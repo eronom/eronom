@@ -1,4 +1,4 @@
-# Eronom Dev Server ⚡
+# Eronom
 
 An ultra-fast, zero-dependency, Vite-style Hot Module Replacement (HMR) development server built natively in Go. 
 
