@@ -41,7 +41,7 @@ Eronom natively serves `.erm` files as unified template components. This means y
     </style>
 </head>
 <body>
-    <div id="app">Hello from Eronom!</div>
+    <div id="app">Hello from Eronom</div>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
