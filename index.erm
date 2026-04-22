@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Erm Dev Server with HMR</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        h1 {
+            color: #42b983;
+        }
+
+        code {
+            background-color: #4b3a27b2;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welssscomezzzsssss to thess Deeevv sv toosossssss sErmssss Dev Serverss with HMR!</h1>
+    <p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
+    <div id="app"></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const app = document.getElementById('app');
+            
+            const timeDisplay = document.createElement('h3');
+            app.appendChild(timeDisplay);
+
+            setInterval(() => {
+                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
+            }, 1000);
+
+            // Conditional Rendering Logic
+            const showExtraContent = true; // Change this to false and save to see HMR remove it!
+            if (showExtraContent) {
+                const extraContent = document.createElement('div');
+                extraContent.id = "extra-content";
+                extraContent.style.marginTop = "20px";
+                extraContent.style.padding = "15px";
+                extraContent.style.border = "2px dashed #42b983";
+                extraContent.innerHTML = `
+                    <h3>🎉 Conditionally Rendered Box</h3>
+                    <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
+                `;
+                app.appendChild(extraContent);
+            }
+
+            console.log("Erm component script loaded.");
+        });
+    </script>
+</body>
+</html>
