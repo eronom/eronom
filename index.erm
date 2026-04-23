@@ -29,10 +29,13 @@
     </style>
 </head>
 <body>
-    <h1>Welssscomezzzsssss to thess Deeevv sv toosossssss sErmssss Dev Serverss with HMR!</h1>
+    
+     <div id="app"></div>
+    <h1>paanewsasaasaassssssgssssssslsssssscomezzzsssss to thess Deeevvsss sv toosossssss sErmssss Dev Serverss with HMR!</h1>
     <p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
-    <div id="app"></div>
+   <h1>ppssassdsfgfddddddddddgggggggg nnwsss new hello new wayhyy</h1>
 
+<h1>ppssassdsfgfdddddnesssswdddddgggggggg nnwsss new hello new wayhyy</h1>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const app = document.getElementById('app');
@@ -42,7 +45,7 @@
 
             setInterval(() => {
                 timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-            }, 1000);
+            }, 1);
 
             // Conditional Rendering Logic
             const showExtraContent = true; // Change this to false and save to see HMR remove it!

@@ -52,17 +52,19 @@ const hmrClientJS = `
         return id;
     };
 
-    window.__hmr_listeners = window.__hmr_listeners || [];
-    const originalDocAddEventListener = document.addEventListener;
-    document.addEventListener = function(type, listener, options) {
-        window.__hmr_listeners.push({ target: document, type, listener, options });
-        return originalDocAddEventListener.call(document, type, listener, options);
+    window.__hmr_timeouts = window.__hmr_timeouts || [];
+    const originalSetTimeout = window.setTimeout;
+    window.setTimeout = function(fn, t) {
+        let id = originalSetTimeout(fn, t);
+        window.__hmr_timeouts.push(id);
+        return id;
     };
 
-    const originalWinAddEventListener = window.addEventListener;
-    window.addEventListener = function(type, listener, options) {
-        window.__hmr_listeners.push({ target: window, type, listener, options });
-        return originalWinAddEventListener.call(window, type, listener, options);
+    window.__hmr_listeners = window.__hmr_listeners || [];
+    const originalAddEventListener = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+        window.__hmr_listeners.push({ target: this, type, listener, options });
+        return originalAddEventListener.call(this, type, listener, options);
     };
 
     let ws = new WebSocket("ws://" + location.host + "/__hmr");
@@ -71,13 +73,17 @@ const hmrClientJS = `
         if (data.type === 'hmr_erm') {
             console.log("[HMR] Module updated. Refreshing content seamlessly...");
             
-            // Clear prior intervals
+            // Clear prior intervals and timeouts
             window.__hmr_intervals.forEach(clearInterval);
             window.__hmr_intervals = [];
+            window.__hmr_timeouts.forEach(clearTimeout);
+            window.__hmr_timeouts = [];
             
             // Clear prior event listeners
             window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
-                target.removeEventListener(type, listener, options);
+                try {
+                    target.removeEventListener(type, listener, options);
+                } catch(e) {}
             });
             window.__hmr_listeners = [];
 
@@ -89,33 +95,72 @@ const hmrClientJS = `
                     
                     document.title = doc.title;
 
-                    let oldStyles = document.querySelectorAll('style, link[rel="stylesheet"]');
-                    oldStyles.forEach(s => s.remove());
-                    let newStyles = doc.querySelectorAll('style, link[rel="stylesheet"]');
-                    newStyles.forEach(s => document.head.appendChild(s.cloneNode(true)));
-                    
-                    document.body.innerHTML = doc.body.innerHTML;
+                    let performUpdate = () => {
+                        let oldStyles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'));
+                        let newStyles = doc.querySelectorAll('style, link[rel="stylesheet"]');
+                        newStyles.forEach(s => document.head.appendChild(s.cloneNode(true)));
+                        setTimeout(() => {
+                            oldStyles.forEach(s => s.remove());
+                        }, 10);
+                        
+                        document.head.querySelectorAll('script').forEach(s => {
+                            if(s.src && s.src.includes('__hmr_client.js')) return;
+                            s.remove();
+                        });
 
-                    let scripts = document.body.querySelectorAll('script');
-                    scripts.forEach(s => {
-                        if(s.src && s.src.includes('__hmr_client.js')) return;
-                        let newScript = document.createElement('script');
-                        newScript.text = s.innerHTML;
-                        if(s.src) {
-                             let url = new URL(s.src, location.href);
-                             url.searchParams.set('t', new Date().getTime());
-                             newScript.src = url.href;
+                        doc.head.querySelectorAll('script').forEach(s => {
+                            if(s.src && s.src.includes('__hmr_client.js')) return;
+                            let newScript = document.createElement('script');
+                            Array.from(s.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+                            newScript.text = s.innerHTML;
+                            if(s.src) {
+                                 let url = new URL(s.src, location.href);
+                                 url.searchParams.set('t', new Date().getTime());
+                                 newScript.src = url.href;
+                            }
+                            document.head.appendChild(newScript);
+                        });
+
+                        if (window.morphdom) {
+                            window.morphdom(document.body, doc.body);
+                        } else {
+                            document.body.innerHTML = doc.body.innerHTML;
                         }
-                        s.replaceWith(newScript);
-                    });
 
-                    document.dispatchEvent(new Event('DOMContentLoaded', {
-                        bubbles: true,
-                        cancelable: true
-                    }));
-                    window.dispatchEvent(new Event('load'));
+                        document.body.querySelectorAll('script').forEach(s => {
+                            if(s.src && s.src.includes('__hmr_client.js')) return;
+                            let newScript = document.createElement('script');
+                            Array.from(s.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+                            newScript.text = s.innerHTML;
+                            if(s.src) {
+                                 let url = new URL(s.src, location.href);
+                                 url.searchParams.set('t', new Date().getTime());
+                                 newScript.src = url.href;
+                            }
+                            s.replaceWith(newScript);
+                        });
 
-                    console.log("[HMR] Hot Replacement complete.");
+                        document.dispatchEvent(new Event('DOMContentLoaded', {
+                            bubbles: true,
+                            cancelable: true
+                        }));
+                        window.dispatchEvent(new Event('load'));
+                        console.log("[HMR] Hot Replacement complete.");
+                    };
+
+                    if (!window.morphdom) {
+                         import('https://unpkg.com/morphdom@2.7.0/dist/morphdom-esm.js')
+                             .then(m => {
+                                 window.morphdom = m.default;
+                                 performUpdate();
+                             })
+                             .catch(e => {
+                                 console.error("[HMR] Failed to load morphdom", e);
+                                 performUpdate();
+                             });
+                    } else {
+                         performUpdate();
+                    }
                 });
         } else if (data.type === 'reload') {
             location.reload();
