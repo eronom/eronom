@@ -44,7 +44,7 @@ const hmrClientJS = `
     if (window.__hmr_initialized) return;
     window.__hmr_initialized = true;
 
-    // Vite-like HMR context
+    // em-like HMR context
     window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
     window.hmr = {
         data: window.__hmr_data || {},
@@ -85,9 +85,28 @@ const hmrClientJS = `
     let ws = new WebSocket("ws://" + location.host + "/__hmr");
     ws.onmessage = function(event) {
         let data = JSON.parse(event.data);
-        if (data.type === 'hmr_erm') {
-            console.log("[HMR] Module updated. Refreshing content seamlessly...");
+        if (data.type === 'update' || data.type === 'hmr_erm') {
+            let fetchPath = data.path || location.href;
+            let url = new URL(fetchPath, location.origin);
+            url.searchParams.set('t', new Date().getTime());
             
+            console.log("[em] hot updated: " + (data.path || 'Document'));
+
+            if (data.path && data.path.endsWith('.css')) {
+                let links = document.querySelectorAll('link[rel="stylesheet"]');
+                let updated = false;
+                links.forEach(link => {
+                    let linkUrl = new URL(link.href, location.origin);
+                    if (linkUrl.pathname === data.path) {
+                        link.href = url.href;
+                        updated = true;
+                    }
+                });
+                if (updated) {
+                    return;
+                }
+            }
+
             // Call dispose handlers before DOM replacement
             window.__hmr_hooks.dispose.forEach(cb => {
                 try { cb(window.hmr.data); } catch(e) { console.error("[HMR] Error in dispose handler", e); }
@@ -105,7 +124,7 @@ const hmrClientJS = `
             });
             window.__hmr_listeners = [];
 
-            fetch(location.href)
+            fetch(url.href)
                 .then(r => r.text())
                 .then(html => {
                     let parser = new DOMParser();
@@ -126,9 +145,9 @@ const hmrClientJS = `
                         let newScript = document.createElement('script');
                         newScript.text = s.innerHTML;
                         if(s.src) {
-                             let url = new URL(s.src, location.href);
-                             url.searchParams.set('t', new Date().getTime());
-                             newScript.src = url.href;
+                             let sUrl = new URL(s.src, location.href);
+                             sUrl.searchParams.set('t', new Date().getTime());
+                             newScript.src = sUrl.href;
                         }
                         s.replaceWith(newScript);
                     });
@@ -205,8 +224,10 @@ func watchFiles(dir string) {
 
 				fmt.Printf("File changed: %s\n", relPath)
 
-				if strings.HasSuffix(relPath, ".erm") || strings.HasSuffix(relPath, ".js") {
-					manager.broadcast([]byte(`{"type": "hmr_erm"}`))
+				if strings.HasSuffix(relPath, ".erm") || strings.HasSuffix(relPath, ".js") || strings.HasSuffix(relPath, ".css") || strings.HasSuffix(relPath, ".html") {
+					path := "/" + strings.ReplaceAll(relPath, "\\", "/")
+					msg := fmt.Sprintf(`{"type": "update", "path": "%s"}`, path)
+					manager.broadcast([]byte(msg))
 				}
 
 				if event.Op&fsnotify.Create == fsnotify.Create {
@@ -289,7 +310,7 @@ func main() {
 			if strings.HasSuffix(fullPath, ".erm") {
 				content, err := os.ReadFile(fullPath)
 				if err == nil {
-					// Vite-like API support
+					// em-like API support
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
 
 					scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)
@@ -319,7 +340,7 @@ func main() {
 			} else if strings.HasSuffix(fullPath, ".js") && reqPath != "/__hmr_client.js" {
 				content, err := os.ReadFile(fullPath)
 				if err == nil {
-					// Vite-like API support for standalone js files
+					// em-like API support for standalone js files
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
 					w.Header().Set("Content-Type", "application/javascript")
 					w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
