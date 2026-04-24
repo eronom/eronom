@@ -44,6 +44,23 @@ const hmrClientJS = `
     if (window.__hmr_initialized) return;
     window.__hmr_initialized = true;
 
+    // Vite-like HMR context
+    window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
+    window.hmr = {
+        data: window.__hmr_data || {},
+        accept: function(cb) {
+            window.__hmr_hooks.accept.push(cb);
+        },
+        dispose: function(cb) {
+            window.__hmr_hooks.dispose.push(cb);
+        },
+        invalidate: function() {
+            location.reload();
+        }
+    };
+    // Ensure data persists properly
+    window.__hmr_data = window.hmr.data;
+
     window.__hmr_intervals = window.__hmr_intervals || [];
     const originalSetInterval = window.setInterval;
     window.setInterval = function(fn, t) {
@@ -71,6 +88,13 @@ const hmrClientJS = `
         if (data.type === 'hmr_erm') {
             console.log("[HMR] Module updated. Refreshing content seamlessly...");
             
+            // Call dispose handlers before DOM replacement
+            window.__hmr_hooks.dispose.forEach(cb => {
+                try { cb(window.hmr.data); } catch(e) { console.error("[HMR] Error in dispose handler", e); }
+            });
+            window.__hmr_hooks.dispose = [];
+            window.__hmr_hooks.accept = []; // clear accept hooks for the next run
+
             // Clear prior intervals
             window.__hmr_intervals.forEach(clearInterval);
             window.__hmr_intervals = [];
@@ -181,7 +205,7 @@ func watchFiles(dir string) {
 
 				fmt.Printf("File changed: %s\n", relPath)
 
-				if strings.HasSuffix(relPath, ".erm") {
+				if strings.HasSuffix(relPath, ".erm") || strings.HasSuffix(relPath, ".js") {
 					manager.broadcast([]byte(`{"type": "hmr_erm"}`))
 				}
 
@@ -261,32 +285,47 @@ func main() {
 		fullPath := filepath.Join(dir, reqPath)
 		fileInfo, err := os.Stat(fullPath)
 
-		if err == nil && !fileInfo.IsDir() && strings.HasSuffix(fullPath, ".erm") {
-			content, err := os.ReadFile(fullPath)
-			if err == nil {
-				scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)
+		if err == nil && !fileInfo.IsDir() {
+			if strings.HasSuffix(fullPath, ".erm") {
+				content, err := os.ReadFile(fullPath)
+				if err == nil {
+					// Vite-like API support
+					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
 
-				var injected []byte
-				headIdx := bytes.Index(bytes.ToLower(content), []byte("</head>"))
-				if headIdx != -1 {
-					injected = append(injected, content[:headIdx]...)
-					injected = append(injected, scriptTag...)
-					injected = append(injected, content[headIdx:]...)
-				} else {
-					idx := bytes.LastIndex(bytes.ToLower(content), []byte("</body>"))
-					if idx != -1 {
-						injected = append(injected, content[:idx]...)
+					scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)
+
+					var injected []byte
+					headIdx := bytes.Index(bytes.ToLower(content), []byte("</head>"))
+					if headIdx != -1 {
+						injected = append(injected, content[:headIdx]...)
 						injected = append(injected, scriptTag...)
-						injected = append(injected, content[idx:]...)
+						injected = append(injected, content[headIdx:]...)
 					} else {
-						injected = append(content, scriptTag...)
+						idx := bytes.LastIndex(bytes.ToLower(content), []byte("</body>"))
+						if idx != -1 {
+							injected = append(injected, content[:idx]...)
+							injected = append(injected, scriptTag...)
+							injected = append(injected, content[idx:]...)
+						} else {
+							injected = append(content, scriptTag...)
+						}
 					}
-				}
 
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
-				w.Write(injected)
-				return
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
+					w.Write(injected)
+					return
+				}
+			} else if strings.HasSuffix(fullPath, ".js") && reqPath != "/__hmr_client.js" {
+				content, err := os.ReadFile(fullPath)
+				if err == nil {
+					// Vite-like API support for standalone js files
+					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
+					w.Header().Set("Content-Type", "application/javascript")
+					w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
+					w.Write(content)
+					return
+				}
 			}
 		}
 

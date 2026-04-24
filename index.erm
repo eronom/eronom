@@ -29,9 +29,13 @@
     </style>
 </head>
 <body>
-    <h1>Welssscomezzzsssss to thess Deeevv sv toosossssss sErmssss Dev Serverss with HMR!</h1>
+    <h1>vvassavvaataaaaaaaassso thessaaaazzz Deeevv sv toosossssss sErmssss Dev Serverss with HMR!</h1>
     <p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
     <div id="app"></div>
+<h2>Helllo web added h2 tag</h2>
+  
+  <h2>Helllo web added h2ppppppppppppppppp tag</h2>
+   <h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -45,7 +49,7 @@
             }, 1000);
 
             // Conditional Rendering Logic
-            const showExtraContent = true; // Change this to false and save to see HMR remove it!
+            const showExtraContent = false; // Change this to false and save to see HMR remove it!
             if (showExtraContent) {
                 const extraContent = document.createElement('div');
                 extraContent.id = "extra-content";
