@@ -54,7 +54,9 @@
 
     <script>
         let showExtraContent = false; // Change this to false and save to see HMR remove it!
-        let porridge = { temperature: 180 }; // Change temperature to test other states
+        showExtraContent = true;
+        
+        let porridge = { temperature: 100 }; // Change temperature to test other states
 
         document.addEventListener('DOMContentLoaded', () => {
             const app = document.getElementById('app');

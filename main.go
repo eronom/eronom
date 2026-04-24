@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -177,9 +178,25 @@ const hmrClientJS = `
 })();
 `
 
-func processErmConditions(content string) string {
+func processErmComponent(content string) string {
 	res := content
+
+	// 1. Extract all user script blocks properly and remove them.
+	var userScripts []string
+	reScript := regexp.MustCompile(`(?s)(<script(?:\s+[^>]*?)?>)(.*?)(</script>)`)
+	res = reScript.ReplaceAllStringFunc(res, func(match string) string {
+		parts := reScript.FindStringSubmatch(match)
+		if strings.Contains(parts[1], "src=") {
+			return match
+		}
+		userScripts = append(userScripts, parts[2])
+		return ""
+	})
+
+	// 2. Process {#if} logic and replace with hidden anchor spans
+	var generatedLogic []string
 	count := 0
+
 	for {
 		start := strings.Index(res, "{#if ")
 		if start == -1 {
@@ -194,7 +211,7 @@ func processErmConditions(content string) string {
 
 		block := res[start : end+5]
 
-		scriptID := fmt.Sprintf("erm-cond-%d-%d", time.Now().UnixNano(), count)
+		anchorID := fmt.Sprintf("erm-cond-anchor-%d-%d", time.Now().UnixNano(), count)
 		count++
 
 		var branches []string
@@ -254,25 +271,41 @@ func processErmConditions(content string) string {
 			break
 		}
 
-		js := fmt.Sprintf(`<script id="%s">
-document.addEventListener('DOMContentLoaded', () => {
-    let htmlBase64 = '';
-    %s
-    if (htmlBase64) {
-        let me = document.getElementById("%s");
-        if (me) {
-            let html = decodeURIComponent(escape(atob(htmlBase64)));
-            let tpl = document.createElement('template');
-            tpl.innerHTML = html;
-            me.parentNode.insertBefore(tpl.content, me.nextSibling);
-        }
-    }
-}, { once: true });
-</script>`, scriptID, strings.Join(branches, " else "), scriptID)
+		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:none;"></span>`, anchorID)
 
-		res = res[:start] + js + res[end+5:]
+		logic := fmt.Sprintf(`
+	{
+		let htmlBase64 = '';
+		%s
+		if (htmlBase64) {
+			let me = document.getElementById("%s");
+			if (me) {
+				let html = decodeURIComponent(escape(atob(htmlBase64)));
+				let tpl = document.createElement('template');
+				tpl.innerHTML = html;
+				me.parentNode.insertBefore(tpl.content, me);
+			}
+		}
+	}`, strings.Join(branches, " else "), anchorID)
+
+		generatedLogic = append(generatedLogic, logic)
+		res = res[:start] + anchorHTML + res[end+5:]
 	}
-	return res
+
+	// 3. Assemble final compiled JS block
+	finalJS := fmt.Sprintf(`<script>
+(() => {
+	// User Logic
+	%s
+
+	// Conditional Engine
+	document.addEventListener('DOMContentLoaded', () => {
+		%s
+	}, { once: true });
+})();
+</script>`, strings.Join(userScripts, "\n"), strings.Join(generatedLogic, "\n"))
+
+	return res + finalJS
 }
 
 func watchFiles(dir string) {
@@ -413,7 +446,7 @@ func main() {
 					// em-like API support
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
 
-					processedContent := processErmConditions(string(content))
+					processedContent := processErmComponent(string(content))
 					content = []byte(processedContent)
 
 					scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)
