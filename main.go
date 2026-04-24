@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"log"
@@ -149,6 +150,7 @@ const hmrClientJS = `
                              sUrl.searchParams.set('t', new Date().getTime());
                              newScript.src = sUrl.href;
                         }
+                        if (s.id) newScript.id = s.id;
                         s.replaceWith(newScript);
                     });
 
@@ -174,6 +176,104 @@ const hmrClientJS = `
     console.log("[HMR] Connected.");
 })();
 `
+
+func processErmConditions(content string) string {
+	res := content
+	count := 0
+	for {
+		start := strings.Index(res, "{#if ")
+		if start == -1 {
+			break
+		}
+
+		end := strings.Index(res[start:], "{/if}")
+		if end == -1 {
+			break
+		}
+		end += start
+
+		block := res[start : end+5]
+
+		scriptID := fmt.Sprintf("erm-cond-%d-%d", time.Now().UnixNano(), count)
+		count++
+
+		var branches []string
+		rem := block[5:]
+
+		closeBrace := strings.Index(rem, "}")
+		if closeBrace == -1 {
+			break
+		}
+		cond := strings.TrimSpace(rem[:closeBrace])
+		rem = rem[closeBrace+1:]
+
+		valid := true
+		for {
+			nextElseIf := strings.Index(rem, "{:else if ")
+			nextElse := strings.Index(rem, "{:else}")
+			nextEnd := strings.Index(rem, "{/if}")
+
+			minIdx := nextEnd
+			if minIdx == -1 {
+				valid = false
+				break
+			}
+			tokType := "end"
+
+			if nextElseIf != -1 && nextElseIf < minIdx {
+				minIdx = nextElseIf
+				tokType = "elseif"
+			}
+			if nextElse != -1 && nextElse < minIdx {
+				minIdx = nextElse
+				tokType = "else"
+			}
+
+			htmlBody := rem[:minIdx]
+			encodedHtml := base64.StdEncoding.EncodeToString([]byte(htmlBody))
+
+			branches = append(branches, fmt.Sprintf(`if (%s) { htmlBase64 = "%s"; }`, cond, encodedHtml))
+
+			if tokType == "end" {
+				break
+			} else if tokType == "else" {
+				rem = rem[minIdx+7:]
+				cond = "true"
+			} else if tokType == "elseif" {
+				rem = rem[minIdx+10:]
+				clBr := strings.Index(rem, "}")
+				if clBr == -1 {
+					valid = false
+					break
+				}
+				cond = strings.TrimSpace(rem[:clBr])
+				rem = rem[clBr+1:]
+			}
+		}
+		if !valid {
+			break
+		}
+
+		js := fmt.Sprintf(`<script id="%s">
+document.addEventListener('DOMContentLoaded', () => {
+    let htmlBase64 = '';
+    %s
+    if (htmlBase64) {
+        let me = document.getElementById("%s");
+        if (me) {
+            let html = decodeURIComponent(escape(atob(htmlBase64)));
+            let tpl = document.createElement('template');
+            tpl.innerHTML = html;
+            me.parentNode.insertBefore(tpl.content, me.nextSibling);
+        }
+    }
+}, { once: true });
+</script>`, scriptID, strings.Join(branches, " else "), scriptID)
+
+		res = res[:start] + js + res[end+5:]
+	}
+	return res
+}
 
 func watchFiles(dir string) {
 	watcher, err := fsnotify.NewWatcher()
@@ -312,6 +412,9 @@ func main() {
 				if err == nil {
 					// em-like API support
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
+
+					processedContent := processErmConditions(string(content))
+					content = []byte(processedContent)
 
 					scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)
 
