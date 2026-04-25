@@ -89,6 +89,12 @@ const hmrClientJS = `
         let data = JSON.parse(event.data);
         if (data.type === 'update' || data.type === 'hmr_erm') {
             let fetchPath = data.path || location.href;
+            
+            // If it's a template/HTML file, always fetch the current page so components re-render within their parent scope.
+            if (data.path && (data.path.endsWith('.erm') || data.path.endsWith('.html'))) {
+                fetchPath = location.href;
+            }
+
             let url = new URL(fetchPath, location.origin);
             url.searchParams.set('t', new Date().getTime());
             
@@ -178,20 +184,71 @@ const hmrClientJS = `
 })();
 `
 
-func processErmComponent(content string) string {
-	res := content
-
-	// 1. Extract all user script blocks properly and remove them.
-	var userScripts []string
+func processComponentTree(baseDir, content string, visited map[string]bool) (string, []string) {
+	var nodeScripts []string
 	reScript := regexp.MustCompile(`(?s)(<script(?:\s+[^>]*?)?>)(.*?)(</script>)`)
-	res = reScript.ReplaceAllStringFunc(res, func(match string) string {
+	html := reScript.ReplaceAllStringFunc(content, func(match string) string {
 		parts := reScript.FindStringSubmatch(match)
 		if strings.Contains(parts[1], "src=") {
 			return match
 		}
-		userScripts = append(userScripts, parts[2])
+		nodeScripts = append(nodeScripts, strings.TrimSpace(parts[2]))
 		return ""
 	})
+
+	reImport := regexp.MustCompile(`(?m)^[\s]*import\s+([A-Z][a-zA-Z0-9]*)\s+from\s+['"](.+?\.erm)['"]\s*;?[\s]*$`)
+	imports := make(map[string]string)
+	for i, script := range nodeScripts {
+		nodeScripts[i] = reImport.ReplaceAllStringFunc(script, func(match string) string {
+			parts := reImport.FindStringSubmatch(match)
+			imports[parts[1]] = parts[2]
+			return ""
+		})
+	}
+
+	reCompTag := regexp.MustCompile(`(?s)<([A-Z][a-zA-Z0-9]*)\s*/>`)
+	html = reCompTag.ReplaceAllStringFunc(html, func(match string) string {
+		parts := reCompTag.FindStringSubmatch(match)
+		compName := parts[1]
+
+		compRelPath, ok := imports[compName]
+		if !ok {
+			compRelPath = compName + ".erm"
+		}
+
+		compPath := filepath.Join(baseDir, compRelPath)
+		absPath, _ := filepath.Abs(compPath)
+		if visited[absPath] {
+			return match
+		}
+		visitedChild := make(map[string]bool)
+		for k, v := range visited {
+			visitedChild[k] = v
+		}
+		visitedChild[absPath] = true
+
+		compContentBytes, err := os.ReadFile(compPath)
+		if err != nil {
+			return match
+		}
+
+		compHtml, compScripts := processComponentTree(filepath.Dir(compPath), string(compContentBytes), visitedChild)
+		for _, s := range compScripts {
+			if strings.TrimSpace(s) != "" {
+				nodeScripts = append(nodeScripts, fmt.Sprintf("{\n%s\n}", s))
+			}
+		}
+
+		return compHtml
+	})
+
+	return html, nodeScripts
+}
+
+func processErmComponent(baseDir string, content string) string {
+	absBase, _ := filepath.Abs(baseDir)
+	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
+	res, userScripts := processComponentTree(baseDir, content, visited)
 
 	// 2. Process {#if} logic and replace with hidden anchor spans
 	var generatedLogic []string
@@ -446,7 +503,7 @@ func main() {
 					// em-like API support
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
 
-					processedContent := processErmComponent(string(content))
+					processedContent := processErmComponent(filepath.Dir(fullPath), string(content))
 					content = []byte(processedContent)
 
 					scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)
