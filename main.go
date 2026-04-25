@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +46,7 @@ const hmrClientJS = `
     if (window.__hmr_initialized) return;
     window.__hmr_initialized = true;
 
-    // Vite-like HMR context
+    // em-like HMR context
     window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
     window.hmr = {
         data: window.__hmr_data || {},
@@ -85,9 +87,28 @@ const hmrClientJS = `
     let ws = new WebSocket("ws://" + location.host + "/__hmr");
     ws.onmessage = function(event) {
         let data = JSON.parse(event.data);
-        if (data.type === 'hmr_erm') {
-            console.log("[HMR] Module updated. Refreshing content seamlessly...");
+        if (data.type === 'update' || data.type === 'hmr_erm') {
+            let fetchPath = data.path || location.href;
+            let url = new URL(fetchPath, location.origin);
+            url.searchParams.set('t', new Date().getTime());
             
+            console.log("[em] hot updated: " + (data.path || 'Document'));
+
+            if (data.path && data.path.endsWith('.css')) {
+                let links = document.querySelectorAll('link[rel="stylesheet"]');
+                let updated = false;
+                links.forEach(link => {
+                    let linkUrl = new URL(link.href, location.origin);
+                    if (linkUrl.pathname === data.path) {
+                        link.href = url.href;
+                        updated = true;
+                    }
+                });
+                if (updated) {
+                    return;
+                }
+            }
+
             // Call dispose handlers before DOM replacement
             window.__hmr_hooks.dispose.forEach(cb => {
                 try { cb(window.hmr.data); } catch(e) { console.error("[HMR] Error in dispose handler", e); }
@@ -105,7 +126,7 @@ const hmrClientJS = `
             });
             window.__hmr_listeners = [];
 
-            fetch(location.href)
+            fetch(url.href)
                 .then(r => r.text())
                 .then(html => {
                     let parser = new DOMParser();
@@ -126,10 +147,11 @@ const hmrClientJS = `
                         let newScript = document.createElement('script');
                         newScript.text = s.innerHTML;
                         if(s.src) {
-                             let url = new URL(s.src, location.href);
-                             url.searchParams.set('t', new Date().getTime());
-                             newScript.src = url.href;
+                             let sUrl = new URL(s.src, location.href);
+                             sUrl.searchParams.set('t', new Date().getTime());
+                             newScript.src = sUrl.href;
                         }
+                        if (s.id) newScript.id = s.id;
                         s.replaceWith(newScript);
                     });
 
@@ -155,6 +177,136 @@ const hmrClientJS = `
     console.log("[HMR] Connected.");
 })();
 `
+
+func processErmComponent(content string) string {
+	res := content
+
+	// 1. Extract all user script blocks properly and remove them.
+	var userScripts []string
+	reScript := regexp.MustCompile(`(?s)(<script(?:\s+[^>]*?)?>)(.*?)(</script>)`)
+	res = reScript.ReplaceAllStringFunc(res, func(match string) string {
+		parts := reScript.FindStringSubmatch(match)
+		if strings.Contains(parts[1], "src=") {
+			return match
+		}
+		userScripts = append(userScripts, parts[2])
+		return ""
+	})
+
+	// 2. Process {#if} logic and replace with hidden anchor spans
+	var generatedLogic []string
+	count := 0
+
+	for {
+		start := strings.Index(res, "{#if ")
+		if start == -1 {
+			break
+		}
+
+		end := strings.Index(res[start:], "{/if}")
+		if end == -1 {
+			break
+		}
+		end += start
+
+		block := res[start : end+5]
+
+		anchorID := fmt.Sprintf("erm-cond-anchor-%d-%d", time.Now().UnixNano(), count)
+		count++
+
+		var branches []string
+		rem := block[5:]
+
+		closeBrace := strings.Index(rem, "}")
+		if closeBrace == -1 {
+			break
+		}
+		cond := strings.TrimSpace(rem[:closeBrace])
+		rem = rem[closeBrace+1:]
+
+		valid := true
+		for {
+			nextElseIf := strings.Index(rem, "{:else if ")
+			nextElse := strings.Index(rem, "{:else}")
+			nextEnd := strings.Index(rem, "{/if}")
+
+			minIdx := nextEnd
+			if minIdx == -1 {
+				valid = false
+				break
+			}
+			tokType := "end"
+
+			if nextElseIf != -1 && nextElseIf < minIdx {
+				minIdx = nextElseIf
+				tokType = "elseif"
+			}
+			if nextElse != -1 && nextElse < minIdx {
+				minIdx = nextElse
+				tokType = "else"
+			}
+
+			htmlBody := rem[:minIdx]
+			encodedHtml := base64.StdEncoding.EncodeToString([]byte(htmlBody))
+
+			branches = append(branches, fmt.Sprintf(`if (%s) { htmlBase64 = "%s"; }`, cond, encodedHtml))
+
+			if tokType == "end" {
+				break
+			} else if tokType == "else" {
+				rem = rem[minIdx+7:]
+				cond = "true"
+			} else if tokType == "elseif" {
+				rem = rem[minIdx+10:]
+				clBr := strings.Index(rem, "}")
+				if clBr == -1 {
+					valid = false
+					break
+				}
+				cond = strings.TrimSpace(rem[:clBr])
+				rem = rem[clBr+1:]
+			}
+		}
+		if !valid {
+			break
+		}
+
+		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:none;"></span>`, anchorID)
+
+		logic := fmt.Sprintf(`
+	{
+		let htmlBase64 = '';
+		%s
+		if (htmlBase64) {
+			let me = document.getElementById("%s");
+			if (me) {
+				let html = decodeURIComponent(escape(atob(htmlBase64)));
+				let tpl = document.createElement('template');
+				tpl.innerHTML = html;
+				me.parentNode.insertBefore(tpl.content, me);
+			}
+		}
+	}`, strings.Join(branches, " else "), anchorID)
+
+		generatedLogic = append(generatedLogic, logic)
+		res = res[:start] + anchorHTML + res[end+5:]
+	}
+
+	// 3. Assemble final compiled JS block
+	finalJS := fmt.Sprintf(`<script>
+(() => {
+	// User Logic
+	%s
+
+	// Conditional Engine
+	document.addEventListener('DOMContentLoaded', () => {
+		%s
+	}, { once: true });
+})();
+</script>`, strings.Join(userScripts, "\n"), strings.Join(generatedLogic, "\n"))
+
+	return res + finalJS
+}
 
 func watchFiles(dir string) {
 	watcher, err := fsnotify.NewWatcher()
@@ -205,8 +357,10 @@ func watchFiles(dir string) {
 
 				fmt.Printf("File changed: %s\n", relPath)
 
-				if strings.HasSuffix(relPath, ".erm") || strings.HasSuffix(relPath, ".js") {
-					manager.broadcast([]byte(`{"type": "hmr_erm"}`))
+				if strings.HasSuffix(relPath, ".erm") || strings.HasSuffix(relPath, ".js") || strings.HasSuffix(relPath, ".css") || strings.HasSuffix(relPath, ".html") {
+					path := "/" + strings.ReplaceAll(relPath, "\\", "/")
+					msg := fmt.Sprintf(`{"type": "update", "path": "%s"}`, path)
+					manager.broadcast([]byte(msg))
 				}
 
 				if event.Op&fsnotify.Create == fsnotify.Create {
@@ -289,8 +443,11 @@ func main() {
 			if strings.HasSuffix(fullPath, ".erm") {
 				content, err := os.ReadFile(fullPath)
 				if err == nil {
-					// Vite-like API support
+					// em-like API support
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
+
+					processedContent := processErmComponent(string(content))
+					content = []byte(processedContent)
 
 					scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)
 
@@ -319,7 +476,7 @@ func main() {
 			} else if strings.HasSuffix(fullPath, ".js") && reqPath != "/__hmr_client.js" {
 				content, err := os.ReadFile(fullPath)
 				if err == nil {
-					// Vite-like API support for standalone js files
+					// em-like API support for standalone js files
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
 					w.Header().Set("Content-Type", "application/javascript")
 					w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
