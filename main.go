@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"hash/fnv"
 	"io/fs"
 	"log"
 	"net/http"
@@ -184,8 +185,67 @@ const hmrClientJS = `
 })();
 `
 
-func processComponentTree(baseDir, content string, visited map[string]bool) (string, []string) {
+func scopeCSS(css, scopeID string) string {
+	re := regexp.MustCompile(`(?s)([^\{\}]+)\{([^\{\}]*)\}`)
+	return re.ReplaceAllStringFunc(css, func(match string) string {
+		parts := re.FindStringSubmatch(match)
+
+		rawSelector := parts[1]
+		block := parts[2]
+
+		trimmedSelector := strings.TrimSpace(rawSelector)
+		if trimmedSelector == "" {
+			return match
+		}
+		idx := strings.Index(rawSelector, trimmedSelector)
+		leadingWhite := rawSelector[:idx]
+
+		sels := strings.Split(trimmedSelector, ",")
+		for i, s := range sels {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				if strings.Contains(s, "%") || s == "to" || s == "from" {
+					continue
+				}
+
+				semiIdx := strings.Index(s, ":")
+				if semiIdx != -1 {
+					sels[i] = s[:semiIdx] + "[" + scopeID + "]" + s[semiIdx:]
+				} else {
+					sels[i] = s + "[" + scopeID + "]"
+				}
+			}
+		}
+		return leadingWhite + strings.Join(sels, ", ") + " {" + block + "}"
+	})
+}
+
+func scopeHTML(html, scopeID string) string {
+	reTag := regexp.MustCompile(`(?i)<([a-zA-Z0-9-:]+)([^>]*)>`)
+	return reTag.ReplaceAllStringFunc(html, func(match string) string {
+		parts := reTag.FindStringSubmatch(match)
+		tag := parts[1]
+		attrs := parts[2]
+
+		if len(tag) > 0 && tag[0] >= 'A' && tag[0] <= 'Z' {
+			return match
+		}
+		if strings.ToLower(tag) == "html" || strings.ToLower(tag) == "head" || strings.ToLower(tag) == "body" || tag == "!DOCTYPE" || strings.ToLower(tag) == "script" || strings.ToLower(tag) == "style" {
+			return match
+		}
+
+		return "<" + tag + " " + scopeID + attrs + ">"
+	})
+}
+
+func processComponentTree(baseDir, content string, visited map[string]bool) (string, []string, []string) {
 	var nodeScripts []string
+	var nodeStyles []string
+
+	h := fnv.New32a()
+	h.Write([]byte(content))
+	scopeID := fmt.Sprintf("data-e-%x", h.Sum32())
+
 	reScript := regexp.MustCompile(`(?s)(<script(?:\s+[^>]*?)?>)(.*?)(</script>)`)
 	html := reScript.ReplaceAllStringFunc(content, func(match string) string {
 		parts := reScript.FindStringSubmatch(match)
@@ -195,6 +255,17 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 		nodeScripts = append(nodeScripts, strings.TrimSpace(parts[2]))
 		return ""
 	})
+
+	reStyle := regexp.MustCompile(`(?s)<style[^>]*>(.*?)</style>`)
+	html = reStyle.ReplaceAllStringFunc(html, func(match string) string {
+		parts := reStyle.FindStringSubmatch(match)
+		cssContent := parts[1]
+		scopedCssContent := scopeCSS(cssContent, scopeID)
+		nodeStyles = append(nodeStyles, scopedCssContent)
+		return ""
+	})
+
+	html = scopeHTML(html, scopeID)
 
 	reImport := regexp.MustCompile(`(?m)^[\s]*import\s+([A-Z][a-zA-Z0-9]*)\s+from\s+['"](.+?\.erm)['"]\s*;?[\s]*$`)
 	imports := make(map[string]string)
@@ -232,23 +303,28 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 			return match
 		}
 
-		compHtml, compScripts := processComponentTree(filepath.Dir(compPath), string(compContentBytes), visitedChild)
+		compHtml, compScripts, compStyles := processComponentTree(filepath.Dir(compPath), string(compContentBytes), visitedChild)
 		for _, s := range compScripts {
 			if strings.TrimSpace(s) != "" {
 				nodeScripts = append(nodeScripts, fmt.Sprintf("{\n%s\n}", s))
+			}
+		}
+		for _, s := range compStyles {
+			if strings.TrimSpace(s) != "" {
+				nodeStyles = append(nodeStyles, s)
 			}
 		}
 
 		return compHtml
 	})
 
-	return html, nodeScripts
+	return html, nodeScripts, nodeStyles
 }
 
 func processErmComponent(baseDir string, content string) string {
 	absBase, _ := filepath.Abs(baseDir)
 	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
-	res, userScripts := processComponentTree(baseDir, content, visited)
+	res, userScripts, userStyles := processComponentTree(baseDir, content, visited)
 
 	// 2. Process {#if} logic and replace with hidden anchor spans
 	var generatedLogic []string
@@ -362,7 +438,12 @@ func processErmComponent(baseDir string, content string) string {
 })();
 </script>`, strings.Join(userScripts, "\n"), strings.Join(generatedLogic, "\n"))
 
-	return res + finalJS
+	finalCSS := ""
+	if len(userStyles) > 0 {
+		finalCSS = fmt.Sprintf("\n<style>\n%s\n</style>\n", strings.Join(userStyles, "\n"))
+	}
+
+	return res + finalCSS + finalJS
 }
 
 func watchFiles(dir string) {
