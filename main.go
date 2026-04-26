@@ -517,15 +517,143 @@ func watchFiles(dir string) {
 	}
 }
 
+func buildProject(dir string) {
+	fmt.Println("Building project...")
+	buildDir := filepath.Join(dir, "build")
+	os.RemoveAll(buildDir)
+	err := os.MkdirAll(buildDir, 0755)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		if relPath == "." {
+			return nil
+		}
+
+		if d.IsDir() {
+			if relPath == "build" || relPath == ".git" || strings.HasPrefix(filepath.Base(relPath), ".") {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(buildDir, relPath), 0755)
+		}
+
+		if strings.HasPrefix(filepath.Base(relPath), ".") || relPath == "main.go" || relPath == "main" || relPath == "go.mod" || relPath == "go.sum" || relPath == "README.md" || relPath == "LICENSE" || strings.HasSuffix(relPath, ".exe") {
+			return nil
+		}
+
+		outPath := filepath.Join(buildDir, relPath)
+
+		if strings.HasSuffix(relPath, ".erm") {
+			baseName := filepath.Base(relPath)
+			if baseName == "layout.erm" || (baseName[0] >= 'A' && baseName[0] <= 'Z') {
+				return nil
+			}
+
+			if baseName == "page.erm" {
+				outPath = filepath.Join(filepath.Dir(outPath), "index.html")
+			} else {
+				outPath = outPath[:len(outPath)-4] + ".html"
+			}
+
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+
+			pageContent := string(content)
+			pageContent = strings.ReplaceAll(pageContent, "import.meta.hot", "undefined")
+
+			currentDir := filepath.Dir(path)
+			var layoutBytes []byte
+			for {
+				layoutPath := filepath.Join(currentDir, "layout.erm")
+				if layoutInfo, err := os.Stat(layoutPath); err == nil && !layoutInfo.IsDir() && path != layoutPath {
+					layoutBytes, _ = os.ReadFile(layoutPath)
+					break
+				}
+				if currentDir == dir || currentDir == filepath.Dir(currentDir) {
+					break
+				}
+				currentDir = filepath.Dir(currentDir)
+			}
+
+			if len(layoutBytes) > 0 {
+				layoutContent := string(layoutBytes)
+				originalPage := pageContent
+				pageContent = strings.ReplaceAll(layoutContent, "<slot />", originalPage)
+				pageContent = strings.ReplaceAll(pageContent, "<slot></slot>", originalPage)
+			}
+
+			processedContent := processErmComponent(filepath.Dir(path), pageContent)
+
+			err = os.WriteFile(outPath, []byte(processedContent), 0644)
+			if err != nil {
+				return err
+			}
+			relOut, _ := filepath.Rel(buildDir, outPath)
+			fmt.Printf("Built: %s -> %s\n", relPath, relOut)
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		if strings.HasSuffix(relPath, ".js") {
+			contentStr := string(content)
+			contentStr = strings.ReplaceAll(contentStr, "import.meta.hot", "undefined")
+			err = os.WriteFile(outPath, []byte(contentStr), 0644)
+		} else {
+			err = os.WriteFile(outPath, content, 0644)
+		}
+
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Copied: %s\n", relPath)
+		return nil
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Build complete.")
+}
+
 func main() {
 	dir := "."
+	isBuild := false
+
 	if len(os.Args) > 1 {
-		dir = os.Args[1]
+		if os.Args[1] == "build" {
+			isBuild = true
+			if len(os.Args) > 2 {
+				dir = os.Args[2]
+			}
+		} else {
+			dir = os.Args[1]
+		}
 	}
 
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if isBuild {
+		buildProject(dir)
+		return
 	}
 
 	go watchFiles(dir)
