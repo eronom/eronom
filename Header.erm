@@ -1,0 +1,17 @@
+<script>
+    let headerText = "Hello Header from component script!";
+    console.log("Header component loaded!");
+</script>
+<style>
+    .header-box {
+        border: 2px solid #42b983;
+        padding: 10px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        text-align: center;
+        background-color: #2c3e50;
+    }
+</style>
+<div class="header-box">
+    <h1>Helloooowebb Headersssssss (Reusable Component)</h1>
+</div>
