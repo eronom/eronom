@@ -570,12 +570,52 @@ func main() {
 	fs := http.FileServer(http.Dir(dir))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		reqPath := r.URL.Path
-		if reqPath == "/" {
-			reqPath = "/index.erm"
-		}
+		var fullPath string
+		var fileInfo os.FileInfo
+		var err error
 
-		fullPath := filepath.Join(dir, reqPath)
-		fileInfo, err := os.Stat(fullPath)
+		// Next.js-like file-based routing resolution
+		if reqPath == "/" {
+			candidates := []string{"/page.erm", "/index.erm"}
+			for _, c := range candidates {
+				candidatePath := filepath.Join(dir, c)
+				info, e := os.Stat(candidatePath)
+				if e == nil && !info.IsDir() {
+					fullPath = candidatePath
+					fileInfo = info
+					err = nil
+					break
+				}
+			}
+			if fullPath == "" {
+				fullPath = filepath.Join(dir, "/index.erm")
+				fileInfo, err = os.Stat(fullPath)
+			}
+		} else if filepath.Ext(reqPath) == "" {
+			// No extension, try app/pages routing patterns
+			candidates := []string{
+				reqPath + "/page.erm",
+				reqPath + ".erm",
+				reqPath + "/index.erm",
+			}
+			for _, c := range candidates {
+				candidatePath := filepath.Join(dir, c)
+				info, e := os.Stat(candidatePath)
+				if e == nil && !info.IsDir() {
+					fullPath = candidatePath
+					fileInfo = info
+					err = nil
+					break
+				}
+			}
+			if fullPath == "" {
+				fullPath = filepath.Join(dir, reqPath)
+				fileInfo, err = os.Stat(fullPath)
+			}
+		} else {
+			fullPath = filepath.Join(dir, reqPath)
+			fileInfo, err = os.Stat(fullPath)
+		}
 
 		if err == nil && !fileInfo.IsDir() {
 			if strings.HasSuffix(fullPath, ".erm") {
