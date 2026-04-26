@@ -204,7 +204,7 @@ func scopeCSS(css, scopeID string) string {
 		for i, s := range sels {
 			s = strings.TrimSpace(s)
 			if s != "" {
-				if strings.Contains(s, "%") || s == "to" || s == "from" {
+				if strings.Contains(s, "%") || s == "to" || s == "from" || strings.HasPrefix(s, "body") || strings.HasPrefix(s, "html") {
 					continue
 				}
 
@@ -623,8 +623,31 @@ func main() {
 				if err == nil {
 					// em-like API support
 					content = bytes.ReplaceAll(content, []byte("import.meta.hot"), []byte("window.hmr"))
+					pageContent := string(content)
 
-					processedContent := processErmComponent(filepath.Dir(fullPath), string(content))
+					// Basic Next.js-like layout support
+					currentDir := filepath.Dir(fullPath)
+					var layoutBytes []byte
+					for {
+						layoutPath := filepath.Join(currentDir, "layout.erm")
+						if layoutInfo, err := os.Stat(layoutPath); err == nil && !layoutInfo.IsDir() && fullPath != layoutPath {
+							layoutBytes, _ = os.ReadFile(layoutPath)
+							break
+						}
+						if currentDir == dir || currentDir == filepath.Dir(currentDir) {
+							break
+						}
+						currentDir = filepath.Dir(currentDir)
+					}
+
+					if len(layoutBytes) > 0 {
+						layoutContent := string(layoutBytes)
+						originalPage := pageContent
+						pageContent = strings.ReplaceAll(layoutContent, "<slot />", originalPage)
+						pageContent = strings.ReplaceAll(pageContent, "<slot></slot>", originalPage)
+					}
+
+					processedContent := processErmComponent(filepath.Dir(fullPath), pageContent)
 					content = []byte(processedContent)
 
 					scriptTag := []byte(`<script src="/__hmr_client.js"></script>`)

@@ -1,83 +1,48 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Erm Dev Server with HMR</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #1a1a1a;
-            color: #ffffff;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-        
-        }
-
-        h1 {
-            color: #42b983;
-        }
-
-        code {
-            background-color: #4b3a27b2;
-            padding: 0.2rem 0.4rem;
-            border-radius: 4px;
-        }
-    </style>
-</head>
-<body>
-  <script>
-        import Header from './Header.erm';
-        
-        let showExtraContent = true; // Change this to false and save to see HMR remove it!
-     
-        
-        let porridge = { temperature: 100 }; // Change temperature to test other states
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const app = document.getElementById('app');
-            
-            const timeDisplay = document.createElement('h3');
-            app.appendChild(timeDisplay);
-
-            setInterval(() => {
-                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-            }, 1);
-
-            // Conditional rendering is now handled declaratively in the template using {#if} syntax!
-
-            console.log("Erm component script loaded.");
-        });
-    </script>
-    <h1>Dev sv toosossssss sErmssss Dev Serverss with HMR!</h1>
+<script>
+    import Header from './Header.erm';
     
-    <p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
-    <div id="app"></div>
-<h2>Helllo web added h2 tag</h2>
-  
-  <h2>Helllooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
-   <h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+    let showExtraContent = true; // Change this to false and save to see HMR remove it!
+    
+    let porridge = { temperature: 100 }; // Change temperature to test other states
 
-    {#if porridge.temperature > 100}
-        <p>too hot!</p>
-    {:else if 80 > porridge.temperature}
-        <p>too cold!</p>
-    {:else}
-        <p>just right!</p>
-    {/if}
+    document.addEventListener('DOMContentLoaded', () => {
+        const app = document.getElementById('app');
+        
+        const timeDisplay = document.createElement('h3');
+        app.appendChild(timeDisplay);
+
+        setInterval(() => {
+            timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
+        }, 1);
+
+        // Conditional rendering is now handled declaratively in the template using {#if} syntax!
+
+        console.log("Erm component script loaded.");
+    });
+</script>
+<h1>Dev sv toosossssss sErmssss Dev Serverss with HMR!</h1>
+
+<p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
+<div id="app"></div>
+<h2>Helllo web added h2 tag</h2>
+
+<h2>Helllooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
+<h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+
+{#if porridge.temperature > 100}
+    <p>too hot!</p>
+{:else if 80 > porridge.temperature}
+    <p>too cold!</p>
+{:else}
+    <p>just right!</p>
+{/if}
 
 <Header />
-    {#if showExtraContent}
-        <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-            <h3>🎉 Condssitsionalssssssss Rendered Box</h3>
-            <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
-        </div>
-    {/if}
+{#if showExtraContent}
+    <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
+        <h3>🎉 Condssitsionalssssssss Rendered Box</h3>
+        <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
+    </div>
+{/if}
 
-  <Footer />
-</body>
-</html>
+<Footer />
