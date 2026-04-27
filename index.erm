@@ -47,7 +47,7 @@
 <Header />
 {#if showExtraContent}
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxx</h3>
+        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxxss</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
 {/if}

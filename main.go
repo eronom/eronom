@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dop251/goja"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 )
@@ -438,6 +439,24 @@ func processErmComponent(baseDir string, content string) string {
 	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
 	res, userScripts, userStyles := processComponentTree(baseDir, content, visited)
 
+	// Evaluate scripts on server for SSR
+	scriptSource := strings.Join(userScripts, "\n")
+	vm := goja.New()
+
+	vm.RunString("function signal(val) { return val; }")
+	vm.RunString(`
+var window = this;
+var document = { addEventListener: function() {} };
+var console = { log: function() {}, error: function() {} };
+window.__erm_bindings = [];
+window.__erm_events = [];
+`)
+
+	_, err := vm.RunString(scriptSource)
+	if err != nil {
+		log.Printf("JS execution error during SSR: %v\n", err)
+	}
+
 	// 2. Process {#if} logic and replace with hidden anchor spans
 	var generatedLogic []string
 	count := 0
@@ -470,6 +489,11 @@ func processErmComponent(baseDir string, content string) string {
 		rem = rem[closeBrace+1:]
 
 		valid := true
+
+		initialHTML := ""
+		initialBase64 := ""
+		ssrMatched := false
+
 		for {
 			nextElseIf := strings.Index(rem, "{:else if ")
 			nextElse := strings.Index(rem, "{:else}")
@@ -496,6 +520,14 @@ func processErmComponent(baseDir string, content string) string {
 
 			branches = append(branches, fmt.Sprintf(`if (%s) { newHtmlBase64 = "%s"; }`, cond, encodedHtml))
 
+			if !ssrMatched {
+				if ssrVal, err := vm.RunString(cond); err == nil && ssrVal.ToBoolean() {
+					initialHTML = htmlBody
+					initialBase64 = encodedHtml
+					ssrMatched = true
+				}
+			}
+
 			if tokType == "end" {
 				break
 			} else if tokType == "else" {
@@ -516,26 +548,23 @@ func processErmComponent(baseDir string, content string) string {
 			break
 		}
 
-		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:none;"></span>`, anchorID)
+		anchorHTML := fmt.Sprintf(`<span id="%s" data-ssr-base64="%s" style="display:contents;">%s</span>`, anchorID, initialBase64, initialHTML)
 
 		logic := fmt.Sprintf(`
 	{
 		let me = document.getElementById("%s");
 		if (me) {
-			me.__erm_cond_nodes = me.__erm_cond_nodes || [];
+			if (typeof me.__erm_cond_last === 'undefined') {
+				me.__erm_cond_last = me.getAttribute('data-ssr-base64') || '';
+			}
 			let newHtmlBase64 = '';
 			%s
 			if (me.__erm_cond_last !== newHtmlBase64) {
 				me.__erm_cond_last = newHtmlBase64;
-				me.__erm_cond_nodes.forEach(n => { if (n && n.parentNode) n.parentNode.removeChild(n); });
-				me.__erm_cond_nodes = [];
-				if (newHtmlBase64) {
-					let html = decodeURIComponent(escape(atob(newHtmlBase64)));
-					let tpl = document.createElement('template');
-					tpl.innerHTML = html;
-					let nodes = Array.from(tpl.content.childNodes);
-					nodes.forEach(n => me.__erm_cond_nodes.push(n));
-					me.parentNode.insertBefore(tpl.content, me);
+				if (newHtmlBase64 === '') {
+					me.innerHTML = '';
+				} else {
+					me.innerHTML = decodeURIComponent(escape(atob(newHtmlBase64)));
 				}
 			}
 		}
