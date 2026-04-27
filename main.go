@@ -238,6 +238,111 @@ func scopeHTML(html, scopeID string) string {
 	})
 }
 
+func parseReactivity(html string) (string, []string, []string) {
+	var out strings.Builder
+	var jsBindings []string
+	var jsEvents []string
+
+	inTag := false
+	inString := false
+	var stringChar byte
+
+	i := 0
+	for i < len(html) {
+		c := html[i]
+
+		if !inTag {
+			if c == '<' {
+				inTag = true
+				out.WriteByte(c)
+				i++
+				continue
+			}
+			if c == '{' && i+1 < len(html) && html[i+1] != '#' && html[i+1] != ':' && html[i+1] != '/' {
+				start := i
+				depth := 1
+				curr := i + 1
+				for curr < len(html) && depth > 0 {
+					if html[curr] == '{' {
+						depth++
+					} else if html[curr] == '}' {
+						depth--
+					}
+					curr++
+				}
+				if depth == 0 {
+					expr := html[start+1 : curr-1]
+					id := fmt.Sprintf("erm-bind-%d-%d", time.Now().UnixNano(), i)
+					out.WriteString(fmt.Sprintf(`<span id="%s"></span>`, id))
+
+					jsBindings = append(jsBindings, fmt.Sprintf(`window.__erm_bindings.push({ id: "%s", get: () => (%s) });`, id, expr))
+					i = curr
+					continue
+				}
+			}
+		} else {
+			if c == '>' && !inString {
+				inTag = false
+				out.WriteByte(c)
+				i++
+				continue
+			}
+			if (c == '"' || c == '\'') && !inString {
+				inString = true
+				stringChar = c
+				out.WriteByte(c)
+				i++
+				continue
+			}
+			if c == stringChar && inString {
+				inString = false
+				out.WriteByte(c)
+				i++
+				continue
+			}
+
+			if !inString && i > 0 && (html[i-1] == ' ' || html[i-1] == '\t' || html[i-1] == '\n') && strings.HasPrefix(html[i:], "on") {
+				eqIdx := strings.Index(html[i:], "=")
+				if eqIdx > 2 && eqIdx < 30 {
+					attrName := html[i : i+eqIdx]
+					if !strings.ContainsAny(attrName, " \t\n>") {
+						if i+eqIdx+1 < len(html) && html[i+eqIdx+1] == '{' {
+							start := i + eqIdx + 1
+							depth := 1
+							curr := start + 1
+							for curr < len(html) && depth > 0 {
+								if html[curr] == '{' {
+									depth++
+								}
+								if html[curr] == '}' {
+									depth--
+								}
+								curr++
+							}
+							if depth == 0 {
+								expr := html[start+1 : curr-1]
+								eventName := strings.ToLower(attrName[2:])
+								id := fmt.Sprintf("erm-evt-%d-%d", time.Now().UnixNano(), i)
+
+								out.WriteString(fmt.Sprintf(`data-erm-evt-%s="%s"`, eventName, id))
+
+								jsEvents = append(jsEvents, fmt.Sprintf(`window.__erm_events.push({ id: "%s", event: "%s", handler: function(event) { try { const e_fn = (%s); if (typeof e_fn === 'function') { e_fn(event); } } catch(err) { console.error(err); } if (typeof window.__erm_update === 'function') window.__erm_update(); } });`, id, eventName, expr))
+
+								i = curr
+								continue
+							}
+						}
+					}
+				}
+			}
+		}
+
+		out.WriteByte(c)
+		i++
+	}
+	return out.String(), jsBindings, jsEvents
+}
+
 func processComponentTree(baseDir, content string, visited map[string]bool) (string, []string, []string) {
 	var nodeScripts []string
 	var nodeStyles []string
@@ -266,6 +371,13 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 	})
 
 	html = scopeHTML(html, scopeID)
+
+	html, jsBindings, jsEvents := parseReactivity(html)
+
+	reactivityScript := strings.Join(jsBindings, "\n") + "\n" + strings.Join(jsEvents, "\n")
+	if strings.TrimSpace(reactivityScript) != "" {
+		nodeScripts = append(nodeScripts, reactivityScript)
+	}
 
 	reImport := regexp.MustCompile(`(?m)^[\s]*import\s+([A-Z][a-zA-Z0-9]*)\s+from\s+['"](.+?\.erm)['"]\s*;?[\s]*$`)
 	imports := make(map[string]string)
@@ -382,7 +494,7 @@ func processErmComponent(baseDir string, content string) string {
 			htmlBody := rem[:minIdx]
 			encodedHtml := base64.StdEncoding.EncodeToString([]byte(htmlBody))
 
-			branches = append(branches, fmt.Sprintf(`if (%s) { htmlBase64 = "%s"; }`, cond, encodedHtml))
+			branches = append(branches, fmt.Sprintf(`if (%s) { newHtmlBase64 = "%s"; }`, cond, encodedHtml))
 
 			if tokType == "end" {
 				break
@@ -408,18 +520,26 @@ func processErmComponent(baseDir string, content string) string {
 
 		logic := fmt.Sprintf(`
 	{
-		let htmlBase64 = '';
-		%s
-		if (htmlBase64) {
-			let me = document.getElementById("%s");
-			if (me) {
-				let html = decodeURIComponent(escape(atob(htmlBase64)));
-				let tpl = document.createElement('template');
-				tpl.innerHTML = html;
-				me.parentNode.insertBefore(tpl.content, me);
+		let me = document.getElementById("%s");
+		if (me) {
+			me.__erm_cond_nodes = me.__erm_cond_nodes || [];
+			let newHtmlBase64 = '';
+			%s
+			if (me.__erm_cond_last !== newHtmlBase64) {
+				me.__erm_cond_last = newHtmlBase64;
+				me.__erm_cond_nodes.forEach(n => { if (n && n.parentNode) n.parentNode.removeChild(n); });
+				me.__erm_cond_nodes = [];
+				if (newHtmlBase64) {
+					let html = decodeURIComponent(escape(atob(newHtmlBase64)));
+					let tpl = document.createElement('template');
+					tpl.innerHTML = html;
+					let nodes = Array.from(tpl.content.childNodes);
+					nodes.forEach(n => me.__erm_cond_nodes.push(n));
+					me.parentNode.insertBefore(tpl.content, me);
+				}
 			}
 		}
-	}`, strings.Join(branches, " else "), anchorID)
+	}`, anchorID, strings.Join(branches, " else "))
 
 		generatedLogic = append(generatedLogic, logic)
 		res = res[:start] + anchorHTML + res[end+5:]
@@ -427,16 +547,42 @@ func processErmComponent(baseDir string, content string) string {
 
 	// 3. Assemble final compiled JS block
 	finalJS := fmt.Sprintf(`<script>
+window.signal = window.signal || function(val) { return val; };
 (() => {
+	window.__erm_bindings = window.__erm_bindings || [];
+	window.__erm_events = window.__erm_events || [];
+
+	window.__erm_update = function() {
+		%s
+		window.__erm_bindings.forEach(b => {
+			try {
+				let val = b.get();
+				if (b.last !== val) {
+					b.last = val;
+					let el = document.getElementById(b.id);
+					if (el) el.innerText = val;
+				}
+			} catch(e) {}
+		});
+	};
+
 	// User Logic
 	%s
 
 	// Conditional Engine
 	document.addEventListener('DOMContentLoaded', () => {
-		%s
+		window.__erm_events.forEach(ev => {
+			document.addEventListener(ev.event, (e) => {
+				let target = e.target.closest('[' + 'data-erm-evt-' + ev.event + '="' + ev.id + '"]');
+				if (target) {
+					ev.handler(e);
+				}
+			});
+		});
+		window.__erm_update();
 	}, { once: true });
 })();
-</script>`, strings.Join(userScripts, "\n"), strings.Join(generatedLogic, "\n"))
+</script>`, strings.Join(generatedLogic, "\n"), strings.Join(userScripts, "\n"))
 
 	finalCSS := ""
 	if len(userStyles) > 0 {

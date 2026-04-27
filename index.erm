@@ -1,6 +1,8 @@
 <script>
     import Header from './Header.erm';
     
+    let count = signal(0);
+    
     let showExtraContent = true; // Change this to false and save to see HMR remove it!
     
     let porridge = { temperature: 100 }; // Change temperature to test other states
@@ -21,6 +23,11 @@
     });
 </script>
 <h1>Dev sv toosossssss sErmssss Dev Serverss with HMR!</h1>
+
+<div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
+    <h3>Reactive Signal Demo</h3>
+    <button onClick={()=>{count+=1}}>Count {count}</button>
+</div>
 
 <p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
 <div id="app"></div>
