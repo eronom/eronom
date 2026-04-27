@@ -716,6 +716,13 @@ func main() {
 	fs := http.FileServer(http.Dir(dir))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		reqPath := r.URL.Path
+
+		// Prevent direct URL access to .erm files
+		if strings.HasSuffix(reqPath, ".erm") {
+			http.NotFound(w, r)
+			return
+		}
+
 		var fullPath string
 		var fileInfo os.FileInfo
 		var err error
