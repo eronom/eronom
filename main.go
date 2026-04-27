@@ -663,10 +663,126 @@ func watchFiles(dir string) {
 	}
 }
 
+func buildProject(sourceDir, outDir string) error {
+	fmt.Println("Building project to", outDir)
+	os.RemoveAll(outDir)
+	err := os.MkdirAll(outDir, 0755)
+	if err != nil {
+		return err
+	}
+
+	layouts := make(map[string]string)
+	err = filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if path != sourceDir && (info.Name() == "build" || strings.HasPrefix(info.Name(), ".")) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Name() == "layout.erm" {
+			b, _ := os.ReadFile(path)
+			layouts[filepath.Dir(path)] = string(b)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	err = filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if path != sourceDir && (info.Name() == "build" || strings.HasPrefix(info.Name(), ".")) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if strings.HasSuffix(info.Name(), ".go") || info.Name() == "go.mod" || info.Name() == "go.sum" {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(sourceDir, path)
+		outPath := filepath.Join(outDir, relPath)
+
+		if strings.HasSuffix(info.Name(), ".erm") {
+			if info.Name() == "layout.erm" || info.Name() == "virtual_root.erm" {
+				return nil
+			}
+			// Skip components (Uppercase .erm)
+			if len(info.Name()) > 0 && info.Name()[0] >= 'A' && info.Name()[0] <= 'Z' {
+				return nil
+			}
+
+			contentBytes, _ := os.ReadFile(path)
+			content := string(contentBytes)
+			content = strings.ReplaceAll(content, "import.meta.hot", "window.hmr")
+
+			currentDir := filepath.Dir(path)
+			var layoutContent string
+			for {
+				if l, ok := layouts[currentDir]; ok {
+					layoutContent = l
+					break
+				}
+				if currentDir == sourceDir || currentDir == filepath.Dir(currentDir) {
+					break
+				}
+				currentDir = filepath.Dir(currentDir)
+			}
+
+			if layoutContent != "" {
+				originalPage := content
+				content = strings.ReplaceAll(layoutContent, "<slot />", originalPage)
+				content = strings.ReplaceAll(content, "<slot></slot>", originalPage)
+			}
+
+			processedContent := processErmComponent(filepath.Dir(path), content)
+
+			ext := filepath.Ext(outPath)
+			base := outPath[:len(outPath)-len(ext)]
+			baseName := filepath.Base(base)
+			dirName := filepath.Dir(base)
+
+			if baseName == "page" || baseName == "index" {
+				outPath = filepath.Join(dirName, "index.html")
+			} else {
+				outPath = filepath.Join(dirName, baseName, "index.html")
+			}
+
+			os.MkdirAll(filepath.Dir(outPath), 0755)
+			return os.WriteFile(outPath, []byte(processedContent), 0644)
+
+		} else {
+			os.MkdirAll(filepath.Dir(outPath), 0755)
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(outPath, b, 0644)
+		}
+	})
+
+	return err
+}
+
 func main() {
+	cmd := "dev"
 	dir := "."
 	if len(os.Args) > 1 {
-		dir = os.Args[1]
+		if os.Args[1] == "build" || os.Args[1] == "dev" || os.Args[1] == "start" {
+			cmd = os.Args[1]
+			if len(os.Args) > 2 {
+				dir = os.Args[2]
+			}
+		} else {
+			dir = os.Args[1]
+		}
 	}
 
 	dir, err := filepath.Abs(dir)
@@ -674,9 +790,50 @@ func main() {
 		log.Fatal(err)
 	}
 
-	go watchFiles(dir)
+	if cmd == "build" {
+		err := buildProject(dir, filepath.Join(dir, "build"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Build successful! Ready for production deployment.")
+		return
+	}
 
 	port := "8080"
+
+	if cmd == "start" {
+		fmt.Printf("Production server running at http://localhost:%s\n", port)
+		buildDir := filepath.Join(dir, "build")
+
+		fs := http.FileServer(http.Dir(buildDir))
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			path := r.URL.Path
+			if path == "/" {
+				path = "/index.html"
+			} else if filepath.Ext(path) == "" {
+				if _, err := os.Stat(filepath.Join(buildDir, path+".html")); err == nil {
+					path = path + ".html"
+				} else if _, err := os.Stat(filepath.Join(buildDir, path, "index.html")); err == nil {
+					path = path + "/index.html"
+				}
+			}
+
+			if _, err := os.Stat(filepath.Join(buildDir, path)); err == nil {
+				http.ServeFile(w, r, filepath.Join(buildDir, path))
+				return
+			}
+
+			fs.ServeHTTP(w, r)
+		})
+
+		err = http.ListenAndServe(":"+port, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	go watchFiles(dir)
 
 	http.HandleFunc("/__hmr", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
