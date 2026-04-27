@@ -1,55 +1,16 @@
-<script>
-    import Header from './Header.erm';
-    
-    let count = signal(0);
-    
-    let showExtraContent = true; // Change this to false and save to see HMR remove it!
-    
-    let porridge = { temperature: 100 }; // Change temperature to test other states
+<h3 data-e-29e2df1>True Go SSR Checksss: {{.Title}}</h3>
 
-    document.addEventListener('DOMContentLoaded', () => {
-        const app = document.getElementById('app');
-        
-        const timeDisplay = document.createElement('h3');
-        app.appendChild(timeDisplay);
-
-        setInterval(() => {
-            timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-        }, 1);
-
-        // Conditional rendering is now handled declaratively in the template using {#if} syntax!
-
-        console.log("Erm component script loaded.");
-    });
-</script>
-<h1>Dev sv toososssssss sErmssss Dev Serverss with HMR!</h1>
-
-<div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
-    <h3>Reactive Signal Demo</h3>
-    <button onClick={()=>{count+=1}}>Count {count}</button>
-</div>
-
-<p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
-<div id="app"></div>
-<h2>Helllo web added h2 tag</h2>
-
-<h2>Helllooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
-<h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
-
-{#if porridge.temperature > 100}
-    <p>too hot!</p>
-{:else if 80 > porridge.temperature}
-    <p>too cold!</p>
+{#if gt .Temperature 100}
+    <p data-e-29e2df1>too hot!</p>
+{:else if gt 80 .Temperature}
+    <p data-e-29e2df1>too cold!</p>
 {:else}
-    <p>just right!</p>
+    <p data-e-29e2df1>just right!</p>
 {/if}
 
-<Header />
-{#if showExtraContent}
-    <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxx</h3>
-        <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
+{#if .ShowExtra}
+    <div data-e-29e2df1 style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
+        <h3 data-e-29e2df1>🎉 True SSR go Rendered Box</h3>
+        <p data-e-29e2df1>This block only loads because .ShowExtra is true.</p>
     </div>
 {/if}
-
-<Footer />

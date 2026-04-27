@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"hash/fnv"
+	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
@@ -438,112 +438,15 @@ func processErmComponent(baseDir string, content string) string {
 	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
 	res, userScripts, userStyles := processComponentTree(baseDir, content, visited)
 
-	// 2. Process {#if} logic and replace with hidden anchor spans
-	var generatedLogic []string
-	count := 0
+	// 2. Process {#if} logic into Go template syntax
+	reIf := regexp.MustCompile(`\{#if\s+([^}]+)\}`)
+	res = reIf.ReplaceAllString(res, "{{if $1}}")
 
-	for {
-		start := strings.Index(res, "{#if ")
-		if start == -1 {
-			break
-		}
+	reElseIf := regexp.MustCompile(`\{:else if\s+([^}]+)\}`)
+	res = reElseIf.ReplaceAllString(res, "{{else if $1}}")
 
-		end := strings.Index(res[start:], "{/if}")
-		if end == -1 {
-			break
-		}
-		end += start
-
-		block := res[start : end+5]
-
-		anchorID := fmt.Sprintf("erm-cond-anchor-%d-%d", time.Now().UnixNano(), count)
-		count++
-
-		var branches []string
-		rem := block[5:]
-
-		closeBrace := strings.Index(rem, "}")
-		if closeBrace == -1 {
-			break
-		}
-		cond := strings.TrimSpace(rem[:closeBrace])
-		rem = rem[closeBrace+1:]
-
-		valid := true
-		for {
-			nextElseIf := strings.Index(rem, "{:else if ")
-			nextElse := strings.Index(rem, "{:else}")
-			nextEnd := strings.Index(rem, "{/if}")
-
-			minIdx := nextEnd
-			if minIdx == -1 {
-				valid = false
-				break
-			}
-			tokType := "end"
-
-			if nextElseIf != -1 && nextElseIf < minIdx {
-				minIdx = nextElseIf
-				tokType = "elseif"
-			}
-			if nextElse != -1 && nextElse < minIdx {
-				minIdx = nextElse
-				tokType = "else"
-			}
-
-			htmlBody := rem[:minIdx]
-			encodedHtml := base64.StdEncoding.EncodeToString([]byte(htmlBody))
-
-			branches = append(branches, fmt.Sprintf(`if (%s) { newHtmlBase64 = "%s"; }`, cond, encodedHtml))
-
-			if tokType == "end" {
-				break
-			} else if tokType == "else" {
-				rem = rem[minIdx+7:]
-				cond = "true"
-			} else if tokType == "elseif" {
-				rem = rem[minIdx+10:]
-				clBr := strings.Index(rem, "}")
-				if clBr == -1 {
-					valid = false
-					break
-				}
-				cond = strings.TrimSpace(rem[:clBr])
-				rem = rem[clBr+1:]
-			}
-		}
-		if !valid {
-			break
-		}
-
-		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:none;"></span>`, anchorID)
-
-		logic := fmt.Sprintf(`
-	{
-		let me = document.getElementById("%s");
-		if (me) {
-			me.__erm_cond_nodes = me.__erm_cond_nodes || [];
-			let newHtmlBase64 = '';
-			%s
-			if (me.__erm_cond_last !== newHtmlBase64) {
-				me.__erm_cond_last = newHtmlBase64;
-				me.__erm_cond_nodes.forEach(n => { if (n && n.parentNode) n.parentNode.removeChild(n); });
-				me.__erm_cond_nodes = [];
-				if (newHtmlBase64) {
-					let html = decodeURIComponent(escape(atob(newHtmlBase64)));
-					let tpl = document.createElement('template');
-					tpl.innerHTML = html;
-					let nodes = Array.from(tpl.content.childNodes);
-					nodes.forEach(n => me.__erm_cond_nodes.push(n));
-					me.parentNode.insertBefore(tpl.content, me);
-				}
-			}
-		}
-	}`, anchorID, strings.Join(branches, " else "))
-
-		generatedLogic = append(generatedLogic, logic)
-		res = res[:start] + anchorHTML + res[end+5:]
-	}
+	res = strings.ReplaceAll(res, "{:else}", "{{else}}")
+	res = strings.ReplaceAll(res, "{/if}", "{{end}}")
 
 	// 3. Assemble final compiled JS block
 	finalJS := fmt.Sprintf(`<script>
@@ -553,7 +456,6 @@ window.signal = window.signal || function(val) { return val; };
 	window.__erm_events = window.__erm_events || [];
 
 	window.__erm_update = function() {
-		%s
 		window.__erm_bindings.forEach(b => {
 			try {
 				let val = b.get();
@@ -582,7 +484,7 @@ window.signal = window.signal || function(val) { return val; };
 		window.__erm_update();
 	}, { once: true });
 })();
-</script>`, strings.Join(generatedLogic, "\n"), strings.Join(userScripts, "\n"))
+</script>`, strings.Join(userScripts, "\n"))
 
 	finalCSS := ""
 	if len(userStyles) > 0 {
@@ -819,7 +721,22 @@ func main() {
 			}
 
 			if _, err := os.Stat(filepath.Join(buildDir, path)); err == nil {
-				http.ServeFile(w, r, filepath.Join(buildDir, path))
+				fullPath := filepath.Join(buildDir, path)
+				if strings.HasSuffix(fullPath, ".html") {
+					t, tErr := template.ParseFiles(fullPath)
+					if tErr == nil {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						// 💡 EXAMPLE: Pass SSR data into your page here
+						data := map[string]interface{}{
+							"Title":       "Production SSR Title",
+							"ShowExtra":   true,
+							"Temperature": 150,
+						}
+						t.Execute(w, data)
+						return
+					}
+				}
+				http.ServeFile(w, r, fullPath)
 				return
 			}
 
@@ -981,7 +898,19 @@ func main() {
 
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
 					w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
-					w.Write(injected)
+
+					t, tErr := template.New("page").Parse(string(injected))
+					if tErr == nil {
+						// 💡 EXAMPLE: Pass SSR data into your page here
+						data := map[string]interface{}{
+							"Title":       "Dev SSR Title",
+							"ShowExtra":   true,
+							"Temperature": 150,
+						}
+						t.Execute(w, data)
+					} else {
+						w.Write(injected) // fallback if template fails
+					}
 					return
 				}
 			} else if strings.HasSuffix(fullPath, ".js") && reqPath != "/__hmr_client.js" {
