@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"hash/fnv"
+	gohtml "html"
 	"io/fs"
 	"log"
 	"net/http"
@@ -274,7 +275,10 @@ func parseReactivity(html string) (string, []string, []string) {
 				if depth == 0 {
 					expr := html[start+1 : curr-1]
 					id := fmt.Sprintf("erm-bind-%d-%d", time.Now().UnixNano(), i)
-					out.WriteString(fmt.Sprintf(`<span id="%s"></span>`, id))
+
+					// Inject a placeholder that we will replace during SSR with the escaped initial value
+					exprB64 := base64.StdEncoding.EncodeToString([]byte(expr))
+					out.WriteString(fmt.Sprintf(`<span id="%s"><!--erm-expr:%s--></span>`, id, exprB64))
 
 					jsBindings = append(jsBindings, fmt.Sprintf(`window.__erm_bindings.push({ id: "%s", get: () => (%s) });`, id, expr))
 					i = curr
@@ -456,6 +460,24 @@ window.__erm_events = [];
 	if err != nil {
 		log.Printf("JS execution error during SSR: %v\n", err)
 	}
+
+	// 1.5 Process bindings for true SSR with XSS protection (escape_html)
+	reExpr := regexp.MustCompile(`<!--erm-expr:([a-zA-Z0-9+/=]+)-->`)
+	res = reExpr.ReplaceAllStringFunc(res, func(match string) string {
+		parts := reExpr.FindStringSubmatch(match)
+		b64 := parts[1]
+		exprBytes, decodeErr := base64.StdEncoding.DecodeString(b64)
+		if decodeErr != nil {
+			return ""
+		}
+		expr := string(exprBytes)
+		val, runErr := vm.RunString(expr)
+		if runErr == nil && val != nil && val.Export() != nil {
+			// Svelte-like true SSR: escape HTML output to prevent XSS
+			return gohtml.EscapeString(fmt.Sprintf("%v", val.Export()))
+		}
+		return ""
+	})
 
 	// 2. Process {#if} logic and replace with hidden anchor spans
 	var generatedLogic []string
