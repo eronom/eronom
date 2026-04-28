@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dop251/goja"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 )
@@ -443,23 +442,10 @@ func processErmComponent(baseDir string, content string) string {
 	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
 	res, userScripts, userStyles := processComponentTree(baseDir, content, visited)
 
-	// Evaluate scripts on server for SSR
+	// Evaluate scripts on server for SSR using lightweight evaluator
 	scriptSource := strings.Join(userScripts, "\n")
-	vm := goja.New()
-
-	vm.RunString("function signal(val) { return val; }")
-	vm.RunString(`
-var window = this;
-var document = { addEventListener: function() {} };
-var console = { log: function() {}, error: function() {} };
-window.__erm_bindings = [];
-window.__erm_events = [];
-`)
-
-	_, err := vm.RunString(scriptSource)
-	if err != nil {
-		log.Printf("JS execution error during SSR: %v\n", err)
-	}
+	ev := NewErmEval()
+	ev.ParseScriptVars(scriptSource)
 
 	// 1.5 Process bindings for true SSR with XSS protection (escape_html)
 	reExpr := regexp.MustCompile(`<!--erm-expr:([a-zA-Z0-9+/=]+)-->`)
@@ -471,10 +457,10 @@ window.__erm_events = [];
 			return ""
 		}
 		expr := string(exprBytes)
-		val, runErr := vm.RunString(expr)
-		if runErr == nil && val != nil && val.Export() != nil {
+		val, evalErr := ev.Eval(expr)
+		if evalErr == nil && val != nil {
 			// Svelte-like true SSR: escape HTML output to prevent XSS
-			return gohtml.EscapeString(fmt.Sprintf("%v", val.Export()))
+			return gohtml.EscapeString(fmt.Sprintf("%v", val))
 		}
 		return ""
 	})
@@ -543,7 +529,7 @@ window.__erm_events = [];
 			branches = append(branches, fmt.Sprintf(`if (%s) { newHtmlBase64 = "%s"; }`, cond, encodedHtml))
 
 			if !ssrMatched {
-				if ssrVal, err := vm.RunString(cond); err == nil && ssrVal.ToBoolean() {
+				if condVal, condErr := ev.EvalBool(cond); condErr == nil && condVal {
 					initialHTML = htmlBody
 					initialBase64 = encodedHtml
 					ssrMatched = true
