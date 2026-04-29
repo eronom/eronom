@@ -1,96 +1,26 @@
 package api
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"strings"
+	"eronom/route"
 	"sync"
 	"time"
 )
 
 // =============================================================================
-// Eronom API Routes — Next.js-style API endpoints (/api/...)
+// Eronom API — Fiber-style API Structure
 // =============================================================================
 
-// Router manages all registered API route handlers.
-type Router struct {
-	mu     sync.RWMutex
-	routes map[string]http.HandlerFunc
-}
+var app = route.NewApp()
 
-// NewRouter creates a new API router.
-func NewRouter() *Router {
-	r := &Router{
-		routes: make(map[string]http.HandlerFunc),
-	}
-	r.registerDefaults()
-	return r
-}
-
-// Handle registers an API route handler. The path should NOT include "/api/" prefix.
-// Example: router.Handle("GET /users", handler) → serves GET /api/users
-func (r *Router) Handle(methodAndPath string, handler http.HandlerFunc) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.routes[methodAndPath] = handler
-}
-
-// ServeHTTP dispatches incoming /api/* requests to the matching handler.
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Strip /api prefix
-	path := strings.TrimPrefix(req.URL.Path, "/api")
-	if path == "" {
-		path = "/"
-	}
-
-	method := req.Method
-
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	// Try exact method+path match first: "GET /users"
-	key := method + " " + path
-	if handler, ok := r.routes[key]; ok {
-		handler(w, req)
-		return
-	}
-
-	// Try any-method match: "/users"
-	if handler, ok := r.routes[path]; ok {
-		handler(w, req)
-		return
-	}
-
-	// 404
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(w).Encode(map[string]string{
-		"error": fmt.Sprintf("API route not found: %s %s", method, path),
-	})
-}
-
-// --- JSON helpers for route handlers ---
-
-// JSON sends a JSON response with the given status code.
-func JSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
-// ReadJSON parses the request body as JSON into the target.
-func ReadJSON(r *http.Request, target interface{}) error {
-	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(target)
+// NewRouter exports the app for the main server.
+func NewRouter() *route.App {
+	return app
 }
 
 // =============================================================================
-// Default example routes — real use cases that JS can't do
+// State & Models
 // =============================================================================
 
-// Todo represents a todo item (server-side state)
 type Todo struct {
 	ID        int       `json:"id"`
 	Text      string    `json:"text"`
@@ -99,39 +29,40 @@ type Todo struct {
 }
 
 var (
-	todos  = []Todo{}
-	todoID = 0
-	todoMu sync.Mutex
+	todos     = []Todo{}
+	todoID    = 0
+	todoMu    sync.Mutex
+	startTime = time.Now()
 )
 
-func (r *Router) registerDefaults() {
+// =============================================================================
+// Route Registration
+// =============================================================================
+
+func init() {
 	// ── GET /api/hello ───────────────────────────────────────────────────
-	// Simple JSON response — like Next.js pages/api/hello.js
-	r.Handle("GET /hello", func(w http.ResponseWriter, req *http.Request) {
-		JSON(w, 200, map[string]interface{}{
-			"message":   "Hello from Eronom APIsssvssssvssghjfdhjgfhjgfgkj!",
+	app.GET("/hello", func(c *route.Ctx) error {
+		return c.Status(200).JSON(route.H{
+			"message":   "Hello from Eronom APIsssss (Fiber style)!",
 			"timestamp": time.Now().Unix(),
 			"server":    "Go",
 		})
 	})
 
 	// ── GET /api/todos ───────────────────────────────────────────────────
-	// Returns all todos — server-side state that JS alone can't persist
-	r.Handle("GET /todos", func(w http.ResponseWriter, req *http.Request) {
+	app.GET("/todos", func(c *route.Ctx) error {
 		todoMu.Lock()
 		defer todoMu.Unlock()
-		JSON(w, 200, todos)
+		return c.JSON(todos)
 	})
 
 	// ── POST /api/todos ──────────────────────────────────────────────────
-	// Creates a new todo — modifies server state
-	r.Handle("POST /todos", func(w http.ResponseWriter, req *http.Request) {
+	app.POST("/todos", func(c *route.Ctx) error {
 		var body struct {
 			Text string `json:"text"`
 		}
-		if err := ReadJSON(req, &body); err != nil || body.Text == "" {
-			JSON(w, 400, map[string]string{"error": "text is required"})
-			return
+		if err := c.BindJSON(&body); err != nil || body.Text == "" {
+			return c.Status(400).JSON(route.H{"error": "text is required"})
 		}
 
 		todoMu.Lock()
@@ -145,18 +76,16 @@ func (r *Router) registerDefaults() {
 		todos = append(todos, todo)
 		todoMu.Unlock()
 
-		JSON(w, 201, todo)
+		return c.Status(201).JSON(todo)
 	})
 
 	// ── DELETE /api/todos ────────────────────────────────────────────────
-	// Deletes a todo by ID — server-side mutation
-	r.Handle("DELETE /todos", func(w http.ResponseWriter, req *http.Request) {
+	app.DELETE("/todos", func(c *route.Ctx) error {
 		var body struct {
 			ID int `json:"id"`
 		}
-		if err := ReadJSON(req, &body); err != nil {
-			JSON(w, 400, map[string]string{"error": "id is required"})
-			return
+		if err := c.BindJSON(&body); err != nil {
+			return c.Status(400).JSON(route.H{"error": "id is required"})
 		}
 
 		todoMu.Lock()
@@ -171,22 +100,19 @@ func (r *Router) registerDefaults() {
 		todoMu.Unlock()
 
 		if !found {
-			JSON(w, 404, map[string]string{"error": "todo not found"})
-			return
+			return c.Status(404).JSON(route.H{"error": "todo not found"})
 		}
-		JSON(w, 200, map[string]string{"status": "deleted"})
+		return c.JSON(route.H{"status": "deleted"})
 	})
 
 	// ── PATCH /api/todos ─────────────────────────────────────────────────
-	// Toggle done status — server-side state update
-	r.Handle("PATCH /todos", func(w http.ResponseWriter, req *http.Request) {
+	app.PATCH("/todos", func(c *route.Ctx) error {
 		var body struct {
 			ID   int  `json:"id"`
 			Done bool `json:"done"`
 		}
-		if err := ReadJSON(req, &body); err != nil {
-			JSON(w, 400, map[string]string{"error": "id is required"})
-			return
+		if err := c.BindJSON(&body); err != nil {
+			return c.Status(400).JSON(route.H{"error": "id is required"})
 		}
 
 		todoMu.Lock()
@@ -201,16 +127,14 @@ func (r *Router) registerDefaults() {
 		todoMu.Unlock()
 
 		if updated == nil {
-			JSON(w, 404, map[string]string{"error": "todo not found"})
-			return
+			return c.Status(404).JSON(route.H{"error": "todo not found"})
 		}
-		JSON(w, 200, updated)
+		return c.JSON(updated)
 	})
 
 	// ── GET /api/server-info ─────────────────────────────────────────────
-	// Server-only info that the browser can't know
-	r.Handle("GET /server-info", func(w http.ResponseWriter, req *http.Request) {
-		JSON(w, 200, map[string]interface{}{
+	app.GET("/server-info", func(c *route.Ctx) error {
+		return c.JSON(route.H{
 			"goVersion":  "1.25",
 			"framework":  "eronom",
 			"version":    "0.1.0",
@@ -219,5 +143,3 @@ func (r *Router) registerDefaults() {
 		})
 	})
 }
-
-var startTime = time.Now()

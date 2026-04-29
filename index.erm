@@ -68,7 +68,7 @@
         <input id="todo-input" type="text" placeholder="Add a todo..." style="flex:1; padding: 8px; border-radius: 6px; border: 1px solid #555; background: #222; color: #fff;">
         <button id="todo-add-btn" style="padding: 8px 16px; background: #e67e22; border: none; border-radius: 6px; color: #fff; cursor: pointer;">Add</button>
     </div>
-    <div id="todo-list">Loading todos...</div>
+    <div id="todo-list">Loading todosss...</div>
 </div>
 
 <script>
