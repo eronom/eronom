@@ -109,7 +109,7 @@ func (r *Router) registerDefaults() {
 	// Simple JSON response — like Next.js pages/api/hello.js
 	r.Handle("GET /hello", func(w http.ResponseWriter, req *http.Request) {
 		JSON(w, 200, map[string]interface{}{
-			"message":   "Hello from Eronom APIsss!",
+			"message":   "Hello from Eronom APIsssvssssvssghjfdhjgfhjgfgkj!",
 			"timestamp": time.Now().Unix(),
 			"server":    "Go",
 		})
