@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"eronom/api"
 	"eronom/eval"
 	"fmt"
 	"hash/fnv"
@@ -20,6 +21,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 )
+
+// Global API registry — available to all templates
+var apiRegistry = api.NewRegistry()
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -443,6 +447,35 @@ func processErmComponent(baseDir string, content string) string {
 	absBase, _ := filepath.Abs(baseDir)
 	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
 	res, userScripts, userStyles := processComponentTree(baseDir, content, visited)
+
+	// ── Process {#load "name"} directives ──────────────────────────────
+	reLoad := regexp.MustCompile(`(?m)\{#load\s+"([^"]+)"(?:\s+(.+?))?\}`)
+	res = reLoad.ReplaceAllStringFunc(res, func(match string) string {
+		parts := reLoad.FindStringSubmatch(match)
+		loaderName := parts[1]
+		params := make(map[string]string)
+		if len(parts) > 2 && parts[2] != "" {
+			// Parse key=value pairs
+			for _, pair := range strings.Fields(parts[2]) {
+				kv := strings.SplitN(pair, "=", 2)
+				if len(kv) == 2 {
+					params[kv[0]] = strings.Trim(kv[1], `"'`)
+				}
+			}
+		}
+		data, err := apiRegistry.Load(loaderName, params)
+		if err != nil {
+			return fmt.Sprintf(`<!-- erm:load error: %s -->`, err.Error())
+		}
+		// Inject loaded data as a script block at this position
+		scriptVars := api.FormatForScript(data)
+		userScripts = append([]string{scriptVars}, userScripts...)
+		return "" // The directive itself produces no HTML
+	})
+
+	// ── Inject API built-in variables into script context ────────────────
+	apiVars := api.FormatForScript(apiRegistry.LoadAll())
+	userScripts = append([]string{apiVars}, userScripts...)
 
 	// Evaluate scripts on server for SSR using lightweight evaluator
 	scriptSource := strings.Join(userScripts, "\n")

@@ -22,14 +22,16 @@
         console.log("Erm component script loaded.");
     });
 </script>
-<h1>Dev sv toososssssss sErmssss Dev Serverss with HMR!</h1>
+
+
+<h1>Devsssssss svsss toososssssss sErmssss Dev Serverss with HMR!</h1>
 
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
     <h3>Reactive Signal Demo0vsssssrr</h3>
     <button onClick={()=>{count+=1}}>Count {count}</button>
 </div>
 
-<p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
+<p>Edited ss<code>index.erm</code> to see csshanges ssinstantly.</p>
 <div id="app"></div>
 <h2>Hellloo web added h2 tag</h2>
 
@@ -51,5 +53,29 @@
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
 {/if}
+
+<div style="margin-top: 20px; padding: 20px; border: 2px solid #9b59b6; border-radius: 10px; background: #2d1b4e;">
+    <h3 style="color: #bb86fc;">📡 Server API Data (SSR)</h3>
+    <p>Todays: <strong>{__date.weekday} </strong>, {__date.iso}</p>
+    <p>Server time: <strong>{__date.time}</strong></p>
+    <p>Year: <strong>{__date.year}</strong></p>
+    <p>Framework: <strong>{__app.framework}</strong> v{__app.version}</p>
+    <p>Mode: <strong>{__app.mode}</strong></p>
+    <p>π = <strong>{__math.pi}</strong></p>
+</div>
+
+{#load "meta" title="Home" description="Welcome to Eronom"}
+{#load "random"}
+
+<div style="margin-top: 20px; padding: 20px; border: 2px solid #e67e22; border-radius: 10px; background: #3b2a1a;">
+    <h3 style="color: #f0a500;">📦 Loaded Data Demo</h3>
+    <p>Page title: <strong>{title}</strong></p>
+    <p>Description: <strong>{description}</strong></p>
+    <p>Generator: <strong>{generator}</strong></p>
+    <hr style="border-color: #555;">
+    <p>Random number: <strong>{number}</strong></p>
+    <p>Random UUID: <strong>{uuid}</strong></p>
+    <p>Random color: <strong>{color}</strong></p>
+</div>
 
 <Footer />
