@@ -1,6 +1,7 @@
 package api
 
 import (
+	"eronom/api/todos"
 	"eronom/route"
 	"time"
 )
@@ -11,6 +12,9 @@ var (
 
 // Routes registers all API routes onto the provided app instance.
 func Routes(app *route.App) {
+	// Mount sub-routers
+	app.Group("/todos", todos.Routes)
+
 	// ── GET /api/hello ───────────────────────────────────────────────────
 	app.GET("/hello", func(c *route.Ctx) error {
 		return c.Status(200).JSON(route.H{

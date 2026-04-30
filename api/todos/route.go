@@ -2,6 +2,7 @@ package todos
 
 import (
 	"eronom/route"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -20,17 +21,17 @@ var (
 	todoMu sync.Mutex
 )
 
-// Routes registers todos logic
+// Routes registers all todo-related routes.
 func Routes(app *route.App) {
 	// ── GET /api/todos ───────────────────────────────────────────────────
-	app.GET("/todos", func(c *route.Ctx) error {
+	app.GET("/", func(c *route.Ctx) error {
 		todoMu.Lock()
 		defer todoMu.Unlock()
 		return c.JSON(todos)
 	})
 
 	// ── POST /api/todos ──────────────────────────────────────────────────
-	app.POST("/todos", func(c *route.Ctx) error {
+	app.POST("/", func(c *route.Ctx) error {
 		var body struct {
 			Text string `json:"text"`
 		}
@@ -52,8 +53,21 @@ func Routes(app *route.App) {
 		return c.Status(201).JSON(todo)
 	})
 
+	// ── GET /api/todos/:id ───────────────────────────────────────────────
+	app.GET("/:id", func(c *route.Ctx) error {
+		id := c.Param("id")
+		todoMu.Lock()
+		defer todoMu.Unlock()
+		for _, t := range todos {
+			if fmt.Sprintf("%d", t.ID) == id {
+				return c.JSON(t)
+			}
+		}
+		return c.Status(404).JSON(route.H{"error": "todo not found"})
+	})
+
 	// ── DELETE /api/todos ────────────────────────────────────────────────
-	app.DELETE("/todos", func(c *route.Ctx) error {
+	app.DELETE("/", func(c *route.Ctx) error {
 		var body struct {
 			ID int `json:"id"`
 		}
@@ -79,7 +93,7 @@ func Routes(app *route.App) {
 	})
 
 	// ── PATCH /api/todos ─────────────────────────────────────────────────
-	app.PATCH("/todos", func(c *route.Ctx) error {
+	app.PATCH("/", func(c *route.Ctx) error {
 		var body struct {
 			ID   int  `json:"id"`
 			Done bool `json:"done"`
