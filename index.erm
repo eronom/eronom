@@ -21,18 +21,22 @@
 
         console.log("Erm component script loaded.");
     });
+
+       let randomNum = Math.floor(Math.random() * 1000);
 </script>
-<h1>Dev sv toososssssss sErmssss Dev Serverss with HMR!</h1>
+
+
+<h1>Devsssssss svsss toososssssss sErmssss Dev Serverss with HMR!</h1>
 
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
-    <h3>Reactive Signal Demo</h3>
+    <h3>Reactive Signal Demo0vsssssrr</h3>
     <button onClick={()=>{count+=1}}>Count {count}</button>
 </div>
 
-<p>Edited <code>index.erm</code> to see csshanges ssinstantly.</p>
+<p>Edited ss<code>index.erm</code> to see csshanges ssinstantly.</p>
 <div id="app"></div>
-<h2>Helllo web added h2 tag</h2>
-
+<h2>Hellloo web added h2 tag</h2>
+<p>Random: {randomNum}</p>
 <h2>Helllooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
 <h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
 
@@ -47,9 +51,98 @@
 <Header />
 {#if showExtraContent}
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxx</h3>
+        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxxss</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
 {/if}
 
+<div style="margin-top: 20px; padding: 20px; border: 2px solid #9b59b6; border-radius: 10px; background: #2d1b4e;">
+    <h3 style="color: #bb86fc;">📡 API Routes Demo (like Next.js /api/*)</h3>
+    <div id="api-hello" style="margin-bottom: 10px;">Loading /api/hello...</div>
+    <div id="api-server" style="margin-bottom: 10px;">Loading /api/server-info...</div>
+</div>
+
+<div style="margin-top: 20px; padding: 20px; border: 2px solid #e67e22; border-radius: 10px; background: #3b2a1a;">
+    <h3 style="color: #f0a500;">📝 Todo API (Server-Side State)</h3>
+    <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+        <input id="todo-input" type="text" placeholder="Add a todo..." style="flex:1; padding: 8px; border-radius: 6px; border: 1px solid #555; background: #222; color: #fff;">
+        <button id="todo-add-btn" style="padding: 8px 16px; background: #e67e22; border: none; border-radius: 6px; color: #fff; cursor: pointer;">Add</button>
+    </div>
+    <div id="todo-list">Loading todosss...</div>
+</div>
+
+<script>
+    // Fetch from /api/hello — server returns JSON
+    fetch('/api/hello')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('api-hello').innerHTML =
+                `<strong>/api/hello →</strong> ${data.message} (timestamp: ${data.timestamp}, server: ${data.server})`;
+        });
+
+    // Fetch server info — data only the Go server knows
+    fetch('/api/server-info')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('api-server').innerHTML =
+                `<strong>/api/server-info →</strong> ${data.framework} v${data.version} | Go ${data.goVersion} | uptime: ${data.uptime}`;
+        });
+
+    // Todo CRUD — real server-side state management
+    window.loadTodos = function() {
+        fetch('/api/todos')
+            .then(r => r.json())
+            .then(todos => {
+                const list = document.getElementById('todo-list');
+                if (todos.length === 0) {
+                    list.innerHTML = '<p style="color: #888;">No todos yet. Add one above!</p>';
+                    return;
+                }
+                list.innerHTML = todos.map(t => `
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px; margin-bottom:6px; background:#222; border-radius:6px;">
+                        <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTodo(${t.id}, this.checked)" style="cursor:pointer;">
+                        <span style="${t.done ? 'text-decoration:line-through; color:#888;' : 'color:#fff;'} flex:1;">${t.text}</span>
+                        <button onclick="deleteTodo(${t.id})" style="background:#e74c3c; border:none; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer;">✕</button>
+                    </div>
+                `).join('');
+            });
+    }
+
+    window.addTodo = function() {
+        const input = document.getElementById('todo-input');
+        const text = input.value.trim();
+        if (!text) return;
+        fetch('/api/todos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        }).then(() => { input.value = ''; loadTodos(); });
+    }
+
+    window.toggleTodo = function(id, done) {
+        fetch('/api/todos', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, done })
+        }).then(() => loadTodos());
+    }
+
+    window.deleteTodo = function(id) {
+        fetch('/api/todos', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+        }).then(() => loadTodos());
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadTodos();
+        document.getElementById('todo-add-btn').addEventListener('click', addTodo);
+        document.getElementById('todo-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') addTodo();
+        });
+    });
+</script>
+
 <Footer />
+

@@ -3,8 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"eronom/api"
+	"eronom/eval"
+	"eronom/route"
 	"fmt"
 	"hash/fnv"
+	gohtml "html"
 	"io/fs"
 	"log"
 	"net/http"
@@ -18,6 +22,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 )
+
+// Global API router is now handled inside main() for a pure Fiber-style experience.
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -263,9 +269,10 @@ func parseReactivity(html string) (string, []string, []string) {
 				depth := 1
 				curr := i + 1
 				for curr < len(html) && depth > 0 {
-					if html[curr] == '{' {
+					switch html[curr] {
+					case '{':
 						depth++
-					} else if html[curr] == '}' {
+					case '}':
 						depth--
 					}
 					curr++
@@ -273,7 +280,10 @@ func parseReactivity(html string) (string, []string, []string) {
 				if depth == 0 {
 					expr := html[start+1 : curr-1]
 					id := fmt.Sprintf("erm-bind-%d-%d", time.Now().UnixNano(), i)
-					out.WriteString(fmt.Sprintf(`<span id="%s"></span>`, id))
+
+					// Inject a placeholder that we will replace during SSR with the escaped initial value
+					exprB64 := base64.StdEncoding.EncodeToString([]byte(expr))
+					out.WriteString(fmt.Sprintf(`<span id="%s"><!--erm-expr:%s--></span>`, id, exprB64))
 
 					jsBindings = append(jsBindings, fmt.Sprintf(`window.__erm_bindings.push({ id: "%s", get: () => (%s) });`, id, expr))
 					i = curr
@@ -438,6 +448,29 @@ func processErmComponent(baseDir string, content string) string {
 	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
 	res, userScripts, userStyles := processComponentTree(baseDir, content, visited)
 
+	// Evaluate scripts on server for SSR using lightweight evaluator
+	scriptSource := strings.Join(userScripts, "\n")
+	ev := eval.NewErmEval()
+	ev.ParseScriptVars(scriptSource)
+
+	// 1.5 Process bindings for true SSR with XSS protection (escape_html)
+	reExpr := regexp.MustCompile(`<!--erm-expr:([a-zA-Z0-9+/=]+)-->`)
+	res = reExpr.ReplaceAllStringFunc(res, func(match string) string {
+		parts := reExpr.FindStringSubmatch(match)
+		b64 := parts[1]
+		exprBytes, decodeErr := base64.StdEncoding.DecodeString(b64)
+		if decodeErr != nil {
+			return ""
+		}
+		expr := string(exprBytes)
+		val, evalErr := ev.Eval(expr)
+		if evalErr == nil && val != nil {
+			// Svelte-like true SSR: escape HTML output to prevent XSS
+			return gohtml.EscapeString(fmt.Sprintf("%v", val))
+		}
+		return ""
+	})
+
 	// 2. Process {#if} logic and replace with hidden anchor spans
 	var generatedLogic []string
 	count := 0
@@ -470,6 +503,11 @@ func processErmComponent(baseDir string, content string) string {
 		rem = rem[closeBrace+1:]
 
 		valid := true
+
+		initialHTML := ""
+		initialBase64 := ""
+		ssrMatched := false
+
 		for {
 			nextElseIf := strings.Index(rem, "{:else if ")
 			nextElse := strings.Index(rem, "{:else}")
@@ -496,6 +534,14 @@ func processErmComponent(baseDir string, content string) string {
 
 			branches = append(branches, fmt.Sprintf(`if (%s) { newHtmlBase64 = "%s"; }`, cond, encodedHtml))
 
+			if !ssrMatched {
+				if condVal, condErr := ev.EvalBool(cond); condErr == nil && condVal {
+					initialHTML = htmlBody
+					initialBase64 = encodedHtml
+					ssrMatched = true
+				}
+			}
+
 			if tokType == "end" {
 				break
 			} else if tokType == "else" {
@@ -516,26 +562,23 @@ func processErmComponent(baseDir string, content string) string {
 			break
 		}
 
-		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:none;"></span>`, anchorID)
+		anchorHTML := fmt.Sprintf(`<span id="%s" data-ssr-base64="%s" style="display:contents;">%s</span>`, anchorID, initialBase64, initialHTML)
 
 		logic := fmt.Sprintf(`
 	{
 		let me = document.getElementById("%s");
 		if (me) {
-			me.__erm_cond_nodes = me.__erm_cond_nodes || [];
+			if (typeof me.__erm_cond_last === 'undefined') {
+				me.__erm_cond_last = me.getAttribute('data-ssr-base64') || '';
+			}
 			let newHtmlBase64 = '';
 			%s
 			if (me.__erm_cond_last !== newHtmlBase64) {
 				me.__erm_cond_last = newHtmlBase64;
-				me.__erm_cond_nodes.forEach(n => { if (n && n.parentNode) n.parentNode.removeChild(n); });
-				me.__erm_cond_nodes = [];
-				if (newHtmlBase64) {
-					let html = decodeURIComponent(escape(atob(newHtmlBase64)));
-					let tpl = document.createElement('template');
-					tpl.innerHTML = html;
-					let nodes = Array.from(tpl.content.childNodes);
-					nodes.forEach(n => me.__erm_cond_nodes.push(n));
-					me.parentNode.insertBefore(tpl.content, me);
+				if (newHtmlBase64 === '') {
+					me.innerHTML = '';
+				} else {
+					me.innerHTML = decodeURIComponent(escape(atob(newHtmlBase64)));
 				}
 			}
 		}
@@ -696,14 +739,22 @@ func buildProject(sourceDir, outDir string) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			if path != sourceDir && (info.Name() == "build" || strings.HasPrefix(info.Name(), ".")) {
+		if strings.HasPrefix(info.Name(), ".") && info.Name() != "." {
+			if info.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		if strings.HasSuffix(info.Name(), ".go") || info.Name() == "go.mod" || info.Name() == "go.sum" {
+		if info.IsDir() {
+			if path != sourceDir && (info.Name() == "build" || info.Name() == "tmp") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip Go source files and the binary itself
+		if strings.HasSuffix(info.Name(), ".go") || info.Name() == "go.mod" || info.Name() == "go.sum" || info.Name() == "eronom" {
 			return nil
 		}
 
@@ -771,11 +822,83 @@ func buildProject(sourceDir, outDir string) error {
 	return err
 }
 
+func initProject(dir string) error {
+	fmt.Println("Initializing fresh Eronom project in", dir)
+	err := os.MkdirAll(dir, 0755)
+	if err != nil {
+		return err
+	}
+
+	indexContent := `<script>
+	let name = "Eronom";
+</script>
+
+<style>
+	main {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 100vh;
+		font-family: 'Inter', sans-serif;
+		background: #0f172a;
+		color: white;
+	}
+	h1 {
+		font-size: 3rem;
+		margin-bottom: 0.5rem;
+		background: linear-gradient(to right, #38bdf8, #818cf8);
+		-webkit-background-clip: text;
+		-webkit-text-fill-color: transparent;
+	}
+	p { color: #94a3b8; }
+</style>
+
+<main>
+	<h1>Hello {name}!</h1>
+	<p>Your ultra-fast SSR project is ready.</p>
+</main>
+`
+	layoutContent := `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Eronom App</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+	<slot />
+</body>
+</html>
+`
+
+	err = os.WriteFile(filepath.Join(dir, "index.erm"), []byte(indexContent), 0644)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(filepath.Join(dir, "layout.erm"), []byte(layoutContent), 0644)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Success! Run './eronom' to start development.")
+	return nil
+}
+
 func main() {
+	app := route.NewApp()
+
+	// Register API routes from the api package
+	api.Routes(app)
+
 	cmd := "dev"
 	dir := "."
 	if len(os.Args) > 1 {
-		if os.Args[1] == "build" || os.Args[1] == "dev" || os.Args[1] == "start" {
+		if os.Args[1] == "build" || os.Args[1] == "dev" || os.Args[1] == "start" || os.Args[1] == "init" {
 			cmd = os.Args[1]
 			if len(os.Args) > 2 {
 				dir = os.Args[2]
@@ -796,6 +919,14 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Println("Build successful! Ready for production deployment.")
+		return
+	}
+
+	if cmd == "init" {
+		err := initProject(dir)
+		if err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 
@@ -868,6 +999,11 @@ func main() {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write([]byte(hmrClientJS))
+	})
+
+	// Mount API routes at /api/* — Next.js-style API endpoints
+	http.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		app.ServeHTTP(w, r)
 	})
 
 	fs := http.FileServer(http.Dir(dir))
