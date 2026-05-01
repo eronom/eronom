@@ -334,11 +334,9 @@ func parseReactivity(html string) (string, []string, []string) {
 							if depth == 0 {
 								expr := html[start+1 : curr-1]
 								eventName := strings.ToLower(attrName[2:])
-								id := fmt.Sprintf("erm-evt-%d-%d", time.Now().UnixNano(), i)
+								exprB64 := base64.StdEncoding.EncodeToString([]byte(expr))
 
-								out.WriteString(fmt.Sprintf(`data-erm-evt-%s="%s"`, eventName, id))
-
-								jsEvents = append(jsEvents, fmt.Sprintf(`window.__erm_events.push({ id: "%s", event: "%s", handler: function(event) { try { const e_fn = (%s); if (typeof e_fn === 'function') { e_fn(event); } } catch(err) { console.error(err); } if (typeof window.__erm_update === 'function') window.__erm_update(); } });`, id, eventName, expr))
+								out.WriteString(fmt.Sprintf(`data-erm-evt-%s="<!--erm-evt:%s-->"`, eventName, exprB64))
 
 								i = curr
 								continue
@@ -365,7 +363,7 @@ func parseReactivity(html string) (string, []string, []string) {
 				if depth == 0 {
 					expr := html[start+1 : curr-1]
 					id := fmt.Sprintf("erm-bind-val-%d-%d", time.Now().UnixNano(), i)
-					out.WriteString(fmt.Sprintf(`id="%s" data-erm-evt-input="%s"`, id, id))
+					out.WriteString(fmt.Sprintf(`id="%s" data-erm-evt-input-bind="%s"`, id, id))
 
 					// Update variable on input
 					jsEvents = append(jsEvents, fmt.Sprintf(`window.__erm_events.push({ id: "%s", event: "input", handler: function(event) { %s = event.target.value; if (typeof window.__erm_update === 'function') window.__erm_update(); } });`, id, expr))
@@ -569,16 +567,31 @@ func processErmComponent(baseDir string, content string) string {
 				let __erm_template = decodeURIComponent(escape(atob("%s")));
 				let __erm_html = "";
 				__erm_items.forEach((%s) => {
-					__erm_html += __erm_template.replace(/<!--erm-expr:([a-zA-Z0-9+/=]+)-->/g, (m, b64) => {
+					let __erm_iter_html = __erm_template.replace(/<!--erm-expr:([a-zA-Z0-9+/=]+)-->/g, (m, b64) => {
 						try {
 							return eval(decodeURIComponent(escape(atob(b64))));
 						} catch(e) { return ""; }
 					});
+					// Handle events by baking loop variables into a closure
+					__erm_iter_html = __erm_iter_html.replace(/data-erm-evt-([a-z-]+)="<!--erm-evt:([a-zA-Z0-9+/=]+)-->"/g, (m, eventName, b64) => {
+						let expr = atob(b64);
+						let baked = "((event) => { " + 
+							"let %[5]s = " + JSON.stringify(%[5]s) + "; " +
+							("%[6]s" ? "let %[6]s = " + JSON.stringify(%[6]s) + "; " : "") +
+							"let __erm_fn = (" + expr + "); " +
+							"if (typeof __erm_fn === 'function') __erm_fn(event); " +
+							"})";
+						return 'data-erm-evt-' + eventName + '="' + btoa(baked) + '"';
+					});
+					// Handle boolean attributes (checked, disabled, etc.) and remove if value is falsy
+					__erm_iter_html = __erm_iter_html.replace(/([a-z-]+)="false"/g, "");
+					__erm_iter_html = __erm_iter_html.replace(/([a-z-]+)="true"/g, "$1");
+					__erm_html += __erm_iter_html;
 				});
 				__erm_anchor.innerHTML = __erm_html;
 			}
 		}
-	}`, anchorID, collectionExpr, bodyB64, jsForParams)
+	}`, anchorID, collectionExpr, bodyB64, jsForParams, itemName, indexName)
 
 		generatedLogic = append(generatedLogic, logic)
 		res = strings.Replace(res, fullMatch, anchorHTML, 1)
@@ -747,14 +760,39 @@ window.signal = window.signal || function(val) { return val; };
 	%s
 
 	// Conditional Engine
-	document.addEventListener('DOMContentLoaded', () => {
+	const __erm_handle_event = (e) => {
+		// 1. Dynamic expressions (from loops, etc.)
+		let target = e.target.closest('[data-erm-evt-' + e.type + ']');
+		if (target) {
+			let raw = target.getAttribute('data-erm-evt-' + e.type);
+			if (raw) {
+				try {
+					let expr = raw;
+					if (raw.startsWith('<!--erm-evt:')) {
+						expr = atob(raw.slice(12, -3));
+					} else {
+						expr = atob(raw);
+					}
+					const result = eval(expr);
+					if (typeof result === 'function') result(e);
+					if (typeof window.__erm_update === 'function') window.__erm_update();
+				} catch(err) { console.error(err); }
+			}
+		}
+		// 2. Static events (bind:value, etc.)
 		window.__erm_events.forEach(ev => {
-			document.addEventListener(ev.event, (e) => {
-				let target = e.target.closest('[' + 'data-erm-evt-' + ev.event + '="' + ev.id + '"]');
-				if (target) {
+			if (ev.event === e.type) {
+				let staticTarget = e.target.closest('[data-erm-evt-' + ev.event + '-bind="' + ev.id + '"]');
+				if (staticTarget) {
 					ev.handler(e);
 				}
-			});
+			}
+		});
+	};
+
+	document.addEventListener('DOMContentLoaded', () => {
+		['click', 'input', 'change', 'keydown', 'keyup', 'submit'].forEach(type => {
+			document.addEventListener(type, __erm_handle_event);
 		});
 		window.__erm_update();
 	}, { once: true });
