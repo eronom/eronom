@@ -2,26 +2,87 @@
     import Header from './Header.erm';
     
     let count = signal(0);
+    let todoText = signal('');
+    let todos = signal([]);
     
-    let showExtraContent = true; 
-    
-    let porridge = { temperature: 100 }; 
+    let showExtraContent = true;
+    let porridge = { temperature: 100 };
+
+    const loadTodos = async () => {
+        const r = await fetch('/api/todos');
+        const data = await r.json();
+        todos = data;
+        if (typeof window.__erm_update === 'function') window.__erm_update();
+    }
+
+    const addTodo = async () => {
+        const text = todoText.trim();
+        if (!text) return;
+        const response = await fetch('/api/todos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+       const data = await response.json()
+       console.log("response data: ", data)
+        todoText = ''; 
+        await loadTodos();
+    }
+
+    const toggleTodo = async (id, done) => {
+        await fetch('/api/todos', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, done })
+        });
+   
+        await loadTodos();
+    }
+
+    const deleteTodo = async (id) => {
+        await fetch('/api/todos', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+        });
+        await loadTodos();
+    }
 
     document.addEventListener('DOMContentLoaded', () => {
         const app = document.getElementById('app');
         if (app) {
             const timeDisplay = document.createElement('h3');
             app.appendChild(timeDisplay);
-
             setInterval(() => {
                 timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-            }, 1000);
+            }, 1);
         }
+        
+        loadTodos();
+
+        // Fetch from /api/hello — server returns JSON
+        fetch('/api/hello')
+            .then(r => r.json())
+            .then(data => {
+                const el = document.getElementById('api-hello');
+                if (el) el.innerHTML = `<strong>/api/hello →</strong> ${data.message} (timestamp: ${data.timestamp}, server: ${data.server})`;
+            });
+
+        // Fetch server info — Go server data returns
+        fetch('/api/server-info')
+            .then(r => r.json())
+            .then(data => {
+                const el = document.getElementById('api-server');
+                if (el) el.innerHTML = `<strong>/api/server-info →</strong> ${data.framework} v${data.version} | Go ${data.goVersion} | uptime: ${data.uptime}`;
+            });
+
         console.log("Erm component script loaded.");
     });
 
     let randomNum = Math.floor(Math.random() * 1000);
+    let items = [1, 2, 3, 4, 5];
 </script>
+
 
 <h1>Devsssssss svsss toososssssss sErmssss Dev Serverss with HMR!</h1>
 
@@ -30,13 +91,24 @@
     <button onClick={()=>{count+=1}}>Count {count}</button>
 </div>
 
-why i not see this on the page ? 
-
 <p>Edited ss<code>index.erm</code> to see csshanges ssinstantly.</p>
 <div id="app"></div>
-
-<h2>Helllo web added h2 tag</h2>
+<h2>Hellloo web added h2 tag</h2>
 <p>Random: {randomNum}</p>
+<h2>Helllooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
+<h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+
+<div style="padding: 20px; border: 2px solid #3498db; border-radius: 10px; margin-bottom: 20px;">
+    <h3>For Loop Demo</h3>
+    <div style="margin-bottom: 10px;">
+        <button onClick={()=>{items.push(items.length + 1)}}>Add Item</button>
+        <button onClick={()=>{items.pop()}}>Remove Item</button>
+    </div>
+
+    {#for item,i in items}
+        <p>Item key as {i} : {item}</p>
+    {/for}
+</div>
 
 {#if porridge.temperature > 100}
     <p>too hot!</p>
@@ -47,34 +119,44 @@ why i not see this on the page ?
 {/if}
 
 <Header />
-
 {#if showExtraContent}
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-        <h3>🎉 Conditional Rendered Box</h3>
+        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxxss</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
+    <button onclick={()=>{showExtraContent=false}}>showExtraContent</button>
+{:else}
+    <div><p>showExtraContent is false</p></div>
+    <button onclick={()=>{showExtraContent=true}}>showExtraContent</button>
 {/if}
 
 <div style="margin-top: 20px; padding: 20px; border: 2px solid #9b59b6; border-radius: 10px; background: #2d1b4e;">
-    <h3 style="color: #bb86fc;">📡 API Routes Demo</h3>
+    <h3 style="color: #bb86fc;">📡 API Routes Demo (like /api/*)</h3>
     <div id="api-hello" style="margin-bottom: 10px;">Loading /api/hello...</div>
     <div id="api-server" style="margin-bottom: 10px;">Loading /api/server-info...</div>
 </div>
 
-<script>
-    fetch('/api/hello')
-        .then(r => r.json())
-        .then(data => {
-            document.getElementById('api-hello').innerHTML =
-                `<strong>/api/hello →</strong> ${data.message}`;
-        });
+<div style="margin-top: 20px; padding: 20px; border: 2px solid #e67e22; border-radius: 10px; background: #3b2a1a;">
+    <h3 style="color: #f0a500;">📝 Todo API (Server-Side State)</h3>
+    <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+        <input bind:value={todoText} onKeyDown={(e) => e.key === 'Enter' && addTodo()} type="text" placeholder="Add a todo..." style="flex:1; padding: 8px; border-radius: 6px; border: 1px solid #555; background: #222; color: #fff;">
+        <button onClick={addTodo} style="padding: 8px 16px; background: #e67e22; border: none; border-radius: 6px; color: #fff; cursor: pointer;">Add</button>
+    </div>
+    <div id="todo-list">
+        {#for t in todos}
+            <div style="display:flex; align-items:center; gap:10px; padding:8px; margin-bottom:6px; background:#222; border-radius:6px;">
+                <input type="checkbox" checked={t.done} style="cursor:pointer;" onChange={(e) => toggleTodo(t.id, e.target.checked)} />
+                <span style={`flex:1; color: ${t.done ? '#888' : '#fff'}; text-decoration: ${t.done ? 'line-through' : 'none'};`}>
+                    {t.text}
+                </span>
+                <button onClick={() => deleteTodo(t.id)} style="background:#e74c3c; border:none; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer;">✕</button>
+            </div>
+        {/for}
+        {#if todos.length === 0}
+            <p style="color: #888;">No todos yet. Add one above!</p>
+        {/if}
+    </div>
+</div>
 
-    fetch('/api/server-info')
-        .then(r => r.json())
-        .then(data => {
-            document.getElementById('api-server').innerHTML =
-                `<strong>/api/server-info →</strong> ${data.framework} v${data.version}`;
-        });
-</script>
 
 <Footer />

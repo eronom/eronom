@@ -25,6 +25,14 @@ func (ev *ErmEval) Set(name string, val interface{}) {
 	ev.vars[name] = val
 }
 
+func (ev *ErmEval) Clone() *ErmEval {
+	newEv := NewErmEval()
+	for k, v := range ev.vars {
+		newEv.vars[k] = v
+	}
+	return newEv
+}
+
 // ParseScriptVars extracts top-level let/const/var declarations from script content.
 func (ev *ErmEval) ParseScriptVars(script string) {
 	re := regexp.MustCompile(`(?m)(?:let|const|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*`)

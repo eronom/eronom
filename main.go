@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"os/exec"
+
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 )
@@ -332,17 +334,44 @@ func parseReactivity(html string) (string, []string, []string) {
 							if depth == 0 {
 								expr := html[start+1 : curr-1]
 								eventName := strings.ToLower(attrName[2:])
-								id := fmt.Sprintf("erm-evt-%d-%d", time.Now().UnixNano(), i)
+								exprB64 := base64.StdEncoding.EncodeToString([]byte(expr))
 
-								out.WriteString(fmt.Sprintf(`data-erm-evt-%s="%s"`, eventName, id))
-
-								jsEvents = append(jsEvents, fmt.Sprintf(`window.__erm_events.push({ id: "%s", event: "%s", handler: function(event) { try { const e_fn = (%s); if (typeof e_fn === 'function') { e_fn(event); } } catch(err) { console.error(err); } if (typeof window.__erm_update === 'function') window.__erm_update(); } });`, id, eventName, expr))
+								out.WriteString(fmt.Sprintf(`data-erm-evt-%s="<!--erm-evt:%s-->"`, eventName, exprB64))
 
 								i = curr
 								continue
 							}
 						}
 					}
+				}
+			}
+
+			// Support bind:value={variable}
+			if !inString && i > 0 && (html[i-1] == ' ' || html[i-1] == '\t' || html[i-1] == '\n') && strings.HasPrefix(html[i:], "bind:value={") {
+				start := i + len("bind:value={") - 1
+				depth := 1
+				curr := start + 1
+				for curr < len(html) && depth > 0 {
+					if html[curr] == '{' {
+						depth++
+					}
+					if html[curr] == '}' {
+						depth--
+					}
+					curr++
+				}
+				if depth == 0 {
+					expr := html[start+1 : curr-1]
+					id := fmt.Sprintf("erm-bind-val-%d-%d", time.Now().UnixNano(), i)
+					out.WriteString(fmt.Sprintf(`id="%s" data-erm-evt-input-bind="%s"`, id, id))
+
+					// Update variable on input
+					jsEvents = append(jsEvents, fmt.Sprintf(`window.__erm_events.push({ id: "%s", event: "input", handler: function(event) { %s = event.target.value; if (typeof window.__erm_update === 'function') window.__erm_update(); } });`, id, expr))
+					// Update input when variable changes
+					jsBindings = append(jsBindings, fmt.Sprintf(`window.__erm_bindings.push({ id: "%s", type: "value", get: () => (%s) });`, id, expr))
+
+					i = curr
+					continue
 				}
 			}
 		}
@@ -455,6 +484,119 @@ func processErmComponent(baseDir string, content string) string {
 
 	// 1.5 Process bindings for true SSR with XSS protection (escape_html)
 	reExpr := regexp.MustCompile(`<!--erm-expr:([a-zA-Z0-9+/=]+)-->`)
+
+	// 1.8 Process {#for} logic
+	var generatedLogic []string
+	reFor := regexp.MustCompile(`(?s)\{#for\s+([a-zA-Z_$][a-zA-Z0-9_$]*)(?:\s*,\s*([a-zA-Z_$][a-zA-Z0-9_$]*))?\s+in\s+([^}]+)\}(.*?)\{/for\}`)
+	for {
+		match := reFor.FindStringSubmatch(res)
+		if match == nil {
+			break
+		}
+
+		fullMatch := match[0]
+		itemName := strings.TrimSpace(match[1])
+		indexName := strings.TrimSpace(match[2])
+		collectionExpr := strings.TrimSpace(match[3])
+		body := match[4]
+
+		// For loop template should not have erm-bind spans for internal reactivity,
+		// because we re-render the whole loop anyway.
+		reSpanUnwrap := regexp.MustCompile(`<span id="erm-bind-[^"]+">(<!--erm-expr:[a-zA-Z0-9+/=]+-->)</span>`)
+		templateBody := reSpanUnwrap.ReplaceAllString(body, "$1")
+
+		anchorID := fmt.Sprintf("erm-for-anchor-%d", time.Now().UnixNano())
+
+		// SSR for for-loop
+		var ssrHtml strings.Builder
+		itemsVal, evalErr := ev.Eval(collectionExpr)
+		if evalErr != nil {
+			fmt.Printf("[SSR] Error evaluating loop collection '%s': %v\n", collectionExpr, evalErr)
+		}
+
+		if items, ok := itemsVal.([]interface{}); ok {
+			for i, item := range items {
+				subEv := ev.Clone()
+				subEv.Set(itemName, item)
+				if indexName != "" {
+					subEv.Set(indexName, float64(i))
+				}
+
+				// Replace expressions in body for this iteration
+				iterBody := reExpr.ReplaceAllStringFunc(templateBody, func(match string) string {
+					parts := reExpr.FindStringSubmatch(match)
+					b64 := parts[1]
+					exprBytes, _ := base64.StdEncoding.DecodeString(b64)
+					expr := string(exprBytes)
+					val, evalErr := subEv.Eval(expr)
+					if evalErr == nil && val != nil {
+						return gohtml.EscapeString(fmt.Sprintf("%v", val))
+					}
+					return ""
+				})
+				ssrHtml.WriteString(iterBody)
+			}
+		} else {
+			if itemsVal != nil {
+				fmt.Printf("[SSR] Loop collection '%s' is not an array: %T\n", collectionExpr, itemsVal)
+			} else {
+				fmt.Printf("[SSR] Loop collection '%s' not found or nil\n", collectionExpr)
+			}
+		}
+
+		bodyB64 := base64.StdEncoding.EncodeToString([]byte(templateBody))
+
+		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:contents;">%s</span>`, anchorID, ssrHtml.String())
+
+		jsForParams := itemName
+		if indexName != "" {
+			jsForParams = itemName + ", " + indexName
+		}
+
+		logic := fmt.Sprintf(`
+	{
+		let __erm_anchor = document.getElementById("%s");
+		if (__erm_anchor) {
+			let __erm_items = [];
+			try { __erm_items = (%s); } catch(e) {}
+			if (!Array.isArray(__erm_items)) __erm_items = [];
+			
+			let __erm_itemsJson = JSON.stringify(__erm_items);
+			if (__erm_anchor.__erm_last_items !== __erm_itemsJson) {
+				__erm_anchor.__erm_last_items = __erm_itemsJson;
+				let __erm_template = decodeURIComponent(escape(atob("%s")));
+				let __erm_html = "";
+				__erm_items.forEach((%s) => {
+					let __erm_iter_html = __erm_template.replace(/<!--erm-expr:([a-zA-Z0-9+/=]+)-->/g, (m, b64) => {
+						try {
+							return eval(decodeURIComponent(escape(atob(b64))));
+						} catch(e) { return ""; }
+					});
+					// Handle events by baking loop variables into a closure
+					__erm_iter_html = __erm_iter_html.replace(/data-erm-evt-([a-z-]+)="<!--erm-evt:([a-zA-Z0-9+/=]+)-->"/g, (m, eventName, b64) => {
+						let expr = atob(b64);
+						let baked = "((event) => { " + 
+							"let %[5]s = " + JSON.stringify(%[5]s) + "; " +
+							("%[6]s" ? "let %[6]s = " + JSON.stringify(%[6]s) + "; " : "") +
+							"let __erm_fn = (" + expr + "); " +
+							"if (typeof __erm_fn === 'function') __erm_fn(event); " +
+							"})";
+						return 'data-erm-evt-' + eventName + '="' + btoa(baked) + '"';
+					});
+					// Handle boolean attributes (checked, disabled, etc.) and remove if value is falsy
+					__erm_iter_html = __erm_iter_html.replace(/([a-z-]+)="false"/g, "");
+					__erm_iter_html = __erm_iter_html.replace(/([a-z-]+)="true"/g, "$1");
+					__erm_html += __erm_iter_html;
+				});
+				__erm_anchor.innerHTML = __erm_html;
+			}
+		}
+	}`, anchorID, collectionExpr, bodyB64, jsForParams, itemName, indexName)
+
+		generatedLogic = append(generatedLogic, logic)
+		res = strings.Replace(res, fullMatch, anchorHTML, 1)
+	}
+
 	res = reExpr.ReplaceAllStringFunc(res, func(match string) string {
 		parts := reExpr.FindStringSubmatch(match)
 		b64 := parts[1]
@@ -472,7 +614,6 @@ func processErmComponent(baseDir string, content string) string {
 	})
 
 	// 2. Process {#if} logic and replace with hidden anchor spans
-	var generatedLogic []string
 	count := 0
 
 	for {
@@ -532,7 +673,7 @@ func processErmComponent(baseDir string, content string) string {
 			htmlBody := rem[:minIdx]
 			encodedHtml := base64.StdEncoding.EncodeToString([]byte(htmlBody))
 
-			branches = append(branches, fmt.Sprintf(`if (%s) { newHtmlBase64 = "%s"; }`, cond, encodedHtml))
+			branches = append(branches, fmt.Sprintf(`if (%s) { __erm_newHtmlBase64 = "%s"; }`, cond, encodedHtml))
 
 			if !ssrMatched {
 				if condVal, condErr := ev.EvalBool(cond); condErr == nil && condVal {
@@ -566,19 +707,19 @@ func processErmComponent(baseDir string, content string) string {
 
 		logic := fmt.Sprintf(`
 	{
-		let me = document.getElementById("%s");
-		if (me) {
-			if (typeof me.__erm_cond_last === 'undefined') {
-				me.__erm_cond_last = me.getAttribute('data-ssr-base64') || '';
+		let __erm_me = document.getElementById("%s");
+		if (__erm_me) {
+			if (typeof __erm_me.__erm_cond_last === 'undefined') {
+				__erm_me.__erm_cond_last = __erm_me.getAttribute('data-ssr-base64') || '';
 			}
-			let newHtmlBase64 = '';
+			let __erm_newHtmlBase64 = '';
 			%s
-			if (me.__erm_cond_last !== newHtmlBase64) {
-				me.__erm_cond_last = newHtmlBase64;
-				if (newHtmlBase64 === '') {
-					me.innerHTML = '';
+			if (__erm_me.__erm_cond_last !== __erm_newHtmlBase64) {
+				__erm_me.__erm_cond_last = __erm_newHtmlBase64;
+				if (__erm_newHtmlBase64 === '') {
+					__erm_me.innerHTML = '';
 				} else {
-					me.innerHTML = decodeURIComponent(escape(atob(newHtmlBase64)));
+					__erm_me.innerHTML = decodeURIComponent(escape(atob(__erm_newHtmlBase64)));
 				}
 			}
 		}
@@ -603,7 +744,13 @@ window.signal = window.signal || function(val) { return val; };
 				if (b.last !== val) {
 					b.last = val;
 					let el = document.getElementById(b.id);
-					if (el) el.innerText = val;
+					if (el) {
+						if (b.type === 'value') {
+							if (el.value !== val) el.value = val;
+						} else {
+							el.innerText = val;
+						}
+					}
 				}
 			} catch(e) {}
 		});
@@ -613,14 +760,39 @@ window.signal = window.signal || function(val) { return val; };
 	%s
 
 	// Conditional Engine
-	document.addEventListener('DOMContentLoaded', () => {
+	const __erm_handle_event = (e) => {
+		// 1. Dynamic expressions (from loops, etc.)
+		let target = e.target.closest('[data-erm-evt-' + e.type + ']');
+		if (target) {
+			let raw = target.getAttribute('data-erm-evt-' + e.type);
+			if (raw) {
+				try {
+					let expr = raw;
+					if (raw.startsWith('<!--erm-evt:')) {
+						expr = atob(raw.slice(12, -3));
+					} else {
+						expr = atob(raw);
+					}
+					const result = eval(expr);
+					if (typeof result === 'function') result(e);
+					if (typeof window.__erm_update === 'function') window.__erm_update();
+				} catch(err) { console.error(err); }
+			}
+		}
+		// 2. Static events (bind:value, etc.)
 		window.__erm_events.forEach(ev => {
-			document.addEventListener(ev.event, (e) => {
-				let target = e.target.closest('[' + 'data-erm-evt-' + ev.event + '="' + ev.id + '"]');
-				if (target) {
+			if (ev.event === e.type) {
+				let staticTarget = e.target.closest('[data-erm-evt-' + ev.event + '-bind="' + ev.id + '"]');
+				if (staticTarget) {
 					ev.handler(e);
 				}
-			});
+			}
+		});
+	};
+
+	document.addEventListener('DOMContentLoaded', () => {
+		['click', 'input', 'change', 'keydown', 'keyup', 'submit'].forEach(type => {
+			document.addEventListener(type, __erm_handle_event);
 		});
 		window.__erm_update();
 	}, { once: true });
@@ -819,6 +991,15 @@ func buildProject(sourceDir, outDir string) error {
 		}
 	})
 
+	// Compile the Go binary for production
+	fmt.Println("Compiling Go binary for production...")
+	buildCmd := exec.Command("go", "build", "-o", filepath.Join(outDir, "eronom"), "main.go")
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to compile binary: %v", err)
+	}
+
 	return err
 }
 
@@ -935,6 +1116,13 @@ func main() {
 	if cmd == "start" {
 		fmt.Printf("Production server running at http://localhost:%s\n", port)
 		buildDir := filepath.Join(dir, "build")
+
+		// If we are already inside the build directory, use it directly
+		if _, err := os.Stat(buildDir); os.IsNotExist(err) {
+			buildDir = dir
+		}
+
+		fmt.Printf("Serving production assets from: %s\n", buildDir)
 
 		fs := http.FileServer(http.Dir(buildDir))
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
