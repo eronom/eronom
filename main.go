@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"os/exec"
+
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 )
@@ -658,7 +660,7 @@ func processErmComponent(baseDir string, content string) string {
 			htmlBody := rem[:minIdx]
 			encodedHtml := base64.StdEncoding.EncodeToString([]byte(htmlBody))
 
-			branches = append(branches, fmt.Sprintf(`if (%s) { newHtmlBase64 = "%s"; }`, cond, encodedHtml))
+			branches = append(branches, fmt.Sprintf(`if (%s) { __erm_newHtmlBase64 = "%s"; }`, cond, encodedHtml))
 
 			if !ssrMatched {
 				if condVal, condErr := ev.EvalBool(cond); condErr == nil && condVal {
@@ -951,6 +953,15 @@ func buildProject(sourceDir, outDir string) error {
 		}
 	})
 
+	// Compile the Go binary for production
+	fmt.Println("Compiling Go binary for production...")
+	buildCmd := exec.Command("go", "build", "-o", filepath.Join(outDir, "eronom"), "main.go")
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to compile binary: %v", err)
+	}
+
 	return err
 }
 
@@ -1067,6 +1078,13 @@ func main() {
 	if cmd == "start" {
 		fmt.Printf("Production server running at http://localhost:%s\n", port)
 		buildDir := filepath.Join(dir, "build")
+
+		// If we are already inside the build directory, use it directly
+		if _, err := os.Stat(buildDir); os.IsNotExist(err) {
+			buildDir = dir
+		}
+
+		fmt.Printf("Serving production assets from: %s\n", buildDir)
 
 		fs := http.FileServer(http.Dir(buildDir))
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
