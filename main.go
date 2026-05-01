@@ -487,7 +487,7 @@ func processErmComponent(baseDir string, content string) string {
 
 	// 1.8 Process {#for} logic
 	var generatedLogic []string
-	reFor := regexp.MustCompile(`(?s)\{#for\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s+in\s+([^}]+)\}(.*?)\{/for\}`)
+	reFor := regexp.MustCompile(`(?s)\{#for\s+([a-zA-Z_$][a-zA-Z0-9_$]*)(?:\s*,\s*([a-zA-Z_$][a-zA-Z0-9_$]*))?\s+in\s+([^}]+)\}(.*?)\{/for\}`)
 	for {
 		match := reFor.FindStringSubmatch(res)
 		if match == nil {
@@ -496,8 +496,9 @@ func processErmComponent(baseDir string, content string) string {
 
 		fullMatch := match[0]
 		itemName := strings.TrimSpace(match[1])
-		collectionExpr := strings.TrimSpace(match[2])
-		body := match[3]
+		indexName := strings.TrimSpace(match[2])
+		collectionExpr := strings.TrimSpace(match[3])
+		body := match[4]
 
 		// For loop template should not have erm-bind spans for internal reactivity,
 		// because we re-render the whole loop anyway.
@@ -514,9 +515,12 @@ func processErmComponent(baseDir string, content string) string {
 		}
 
 		if items, ok := itemsVal.([]interface{}); ok {
-			for _, item := range items {
+			for i, item := range items {
 				subEv := ev.Clone()
 				subEv.Set(itemName, item)
+				if indexName != "" {
+					subEv.Set(indexName, float64(i))
+				}
 
 				// Replace expressions in body for this iteration
 				iterBody := reExpr.ReplaceAllStringFunc(templateBody, func(match string) string {
@@ -544,6 +548,11 @@ func processErmComponent(baseDir string, content string) string {
 
 		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:contents;">%s</span>`, anchorID, ssrHtml.String())
 
+		jsForParams := itemName
+		if indexName != "" {
+			jsForParams = itemName + ", " + indexName
+		}
+
 		logic := fmt.Sprintf(`
 	{
 		let __erm_anchor = document.getElementById("%s");
@@ -557,7 +566,7 @@ func processErmComponent(baseDir string, content string) string {
 				__erm_anchor.__erm_last_items = __erm_itemsJson;
 				let __erm_template = decodeURIComponent(escape(atob("%s")));
 				let __erm_html = "";
-				__erm_items.forEach(%s => {
+				__erm_items.forEach((%s) => {
 					__erm_html += __erm_template.replace(/<!--erm-expr:([a-zA-Z0-9+/=]+)-->/g, (m, b64) => {
 						try {
 							return eval(decodeURIComponent(escape(atob(b64))));
@@ -567,7 +576,7 @@ func processErmComponent(baseDir string, content string) string {
 				__erm_anchor.innerHTML = __erm_html;
 			}
 		}
-	}`, anchorID, collectionExpr, bodyB64, itemName)
+	}`, anchorID, collectionExpr, bodyB64, jsForParams)
 
 		generatedLogic = append(generatedLogic, logic)
 		res = strings.Replace(res, fullMatch, anchorHTML, 1)

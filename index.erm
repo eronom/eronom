@@ -49,8 +49,8 @@
         <button onClick={()=>{items.pop()}}>Remove Item</button>
     </div>
 
-    {#for item in items}
-        <p>Item: {item}</p>
+    {#for item, i in items}
+        <p>Item key as {i}: {item}</p>
     {/for}
 </div>
 
