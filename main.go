@@ -345,6 +345,35 @@ func parseReactivity(html string) (string, []string, []string) {
 					}
 				}
 			}
+
+			// Support bind:value={variable}
+			if !inString && i > 0 && (html[i-1] == ' ' || html[i-1] == '\t' || html[i-1] == '\n') && strings.HasPrefix(html[i:], "bind:value={") {
+				start := i + len("bind:value={") - 1
+				depth := 1
+				curr := start + 1
+				for curr < len(html) && depth > 0 {
+					if html[curr] == '{' {
+						depth++
+					}
+					if html[curr] == '}' {
+						depth--
+					}
+					curr++
+				}
+				if depth == 0 {
+					expr := html[start+1 : curr-1]
+					id := fmt.Sprintf("erm-bind-val-%d-%d", time.Now().UnixNano(), i)
+					out.WriteString(fmt.Sprintf(`id="%s" data-erm-evt-input="%s"`, id, id))
+
+					// Update variable on input
+					jsEvents = append(jsEvents, fmt.Sprintf(`window.__erm_events.push({ id: "%s", event: "input", handler: function(event) { %s = event.target.value; if (typeof window.__erm_update === 'function') window.__erm_update(); } });`, id, expr))
+					// Update input when variable changes
+					jsBindings = append(jsBindings, fmt.Sprintf(`window.__erm_bindings.push({ id: "%s", type: "value", get: () => (%s) });`, id, expr))
+
+					i = curr
+					continue
+				}
+			}
 		}
 
 		out.WriteByte(c)
@@ -455,6 +484,95 @@ func processErmComponent(baseDir string, content string) string {
 
 	// 1.5 Process bindings for true SSR with XSS protection (escape_html)
 	reExpr := regexp.MustCompile(`<!--erm-expr:([a-zA-Z0-9+/=]+)-->`)
+
+	// 1.8 Process {#for} logic
+	var generatedLogic []string
+	reFor := regexp.MustCompile(`(?s)\{#for\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s+in\s+([^}]+)\}(.*?)\{/for\}`)
+	for {
+		match := reFor.FindStringSubmatch(res)
+		if match == nil {
+			break
+		}
+
+		fullMatch := match[0]
+		itemName := strings.TrimSpace(match[1])
+		collectionExpr := strings.TrimSpace(match[2])
+		body := match[3]
+
+		// For loop template should not have erm-bind spans for internal reactivity,
+		// because we re-render the whole loop anyway.
+		reSpanUnwrap := regexp.MustCompile(`<span id="erm-bind-[^"]+">(<!--erm-expr:[a-zA-Z0-9+/=]+-->)</span>`)
+		templateBody := reSpanUnwrap.ReplaceAllString(body, "$1")
+
+		anchorID := fmt.Sprintf("erm-for-anchor-%d", time.Now().UnixNano())
+
+		// SSR for for-loop
+		var ssrHtml strings.Builder
+		itemsVal, evalErr := ev.Eval(collectionExpr)
+		if evalErr != nil {
+			fmt.Printf("[SSR] Error evaluating loop collection '%s': %v\n", collectionExpr, evalErr)
+		}
+
+		if items, ok := itemsVal.([]interface{}); ok {
+			for _, item := range items {
+				subEv := ev.Clone()
+				subEv.Set(itemName, item)
+
+				// Replace expressions in body for this iteration
+				iterBody := reExpr.ReplaceAllStringFunc(templateBody, func(match string) string {
+					parts := reExpr.FindStringSubmatch(match)
+					b64 := parts[1]
+					exprBytes, _ := base64.StdEncoding.DecodeString(b64)
+					expr := string(exprBytes)
+					val, evalErr := subEv.Eval(expr)
+					if evalErr == nil && val != nil {
+						return gohtml.EscapeString(fmt.Sprintf("%v", val))
+					}
+					return ""
+				})
+				ssrHtml.WriteString(iterBody)
+			}
+		} else {
+			if itemsVal != nil {
+				fmt.Printf("[SSR] Loop collection '%s' is not an array: %T\n", collectionExpr, itemsVal)
+			} else {
+				fmt.Printf("[SSR] Loop collection '%s' not found or nil\n", collectionExpr)
+			}
+		}
+
+		bodyB64 := base64.StdEncoding.EncodeToString([]byte(templateBody))
+
+		anchorHTML := fmt.Sprintf(`<span id="%s" style="display:contents;">%s</span>`, anchorID, ssrHtml.String())
+
+		logic := fmt.Sprintf(`
+	{
+		let __erm_anchor = document.getElementById("%s");
+		if (__erm_anchor) {
+			let __erm_items = [];
+			try { __erm_items = (%s); } catch(e) {}
+			if (!Array.isArray(__erm_items)) __erm_items = [];
+			
+			let __erm_itemsJson = JSON.stringify(__erm_items);
+			if (__erm_anchor.__erm_last_items !== __erm_itemsJson) {
+				__erm_anchor.__erm_last_items = __erm_itemsJson;
+				let __erm_template = decodeURIComponent(escape(atob("%s")));
+				let __erm_html = "";
+				__erm_items.forEach(%s => {
+					__erm_html += __erm_template.replace(/<!--erm-expr:([a-zA-Z0-9+/=]+)-->/g, (m, b64) => {
+						try {
+							return eval(decodeURIComponent(escape(atob(b64))));
+						} catch(e) { return ""; }
+					});
+				});
+				__erm_anchor.innerHTML = __erm_html;
+			}
+		}
+	}`, anchorID, collectionExpr, bodyB64, itemName)
+
+		generatedLogic = append(generatedLogic, logic)
+		res = strings.Replace(res, fullMatch, anchorHTML, 1)
+	}
+
 	res = reExpr.ReplaceAllStringFunc(res, func(match string) string {
 		parts := reExpr.FindStringSubmatch(match)
 		b64 := parts[1]
@@ -472,7 +590,6 @@ func processErmComponent(baseDir string, content string) string {
 	})
 
 	// 2. Process {#if} logic and replace with hidden anchor spans
-	var generatedLogic []string
 	count := 0
 
 	for {
@@ -566,19 +683,19 @@ func processErmComponent(baseDir string, content string) string {
 
 		logic := fmt.Sprintf(`
 	{
-		let me = document.getElementById("%s");
-		if (me) {
-			if (typeof me.__erm_cond_last === 'undefined') {
-				me.__erm_cond_last = me.getAttribute('data-ssr-base64') || '';
+		let __erm_me = document.getElementById("%s");
+		if (__erm_me) {
+			if (typeof __erm_me.__erm_cond_last === 'undefined') {
+				__erm_me.__erm_cond_last = __erm_me.getAttribute('data-ssr-base64') || '';
 			}
-			let newHtmlBase64 = '';
+			let __erm_newHtmlBase64 = '';
 			%s
-			if (me.__erm_cond_last !== newHtmlBase64) {
-				me.__erm_cond_last = newHtmlBase64;
-				if (newHtmlBase64 === '') {
-					me.innerHTML = '';
+			if (__erm_me.__erm_cond_last !== __erm_newHtmlBase64) {
+				__erm_me.__erm_cond_last = __erm_newHtmlBase64;
+				if (__erm_newHtmlBase64 === '') {
+					__erm_me.innerHTML = '';
 				} else {
-					me.innerHTML = decodeURIComponent(escape(atob(newHtmlBase64)));
+					__erm_me.innerHTML = decodeURIComponent(escape(atob(__erm_newHtmlBase64)));
 				}
 			}
 		}
@@ -603,7 +720,13 @@ window.signal = window.signal || function(val) { return val; };
 				if (b.last !== val) {
 					b.last = val;
 					let el = document.getElementById(b.id);
-					if (el) el.innerText = val;
+					if (el) {
+						if (b.type === 'value') {
+							if (el.value !== val) el.value = val;
+						} else {
+							el.innerText = val;
+						}
+					}
 				}
 			} catch(e) {}
 		});

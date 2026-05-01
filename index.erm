@@ -2,26 +2,31 @@
     import Header from './Header.erm';
     
     let count = signal(0);
+    let todoText = signal('');
     
-    let showExtraContent = true; 
+    let showExtraContent = true; // Change this to false and save to see HMR remove it!
     
-    let porridge = { temperature: 100 }; 
+    let porridge = { temperature: 100 }; // Change temperature to test other states
 
     document.addEventListener('DOMContentLoaded', () => {
         const app = document.getElementById('app');
-        if (app) {
-            const timeDisplay = document.createElement('h3');
-            app.appendChild(timeDisplay);
+        
+        const timeDisplay = document.createElement('h3');
+        app.appendChild(timeDisplay);
 
-            setInterval(() => {
-                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-            }, 1000);
-        }
+        setInterval(() => {
+            timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
+        }, 1);
+
+        // Conditional rendering is now handled declaratively in the template using {#if} syntax!
+
         console.log("Erm component script loaded.");
     });
 
-    let randomNum = Math.floor(Math.random() * 1000);
+       let randomNum = Math.floor(Math.random() * 1000);
+    let items = [1, 2, 3, 4, 5];
 </script>
+
 
 <h1>Devsssssss svsss toososssssss sErmssss Dev Serverss with HMR!</h1>
 
@@ -30,13 +35,24 @@
     <button onClick={()=>{count+=1}}>Count {count}</button>
 </div>
 
-why i not see this on the page ? 
-
 <p>Edited ss<code>index.erm</code> to see csshanges ssinstantly.</p>
 <div id="app"></div>
-
-<h2>Helllo web added h2 tag</h2>
+<h2>Hellloo web added h2 tag</h2>
 <p>Random: {randomNum}</p>
+<h2>Helllooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
+<h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+
+<div style="padding: 20px; border: 2px solid #3498db; border-radius: 10px; margin-bottom: 20px;">
+    <h3>For Loop Demo</h3>
+    <div style="margin-bottom: 10px;">
+        <button onClick={()=>{items.push(items.length + 1)}}>Add Item</button>
+        <button onClick={()=>{items.pop()}}>Remove Item</button>
+    </div>
+
+    {#for item in items}
+        <p>Item: {item}</p>
+    {/for}
+</div>
 
 {#if porridge.temperature > 100}
     <p>too hot!</p>
@@ -47,34 +63,125 @@ why i not see this on the page ?
 {/if}
 
 <Header />
-
 {#if showExtraContent}
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-        <h3>🎉 Conditional Rendered Box</h3>
+        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxxss</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
+    <button onclick={()=>{showExtraContent=false}}>showExtraContent</button>
+{:else}
+    <div><p>showExtraContent is false</p></div>
+    <button onclick={()=>{showExtraContent=true}}>showExtraContent</button>
 {/if}
 
 <div style="margin-top: 20px; padding: 20px; border: 2px solid #9b59b6; border-radius: 10px; background: #2d1b4e;">
-    <h3 style="color: #bb86fc;">📡 API Routes Demo</h3>
+    <h3 style="color: #bb86fc;">📡 API Routes Demo (like Next.js /api/*)</h3>
     <div id="api-hello" style="margin-bottom: 10px;">Loading /api/hello...</div>
     <div id="api-server" style="margin-bottom: 10px;">Loading /api/server-info...</div>
 </div>
 
+<div style="margin-top: 20px; padding: 20px; border: 2px solid #e67e22; border-radius: 10px; background: #3b2a1a;">
+    <h3 style="color: #f0a500;">📝 Todo API (Server-Side State)</h3>
+    <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+        <input bind:value={todoText} onKeyDown={(e) => e.key === 'Enter' && addTodo()} type="text" placeholder="Add a todo..." style="flex:1; padding: 8px; border-radius: 6px; border: 1px solid #555; background: #222; color: #fff;">
+        <button onClick={addTodo} style="padding: 8px 16px; background: #e67e22; border: none; border-radius: 6px; color: #fff; cursor: pointer;">Add</button>
+    </div>
+    <div id="todo-list">Loading todosss...</div>
+</div>
+
 <script>
+    // Fetch from /api/hello — server returns JSON
     fetch('/api/hello')
         .then(r => r.json())
         .then(data => {
             document.getElementById('api-hello').innerHTML =
-                `<strong>/api/hello →</strong> ${data.message}`;
+                `<strong>/api/hello →</strong> ${data.message} (timestamp: ${data.timestamp}, server: ${data.server})`;
         });
 
+    // Fetch server info — data only the Go server knows
     fetch('/api/server-info')
         .then(r => r.json())
         .then(data => {
             document.getElementById('api-server').innerHTML =
-                `<strong>/api/server-info →</strong> ${data.framework} v${data.version}`;
+                `<strong>/api/server-info →</strong> ${data.framework} v${data.version} | Go ${data.goVersion} | uptime: ${data.uptime}`;
         });
+
+    // Todo CRUD — clean programmatic approach 
+    const loadTodos = async () => {
+        const r = await fetch('/api/todos');
+        const todos = await r.json();
+        const list = document.getElementById('todo-list');
+        list.innerHTML = '';
+
+        if (todos.length === 0) {
+            list.innerHTML = '<p style="color: #888;">No todos yet. Add one above!</p>';
+            return;
+        }
+
+        todos.forEach(t => {
+            const item = document.createElement('div');
+            item.style.cssText = "display:flex; align-items:center; gap:10px; padding:8px; margin-bottom:6px; background:#222; border-radius:6px;";
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = t.done;
+            checkbox.style.cursor = 'pointer';
+            checkbox.addEventListener('change', () => toggleTodo(t.id, checkbox.checked));
+
+            const span = document.createElement('span');
+            span.innerText = t.text;
+            span.style.flex = '1';
+            span.style.color = '#fff';
+            if (t.done) {
+                span.style.textDecoration = 'line-through';
+                span.style.color = '#888';
+            }
+
+            const delBtn = document.createElement('button');
+            delBtn.innerHTML = '✕';
+            delBtn.style.cssText = "background:#e74c3c; border:none; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer;";
+            delBtn.addEventListener('click', () => deleteTodo(t.id));
+
+            item.appendChild(checkbox);
+            item.appendChild(span);
+            item.appendChild(delBtn);
+            list.appendChild(item);
+        });
+    }
+
+    const addTodo = async () => {
+        const text = todoText.trim();
+        if (!text) return;
+        await fetch('/api/todos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        todoText = ''; 
+loadTodos();
+    }
+
+    const toggleTodo = async (id, done) => {
+        await fetch('/api/todos', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, done })
+        });
+        loadTodos();
+    }
+
+    const deleteTodo = async (id) => {
+        await fetch('/api/todos', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+        });
+        loadTodos();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadTodos();
+    });
 </script>
 
 <Footer />
