@@ -146,7 +146,8 @@ func parseJSValue(s string, pos int) (interface{}, int) {
 		if pos < len(s) {
 			pos++
 		}
-		return val, pos
+		// SSR: Return as a map so .value access works in templates
+		return map[string]interface{}{"value": val}, pos
 	}
 	if s[pos] == '{' {
 		return parseJSObject(s, pos)

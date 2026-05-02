@@ -382,9 +382,10 @@ func parseReactivity(html string) (string, []string, []string) {
 	return out.String(), jsBindings, jsEvents
 }
 
-func processComponentTree(baseDir, content string, visited map[string]bool) (string, []string, []string) {
+func processComponentTree(baseDir, content string, visited map[string]bool) (string, []string, []string, map[string]string) {
 	var nodeScripts []string
 	var nodeStyles []string
+	allSignalVars := make(map[string]string)
 
 	h := fnv.New32a()
 	h.Write([]byte(content))
@@ -393,71 +394,138 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 	reScript := regexp.MustCompile(`(?s)(<script(?:\s+[^>]*?)?>)(.*?)(</script>)`)
 	html := reScript.ReplaceAllStringFunc(content, func(match string) string {
 		parts := reScript.FindStringSubmatch(match)
-		if strings.Contains(parts[1], "src=") {
-			return match
-		}
 		nodeScripts = append(nodeScripts, strings.TrimSpace(parts[2]))
 		return ""
 	})
 
-	reStyle := regexp.MustCompile(`(?s)<style[^>]*>(.*?)</style>`)
+	reStyle := regexp.MustCompile(`(?s)(<style(?:\s+[^>]*?)?>)(.*?)(</style>)`)
 	html = reStyle.ReplaceAllStringFunc(html, func(match string) string {
 		parts := reStyle.FindStringSubmatch(match)
-		cssContent := parts[1]
-		scopedCssContent := scopeCSS(cssContent, scopeID)
-		nodeStyles = append(nodeStyles, scopedCssContent)
+		nodeStyles = append(nodeStyles, scopeCSS(strings.TrimSpace(parts[2]), scopeID))
 		return ""
 	})
 
 	html = scopeHTML(html, scopeID)
 
+	// --- Mini-Svelte Compiler Transform ---
+	// 1. Find all signal variables in THIS component
+	signalVars := make(map[string]string)
+	sanitizedName := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(baseDir, "_")
+	if sanitizedName == "" || sanitizedName == "_" { sanitizedName = "root" }
+	
+	reSignalDecl := regexp.MustCompile(`(?:let|const|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*signal\(`)
+	for _, script := range nodeScripts {
+		matches := reSignalDecl.FindAllStringSubmatch(script, -1)
+		for _, m := range matches {
+			uniqueName := m[1] + "_" + sanitizedName
+			signalVars[m[1]] = uniqueName
+			allSignalVars[m[1]] = uniqueName
+		}
+	}
+
+	// 2. Transform the script and template bindings
+	for i, script := range nodeScripts {
+		for v, uniqueV := range signalVars {
+			reDecl := regexp.MustCompile(`(?m)(let|const|var)\s+\b` + v + `\b\s*=\s*signal\(`)
+			script = reDecl.ReplaceAllString(script, "var " + uniqueV + " = signal(")
+
+			var newScript strings.Builder
+			lastIdx := 0
+			reWord := regexp.MustCompile(`\b` + v + `\b`)
+			indices := reWord.FindAllStringIndex(script, -1)
+			for _, idx := range indices {
+				newScript.WriteString(script[lastIdx:idx[0]])
+				hasValue := strings.HasPrefix(script[idx[1]:], ".value")
+				isUnique := strings.HasSuffix(newScript.String(), uniqueV)
+				inString := (strings.Count(script[:idx[0]], "'") % 2 != 0) || (strings.Count(script[:idx[0]], "\"") % 2 != 0)
+				if hasValue || isUnique || inString {
+					newScript.WriteString(v)
+				} else {
+					newScript.WriteString(uniqueV + ".value")
+				}
+				lastIdx = idx[1]
+			}
+			newScript.WriteString(script[lastIdx:])
+			script = newScript.String()
+		}
+		nodeScripts[i] = script
+	}
+
+	for v, uniqueV := range signalVars {
+		reBind := regexp.MustCompile(`\{` + v + `\}`)
+		html = reBind.ReplaceAllString(html, "{" + uniqueV + ".value}")
+		html = strings.ReplaceAll(html, "bind:value={" + v + "}", "bind:value={" + uniqueV + ".value}")
+		reForVal := regexp.MustCompile(`\{#for\s+([a-zA-Z_$][a-zA-Z0-9_$]*(\s*,\s*[a-zA-Z_$][a-zA-Z0-9_$]*)?)\s+in\s+` + v + `\}`)
+		html = reForVal.ReplaceAllString(html, "{#for $1 in " + uniqueV + ".value}")
+		reIf := regexp.MustCompile(`\{#(?:if|else if)\s+` + v + `([^}]*)\}`)
+		html = reIf.ReplaceAllString(html, "{#if " + uniqueV + ".value$1}")
+	}
+
 	html, jsBindings, jsEvents := parseReactivity(html)
 
+	for v, uniqueV := range signalVars {
+		reVar := regexp.MustCompile(`(?m)\b` + v + `\b`)
+		for i, s := range jsBindings {
+			if !strings.Contains(s, uniqueV) {
+				jsBindings[i] = reVar.ReplaceAllString(s, uniqueV + ".value")
+			}
+		}
+		for i, s := range jsEvents {
+			if !strings.Contains(s, uniqueV) {
+				jsEvents[i] = reVar.ReplaceAllString(s, uniqueV + ".value")
+			}
+		}
+		reEvt := regexp.MustCompile(`data-erm-evt-([a-z-]+)="<!--erm-evt:([a-zA-Z0-9+/=]+)-->"`)
+		html = reEvt.ReplaceAllStringFunc(html, func(match string) string {
+			parts := reEvt.FindStringSubmatch(match)
+			eventName := parts[1]
+			b64 := parts[2]
+			exprBytes, _ := base64.StdEncoding.DecodeString(b64)
+			expr := string(exprBytes)
+			if !strings.Contains(expr, uniqueV) {
+				var newExpr strings.Builder
+				lastIdx := 0
+				reWord := regexp.MustCompile(`\b` + v + `\b`)
+				indices := reWord.FindAllStringIndex(expr, -1)
+				for _, idx := range indices {
+					newExpr.WriteString(expr[lastIdx:idx[0]])
+					inString := (strings.Count(expr[:idx[0]], "'") % 2 != 0) || (strings.Count(expr[:idx[0]], "\"") % 2 != 0)
+					if inString {
+						newExpr.WriteString(v)
+					} else {
+						newExpr.WriteString(uniqueV + ".value")
+					}
+					lastIdx = idx[1]
+				}
+				newExpr.WriteString(expr[lastIdx:])
+				b64 = base64.StdEncoding.EncodeToString([]byte(newExpr.String()))
+			}
+			return fmt.Sprintf(`data-erm-evt-%s="<!--erm-evt:%s-->"`, eventName, b64)
+		})
+	}
 	reactivityScript := strings.Join(jsBindings, "\n") + "\n" + strings.Join(jsEvents, "\n")
 	if strings.TrimSpace(reactivityScript) != "" {
 		nodeScripts = append(nodeScripts, reactivityScript)
 	}
 
-	reImport := regexp.MustCompile(`(?m)^[\s]*import\s+([A-Z][a-zA-Z0-9]*)\s+from\s+['"](.+?\.erm)['"]\s*;?[\s]*$`)
-	imports := make(map[string]string)
-	for i, script := range nodeScripts {
-		nodeScripts[i] = reImport.ReplaceAllStringFunc(script, func(match string) string {
-			parts := reImport.FindStringSubmatch(match)
-			imports[parts[1]] = parts[2]
-			return ""
-		})
-	}
-
-	reCompTag := regexp.MustCompile(`(?s)<([A-Z][a-zA-Z0-9]*)\s*/>`)
-	html = reCompTag.ReplaceAllStringFunc(html, func(match string) string {
-		parts := reCompTag.FindStringSubmatch(match)
+	reComp := regexp.MustCompile(`<([A-Z][a-zA-Z0-9]*)\s*/>`)
+	html = reComp.ReplaceAllStringFunc(html, func(match string) string {
+		parts := reComp.FindStringSubmatch(match)
 		compName := parts[1]
-
-		compRelPath, ok := imports[compName]
-		if !ok {
-			compRelPath = compName + ".erm"
-		}
-
-		compPath := filepath.Join(baseDir, compRelPath)
-		absPath, _ := filepath.Abs(compPath)
-		if visited[absPath] {
+		compPath := filepath.Join(baseDir, compName+".erm")
+		if _, err := os.Stat(compPath); os.IsNotExist(err) {
 			return match
 		}
+		if visited[compPath] { return fmt.Sprintf("<!-- Circular dependency: %s -->", compName) }
 		visitedChild := make(map[string]bool)
-		for k, v := range visited {
-			visitedChild[k] = v
-		}
-		visitedChild[absPath] = true
-
-		compContentBytes, err := os.ReadFile(compPath)
-		if err != nil {
-			return match
-		}
-
-		compHtml, compScripts, compStyles := processComponentTree(filepath.Dir(compPath), string(compContentBytes), visitedChild)
+		for k, v := range visited { visitedChild[k] = v }
+		visitedChild[compPath] = true
+		compContentBytes, _ := os.ReadFile(compPath)
+		compHtml, compScripts, compStyles, compSignalVars := processComponentTree(filepath.Dir(compPath), string(compContentBytes), visitedChild)
+		for k, v := range compSignalVars { allSignalVars[k] = v }
 		for _, s := range compScripts {
 			if strings.TrimSpace(s) != "" {
-				nodeScripts = append(nodeScripts, fmt.Sprintf("{\n%s\n}", s))
+				nodeScripts = append(nodeScripts, s)
 			}
 		}
 		for _, s := range compStyles {
@@ -465,17 +533,16 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 				nodeStyles = append(nodeStyles, s)
 			}
 		}
-
 		return compHtml
 	})
 
-	return html, nodeScripts, nodeStyles
+	return html, nodeScripts, nodeStyles, allSignalVars
 }
 
 func processErmComponent(baseDir string, content string) string {
 	absBase, _ := filepath.Abs(baseDir)
 	visited := map[string]bool{filepath.Join(absBase, "virtual_root.erm"): true}
-	res, userScripts, userStyles := processComponentTree(baseDir, content, visited)
+	res, userScripts, userStyles, signalVars := processComponentTree(baseDir, content, visited)
 
 	// Evaluate scripts on server for SSR using lightweight evaluator
 	scriptSource := strings.Join(userScripts, "\n")
@@ -729,57 +796,120 @@ func processErmComponent(baseDir string, content string) string {
 		res = res[:start] + anchorHTML + res[end+5:]
 	}
 
-	// 3. Assemble final compiled JS block
+	// 2. Final transform for generated logic (using unique signal names)
+	for v, uniqueV := range signalVars {
+		for i, logic := range generatedLogic {
+			var newLogic strings.Builder
+			lastIdx := 0
+			reWord := regexp.MustCompile(`\b` + v + `\b`)
+			indices := reWord.FindAllStringIndex(logic, -1)
+			for _, idx := range indices {
+				newLogic.WriteString(logic[lastIdx:idx[0]])
+				hasValue := strings.HasPrefix(logic[idx[1]:], ".value")
+				inString := (strings.Count(logic[:idx[0]], "'") % 2 != 0) || (strings.Count(logic[:idx[0]], "\"") % 2 != 0)
+				
+				if hasValue || inString {
+					newLogic.WriteString(v)
+				} else {
+					newLogic.WriteString(uniqueV + ".value")
+				}
+				lastIdx = idx[1]
+			}
+			newLogic.WriteString(logic[lastIdx:])
+			generatedLogic[i] = newLogic.String()
+		}
+	}
+
 	finalJS := fmt.Sprintf(`<script>
-window.signal = window.signal || function(val) { return val; };
 (() => {
+	// --- Reactivity Core ---
+	let activeEffect = null;
+	const contextStack = [];
+
+	window.signal = function(val) {
+		const subscribers = new Set();
+		const createDeepProxy = (obj) => {
+			if (obj === null || typeof obj !== 'object') return obj;
+			return new Proxy(obj, {
+				get(target, prop) {
+					if (activeEffect) subscribers.add(activeEffect);
+					const result = target[prop];
+					return createDeepProxy(result);
+				},
+				set(target, prop, newVal) {
+					target[prop] = newVal;
+					subscribers.forEach(fn => fn());
+					if (window.__erm_update) window.__erm_update();
+					return true;
+				}
+			});
+		};
+
+		const container = { value: val };
+		return new Proxy(container, {
+			get(target, prop) {
+				if (prop === 'valueOf' || prop === Symbol.toPrimitive) return () => target.value;
+				if (activeEffect) subscribers.add(activeEffect);
+				const result = target[prop];
+				return createDeepProxy(result);
+			},
+			set(target, prop, newVal) {
+				target[prop] = newVal;
+				subscribers.forEach(fn => fn());
+				if (window.__erm_update) window.__erm_update();
+				return true;
+			}
+		});
+	};
+
 	window.__erm_bindings = window.__erm_bindings || [];
 	window.__erm_events = window.__erm_events || [];
 
+	let _updateQueued = false;
 	window.__erm_update = function() {
-		%s
-		window.__erm_bindings.forEach(b => {
-			try {
-				let val = b.get();
-				if (b.last !== val) {
-					b.last = val;
-					let el = document.getElementById(b.id);
-					if (el) {
-						if (b.type === 'value') {
-							if (el.value !== val) el.value = val;
-						} else {
-							el.innerText = val;
+		if (_updateQueued) return;
+		_updateQueued = true;
+		
+		requestAnimationFrame(() => {
+			%s
+			window.__erm_bindings.forEach(b => {
+				try {
+					let val = b.get();
+					if (b.last !== val) {
+						b.last = val;
+						let el = document.getElementById(b.id);
+						if (el) {
+							if (b.type === 'value') {
+								if (el.value !== val) el.value = val;
+							} else {
+								el.innerText = val;
+							}
 						}
 					}
-				}
-			} catch(e) {}
+				} catch(e) {}
+			});
+			_updateQueued = false;
 		});
 	};
 
 	// User Logic
 	%s
 
-	// Conditional Engine
+	// Event Delegation
 	const __erm_handle_event = (e) => {
-		// 1. Dynamic expressions (from loops, etc.)
 		let target = e.target.closest('[data-erm-evt-' + e.type + ']');
 		if (target) {
 			let raw = target.getAttribute('data-erm-evt-' + e.type);
 			if (raw) {
 				try {
-					let expr = raw;
-					if (raw.startsWith('<!--erm-evt:')) {
-						expr = atob(raw.slice(12, -3));
-					} else {
-						expr = atob(raw);
-					}
+					let expr = raw.startsWith('<!--erm-evt:') ? atob(raw.slice(12, -3)) : atob(raw);
 					const result = eval(expr);
 					if (typeof result === 'function') result(e);
-					if (typeof window.__erm_update === 'function') window.__erm_update();
+					// Manual update here is now a fallback, signals handle themselves!
+					window.__erm_update();
 				} catch(err) { console.error(err); }
 			}
 		}
-		// 2. Static events (bind:value, etc.)
 		window.__erm_events.forEach(ev => {
 			if (ev.event === e.type) {
 				let staticTarget = e.target.closest('[data-erm-evt-' + ev.event + '-bind="' + ev.id + '"]');
