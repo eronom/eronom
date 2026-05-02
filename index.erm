@@ -1,18 +1,16 @@
 <script>
-    import Header from './Header.erm';
-    
+
     let count = signal(0);
     let todoText = signal('');
     let todos = signal([]);
     
-    let showExtraContent = true;
-    let porridge = { temperature: 100 };
+    let showExtraContent = signal(true);
+    let porridge = signal({ temperature: 100 });
 
     const loadTodos = async () => {
         const r = await fetch('/api/todos');
         const data = await r.json();
-        todos = data;
-        if (typeof window.__erm_update === 'function') window.__erm_update();
+        todos = data; // Svelte-style assignment!
     }
 
     const addTodo = async () => {
@@ -79,16 +77,23 @@
         console.log("Erm component script loaded.");
     });
 
+    // TEST: Background updates now work automatically!
+    let timer = signal(0);
+    setInterval(() => {
+        timer++;
+    }, 1000);
+
     let randomNum = Math.floor(Math.random() * 1000);
-    let items = [1, 2, 3, 4, 5];
+    let items = signal([1, 2, 3, 4, 5]);
 </script>
 
 
 <h1>Devsssssss svsss toososssssss sErmssss Dev Serverss with HMR!</h1>
 
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
-    <h3>Reactive Signal Demo0vsssssrr</h3>
-    <button onClick={()=>{count+=1}}>Count {count}</button>
+    <h3>Reactive Signal Demo (Svelte-like)</h3>
+    <button onClick={()=>{count++}}>Count {count}</button>
+    <p>Background Timer: <strong>{timer}s</strong></p>
 </div>
 
 <p>Edited ss<code>index.erm</code> to see csshanges ssinstantly.</p>
@@ -124,10 +129,10 @@
         <h3>🎉 Condssitsionalssssssss Rendered Boxxxxxss</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
-    <button onclick={()=>{showExtraContent=false}}>showExtraContent</button>
+    <button onclick={()=>{showExtraContent=false}}>Hide Content</button>
 {:else}
     <div><p>showExtraContent is false</p></div>
-    <button onclick={()=>{showExtraContent=true}}>showExtraContent</button>
+    <button onclick={()=>{showExtraContent=true}}>Show Content</button>
 {/if}
 
 <div style="margin-top: 20px; padding: 20px; border: 2px solid #9b59b6; border-radius: 10px; background: #2d1b4e;">
