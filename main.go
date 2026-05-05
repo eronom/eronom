@@ -1214,6 +1214,17 @@ func main() {
 			if len(os.Args) > 2 {
 				dir = os.Args[2]
 			}
+		} else if strings.HasSuffix(os.Args[1], ".em") {
+			content, err := os.ReadFile(os.Args[1])
+			if err != nil {
+				log.Fatal(err)
+			}
+			ev := eval.NewErmEval()
+			err = ev.Run(string(content))
+			if err != nil {
+				log.Fatal(err)
+			}
+			return
 		} else {
 			dir = os.Args[1]
 		}

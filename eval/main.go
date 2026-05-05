@@ -583,3 +583,91 @@ func (p *exprParser) parsePrimary() (interface{}, error) {
 
 	return nil, fmt.Errorf("unexpected character: %c", c)
 }
+
+// Run executes a script line-by-line, supporting assignments and print().
+func (ev *ErmEval) Run(script string) error {
+	lines := strings.Split(script, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		// Handle assignments: name := expr, name = expr, let name = expr, etc.
+		if strings.Contains(line, ":=") {
+			parts := strings.SplitN(line, ":=", 2)
+			name := strings.TrimSpace(parts[0])
+			expr := strings.TrimSpace(parts[1])
+			val, err := ev.Eval(expr)
+			if err != nil {
+				return fmt.Errorf("error evaluating '%s': %v", expr, err)
+			}
+			ev.Set(name, val)
+			continue
+		}
+
+		// Handle let/const/var declarations
+		reDecl := regexp.MustCompile(`^(?:let|const|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(.*)$`)
+		if m := reDecl.FindStringSubmatch(line); m != nil {
+			name := m[1]
+			expr := strings.TrimSuffix(strings.TrimSpace(m[2]), ";")
+			val, err := ev.Eval(expr)
+			if err != nil {
+				return fmt.Errorf("error evaluating '%s': %v", expr, err)
+			}
+			ev.Set(name, val)
+			continue
+		}
+
+		// Handle plain assignment: name = expr
+		if strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			name := strings.TrimSpace(parts[0])
+			expr := strings.TrimSuffix(strings.TrimSpace(parts[1]), ";")
+			// Only treat as assignment if name is a valid identifier
+			if isIdent(name) {
+				val, err := ev.Eval(expr)
+				if err != nil {
+					return fmt.Errorf("error evaluating '%s': %v", expr, err)
+				}
+				ev.Set(name, val)
+				continue
+			}
+		}
+
+		// Handle print(expr)
+		if strings.HasPrefix(line, "print(") {
+			closeParen := strings.LastIndex(line, ")")
+			if closeParen != -1 {
+				expr := line[len("print(") : closeParen]
+				val, err := ev.Eval(expr)
+				if err != nil {
+					return fmt.Errorf("error evaluating print argument '%s': %v", expr, err)
+				}
+				fmt.Println(val)
+				continue
+			}
+		}
+
+		// Otherwise just evaluate as an expression
+		_, err := ev.Eval(line)
+		if err != nil {
+			// Ignore errors for non-expressions or just return them?
+			// For a script runner, we probably want to know if a line is invalid.
+			return fmt.Errorf("invalid line: %s (%v)", line, err)
+		}
+	}
+	return nil
+}
+
+func isIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !isIdentChar(s[i]) {
+			return false
+		}
+	}
+	return true
+}
