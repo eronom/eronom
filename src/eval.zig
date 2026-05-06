@@ -178,7 +178,7 @@ pub const ErmEval = struct {
                     if (j < script.len and script[j] == '=') {
                         j += 1;
                         const val_start = j;
-                        const parsed = parseJSValue(script, val_start, self.allocator);
+                        const parsed = try parseJSValue(script, val_start, self.allocator);
                         if (parsed.val) |v| {
                             try self.set_owned(name, v);
                             i = parsed.pos;
@@ -422,7 +422,7 @@ fn valuesEqual(a: Value, b: Value) bool {
     }
 }
 
-fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) struct { val: ?Value, pos: usize } {
+fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) anyerror!struct { val: ?Value, pos: usize } {
     var p = pos;
     while (p < s.len and std.ascii.isWhitespace(s[p])) {
         p += 1;
@@ -432,12 +432,12 @@ fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) struct 
     // signal()
     if (std.mem.startsWith(u8, s[p..], "signal(")) {
         p += 7;
-        const inner = parseJSValue(s, p, allocator);
+        const inner = try parseJSValue(s, p, allocator);
         p = inner.pos;
         while (p < s.len and s[p] != ')') p += 1;
         if (p < s.len) p += 1;
         var m = std.StringHashMap(Value).init(allocator);
-        if (inner.val) |v| m.put("value", v) catch {};
+        if (inner.val) |v| try m.put(try allocator.dupe(u8, "value"), v);
         return .{ .val = .{ .map = m }, .pos = p };
     }
 
@@ -461,10 +461,50 @@ fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) struct 
         return .{ .val = .{ .number = n }, .pos = p };
     }
 
+    // Array literal
+    if (s[p] == '[') {
+        p += 1;
+        var list: std.ArrayList(Value) = .empty;
+        while (p < s.len and s[p] != ']') {
+            const inner = try parseJSValue(s, p, allocator);
+            if (inner.val) |v| {
+                try list.append(allocator, v);
+            }
+            p = inner.pos;
+            while (p < s.len and (s[p] == ',' or std.ascii.isWhitespace(s[p]))) p += 1;
+        }
+        if (p < s.len) p += 1;
+        return .{ .val = .{ .list = list }, .pos = p };
+    }
+
+    // Object literal
+    if (s[p] == '{') {
+        p += 1;
+        var map = std.StringHashMap(Value).init(allocator);
+        while (p < s.len and s[p] != '}') {
+            while (p < s.len and std.ascii.isWhitespace(s[p])) p += 1;
+            const start = p;
+            while (p < s.len and (std.ascii.isAlphanumeric(s[p]) or s[p] == '_' or s[p] == '$')) p += 1;
+            const key = try allocator.dupe(u8, s[start..p]);
+            while (p < s.len and (std.ascii.isWhitespace(s[p]) or s[p] == ':')) p += 1;
+            const inner = try parseJSValue(s, p, allocator);
+            if (inner.val) |v| {
+                try map.put(key, v);
+            } else {
+                allocator.free(key);
+            }
+            p = inner.pos;
+            while (p < s.len and (s[p] == ',' or std.ascii.isWhitespace(s[p]))) p += 1;
+        }
+        if (p < s.len) p += 1;
+        return .{ .val = .{ .map = map }, .pos = p };
+    }
+
     // Bool/Null
     if (std.mem.startsWith(u8, s[p..], "true")) return .{ .val = .{ .boolean = true }, .pos = p + 4 };
     if (std.mem.startsWith(u8, s[p..], "false")) return .{ .val = .{ .boolean = false }, .pos = p + 5 };
     if (std.mem.startsWith(u8, s[p..], "null")) return .{ .val = .null, .pos = p + 4 };
+    if (std.mem.startsWith(u8, s[p..], "undefined")) return .{ .val = .null, .pos = p + 9 };
 
     return .{ .val = null, .pos = p };
 }
