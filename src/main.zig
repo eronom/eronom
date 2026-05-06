@@ -3,6 +3,56 @@ const eval = @import("eval.zig");
 const router = @import("router.zig");
 const compiler = @import("compiler.zig");
 
+const Watcher = struct {
+    mutex: std.Thread.Mutex = .{},
+    cond: std.Thread.Condition = .{},
+    change_count: usize = 0,
+
+    fn notify(self: *Watcher) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.change_count += 1;
+        self.cond.broadcast();
+    }
+
+    fn wait(self: *Watcher, last_count: usize) usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        while (self.change_count == last_count) {
+            self.cond.wait(&self.mutex);
+        }
+        return self.change_count;
+    }
+};
+
+var global_watcher = Watcher{};
+
+fn watchFiles(allocator: std.mem.Allocator, dir: []const u8) !void {
+    var last_check: i128 = std.time.nanoTimestamp();
+    const ns_per_ms = 1_000_000;
+    while (true) {
+        std.Thread.sleep(200 * ns_per_ms);
+        var iter_dir = std.fs.cwd().openDir(dir, .{ .iterate = true }) catch continue;
+        defer iter_dir.close();
+        var walker = iter_dir.walk(allocator) catch continue;
+        defer walker.deinit();
+
+        var changed = false;
+        while (walker.next() catch break) |entry| {
+            if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".erm") or std.mem.endsWith(u8, entry.path, ".css"))) {
+                const stat = entry.dir.statFile(entry.basename) catch continue;
+                if (stat.mtime > last_check) {
+                    changed = true;
+                    if (stat.mtime > last_check) last_check = stat.mtime;
+                }
+            }
+        }
+        if (changed) {
+            global_watcher.notify();
+        }
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -83,72 +133,96 @@ fn startServer(allocator: std.mem.Allocator, dir: []const u8, is_prod: bool) !vo
     std.debug.print("{s} server running at http://localhost:{d}\n", .{ if (is_prod) "Production" else "Dev", port });
 
     var app = router.App.init(allocator);
-    defer app.deinit();
+    // defer app.deinit();
 
-    // Register routes...
+    if (!is_prod) {
+        _ = try std.Thread.spawn(.{}, watchFiles, .{ allocator, dir });
+    }
 
     while (true) {
         const connection = try server.accept();
-        defer connection.stream.close();
+        _ = try std.Thread.spawn(.{}, handleConnection, .{ allocator, connection, dir, &app });
+    }
+}
 
-        var reader_buf: [4096]u8 = undefined;
-        var buffered_reader = connection.stream.reader(&reader_buf);
-        var writer_buf: [4096]u8 = undefined;
-        var buffered_writer = connection.stream.writer(&writer_buf);
-        
-        var http_server = std.http.Server.init(buffered_reader.interface(), &buffered_writer.interface);
+fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Connection, dir: []const u8, app: *router.App) void {
+    defer connection.stream.close();
 
-        var request = try http_server.receiveHead();
-        
-        if (try app.serveHTTP(&request)) continue;
+    var reader_buf: [4096]u8 = undefined;
+    var buffered_reader = connection.stream.reader(&reader_buf);
+    var writer_buf: [4096]u8 = undefined;
+    var buffered_writer = connection.stream.writer(&writer_buf);
+    
+    var http_server = std.http.Server.init(buffered_reader.interface(), &buffered_writer.interface);
 
-        // Static file serving
-        const target = request.head.target;
-        var full_path = try std.fs.path.join(allocator, &.{ dir, target });
-        defer allocator.free(full_path);
+    var request = http_server.receiveHead() catch return;
+    
+    const target = request.head.target;
 
-        var stat = std.fs.cwd().statFile(full_path) catch {
-            try request.respond("Not Found", .{ .status = .not_found });
-            continue;
+    // HMR Endpoint
+    if (std.mem.eql(u8, target, "/__hmr")) {
+        const response_headers = "HTTP/1.1 200 OK\r\n" ++
+                               "Content-Type: text/event-stream\r\n" ++
+                               "Cache-Control: no-cache\r\n" ++
+                               "Connection: keep-alive\r\n" ++
+                               "Access-Control-Allow-Origin: *\r\n\r\n";
+        connection.stream.writeAll(response_headers) catch return;
+
+        var last_count = global_watcher.change_count;
+        while (true) {
+            last_count = global_watcher.wait(last_count);
+            connection.stream.writeAll("data: {\"type\": \"update\"}\n\n") catch break;
+        }
+        return;
+    }
+
+    if (app.serveHTTP(&request) catch false) return;
+
+    // Static file serving
+    var full_path = std.fs.path.join(allocator, &.{ dir, target }) catch return;
+    defer allocator.free(full_path);
+
+    var stat = std.fs.cwd().statFile(full_path) catch {
+        _ = request.respond("Not Found", .{ .status = .not_found }) catch {};
+        return;
+    };
+
+    if (stat.kind == .directory) {
+        var found = false;
+        const index_files = [_][]const u8{ "index.erm", "index.html" };
+        for (index_files) |idx_file| {
+            const idx_path = std.fs.path.join(allocator, &.{ full_path, idx_file }) catch continue;
+            defer allocator.free(idx_path);
+            if (std.fs.cwd().statFile(idx_path)) |s| {
+                stat = s;
+                const new_path = allocator.dupe(u8, idx_path) catch continue;
+                allocator.free(full_path);
+                full_path = new_path;
+                found = true;
+                break;
+            } else |_| {}
+        }
+        if (!found) {
+            _ = request.respond("Not Found", .{ .status = .not_found }) catch {};
+            return;
+        }
+    }
+
+    // Handle .erm processing
+    if (std.mem.endsWith(u8, full_path, ".erm")) {
+        const content = std.fs.cwd().readFileAlloc(allocator, full_path, 1024 * 1024) catch return;
+        defer allocator.free(content);
+        const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, content) catch return;
+        defer allocator.free(processed);
+        _ = request.respond(processed, .{ .status = .ok, .extra_headers = &.{.{ .name = "Content-Type", .value = "text/html" }} }) catch {};
+    } else {
+        const file = std.fs.cwd().openFile(full_path, .{}) catch {
+            _ = request.respond("Not Found", .{ .status = .not_found }) catch {};
+            return;
         };
-
-        if (stat.kind == .directory) {
-            var found = false;
-            const index_files = [_][]const u8{ "index.erm", "index.html" };
-            for (index_files) |idx_file| {
-                const idx_path = try std.fs.path.join(allocator, &.{ full_path, idx_file });
-                defer allocator.free(idx_path);
-                if (std.fs.cwd().statFile(idx_path)) |s| {
-                    stat = s;
-                    const new_path = try allocator.dupe(u8, idx_path);
-                    allocator.free(full_path);
-                    full_path = new_path;
-                    found = true;
-                    break;
-                } else |_| {}
-            }
-            if (!found) {
-                try request.respond("Not Found", .{ .status = .not_found });
-                continue;
-            }
-        }
-
-        // Handle .erm processing
-        if (std.mem.endsWith(u8, full_path, ".erm")) {
-            const content = try std.fs.cwd().readFileAlloc(allocator, full_path, 1024 * 1024);
-            defer allocator.free(content);
-            const processed = try compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, content);
-            defer allocator.free(processed);
-            try request.respond(processed, .{ .status = .ok, .extra_headers = &.{.{ .name = "Content-Type", .value = "text/html" }} });
-        } else {
-            const file = std.fs.cwd().openFile(full_path, .{}) catch {
-                try request.respond("Not Found", .{ .status = .not_found });
-                continue;
-            };
-            defer file.close();
-            const content = try file.readToEndAlloc(allocator, stat.size);
-            defer allocator.free(content);
-            try request.respond(content, .{ .status = .ok });
-        }
+        defer file.close();
+        const content = file.readToEndAlloc(allocator, stat.size) catch return;
+        defer allocator.free(content);
+        _ = request.respond(content, .{ .status = .ok }) catch {};
     }
 }

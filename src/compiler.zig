@@ -200,6 +200,7 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
 }
 
 fn replaceWord(allocator: std.mem.Allocator, input: []const u8, word: []const u8, suffix: []const u8) ![]const u8 {
+    if (word.len <= 1) return try allocator.dupe(u8, input); // Extra safety
     var res: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < input.len) {
@@ -268,30 +269,57 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _ : []const u8, conten
             
             var sj: usize = 0;
             while (sj < script_content.len) {
-                const patterns = [_][]const u8{ "let", "const", "var" };
-                var found = false;
-                for (patterns) |p| {
-                    if (std.mem.startsWith(u8, script_content[sj..], p) and (sj + p.len < script_content.len and std.ascii.isWhitespace(script_content[sj + p.len]))) {
-                        var k = sj + p.len;
-                        while (k < script_content.len and std.ascii.isWhitespace(script_content[k])) k += 1;
-                        const name_start = k;
-                        while (k < script_content.len and (std.ascii.isAlphanumeric(script_content[k]) or script_content[k] == '_' or script_content[k] == '$')) k += 1;
-                        const name = script_content[name_start..k];
-                        
-                        while (k < script_content.len and std.ascii.isWhitespace(script_content[k])) k += 1;
-                        if (k < script_content.len and script_content[k] == '=') {
-                            k += 1;
-                            while (k < script_content.len and std.ascii.isWhitespace(script_content[k])) k += 1;
-                            if (std.mem.startsWith(u8, script_content[k..], "signal(")) {
-                                try signal_vars_list.append(allocator, try allocator.dupe(u8, name));
-                                sj = k + 7;
-                                found = true;
+                const signal_call = "signal(";
+                const signal_idx = std.mem.indexOf(u8, script_content[sj..], signal_call);
+                if (signal_idx) |idx| {
+                    const call_pos = sj + idx;
+                    // Find '=' before signal(
+                    var eq_pos: ?usize = null;
+                    var k = call_pos;
+                    while (k > sj) {
+                        k -= 1;
+                        if (script_content[k] == '=') {
+                            eq_pos = k;
+                            break;
+                        }
+                        if (script_content[k] == ';' or script_content[k] == '{' or script_content[k] == '}') break;
+                    }
+
+                    if (eq_pos) |ep| {
+                        // Find name before '='
+                        var name_end: ?usize = null;
+                        var m = ep;
+                        while (m > sj) {
+                            m -= 1;
+                            if (std.ascii.isWhitespace(script_content[m])) continue;
+                            if (std.ascii.isAlphanumeric(script_content[m]) or script_content[m] == '_' or script_content[m] == '$') {
+                                name_end = m + 1;
                                 break;
+                            }
+                            break;
+                        }
+
+                        if (name_end) |ne| {
+                            var m_start = ne;
+                            while (m_start > sj) {
+                                m_start -= 1;
+                                if (!(std.ascii.isAlphanumeric(script_content[m_start]) or script_content[m_start] == '_' or script_content[m_start] == '$')) {
+                                    m_start += 1;
+                                    break;
+                                }
+                            }
+                            const name = script_content[m_start..ne];
+                            if (name.len > 1) {
+                                var already = false;
+                                for (signal_vars_list.items) |existing| {
+                                    if (std.mem.eql(u8, existing, name)) { already = true; break; }
+                                }
+                                if (!already) try signal_vars_list.append(allocator, try allocator.dupe(u8, name));
                             }
                         }
                     }
-                }
-                if (!found) sj += 1;
+                    sj = call_pos + signal_call.len;
+                } else break;
             }
 
             try scripts.append(allocator, try allocator.dupe(u8, script_content));
@@ -347,6 +375,99 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
     const result = try processComponentTree(allocator, base_dir, content, &visited);
     
     var final: std.ArrayList(u8) = .empty;
+
+    // HMR Client Script (at the top to catch all listeners/intervals from the start)
+    const hmr_script = 
+        \\<script>
+        \\(function() {
+        \\  if (window.__hmr_initialized) return;
+        \\  window.__hmr_initialized = true;
+        \\  console.log("[HMR] Initialized");
+        \\
+        \\  window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
+        \\  window.hmr = {
+        \\    data: window.__hmr_data || {},
+        \\    accept: (cb) => window.__hmr_hooks.accept.push(cb),
+        \\    dispose: (cb) => window.__hmr_hooks.dispose.push(cb),
+        \\    invalidate: () => location.reload()
+        \\  };
+        \\  window.__hmr_data = window.hmr.data;
+        \\
+        \\  window.__hmr_intervals = window.__hmr_intervals || [];
+        \\  const originalSetInterval = window.setInterval;
+        \\  window.setInterval = function(fn, t) {
+        \\    let id = originalSetInterval(fn, t);
+        \\    window.__hmr_intervals.push(id);
+        \\    return id;
+        \\  };
+        \\
+        \\  window.__hmr_listeners = window.__hmr_listeners || [];
+        \\  const originalDocAddEventListener = document.addEventListener;
+        \\  document.addEventListener = function(type, listener, options) {
+        \\    window.__hmr_listeners.push({ target: document, type, listener, options });
+        \\    return originalDocAddEventListener.call(document, type, listener, options);
+        \\  };
+        \\
+        \\  const originalWinAddEventListener = window.addEventListener;
+        \\  window.addEventListener = function(type, listener, options) {
+        \\    window.__hmr_listeners.push({ target: window, type, listener, options });
+        \\    return originalWinAddEventListener.call(window, type, listener, options);
+        \\  };
+        \\
+        \\  const es = new EventSource("/__hmr");
+        \\  es.onmessage = (e) => {
+        \\    const data = JSON.parse(e.data);
+        \\    if (data.type === 'reload') {
+        \\      location.reload();
+        \\    } else if (data.type === 'update') {
+        \\      console.log("[HMR] Update received");
+        \\
+        \\      window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
+        \\      window.__hmr_hooks.dispose = [];
+        \\      window.__hmr_hooks.accept = [];
+        \\
+        \\      window.__hmr_intervals.forEach(clearInterval);
+        \\      window.__hmr_intervals = [];
+        \\
+        \\      window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
+        \\        target.removeEventListener(type, listener, options);
+        \\      });
+        \\      window.__hmr_listeners = [];
+        \\
+        \\      fetch(location.href)
+        \\        .then(r => r.text())
+        \\        .then(html => {
+        \\          const parser = new DOMParser();
+        \\          const doc = parser.parseFromString(html, 'text/html');
+        \\          document.title = doc.title;
+        \\
+        \\          let oldStyles = document.querySelectorAll('style, link[rel="stylesheet"]');
+        \\          oldStyles.forEach(s => s.remove());
+        \\          let newStyles = doc.querySelectorAll('style, link[rel="stylesheet"]');
+        \\          newStyles.forEach(s => document.head.appendChild(s.cloneNode(true)));
+        \\
+        \\          document.body.innerHTML = doc.body.innerHTML;
+        \\          const scripts = document.body.querySelectorAll('script');
+        \\          scripts.forEach(s => {
+        \\            if (s.textContent.includes("__hmr_initialized")) return;
+        \\            const newScript = document.createElement('script');
+        \\            newScript.text = s.innerHTML;
+        \\            if(s.src) {
+        \\               let sUrl = new URL(s.src, location.href);
+        \\               sUrl.searchParams.set('t', new Date().getTime());
+        \\               newScript.src = sUrl.href;
+        \\            }
+        \\            s.replaceWith(newScript);
+        \\          });
+        \\          document.dispatchEvent(new Event('DOMContentLoaded'));
+        \\          window.dispatchEvent(new Event('load'));
+        \\        });
+        \\    }
+        \\  };
+        \\})();
+        \\</script>
+    ;
+    try final.appendSlice(allocator, hmr_script);
     try final.appendSlice(allocator, result.html);
     
     if (result.styles.items.len > 0) {
