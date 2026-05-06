@@ -30,15 +30,18 @@
 </script>
 
 
-<h1>HMR IS NOW WORKING ddPERFECTsLY!</h1>
-
+<h1>HMR gfibhNOW WORKING PERFECTsLY!</h1>
+vcbc fdh scvxhhhhhhhhhhhhhh
+fdvchgvyufdnb
+gvfcjb hyun
+<p>hello DHBVYUCBHNFDBVH BHYU</p>
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
     <h3>Reactive Signal Demo (Svelte-like)</h3>
     <button onClick={()=>{count++}}>Count {count}</button>
     <p>Background Timer: <strong>{timer}s</strong></p>
 </div>
 
-<p>HMR is now EFddFIaaCIENT and CLEAN! Edited <code>index.erm</code>.</p>
+<p>HMR is now EFddFIaaCIENTss and CLEAN! Edited <code>index.erm</code>.</p>
 <div id="app"></div>
 <h2>Hellloo web added h2 tag</h2>
 <p>Random: {randomNum}</p>

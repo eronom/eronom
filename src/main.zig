@@ -7,10 +7,14 @@ const Watcher = struct {
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     change_count: usize = 0,
+    last_path: ?[]const u8 = null,
+    allocator: std.mem.Allocator,
 
-    fn notify(self: *Watcher) void {
+    fn notify(self: *Watcher, path: []const u8) void {
         self.mutex.lock();
         defer self.mutex.unlock();
+        if (self.last_path) |p| self.allocator.free(p);
+        self.last_path = self.allocator.dupe(u8, path) catch null;
         self.change_count += 1;
         self.cond.broadcast();
     }
@@ -25,7 +29,7 @@ const Watcher = struct {
     }
 };
 
-var global_watcher = Watcher{};
+var global_watcher: Watcher = undefined;
 
 fn watchFiles(allocator: std.mem.Allocator, dir: []const u8) !void {
     var last_check: i128 = std.time.nanoTimestamp();
@@ -37,18 +41,18 @@ fn watchFiles(allocator: std.mem.Allocator, dir: []const u8) !void {
         var walker = iter_dir.walk(allocator) catch continue;
         defer walker.deinit();
 
-        var changed = false;
+        var changed_path: ?[]const u8 = null;
         while (walker.next() catch break) |entry| {
             if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".erm") or std.mem.endsWith(u8, entry.path, ".css"))) {
                 const stat = entry.dir.statFile(entry.basename) catch continue;
                 if (stat.mtime > last_check) {
-                    changed = true;
                     if (stat.mtime > last_check) last_check = stat.mtime;
+                    changed_path = entry.path;
                 }
             }
         }
-        if (changed) {
-            global_watcher.notify();
+        if (changed_path != null) {
+            global_watcher.notify(changed_path.?);
         }
     }
 }
@@ -57,6 +61,12 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
+
+    global_watcher.allocator = allocator;
+    global_watcher.last_path = null;
+    global_watcher.change_count = 0;
+    global_watcher.mutex = .{};
+    global_watcher.cond = .{};
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -139,9 +149,11 @@ fn startServer(allocator: std.mem.Allocator, dir: []const u8, is_prod: bool) !vo
         _ = try std.Thread.spawn(.{}, watchFiles, .{ allocator, dir });
     }
 
+    const app_ptr = &app;
+
     while (true) {
         const connection = try server.accept();
-        _ = try std.Thread.spawn(.{}, handleConnection, .{ allocator, connection, dir, &app });
+        _ = try std.Thread.spawn(.{}, handleConnection, .{ allocator, connection, dir, app_ptr });
     }
 }
 
@@ -171,7 +183,10 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
         var last_count = global_watcher.change_count;
         while (true) {
             last_count = global_watcher.wait(last_count);
-            connection.stream.writeAll("data: {\"type\": \"update\"}\n\n") catch break;
+            const path = global_watcher.last_path orelse "unknown";
+            var json_buf: [1024]u8 = undefined;
+            const json = std.fmt.bufPrint(&json_buf, "data: {{\"type\": \"update\", \"path\": \"{s}\"}}\n\n", .{path}) catch continue;
+            connection.stream.writeAll(json) catch break;
         }
         return;
     }

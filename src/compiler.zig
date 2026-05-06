@@ -16,11 +16,11 @@ pub fn scopeCSS(allocator: std.mem.Allocator, css: []const u8, scopeID: []const 
             if (!first) try result.appendSlice(allocator, ", ");
             const trimmed = std.mem.trim(u8, s, " \t\n\r");
             if (trimmed.len > 0) {
-                if (std.mem.containsAtLeast(u8, trimmed, 1, "%") or 
-                    (std.mem.eql(u8, trimmed, "to")) or 
-                    (std.mem.eql(u8, trimmed, "from")) or 
-                    (std.mem.startsWith(u8, trimmed, "body")) or 
-                    (std.mem.startsWith(u8, trimmed, "html"))) 
+                if (std.mem.containsAtLeast(u8, trimmed, 1, "%") or
+                    (std.mem.eql(u8, trimmed, "to")) or
+                    (std.mem.eql(u8, trimmed, "from")) or
+                    (std.mem.startsWith(u8, trimmed, "body")) or
+                    (std.mem.startsWith(u8, trimmed, "html")))
                 {
                     try result.appendSlice(allocator, trimmed);
                 } else {
@@ -58,7 +58,7 @@ pub fn scopeHTML(allocator: std.mem.Allocator, html: []const u8, scopeID: []cons
             break;
         };
         try result.appendSlice(allocator, html[i..tag_start]);
-        
+
         const tag_end = std.mem.indexOfScalarPos(u8, html, tag_start, '>') orelse {
             try result.appendSlice(allocator, html[tag_start..]);
             break;
@@ -68,7 +68,7 @@ pub fn scopeHTML(allocator: std.mem.Allocator, html: []const u8, scopeID: []cons
         if (tag_content.len > 0 and tag_content[0] != '/') {
             var parts_it = std.mem.tokenizeAny(u8, tag_content, " \t\n\r");
             const tag_name = parts_it.next() orelse "";
-            
+
             const is_component = tag_name.len > 0 and std.ascii.isUpper(tag_name[0]);
             const is_global = std.mem.eql(u8, tag_name, "html") or std.mem.eql(u8, tag_name, "head") or std.mem.eql(u8, tag_name, "body") or std.mem.eql(u8, tag_name, "!DOCTYPE") or std.mem.eql(u8, tag_name, "script") or std.mem.eql(u8, tag_name, "style");
 
@@ -105,7 +105,7 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     var in_tag = false;
-    
+
     while (i < html.len) {
         const c = html[i];
         if (!in_tag) {
@@ -115,17 +115,16 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                 i += 1;
                 continue;
             }
-            if (c == '{' and i + 1 < html.len and html[i+1] != '#' and html[i+1] != '/' and html[i+1] != ':') {
+            if (c == '{' and i + 1 < html.len and html[i + 1] != '#' and html[i + 1] != '/' and html[i + 1] != ':') {
                 var depth: usize = 1;
                 var j = i + 1;
                 while (j < html.len and depth > 0) {
-                    if (html[j] == '{') depth += 1
-                    else if (html[j] == '}') depth -= 1;
+                    if (html[j] == '{') depth += 1 else if (html[j] == '}') depth -= 1;
                     j += 1;
                 }
                 if (depth == 0) {
                     var expr: []const u8 = try allocator.dupe(u8, html[i + 1 .. j - 1]);
-                    
+
                     for (signals) |sig| {
                         const new_expr = try replaceWord(allocator, expr, sig, ".value");
                         allocator.free(expr);
@@ -136,8 +135,8 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                     try out.appendSlice(allocator, "<span id=\"");
                     try out.appendSlice(allocator, id);
                     try out.appendSlice(allocator, "\"></span>");
-                    
-                    const binding = try std.fmt.allocPrint(allocator, "window.__erm_bindings.push({{ id: \"{s}\", get: () => ({s}) }});", .{id, expr});
+
+                    const binding = try std.fmt.allocPrint(allocator, "window.__erm_bindings.push({{ id: \"{s}\", get: () => ({s}) }});", .{ id, expr });
                     try bindings.append(allocator, binding);
                     allocator.free(expr);
                     i = j;
@@ -151,17 +150,16 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                 i += 1;
                 continue;
             }
-            if (i > 0 and std.ascii.isWhitespace(html[i-1]) and std.mem.startsWith(u8, html[i..], "on")) {
+            if (i > 0 and std.ascii.isWhitespace(html[i - 1]) and std.mem.startsWith(u8, html[i..], "on")) {
                 var k = i + 2;
                 while (k < html.len and std.ascii.isAlphabetic(html[k])) k += 1;
                 if (k < html.len and html[k] == '=') {
                     const attr_name = html[i..k];
-                    if (k + 1 < html.len and html[k+1] == '{') {
+                    if (k + 1 < html.len and html[k + 1] == '{') {
                         var depth: usize = 1;
                         var j = k + 2;
                         while (j < html.len and depth > 0) {
-                            if (html[j] == '{') depth += 1
-                            else if (html[j] == '}') depth -= 1;
+                            if (html[j] == '{') depth += 1 else if (html[j] == '}') depth -= 1;
                             j += 1;
                         }
                         if (depth == 0) {
@@ -176,13 +174,13 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                             const event_type_raw = attr_name[2..];
                             const event_type = try allocator.dupe(u8, event_type_raw);
                             for (event_type) |*char| char.* = std.ascii.toLower(char.*);
-                            
+
                             const id = try std.fmt.allocPrint(allocator, "erm-evt-{d}", .{j});
                             try out.appendSlice(allocator, "id=\"");
                             try out.appendSlice(allocator, id);
                             try out.appendSlice(allocator, "\" ");
-                            
-                            const event = try std.fmt.allocPrint(allocator, "window.__erm_events.push({{ id: \"{s}\", event: \"{s}\", handler: (event) => {{ ({s})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); }} }});", .{id, event_type, expr});
+
+                            const event = try std.fmt.allocPrint(allocator, "window.__erm_events.push({{ id: \"{s}\", event: \"{s}\", handler: (event) => {{ ({s})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); }} }});", .{ id, event_type, expr });
                             try events.append(allocator, event);
                             allocator.free(expr);
                             allocator.free(event_type);
@@ -203,24 +201,41 @@ fn replaceWord(allocator: std.mem.Allocator, input: []const u8, word: []const u8
     if (word.len <= 1) return try allocator.dupe(u8, input); // Extra safety
     var res: std.ArrayList(u8) = .empty;
     var i: usize = 0;
+    var in_string: ?u8 = null;
     while (i < input.len) {
+        if (in_string) |quote| {
+            if (input[i] == quote and (i == 0 or input[i - 1] != '\\')) {
+                in_string = null;
+            }
+            try res.append(allocator, input[i]);
+            i += 1;
+            continue;
+        }
+
+        if (input[i] == '"' or input[i] == '\'') {
+            in_string = input[i];
+            try res.append(allocator, input[i]);
+            i += 1;
+            continue;
+        }
+
         if (std.mem.startsWith(u8, input[i..], word)) {
             const end = i + word.len;
-            const before_ok = if (i == 0) true else !std.ascii.isAlphanumeric(input[i - 1]) and input[i-1] != '_' and input[i-1] != '$';
+            const before_ok = if (i == 0) true else !std.ascii.isAlphanumeric(input[i - 1]) and input[i - 1] != '_' and input[i - 1] != '$';
             const after_ok = if (end == input.len) true else !std.ascii.isAlphanumeric(input[end]) and input[end] != '_' and input[end] != '$';
-            
+
             if (before_ok and after_ok) {
                 var is_decl = false;
                 const keywords = [_][]const u8{ "let", "const", "var" };
                 for (keywords) |kw| {
                     if (i >= kw.len + 1) {
                         const start = i - kw.len - 1;
-                        if (std.mem.eql(u8, input[start..i-1], kw) and std.ascii.isWhitespace(input[i-1])) {
-                             const pre_kw_ok = if (start == 0) true else !std.ascii.isAlphanumeric(input[start-1]);
-                             if (pre_kw_ok) {
-                                 is_decl = true;
-                                 break;
-                             }
+                        if (std.mem.eql(u8, input[start .. i - 1], kw) and std.ascii.isWhitespace(input[i - 1])) {
+                            const pre_kw_ok = if (start == 0) true else !std.ascii.isAlphanumeric(input[start - 1]);
+                            if (pre_kw_ok) {
+                                is_decl = true;
+                                break;
+                            }
                         }
                     }
                 }
@@ -243,7 +258,46 @@ fn replaceWord(allocator: std.mem.Allocator, input: []const u8, word: []const u8
     return res.toOwnedSlice(allocator);
 }
 
-pub fn processComponentTree(allocator: std.mem.Allocator, _ : []const u8, content: []const u8, _ : *std.StringHashMap(bool)) !ProcessResult {
+fn injectSignalName(allocator: std.mem.Allocator, input: []const u8, name: []const u8) ![]const u8 {
+    var res: std.ArrayList(u8) = .empty;
+    defer res.deinit(allocator);
+    var i: usize = 0;
+    while (i < input.len) {
+        if (std.mem.startsWith(u8, input[i..], name)) {
+            const end = i + name.len;
+            var k = end;
+            while (k < input.len and (std.ascii.isWhitespace(input[k]) or input[k] == ':')) k += 1;
+            if (k < input.len and input[k] == '=') {
+                k += 1;
+                while (k < input.len and std.ascii.isWhitespace(input[k])) k += 1;
+                if (std.mem.startsWith(u8, input[k..], "signal(")) {
+                    var depth: usize = 1;
+                    var j = k + 7;
+                    while (j < input.len and depth > 0) {
+                        if (input[j] == '(') depth += 1 else if (input[j] == ')') depth -= 1;
+                        j += 1;
+                    }
+                    if (depth == 0) {
+                        try res.appendSlice(allocator, input[i .. j - 1]);
+                        try res.appendSlice(allocator, ", \"");
+                        try res.appendSlice(allocator, name);
+                        try res.appendSlice(allocator, "\")");
+
+                        const remaining = try injectSignalName(allocator, input[j..], name);
+                        defer allocator.free(remaining);
+                        try res.appendSlice(allocator, remaining);
+                        return res.toOwnedSlice(allocator);
+                    }
+                }
+            }
+        }
+        try res.append(allocator, input[i]);
+        i += 1;
+    }
+    return res.toOwnedSlice(allocator);
+}
+
+pub fn processComponentTree(allocator: std.mem.Allocator, _: []const u8, content: []const u8, _: *std.StringHashMap(bool)) !ProcessResult {
     var scripts: std.ArrayList([]const u8) = .empty;
     var styles: std.ArrayList([]const u8) = .empty;
     var signal_vars_list: std.ArrayList([]const u8) = .empty;
@@ -266,7 +320,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _ : []const u8, conten
             const script_tag = content[i .. i + end + 9];
             const content_start = (std.mem.indexOfScalar(u8, script_tag, '>') orelse 0) + 1;
             const script_content = std.mem.trim(u8, script_tag[content_start .. script_tag.len - 9], " \t\n\r");
-            
+
             var sj: usize = 0;
             while (sj < script_content.len) {
                 const signal_call = "signal(";
@@ -312,9 +366,14 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _ : []const u8, conten
                             if (name.len > 1) {
                                 var already = false;
                                 for (signal_vars_list.items) |existing| {
-                                    if (std.mem.eql(u8, existing, name)) { already = true; break; }
+                                    if (std.mem.eql(u8, existing, name)) {
+                                        already = true;
+                                        break;
+                                    }
                                 }
-                                if (!already) try signal_vars_list.append(allocator, try allocator.dupe(u8, name));
+                                if (!already) {
+                                    try signal_vars_list.append(allocator, try allocator.dupe(u8, name));
+                                }
                             }
                         }
                     }
@@ -339,6 +398,11 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _ : []const u8, conten
 
     for (scripts.items, 0..) |s, si| {
         var transformed: []const u8 = try allocator.dupe(u8, s);
+        for (signal_vars_list.items) |sig| {
+            const new_injected = try injectSignalName(allocator, transformed, sig);
+            allocator.free(transformed);
+            transformed = new_injected;
+        }
         for (signal_vars_list.items) |sig| {
             const new_transformed = try replaceWord(allocator, transformed, sig, ".value");
             allocator.free(transformed);
@@ -371,13 +435,13 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _ : []const u8, conten
 pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8) ![]const u8 {
     var visited = std.StringHashMap(bool).init(allocator);
     defer visited.deinit();
-    
+
     const result = try processComponentTree(allocator, base_dir, content, &visited);
-    
+
     var final: std.ArrayList(u8) = .empty;
 
     // HMR Client Script (at the top to catch all listeners/intervals from the start)
-    const hmr_script = 
+    const hmr_script =
         \\<script>
         \\(function() {
         \\  if (window.__hmr_initialized) return;
@@ -414,25 +478,32 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\    return originalWinAddEventListener.call(window, type, listener, options);
         \\  };
         \\
+        \\  const originalElementAddEventListener = Element.prototype.addEventListener;
+        \\  Element.prototype.addEventListener = function(type, listener, options) {
+        \\    window.__hmr_listeners.push({ target: this, type, listener, options });
+        \\    return originalElementAddEventListener.call(this, type, listener, options);
+        \\  };
+        \\
         \\  const es = new EventSource("/__hmr");
         \\  es.onmessage = (e) => {
         \\    const data = JSON.parse(e.data);
         \\    if (data.type === 'reload') {
         \\      location.reload();
         \\    } else if (data.type === 'update') {
-        \\      console.log("[HMR] Update received");
+        \\      const path = data.path || 'unknown';
+        \\      console.log("[HMR] Update received for: " + path);
         \\
-        \\      window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
-        \\      window.__hmr_hooks.dispose = [];
-        \\      window.__hmr_hooks.accept = [];
-        \\
-        \\      window.__hmr_intervals.forEach(clearInterval);
-        \\      window.__hmr_intervals = [];
-        \\
-        \\      window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
-        \\        target.removeEventListener(type, listener, options);
-        \\      });
-        \\      window.__hmr_listeners = [];
+        \\      if (path.endsWith('.css')) {
+        \\          let links = document.querySelectorAll('link[rel="stylesheet"]');
+        \\          let found = false;
+        \\          links.forEach(link => {
+        \\              if (link.href.includes(path)) {
+        \\                  link.href = path + '?t=' + new Date().getTime();
+        \\                  found = true;
+        \\              }
+        \\          });
+        \\          if (found) return;
+        \\      }
         \\
         \\      fetch(location.href)
         \\        .then(r => r.text())
@@ -441,12 +512,67 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\          const doc = parser.parseFromString(html, 'text/html');
         \\          document.title = doc.title;
         \\
-        \\          let oldStyles = document.querySelectorAll('style, link[rel="stylesheet"]');
-        \\          oldStyles.forEach(s => s.remove());
-        \\          let newStyles = doc.querySelectorAll('style, link[rel="stylesheet"]');
-        \\          newStyles.forEach(s => document.head.appendChild(s.cloneNode(true)));
+        \\          function morph(oldNode, newNode) {
+        \\            if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
+        \\              oldNode.replaceWith(newNode.cloneNode(true));
+        \\              return;
+        \\            }
+        \\            if (oldNode.nodeType === Node.TEXT_NODE) {
+        \\              if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
+        \\              return;
+        \\            }
+        \\            const oldAttrs = oldNode.attributes;
+        \\            const newAttrs = newNode.attributes;
+        \\            if (oldAttrs && newAttrs) {
+        \\              for (let i = 0; i < newAttrs.length; i++) {
+        \\                const attr = newAttrs[i];
+        \\                if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
+        \\              }
+        \\              for (let i = 0; i < oldAttrs.length; i++) {
+        \\                const attr = oldAttrs[i];
+        \\                if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
+        \\              }
+        \\            }
+        \\            const oldChildren = Array.from(oldNode.childNodes);
+        \\            const newChildren = Array.from(newNode.childNodes);
+        \\            const max = Math.max(oldChildren.length, newChildren.length);
+        \\            for (let i = 0; i < max; i++) {
+        \\              if (i >= oldChildren.length) {
+        \\                oldNode.appendChild(newChildren[i].cloneNode(true));
+        \\              } else if (i >= newChildren.length) {
+        \\                oldNode.removeChild(oldChildren[i]);
+        \\              } else {
+        \\                morph(oldChildren[i], newChildren[i]);
+        \\              }
+        \\            }
+        \\          }
         \\
-        \\          document.body.innerHTML = doc.body.innerHTML;
+        \\          const newStyles = doc.querySelectorAll('style');
+        \\          if (newStyles.length > 0) {
+        \\              let styleContainer = document.getElementById('__erm_styles');
+        \\              if (!styleContainer) {
+        \\                  styleContainer = document.createElement('div');
+        \\                  styleContainer.id = '__erm_styles';
+        \\                  document.head.appendChild(styleContainer);
+        \\              }
+        \\              styleContainer.innerHTML = '';
+        \\              newStyles.forEach(s => styleContainer.appendChild(s.cloneNode(true)));
+        \\          }
+        \\
+        \\          // Call dispose handlers before DOM replacement
+        \\          window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
+        \\          window.__hmr_hooks.dispose = [];
+        \\          window.__hmr_hooks.accept = [];
+        \\          window.__hmr_intervals.forEach(clearInterval);
+        \\          window.__hmr_intervals = [];
+        \\          window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
+        \\            target.removeEventListener(type, listener, options);
+        \\            if (target.__erm_listener_added) delete target.__erm_listener_added;
+        \\          });
+        \\          window.__hmr_listeners = [];
+        \\
+        \\          morph(document.body, doc.body);
+        \\
         \\          const scripts = document.body.querySelectorAll('script');
         \\          scripts.forEach(s => {
         \\            if (s.textContent.includes("__hmr_initialized")) return;
@@ -461,6 +587,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\          });
         \\          document.dispatchEvent(new Event('DOMContentLoaded'));
         \\          window.dispatchEvent(new Event('load'));
+        \\          if (window.__erm_update) window.__erm_update();
         \\        });
         \\    }
         \\  };
@@ -469,7 +596,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
     ;
     try final.appendSlice(allocator, hmr_script);
     try final.appendSlice(allocator, result.html);
-    
+
     if (result.styles.items.len > 0) {
         try final.appendSlice(allocator, "\n<style>\n");
         for (result.styles.items) |s| {
@@ -478,11 +605,16 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         }
         try final.appendSlice(allocator, "</style>\n");
     }
-    
-    const runtime = 
+
+    const runtime =
         \\(() => {
+        \\  window.__hmr_data = window.__hmr_data || { signals: {} };
+        \\  if (!window.__hmr_data.signals) window.__hmr_data.signals = {};
         \\  let activeEffect = null;
-        \\  window.signal = function(val) {
+        \\  window.signal = function(val, name) {
+        \\    if (name && window.__hmr_data.signals[name] !== undefined) {
+        \\      val = window.__hmr_data.signals[name];
+        \\    }
         \\    const subscribers = new Set();
         \\    const container = { 
         \\      _val: val,
@@ -501,6 +633,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\      set(target, prop, newVal) {
         \\        if (prop === 'value') {
         \\          target._val = newVal;
+        \\          if (name) window.__hmr_data.signals[name] = newVal;
         \\          subscribers.forEach(fn => fn());
         \\          if (window.__erm_update) window.__erm_update();
         \\          return true;
@@ -523,20 +656,30 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\          if (b.last !== val) {
         \\            b.last = val;
         \\            let el = document.getElementById(b.id);
-        \\            if (el) el.innerText = val;
+        \\            if (el) el.innerText = val === undefined ? '' : val;
         \\          }
         \\        } catch(e) {}
         \\      });
         \\      _updateQueued = false;
         \\    });
         \\  };
-        \\  document.addEventListener('DOMContentLoaded', () => {
+        \\  function _initReactivity() {
         \\    window.__erm_events.forEach(ev => {
         \\      let el = document.getElementById(ev.id);
-        \\      if (el) el.addEventListener(ev.event, ev.handler);
+        \\      if (el && !el.__erm_listener_added) {
+        \\         el.addEventListener(ev.event, ev.handler);
+        \\         el.__erm_listener_added = true;
+        \\      }
         \\    });
         \\    window.__erm_update();
-        \\  });
+        \\  }
+        \\  if (document.readyState === 'loading') {
+        \\    document.addEventListener('DOMContentLoaded', _initReactivity);
+        \\  } else {
+        \\    _initReactivity();
+        \\  }
+        \\  // Also run it after a short delay to catch late-bound elements
+        \\  setTimeout(_initReactivity, 10);
     ;
 
     try final.appendSlice(allocator, "<script>\n");
@@ -547,6 +690,6 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         try final.append(allocator, '\n');
     }
     try final.appendSlice(allocator, "})();\n</script>\n");
-    
+
     return final.toOwnedSlice(allocator);
 }
