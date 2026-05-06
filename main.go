@@ -411,8 +411,10 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 	// 1. Find all signal variables in THIS component
 	signalVars := make(map[string]string)
 	sanitizedName := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(baseDir, "_")
-	if sanitizedName == "" || sanitizedName == "_" { sanitizedName = "root" }
-	
+	if sanitizedName == "" || sanitizedName == "_" {
+		sanitizedName = "root"
+	}
+
 	reSignalDecl := regexp.MustCompile(`(?:let|const|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*signal\(`)
 	for _, script := range nodeScripts {
 		matches := reSignalDecl.FindAllStringSubmatch(script, -1)
@@ -427,7 +429,7 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 	for i, script := range nodeScripts {
 		for v, uniqueV := range signalVars {
 			reDecl := regexp.MustCompile(`(?m)(let|const|var)\s+\b` + v + `\b\s*=\s*signal\(`)
-			script = reDecl.ReplaceAllString(script, "var " + uniqueV + " = signal(")
+			script = reDecl.ReplaceAllString(script, "var "+uniqueV+" = signal(")
 
 			var newScript strings.Builder
 			lastIdx := 0
@@ -437,7 +439,7 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 				newScript.WriteString(script[lastIdx:idx[0]])
 				hasValue := strings.HasPrefix(script[idx[1]:], ".value")
 				isUnique := strings.HasSuffix(newScript.String(), uniqueV)
-				inString := (strings.Count(script[:idx[0]], "'") % 2 != 0) || (strings.Count(script[:idx[0]], "\"") % 2 != 0)
+				inString := (strings.Count(script[:idx[0]], "'")%2 != 0) || (strings.Count(script[:idx[0]], "\"")%2 != 0)
 				if hasValue || isUnique || inString {
 					newScript.WriteString(v)
 				} else {
@@ -453,12 +455,12 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 
 	for v, uniqueV := range signalVars {
 		reBind := regexp.MustCompile(`\{` + v + `\}`)
-		html = reBind.ReplaceAllString(html, "{" + uniqueV + ".value}")
-		html = strings.ReplaceAll(html, "bind:value={" + v + "}", "bind:value={" + uniqueV + ".value}")
+		html = reBind.ReplaceAllString(html, "{"+uniqueV+".value}")
+		html = strings.ReplaceAll(html, "bind:value={"+v+"}", "bind:value={"+uniqueV+".value}")
 		reForVal := regexp.MustCompile(`\{#for\s+([a-zA-Z_$][a-zA-Z0-9_$]*(\s*,\s*[a-zA-Z_$][a-zA-Z0-9_$]*)?)\s+in\s+` + v + `\}`)
-		html = reForVal.ReplaceAllString(html, "{#for $1 in " + uniqueV + ".value}")
+		html = reForVal.ReplaceAllString(html, "{#for $1 in "+uniqueV+".value}")
 		reIf := regexp.MustCompile(`\{#(?:if|else if)\s+` + v + `([^}]*)\}`)
-		html = reIf.ReplaceAllString(html, "{#if " + uniqueV + ".value$1}")
+		html = reIf.ReplaceAllString(html, "{#if "+uniqueV+".value$1}")
 	}
 
 	html, jsBindings, jsEvents := parseReactivity(html)
@@ -467,12 +469,12 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 		reVar := regexp.MustCompile(`(?m)\b` + v + `\b`)
 		for i, s := range jsBindings {
 			if !strings.Contains(s, uniqueV) {
-				jsBindings[i] = reVar.ReplaceAllString(s, uniqueV + ".value")
+				jsBindings[i] = reVar.ReplaceAllString(s, uniqueV+".value")
 			}
 		}
 		for i, s := range jsEvents {
 			if !strings.Contains(s, uniqueV) {
-				jsEvents[i] = reVar.ReplaceAllString(s, uniqueV + ".value")
+				jsEvents[i] = reVar.ReplaceAllString(s, uniqueV+".value")
 			}
 		}
 		reEvt := regexp.MustCompile(`data-erm-evt-([a-z-]+)="<!--erm-evt:([a-zA-Z0-9+/=]+)-->"`)
@@ -489,7 +491,7 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 				indices := reWord.FindAllStringIndex(expr, -1)
 				for _, idx := range indices {
 					newExpr.WriteString(expr[lastIdx:idx[0]])
-					inString := (strings.Count(expr[:idx[0]], "'") % 2 != 0) || (strings.Count(expr[:idx[0]], "\"") % 2 != 0)
+					inString := (strings.Count(expr[:idx[0]], "'")%2 != 0) || (strings.Count(expr[:idx[0]], "\"")%2 != 0)
 					if inString {
 						newExpr.WriteString(v)
 					} else {
@@ -516,13 +518,19 @@ func processComponentTree(baseDir, content string, visited map[string]bool) (str
 		if _, err := os.Stat(compPath); os.IsNotExist(err) {
 			return match
 		}
-		if visited[compPath] { return fmt.Sprintf("<!-- Circular dependency: %s -->", compName) }
+		if visited[compPath] {
+			return fmt.Sprintf("<!-- Circular dependency: %s -->", compName)
+		}
 		visitedChild := make(map[string]bool)
-		for k, v := range visited { visitedChild[k] = v }
+		for k, v := range visited {
+			visitedChild[k] = v
+		}
 		visitedChild[compPath] = true
 		compContentBytes, _ := os.ReadFile(compPath)
 		compHtml, compScripts, compStyles, compSignalVars := processComponentTree(filepath.Dir(compPath), string(compContentBytes), visitedChild)
-		for k, v := range compSignalVars { allSignalVars[k] = v }
+		for k, v := range compSignalVars {
+			allSignalVars[k] = v
+		}
 		for _, s := range compScripts {
 			if strings.TrimSpace(s) != "" {
 				nodeScripts = append(nodeScripts, s)
@@ -806,8 +814,8 @@ func processErmComponent(baseDir string, content string) string {
 			for _, idx := range indices {
 				newLogic.WriteString(logic[lastIdx:idx[0]])
 				hasValue := strings.HasPrefix(logic[idx[1]:], ".value")
-				inString := (strings.Count(logic[:idx[0]], "'") % 2 != 0) || (strings.Count(logic[:idx[0]], "\"") % 2 != 0)
-				
+				inString := (strings.Count(logic[:idx[0]], "'")%2 != 0) || (strings.Count(logic[:idx[0]], "\"")%2 != 0)
+
 				if hasValue || inString {
 					newLogic.WriteString(v)
 				} else {
