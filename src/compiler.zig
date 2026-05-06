@@ -105,8 +105,8 @@ pub const ProcessResult = struct {
 };
 
 pub fn processComponentTree(allocator: std.mem.Allocator, _ : []const u8, content: []const u8, _ : *std.StringHashMap(bool)) !ProcessResult {
-    var scripts = std.ArrayList([]const u8).init(allocator);
-    var styles = std.ArrayList([]const u8).init(allocator);
+    var scripts: std.ArrayList([]const u8) = .empty;
+    var styles: std.ArrayList([]const u8) = .empty;
     const signal_vars = std.StringHashMap([]const u8).init(allocator);
 
     var h = std.hash.Fnv1a_32.init();
