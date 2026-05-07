@@ -223,7 +223,11 @@ fn buildProject(allocator: std.mem.Allocator, dir: []const u8) !void {
                     }
                     defer allocator.free(final_content);
 
-                    const processed = try compiler.processErmComponent(allocator, entry.path, final_content, true);
+                    const file_dir = std.fs.path.dirname(entry.path) orelse ".";
+                    const abs_file_dir = try std.fs.path.join(allocator, &.{ dir, file_dir });
+                    defer allocator.free(abs_file_dir);
+
+                    const processed = try compiler.processErmComponent(allocator, abs_file_dir, final_content, true);
                     defer allocator.free(processed);
 
                     // Determine output path (pretty URLs)

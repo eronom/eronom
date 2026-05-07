@@ -425,17 +425,13 @@ pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, 
                     const comp_path = try std.fs.path.join(allocator, &.{ base_dir, comp_filename });
                     defer allocator.free(comp_path);
 
-                    std.debug.print("Checking component: {s} at {s}\n", .{ tag_name, comp_path });
-
                     if (std.fs.cwd().statFile(comp_path)) |_| {
-                        std.debug.print("Found component: {s}\n", .{tag_name});
                         if (visited.get(comp_path) == null) {
                             try visited.put(try allocator.dupe(u8, comp_path), true);
                             const comp_content = try std.fs.cwd().readFileAlloc(allocator, comp_path, 1024 * 1024);
                             defer allocator.free(comp_content);
 
                             var sub_res = try processComponentTree(allocator, base_dir, comp_content, visited);
-                            std.debug.print("Sub-component {s} rendered {d} bytes\n", .{ tag_name, sub_res.html.len });
                             try html_buf.appendSlice(allocator, sub_res.html);
                             for (sub_res.scripts.items) |s| try scripts.append(allocator, s);
                             for (sub_res.styles.items) |s| try styles.append(allocator, s);
@@ -457,9 +453,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, 
                             i += tag_end + 1;
                             continue;
                         }
-                    } else |_| {
-                        std.debug.print("Component NOT found: {s} at {s}\n", .{ tag_name, comp_path });
-                    }
+                    } else |_| {}
                 }
             }
             try html_buf.append(allocator, content[i]);
@@ -488,7 +482,6 @@ pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, 
 
     var bindings: std.ArrayList([]const u8) = .empty;
     var events: std.ArrayList([]const u8) = .empty;
-    std.debug.print("Final html_buf size: {d}\n", .{html_buf.items.len});
     const reactive_html = try parseReactivity(allocator, html_buf.items, &bindings, &events, signal_vars_list.items);
     html_buf.deinit(allocator);
 
@@ -510,7 +503,11 @@ pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, 
 
 pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8, is_prod: bool) ![]const u8 {
     var visited = std.StringHashMap(bool).init(allocator);
-    defer visited.deinit();
+    defer {
+        var it = visited.keyIterator();
+        while (it.next()) |k| allocator.free(k.*);
+        visited.deinit();
+    }
 
     var result = try processComponentTree(allocator, base_dir, content, &visited);
 
@@ -1037,7 +1034,6 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         try final.appendSlice(allocator, "})();\n</script>\n");
     }
 
-    std.debug.print("Total final HTML size: {d}\n", .{final.items.len});
     result.deinit(allocator);
     return final.toOwnedSlice(allocator);
 }
