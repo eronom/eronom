@@ -131,7 +131,134 @@ fn buildProject(allocator: std.mem.Allocator, dir: []const u8) !void {
     const build_dir = try std.fs.path.join(allocator, &.{ dir, "build" });
     defer allocator.free(build_dir);
     std.debug.print("Building project to {s}\n", .{build_dir});
-    // Recursive walk and process (omitted for brevity)
+
+    // Clean and recreate build directory
+    std.fs.cwd().deleteTree(build_dir) catch {};
+    try std.fs.cwd().makePath(build_dir);
+
+    var layouts = std.StringHashMap([]const u8).init(allocator);
+    defer {
+        var it = layouts.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            allocator.free(entry.value_ptr.*);
+        }
+        layouts.deinit();
+    }
+
+    // Pass 1: find layouts
+    {
+        var iter_dir = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+        defer iter_dir.close();
+        var walker = try iter_dir.walk(allocator);
+        defer walker.deinit();
+        while (try walker.next()) |entry| {
+            if (std.mem.startsWith(u8, entry.path, "build")) continue;
+            if (std.mem.eql(u8, entry.basename, "layout.erm")) {
+                const content = try entry.dir.readFileAlloc(allocator, entry.basename, 1024 * 1024);
+                const layout_dir = try allocator.dupe(u8, std.fs.path.dirname(entry.path) orelse ".");
+                try layouts.put(layout_dir, content);
+            }
+        }
+    }
+
+    // Pass 2: process files
+    {
+        var iter_dir = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+        defer iter_dir.close();
+        var walker = try iter_dir.walk(allocator);
+        defer walker.deinit();
+
+        while (try walker.next()) |entry| {
+            // Skip build directory, source code, and build artifacts
+            const skip_dirs = [_][]const u8{ "build", "src", "zig-out", ".zig-cache", "test", ".git", ".github", "tmp" };
+            var skip = false;
+            for (skip_dirs) |sd| {
+                if (std.mem.startsWith(u8, entry.path, sd)) {
+                    skip = true;
+                    break;
+                }
+            }
+            if (skip) continue;
+            if (std.mem.startsWith(u8, entry.basename, ".")) continue;
+
+            const rel_dir = std.fs.path.dirname(entry.path) orelse "";
+
+            if (entry.kind == .file) {
+                if (std.mem.endsWith(u8, entry.basename, ".erm")) {
+                    if (std.mem.eql(u8, entry.basename, "layout.erm") or std.mem.eql(u8, entry.basename, "virtual_root.erm")) continue;
+                    // Skip components (Uppercase)
+                    if (entry.basename.len > 0 and std.ascii.isUpper(entry.basename[0])) continue;
+
+                    const content = try entry.dir.readFileAlloc(allocator, entry.basename, 1024 * 1024);
+                    defer allocator.free(content);
+
+                    const content_hmr = try std.mem.replaceOwned(u8, allocator, content, "import.meta.hot", "window.hmr");
+                    defer allocator.free(content_hmr);
+
+                    // Find closest layout
+                    var current_dir = try allocator.dupe(u8, rel_dir);
+                    defer allocator.free(current_dir);
+                    var layout_content: ?[]const u8 = null;
+                    while (true) {
+                        if (layouts.get(current_dir)) |l| {
+                            layout_content = l;
+                            break;
+                        }
+                        if (std.mem.eql(u8, current_dir, ".") or std.mem.eql(u8, current_dir, "")) break;
+                        const parent = std.fs.path.dirname(current_dir) orelse ".";
+                        const next_dir = try allocator.dupe(u8, parent);
+                        allocator.free(current_dir);
+                        current_dir = next_dir;
+                    }
+
+                    var final_content: []const u8 = undefined;
+                    if (layout_content) |l| {
+                        const replaced = try std.mem.replaceOwned(u8, allocator, l, "<slot />", content_hmr);
+                        const replaced2 = try std.mem.replaceOwned(u8, allocator, replaced, "<slot></slot>", content_hmr);
+                        allocator.free(replaced);
+                        final_content = replaced2;
+                    } else {
+                        final_content = try allocator.dupe(u8, content_hmr);
+                    }
+                    defer allocator.free(final_content);
+
+                    const processed = try compiler.processErmComponent(allocator, entry.path, final_content, true);
+                    defer allocator.free(processed);
+
+                    // Determine output path (pretty URLs)
+                    const base_name = entry.basename[0 .. entry.basename.len - 4]; // remove .erm
+                    var out_path: []const u8 = undefined;
+                    if (std.mem.eql(u8, base_name, "index") or std.mem.eql(u8, base_name, "page")) {
+                        out_path = try std.fs.path.join(allocator, &.{ build_dir, rel_dir, "index.html" });
+                    } else {
+                        out_path = try std.fs.path.join(allocator, &.{ build_dir, rel_dir, base_name, "index.html" });
+                    }
+                    defer allocator.free(out_path);
+
+                    try std.fs.cwd().makePath(std.fs.path.dirname(out_path).?);
+                    try std.fs.cwd().writeFile(.{ .sub_path = out_path, .data = processed });
+                } else {
+                    // Skip Zig/source relevant files
+                    const skip_exts = [_][]const u8{ ".zig", ".go", ".mod", ".sum" };
+                    var skip_file = false;
+                    for (skip_exts) |ext| {
+                        if (std.mem.endsWith(u8, entry.basename, ext)) {
+                            skip_file = true;
+                            break;
+                        }
+                    }
+                    if (std.mem.eql(u8, entry.basename, "eronom")) skip_file = true;
+                    if (skip_file) continue;
+
+                    const target_path = try std.fs.path.join(allocator, &.{ build_dir, entry.path });
+                    defer allocator.free(target_path);
+                    try std.fs.cwd().makePath(std.fs.path.dirname(target_path).?);
+                    try entry.dir.copyFile(entry.basename, std.fs.cwd(), target_path, .{});
+                }
+            }
+        }
+    }
 }
 
 fn startServer(allocator: std.mem.Allocator, dir: []const u8, is_prod: bool) !void {
@@ -164,20 +291,20 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
     var buffered_reader = connection.stream.reader(&reader_buf);
     var writer_buf: [4096]u8 = undefined;
     var buffered_writer = connection.stream.writer(&writer_buf);
-    
+
     var http_server = std.http.Server.init(buffered_reader.interface(), &buffered_writer.interface);
 
     var request = http_server.receiveHead() catch return;
-    
     const target = request.head.target;
+    std.debug.print("Request: {s} {s}\n", .{ @tagName(request.head.method), target });
 
     // HMR Endpoint
     if (std.mem.eql(u8, target, "/__hmr")) {
         const response_headers = "HTTP/1.1 200 OK\r\n" ++
-                               "Content-Type: text/event-stream\r\n" ++
-                               "Cache-Control: no-cache\r\n" ++
-                               "Connection: keep-alive\r\n" ++
-                               "Access-Control-Allow-Origin: *\r\n\r\n";
+            "Content-Type: text/event-stream\r\n" ++
+            "Cache-Control: no-cache\r\n" ++
+            "Connection: keep-alive\r\n" ++
+            "Access-Control-Allow-Origin: *\r\n\r\n";
         connection.stream.writeAll(response_headers) catch return;
 
         var last_count = global_watcher.change_count;
@@ -227,7 +354,7 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
     if (std.mem.endsWith(u8, full_path, ".erm")) {
         const content = std.fs.cwd().readFileAlloc(allocator, full_path, 1024 * 1024) catch return;
         defer allocator.free(content);
-        const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, content) catch return;
+        const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, content, false) catch return;
         defer allocator.free(processed);
         _ = request.respond(processed, .{ .status = .ok, .extra_headers = &.{.{ .name = "Content-Type", .value = "text/html" }} }) catch {};
     } else {

@@ -99,6 +99,16 @@ pub const ProcessResult = struct {
     scripts: std.ArrayList([]const u8),
     styles: std.ArrayList([]const u8),
     signal_vars: std.ArrayList([]const u8),
+
+    pub fn deinit(self: *ProcessResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.html);
+        for (self.scripts.items) |s| allocator.free(s);
+        self.scripts.deinit(allocator);
+        for (self.styles.items) |s| allocator.free(s);
+        self.styles.deinit(allocator);
+        for (self.signal_vars.items) |s| allocator.free(s);
+        self.signal_vars.deinit(allocator);
+    }
 };
 
 fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *std.ArrayList([]const u8), events: *std.ArrayList([]const u8), signals: []const []const u8) ![]const u8 {
@@ -112,9 +122,9 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
 
         // Track control flow block depth
         if (c == '{' and i + 1 < html.len) {
-            if (html[i+1] == '#') {
+            if (html[i + 1] == '#') {
                 block_depth += 1;
-            } else if (html[i+1] == '/') {
+            } else if (html[i + 1] == '/') {
                 if (block_depth > 0) block_depth -= 1;
             }
         }
@@ -151,6 +161,7 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                     const binding = try std.fmt.allocPrint(allocator, "window.__erm_bindings.push({{ id: \"{s}\", get: () => ({s}) }});", .{ id, expr });
                     try bindings.append(allocator, binding);
                     allocator.free(expr);
+                    allocator.free(id);
                     i = j;
                     continue;
                 }
@@ -196,6 +207,7 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                             try events.append(allocator, event);
                             allocator.free(expr);
                             allocator.free(event_type);
+                            allocator.free(id);
                             i = j;
                             continue;
                         }
@@ -309,7 +321,7 @@ fn injectSignalName(allocator: std.mem.Allocator, input: []const u8, name: []con
     return res.toOwnedSlice(allocator);
 }
 
-pub fn processComponentTree(allocator: std.mem.Allocator, _: []const u8, content: []const u8, _: *std.StringHashMap(bool)) !ProcessResult {
+pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8, visited: *std.StringHashMap(bool)) !ProcessResult {
     var scripts: std.ArrayList([]const u8) = .empty;
     var styles: std.ArrayList([]const u8) = .empty;
     var signal_vars_list: std.ArrayList([]const u8) = .empty;
@@ -335,7 +347,6 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _: []const u8, content
                 const signal_idx = std.mem.indexOf(u8, script_content[sj..], signal_call);
                 if (signal_idx) |idx| {
                     const call_pos = sj + idx;
-                    // Find '=' before signal(
                     var eq_pos: ?usize = null;
                     var k = call_pos;
                     while (k > sj) {
@@ -348,7 +359,6 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _: []const u8, content
                     }
 
                     if (eq_pos) |ep| {
-                        // Find name before '='
                         var name_end: ?usize = null;
                         var m = ep;
                         while (m > sj) {
@@ -398,6 +408,62 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _: []const u8, content
             const style_content = style_tag[content_start .. style_tag.len - 8];
             try styles.append(allocator, try scopeCSS(allocator, std.mem.trim(u8, style_content, " \t\n\r"), scope_id));
             i += end + 8;
+        } else if (content[i] == '<') {
+            const tag_end = std.mem.indexOfScalar(u8, content[i..], '>') orelse {
+                try html_buf.append(allocator, content[i]);
+                i += 1;
+                continue;
+            };
+            const tag_content = content[i + 1 .. i + tag_end];
+            if (tag_content.len > 0 and tag_content[0] != '/') {
+                var parts_it = std.mem.tokenizeAny(u8, tag_content, " \t\n\r");
+                const tag_name = parts_it.next() orelse "";
+                if (tag_name.len > 0 and std.ascii.isUpper(tag_name[0])) {
+                    // It's a component!
+                    const comp_filename = try std.fmt.allocPrint(allocator, "{s}.erm", .{tag_name});
+                    defer allocator.free(comp_filename);
+                    const comp_path = try std.fs.path.join(allocator, &.{ base_dir, comp_filename });
+                    defer allocator.free(comp_path);
+
+                    std.debug.print("Checking component: {s} at {s}\n", .{ tag_name, comp_path });
+
+                    if (std.fs.cwd().statFile(comp_path)) |_| {
+                        std.debug.print("Found component: {s}\n", .{tag_name});
+                        if (visited.get(comp_path) == null) {
+                            try visited.put(try allocator.dupe(u8, comp_path), true);
+                            const comp_content = try std.fs.cwd().readFileAlloc(allocator, comp_path, 1024 * 1024);
+                            defer allocator.free(comp_content);
+
+                            var sub_res = try processComponentTree(allocator, base_dir, comp_content, visited);
+                            std.debug.print("Sub-component {s} rendered {d} bytes\n", .{ tag_name, sub_res.html.len });
+                            try html_buf.appendSlice(allocator, sub_res.html);
+                            for (sub_res.scripts.items) |s| try scripts.append(allocator, s);
+                            for (sub_res.styles.items) |s| try styles.append(allocator, s);
+                            for (sub_res.signal_vars.items) |sv| {
+                                var already = false;
+                                for (signal_vars_list.items) |existing| {
+                                    if (std.mem.eql(u8, existing, sv)) {
+                                        already = true;
+                                        break;
+                                    }
+                                }
+                                if (!already) try signal_vars_list.append(allocator, sv) else allocator.free(sv);
+                            }
+                            // Cleanup sub_res structures but not the items we moved
+                            sub_res.scripts.deinit(allocator);
+                            sub_res.styles.deinit(allocator);
+                            sub_res.signal_vars.deinit(allocator);
+                            allocator.free(sub_res.html);
+                            i += tag_end + 1;
+                            continue;
+                        }
+                    } else |_| {
+                        std.debug.print("Component NOT found: {s} at {s}\n", .{ tag_name, comp_path });
+                    }
+                }
+            }
+            try html_buf.append(allocator, content[i]);
+            i += 1;
         } else {
             try html_buf.append(allocator, content[i]);
             i += 1;
@@ -416,11 +482,13 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _: []const u8, content
             allocator.free(transformed);
             transformed = new_transformed;
         }
+        allocator.free(s);
         scripts.items[si] = transformed;
     }
 
     var bindings: std.ArrayList([]const u8) = .empty;
     var events: std.ArrayList([]const u8) = .empty;
+    std.debug.print("Final html_buf size: {d}\n", .{html_buf.items.len});
     const reactive_html = try parseReactivity(allocator, html_buf.items, &bindings, &events, signal_vars_list.items);
     html_buf.deinit(allocator);
 
@@ -440,7 +508,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, _: []const u8, content
     };
 }
 
-pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8) ![]const u8 {
+pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8, is_prod: bool) ![]const u8 {
     var visited = std.StringHashMap(bool).init(allocator);
     defer visited.deinit();
 
@@ -602,7 +670,9 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\})();
         \\</script>
     ;
-    try final.appendSlice(allocator, hmr_script);
+    if (!is_prod) {
+        try final.appendSlice(allocator, hmr_script);
+    }
 
     var ev = eval.ErmEval.init(allocator);
     defer ev.deinit();
@@ -956,17 +1026,18 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\  setTimeout(_initReactivity, 10);
     ;
 
-    try final.appendSlice(allocator, "<script>\n");
-    try final.appendSlice(allocator, runtime);
-    try final.appendSlice(allocator, "\n");
-    for (result.scripts.items) |s| {
-        try final.appendSlice(allocator, s);
-        try final.append(allocator, '\n');
+    if (result.scripts.items.len > 0 or result.signal_vars.items.len > 0) {
+        try final.appendSlice(allocator, "<script>\n");
+        try final.appendSlice(allocator, runtime);
+        try final.appendSlice(allocator, "\n");
+        for (result.scripts.items) |s| {
+            try final.appendSlice(allocator, s);
+            try final.append(allocator, '\n');
+        }
+        try final.appendSlice(allocator, "})();\n</script>\n");
     }
-    try final.appendSlice(allocator, "})();\n</script>\n");
 
-    for (result.signal_vars.items) |s| allocator.free(s);
-    result.signal_vars.deinit(allocator);
-
+    std.debug.print("Total final HTML size: {d}\n", .{final.items.len});
+    result.deinit(allocator);
     return final.toOwnedSlice(allocator);
 }

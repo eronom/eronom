@@ -12,8 +12,11 @@ pub const Value = union(enum) {
         switch (self.*) {
             .string => |s| allocator.free(s),
             .map => |*m| {
-                var vit = m.valueIterator();
-                while (vit.next()) |v| v.deinit(allocator);
+                var it = m.iterator();
+                while (it.next()) |entry| {
+                    allocator.free(entry.key_ptr.*);
+                    entry.value_ptr.deinit(allocator);
+                }
                 m.deinit();
             },
             .list => |*l| {
@@ -169,7 +172,7 @@ pub const ErmEval = struct {
                         j += 1;
                     }
                     const name = script[name_start..j];
-                    
+
                     while (j < script.len and std.ascii.isWhitespace(script[j])) {
                         j += 1;
                     }
@@ -240,7 +243,7 @@ const ExprParser = struct {
         var left = try self.parseAddSub();
         self.skip();
         if (self.pos >= self.input.len) return left;
-        
+
         const ops = [_][]const u8{ "===", "!==", "==", "!=", ">=", "<=", ">", "<" };
         var found_op: ?[]const u8 = null;
         for (ops) |op| {
