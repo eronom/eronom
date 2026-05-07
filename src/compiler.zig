@@ -933,6 +933,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\          }
         \\        } catch(e) {}
         \\      });
+        \\      if (typeof _initReactivity === 'function') _initReactivity();
         \\      _updateQueued = false;
         \\    });
         \\  };
