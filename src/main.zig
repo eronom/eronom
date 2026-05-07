@@ -153,7 +153,15 @@ fn buildProject(allocator: std.mem.Allocator, dir: []const u8) !void {
         var walker = try iter_dir.walk(allocator);
         defer walker.deinit();
         while (try walker.next()) |entry| {
-            if (std.mem.startsWith(u8, entry.path, "build")) continue;
+            const skip_dirs = [_][]const u8{ "build", "src", "zig-out", ".zig-cache", "test", ".git", ".github", "tmp", ".agents" };
+            var skip = false;
+            for (skip_dirs) |sd| {
+                if (std.mem.startsWith(u8, entry.path, sd)) {
+                    skip = true;
+                    break;
+                }
+            }
+            if (skip) continue;
             if (std.mem.eql(u8, entry.basename, "layout.erm")) {
                 const content = try entry.dir.readFileAlloc(allocator, entry.basename, 1024 * 1024);
                 const layout_dir = try allocator.dupe(u8, std.fs.path.dirname(entry.path) orelse ".");
@@ -171,7 +179,7 @@ fn buildProject(allocator: std.mem.Allocator, dir: []const u8) !void {
 
         while (try walker.next()) |entry| {
             // Skip build directory, source code, and build artifacts
-            const skip_dirs = [_][]const u8{ "build", "src", "zig-out", ".zig-cache", "test", ".git", ".github", "tmp" };
+            const skip_dirs = [_][]const u8{ "build", "src", "zig-out", ".zig-cache", "test", ".git", ".github", "tmp", ".agents" };
             var skip = false;
             for (skip_dirs) |sd| {
                 if (std.mem.startsWith(u8, entry.path, sd)) {
