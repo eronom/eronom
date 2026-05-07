@@ -299,8 +299,23 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
     var http_server = std.http.Server.init(buffered_reader.interface(), &buffered_writer.interface);
 
     var request = http_server.receiveHead() catch return;
-    const target = request.head.target;
+    var target = request.head.target;
+
+    // Strip query parameters for routing
+    if (std.mem.indexOfScalar(u8, target, '?')) |q_idx| {
+        target = target[0..q_idx];
+    }
+    if (std.mem.indexOfScalar(u8, target, '#')) |f_idx| {
+        target = target[0..f_idx];
+    }
+
     std.debug.print("Request: {s} {s}\n", .{ @tagName(request.head.method), target });
+
+    // Block direct access to .erm files
+    if (std.mem.endsWith(u8, target, ".erm")) {
+        _ = request.respond("Not Found", .{ .status = .not_found }) catch {};
+        return;
+    }
 
     // HMR Endpoint
     if (std.mem.eql(u8, target, "/__hmr")) {
@@ -328,14 +343,24 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
     var full_path = std.fs.path.join(allocator, &.{ dir, target }) catch return;
     defer allocator.free(full_path);
 
-    var stat = std.fs.cwd().statFile(full_path) catch {
+    var stat = std.fs.cwd().statFile(full_path) catch |err| blk: {
+        if (err == error.FileNotFound and !std.mem.endsWith(u8, full_path, ".erm")) {
+            const erm_path = std.fmt.allocPrint(allocator, "{s}.erm", .{full_path}) catch return;
+            defer allocator.free(erm_path);
+            if (std.fs.cwd().statFile(erm_path)) |s| {
+                const new_path = allocator.dupe(u8, erm_path) catch return;
+                allocator.free(full_path);
+                full_path = new_path;
+                break :blk s;
+            } else |_| {}
+        }
         _ = request.respond("Not Found", .{ .status = .not_found }) catch {};
         return;
     };
 
     if (stat.kind == .directory) {
         var found = false;
-        const index_files = [_][]const u8{ "index.erm", "index.html" };
+        const index_files = [_][]const u8{ "index.erm", "page.erm", "index.html" };
         for (index_files) |idx_file| {
             const idx_path = std.fs.path.join(allocator, &.{ full_path, idx_file }) catch continue;
             defer allocator.free(idx_path);
@@ -358,7 +383,43 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
     if (std.mem.endsWith(u8, full_path, ".erm")) {
         const content = std.fs.cwd().readFileAlloc(allocator, full_path, 1024 * 1024) catch return;
         defer allocator.free(content);
-        const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, content, false) catch return;
+
+        const content_hmr = std.mem.replaceOwned(u8, allocator, content, "import.meta.hot", "window.hmr") catch content;
+        defer if (content_hmr.ptr != content.ptr) allocator.free(@constCast(content_hmr));
+
+        // Find closest layout
+        var current_dir = allocator.dupe(u8, std.fs.path.dirname(full_path) orelse ".") catch return;
+        defer allocator.free(current_dir);
+        var layout_content: ?[]const u8 = null;
+        while (true) {
+            const lp = std.fs.path.join(allocator, &.{ current_dir, "layout.erm" }) catch break;
+            defer allocator.free(lp);
+            if (std.fs.cwd().readFileAlloc(allocator, lp, 1024 * 1024)) |c| {
+                layout_content = c;
+                break;
+            } else |_| {}
+
+            if (std.mem.eql(u8, current_dir, dir)) break;
+            const parent = std.fs.path.dirname(current_dir) orelse break;
+            if (std.mem.eql(u8, parent, current_dir)) break;
+            const next = allocator.dupe(u8, parent) catch break;
+            allocator.free(current_dir);
+            current_dir = next;
+        }
+
+        var final_content: []const u8 = undefined;
+        if (layout_content) |l| {
+            defer allocator.free(l);
+            const replaced = std.mem.replaceOwned(u8, allocator, l, "<slot />", content_hmr) catch l;
+            const replaced2 = std.mem.replaceOwned(u8, allocator, replaced, "<slot></slot>", content_hmr) catch replaced;
+            if (replaced.ptr != l.ptr) allocator.free(replaced);
+            final_content = replaced2;
+        } else {
+            final_content = if (content_hmr.ptr != content.ptr) allocator.dupe(u8, content_hmr) catch content_hmr else content_hmr;
+        }
+        defer if (final_content.ptr != content_hmr.ptr and final_content.ptr != content.ptr) allocator.free(@constCast(final_content));
+
+        const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, final_content, false) catch return;
         defer allocator.free(processed);
         _ = request.respond(processed, .{ .status = .ok, .extra_headers = &.{.{ .name = "Content-Type", .value = "text/html; charset=utf-8" }} }) catch {};
     } else {

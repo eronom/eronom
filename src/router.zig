@@ -94,7 +94,14 @@ pub const App = struct {
     pub fn delete(self: *App, path: []const u8, h: HandlerFunc) !void { try self.handle(.DELETE, path, h); }
 
     pub fn serveHTTP(self: *App, req: *std.http.Server.Request) !bool {
-        const path = req.head.target;
+        var path = req.head.target;
+        if (std.mem.indexOfScalar(u8, path, '?')) |q_idx| {
+            path = path[0..q_idx];
+        }
+        if (std.mem.indexOfScalar(u8, path, '#')) |f_idx| {
+            path = path[0..f_idx];
+        }
+
         // Trim /api prefix
         var clean_path = path;
         if (std.mem.startsWith(u8, clean_path, "/api")) {
