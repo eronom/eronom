@@ -1,8 +1,0 @@
-*.zig linguist-language=Zig
-*.erm linguist-language=HTML
-*.em linguist-language=HTML
-.agents/** linguist-vendored
-test/** linguist-vendored
-zig-out/** linguist-vendored
-build/** linguist-vendored
-.zig-cache/** linguist-vendored
