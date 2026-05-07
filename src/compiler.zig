@@ -122,9 +122,9 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
 
         // Track control flow block depth
         if (c == '{' and i + 1 < html.len) {
-            if (html[i + 1] == '#') {
+            if (std.mem.startsWith(u8, html[i..], "{#for ")) {
                 block_depth += 1;
-            } else if (html[i + 1] == '/') {
+            } else if (std.mem.startsWith(u8, html[i..], "{/for}")) {
                 if (block_depth > 0) block_depth -= 1;
             }
         }
@@ -502,6 +502,8 @@ pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, 
 }
 
 pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8, is_prod: bool) ![]const u8 {
+    var if_counter: usize = 0;
+    var for_counter: usize = 0;
     var visited = std.StringHashMap(bool).init(allocator);
     defer {
         var it = visited.keyIterator();
@@ -721,7 +723,8 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
             item_name = vars_part;
         }
 
-        const anchor_id = try std.fmt.allocPrint(allocator, "erm-for-{d}", .{std.time.nanoTimestamp()});
+        const anchor_id = try std.fmt.allocPrint(allocator, "erm-for-{d}", .{for_counter});
+        for_counter += 1;
         defer allocator.free(anchor_id);
 
         // SSR For Loop
@@ -841,7 +844,8 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         if (end_if_idx == null) break;
         const full_block = res_html[start_idx .. end_if_idx.? + 5];
 
-        const anchor_id = try std.fmt.allocPrint(allocator, "erm-if-{d}", .{std.time.nanoTimestamp()});
+        const anchor_id = try std.fmt.allocPrint(allocator, "erm-if-{d}", .{if_counter});
+        if_counter += 1;
         defer allocator.free(anchor_id);
 
         var branches: std.ArrayList(u8) = .empty;
@@ -897,7 +901,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
 
             try branches.appendSlice(allocator, if (block_type == .if_stmt) "if (" else " else if (");
             try branches.appendSlice(allocator, cond_expr);
-            try branches.appendSlice(allocator, ") { __erm_new = atob(\"");
+            try branches.appendSlice(allocator, ") { __erm_new = __erm_b64utf8(\"");
             try branches.appendSlice(allocator, body_b64);
             try branches.appendSlice(allocator, "\"); }");
 
@@ -915,6 +919,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
             \\        if (__erm_anchor.__erm_last !== __erm_new) {{
             \\          __erm_anchor.__erm_last = __erm_new;
             \\          __erm_anchor.innerHTML = __erm_new;
+            \\          if (window.__erm_update) window.__erm_update();
             \\        }}
             \\      }}
             \\    }}
@@ -946,7 +951,10 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         \\(() => {
         \\  window.__hmr_data = window.__hmr_data || { signals: {} };
         \\  if (!window.__hmr_data.signals) window.__hmr_data.signals = {};
-        \\  let activeEffect = null;
+        \\  window.__erm_b64utf8 = function(str) {
+        \\      return decodeURIComponent(escape(window.atob(str)));
+        \\    };
+        \\    let activeEffect = null;
         \\  window.signal = function(val, name) {
         \\    if (name && window.__hmr_data.signals[name] !== undefined) {
         \\      val = window.__hmr_data.signals[name];

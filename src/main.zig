@@ -360,7 +360,7 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
         defer allocator.free(content);
         const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, content, false) catch return;
         defer allocator.free(processed);
-        _ = request.respond(processed, .{ .status = .ok, .extra_headers = &.{.{ .name = "Content-Type", .value = "text/html" }} }) catch {};
+        _ = request.respond(processed, .{ .status = .ok, .extra_headers = &.{.{ .name = "Content-Type", .value = "text/html; charset=utf-8" }} }) catch {};
     } else {
         const file = std.fs.cwd().openFile(full_path, .{}) catch {
             _ = request.respond("Not Found", .{ .status = .not_found }) catch {};
