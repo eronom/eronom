@@ -182,7 +182,7 @@ fn buildProject(allocator: std.mem.Allocator, dir: []const u8) !void {
             if (skip) continue;
             if (std.mem.startsWith(u8, entry.basename, ".")) continue;
 
-            const rel_dir = std.fs.path.dirname(entry.path) orelse "";
+            const rel_dir = std.fs.path.dirname(entry.path) orelse ".";
 
             if (entry.kind == .file) {
                 if (std.mem.endsWith(u8, entry.basename, ".erm")) {
@@ -284,11 +284,11 @@ fn startServer(allocator: std.mem.Allocator, dir: []const u8, is_prod: bool) !vo
 
     while (true) {
         const connection = try server.accept();
-        _ = try std.Thread.spawn(.{}, handleConnection, .{ allocator, connection, dir, app_ptr });
+        _ = try std.Thread.spawn(.{}, handleConnection, .{ allocator, connection, dir, app_ptr, is_prod });
     }
 }
 
-fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Connection, dir: []const u8, app: *router.App) void {
+fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Connection, dir: []const u8, app: *router.App, is_prod: bool) void {
     defer connection.stream.close();
 
     var reader_buf: [4096]u8 = undefined;
@@ -318,7 +318,7 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
     }
 
     // HMR Endpoint
-    if (std.mem.eql(u8, target, "/__hmr")) {
+    if (!is_prod and std.mem.eql(u8, target, "/__hmr")) {
         const response_headers = "HTTP/1.1 200 OK\r\n" ++
             "Content-Type: text/event-stream\r\n" ++
             "Cache-Control: no-cache\r\n" ++
@@ -422,7 +422,7 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
         }
         defer if (owned_final) allocator.free(@constCast(final_content));
 
-        const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, final_content, false) catch return;
+        const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, final_content, is_prod) catch return;
         defer allocator.free(processed);
         _ = request.respond(processed, .{ .status = .ok, .extra_headers = &.{.{ .name = "Content-Type", .value = "text/html; charset=utf-8" }} }) catch {};
     } else {
