@@ -408,16 +408,19 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
         }
 
         var final_content: []const u8 = undefined;
+        var owned_final = false;
         if (layout_content) |l| {
             defer allocator.free(l);
             const replaced = std.mem.replaceOwned(u8, allocator, l, "<slot />", content_hmr) catch l;
             const replaced2 = std.mem.replaceOwned(u8, allocator, replaced, "<slot></slot>", content_hmr) catch replaced;
-            if (replaced.ptr != l.ptr) allocator.free(replaced);
+            if (replaced.ptr != l.ptr and replaced.ptr != replaced2.ptr) allocator.free(replaced);
             final_content = replaced2;
+            owned_final = (replaced2.ptr != l.ptr);
         } else {
-            final_content = if (content_hmr.ptr != content.ptr) allocator.dupe(u8, content_hmr) catch content_hmr else content_hmr;
+            final_content = content_hmr;
+            owned_final = false;
         }
-        defer if (final_content.ptr != content_hmr.ptr and final_content.ptr != content.ptr) allocator.free(@constCast(final_content));
+        defer if (owned_final) allocator.free(@constCast(final_content));
 
         const processed = compiler.processErmComponent(allocator, std.fs.path.dirname(full_path).?, final_content, false) catch return;
         defer allocator.free(processed);
