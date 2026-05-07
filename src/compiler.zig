@@ -692,7 +692,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
 
                             const val_iter = sub_ev.eval(sub_expr) catch eval.Value{ .null = {} };
                             var val_buf: [1024]u8 = undefined;
-                            const val_str = try std.fmt.bufPrint(&val_buf, "{any}", .{val_iter});
+                            const val_str = try std.fmt.bufPrint(&val_buf, "{f}", .{val_iter});
                             try ssr_html.appendSlice(allocator, val_str);
                             bit = j;
                             continue;

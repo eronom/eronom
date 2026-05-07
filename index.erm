@@ -46,7 +46,7 @@ gvfcjb hyun
 <h2>Hellloo web added h2 tag</h2>
 <p>Random: {randomNum}</p>
 <h2>Hwwwssselaaaaaallsvvsssssssvvvvsssssssssssooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
-<h2>Helsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+<h2>Hellsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
 
 <div style="padding: 20px; border: 2px solid #3498db; border-radius: 10px; margin-bottom: 20px;">
     <h3>For Loop Demo</h3>
@@ -71,7 +71,7 @@ gvfcjb hyun
 <Header />
 {#if showExtraContent}
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-        <h3>🎉 Condssitsionalssssssss Rendered Boxxxxxss</h3>
+        <h3>🎉 Condsfssitsionalssssssss Rendered Boxxxxxss</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
     <button onclick={()=>{showExtraContent=false}}>Hide Content</button>

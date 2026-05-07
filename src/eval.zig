@@ -46,9 +46,7 @@ pub const Value = union(enum) {
         }
     }
 
-    pub fn format(self: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: Value, writer: anytype) !void {
         switch (self) {
             .null => try writer.writeAll("null"),
             .boolean => |b| try writer.print("{s}", .{if (b) "true" else "false"}),
@@ -60,7 +58,7 @@ pub const Value = union(enum) {
                 var first = true;
                 while (it.next()) |entry| {
                     if (!first) try writer.writeAll(", ");
-                    try writer.print("\"{s}\": {any}", .{ entry.key_ptr.*, entry.value_ptr.* });
+                    try writer.print("\"{s}\": {f}", .{ entry.key_ptr.*, entry.value_ptr.* });
                     first = false;
                 }
                 try writer.writeAll(" }");
@@ -69,7 +67,7 @@ pub const Value = union(enum) {
                 try writer.writeAll("[ ");
                 for (l.items, 0..) |v, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try writer.print("{any}", .{v});
+                    try writer.print("{f}", .{v});
                 }
                 try writer.writeAll(" ]");
             },
@@ -281,8 +279,8 @@ const ExprParser = struct {
                     if (left == .string or right == .string) {
                         var buf: std.ArrayList(u8) = .empty;
                         defer buf.deinit(self.ev.allocator);
-                        try buf.writer(self.ev.allocator).print("{any}", .{left});
-                        try buf.writer(self.ev.allocator).print("{any}", .{right});
+                        try buf.writer(self.ev.allocator).print("{f}", .{left});
+                        try buf.writer(self.ev.allocator).print("{f}", .{right});
                         left = .{ .string = try buf.toOwnedSlice(self.ev.allocator) };
                     } else {
                         left = .{ .number = left.toNumber() + right.toNumber() };
