@@ -1,7 +1,0 @@
-list = [1, 2, 3];
-
-list.push(4);
-
-list.pop();
-
-print(list);
