@@ -1,6 +1,10 @@
 
 todos = [
-  { id: 1, text: "Learn Eronom", done: false }
+  { id: 1, text: "Learn Eronom", done: false },
+  { id: 2, text: "Learn Er", done: false },
+  { id: 3, text: "Learn Erm", done: false },
+  { id: 4, text: "Learn E", done: false },
+  { id: 5, text: "Learn Eronom", done: false },
 ]
 
 get('/', (c) => {

@@ -792,7 +792,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
             \\        let __erm_itemsJson = JSON.stringify(__erm_items);
             \\        if (__erm_anchor.__erm_last_items !== __erm_itemsJson) {{
             \\          __erm_anchor.__erm_last_items = __erm_itemsJson;
-            \\          let __erm_template = atob("{s}");
+            \\          let __erm_template = __erm_b64utf8("{s}");
             \\          let __erm_html = "";
             \\          __erm_items.forEach(({s}) => {{
             \\            let __erm_iter_html = __erm_template.replace(/\{{([^{{}}#/:][^{{}}]*)\}}/g, (m, expr) => {{

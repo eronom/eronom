@@ -116,7 +116,18 @@ pub fn handleApiRequest(allocator: std.mem.Allocator, request: *std.http.Server.
 
     for (routes.items) |route| {
         if (std.mem.eql(u8, route.method, @tagName(request.head.method))) {
-            if (std.mem.eql(u8, route.path, sub_path) or (route.path[0] != '/' and std.mem.eql(u8, route.path, sub_path[1..]))) {
+            var match = std.mem.eql(u8, route.path, sub_path);
+            if (!match) {
+                if (std.mem.eql(u8, route.path, "/") and sub_path.len == 0) {
+                    match = true;
+                } else if (sub_path.len > 0 and sub_path[0] == '/') {
+                    if (std.mem.eql(u8, route.path, sub_path[1..])) match = true;
+                } else if (route.path.len > 0 and route.path[0] == '/') {
+                    if (std.mem.eql(u8, route.path[1..], sub_path)) match = true;
+                }
+            }
+
+            if (match) {
                 for (route.handler_lines) |h_line| {
                     const h_trimmed = std.mem.trim(u8, h_line, " \t\r");
                     if (std.mem.indexOf(u8, h_trimmed, "c.json(")) |json_idx| {
@@ -386,8 +397,9 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
                 } else {
                     try obj_buf.appendSlice(allocator, "\n    ");
                 }
+                try obj_buf.append(allocator, '"');
                 try obj_buf.appendSlice(allocator, key);
-                try obj_buf.appendSlice(allocator, ": ");
+                try obj_buf.appendSlice(allocator, "\": ");
                 try obj_buf.appendSlice(allocator, formatted_v);
                 
                 if (variables.get(full_key)) |old| allocator.free(old);

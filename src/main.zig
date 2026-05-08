@@ -320,9 +320,9 @@ fn handleDynamicApi(allocator: std.mem.Allocator, request: *std.http.Server.Requ
 }
 
 fn handleDynamicApiInner(allocator: std.mem.Allocator, request: *std.http.Server.Request, target: []const u8) !bool {
-    if (!std.mem.startsWith(u8, target, "/api/")) return false;
+    if (!std.mem.startsWith(u8, target, "/api")) return false;
 
-    var path_it = std.mem.tokenizeScalar(u8, target[5..], '/');
+    var path_it = std.mem.tokenizeScalar(u8, target[4..], '/');
     var current_api_path: std.ArrayList(u8) = .empty;
     defer current_api_path.deinit(allocator);
     try current_api_path.appendSlice(allocator, "api");
