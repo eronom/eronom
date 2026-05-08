@@ -1,0 +1,13 @@
+app = serve({
+  port: 3000,
+  
+})
+todos = [
+  { id: 1, text: "Learn Eronom", done: false }
+]
+
+// GET all todos
+app.get('/todos', (c) => {
+  return c.json(todos)
+})
+

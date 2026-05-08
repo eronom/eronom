@@ -1,0 +1,3 @@
+user = "vs"
+
+print(user)

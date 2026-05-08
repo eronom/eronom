@@ -21,7 +21,7 @@ pub const Ctx = struct {
         var buf = std.ArrayList(u8).init(self.allocator);
         defer buf.deinit();
         try std.json.stringify(data, .{}, buf.writer());
-        
+
         try self.request.respond(buf.items, .{
             .status = self.status,
             .extra_headers = &.{
@@ -75,7 +75,7 @@ pub const App = struct {
         try full_path.appendSlice(self.allocator, self.prefix);
         if (!std.mem.startsWith(u8, path, "/")) try full_path.append(self.allocator, '/');
         try full_path.appendSlice(self.allocator, path);
-        
+
         // Trim trailing slash if not root
         if (full_path.items.len > 1 and full_path.items[full_path.items.len - 1] == '/') {
             _ = full_path.pop();
@@ -88,10 +88,18 @@ pub const App = struct {
         });
     }
 
-    pub fn get(self: *App, path: []const u8, h: HandlerFunc) !void { try self.handle(.GET, path, h); }
-    pub fn post(self: *App, path: []const u8, h: HandlerFunc) !void { try self.handle(.POST, path, h); }
-    pub fn put(self: *App, path: []const u8, h: HandlerFunc) !void { try self.handle(.PUT, path, h); }
-    pub fn delete(self: *App, path: []const u8, h: HandlerFunc) !void { try self.handle(.DELETE, path, h); }
+    pub fn get(self: *App, path: []const u8, h: HandlerFunc) !void {
+        try self.handle(.GET, path, h);
+    }
+    pub fn post(self: *App, path: []const u8, h: HandlerFunc) !void {
+        try self.handle(.POST, path, h);
+    }
+    pub fn put(self: *App, path: []const u8, h: HandlerFunc) !void {
+        try self.handle(.PUT, path, h);
+    }
+    pub fn delete(self: *App, path: []const u8, h: HandlerFunc) !void {
+        try self.handle(.DELETE, path, h);
+    }
 
     pub fn serveHTTP(self: *App, req: *std.http.Server.Request) !bool {
         var path = req.head.target;

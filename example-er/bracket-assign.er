@@ -1,0 +1,5 @@
+todos = [
+  { text: "Old" }
+]
+todos[0].text = "New"
+print("Updated: {todos[0].text}")
