@@ -46,8 +46,67 @@ pub fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     var if_was_executed = false;
     var routes: std.ArrayList(Route) = .empty;
-    defer routes.deinit(allocator);
+    defer {
+        for (routes.items) |route| {
+            allocator.free(route.path);
+        }
+        routes.deinit(allocator);
+    }
     try executeStatements(allocator, lines, &variables, &allocated_keys, &if_was_executed, &routes);
+
+    if (variables.get("__server_port__")) |port_s| {
+        const port = std.fmt.parseInt(u16, port_s, 10) catch 3000;
+        try startServer(allocator, port, &routes, &variables);
+    }
+}
+
+fn startServer(allocator: std.mem.Allocator, port: u16, routes: *std.ArrayList(Route), variables: *std.StringHashMap([]const u8)) !void {
+    const address = std.net.Address.parseIp("0.0.0.0", port) catch try std.net.Address.parseIp("127.0.0.1", port);
+    var server = try address.listen(.{ .reuse_address = true });
+    defer server.deinit();
+
+    std.debug.print("lisinning port {d}\n", .{port});
+
+    while (true) {
+        const conn = try server.accept();
+        defer conn.stream.close();
+
+        var reader_buf: [4096]u8 = undefined;
+        var buffered_reader = conn.stream.reader(&reader_buf);
+        var writer_buf: [4096]u8 = undefined;
+        var buffered_writer = conn.stream.writer(&writer_buf);
+
+        var http_server = std.http.Server.init(buffered_reader.interface(), &buffered_writer.interface);
+        var request = http_server.receiveHead() catch continue;
+
+        var matched = false;
+        for (routes.items) |route| {
+            if (std.mem.eql(u8, route.path, request.head.target)) {
+                for (route.handler_lines) |h_line| {
+                    const h_trimmed = std.mem.trim(u8, h_line, " \t\r");
+                    if (std.mem.indexOf(u8, h_trimmed, "c.json(")) |json_idx| {
+                        const o_p = std.mem.indexOfPos(u8, h_trimmed, json_idx, "(") orelse continue;
+                        const c_p = std.mem.lastIndexOf(u8, h_trimmed, ")") orelse continue;
+                        const data_expr = h_trimmed[o_p + 1 .. c_p];
+                        const data_val = try evaluateExpression(allocator, data_expr, variables.*);
+                        defer allocator.free(data_val);
+
+                        _ = try request.respond(data_val, .{
+                            .status = .ok,
+                            .extra_headers = &.{.{ .name = "Content-Type", .value = "application/json" }},
+                        });
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            if (matched) break;
+        }
+
+        if (!matched) {
+            _ = try request.respond("Not Found", .{ .status = .not_found });
+        }
+    }
 }
 
 fn findClosingBrace(lines: [][]const u8, start_idx: usize) usize {
@@ -434,52 +493,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                     defer allocator.free(port_s);
                     const port = std.fmt.parseInt(u16, port_s, 10) catch 3000;
 
-                    const address = std.net.Address.parseIp("0.0.0.0", port) catch try std.net.Address.parseIp("127.0.0.1", port);
-                    var server = try address.listen(.{ .reuse_address = true });
-                    defer server.deinit();
-
-                    std.debug.print("lisinning port {d}\n", .{port});
-
-                    while (true) {
-                        const conn = try server.accept();
-                        defer conn.stream.close();
-
-                        var reader_buf: [4096]u8 = undefined;
-                        var buffered_reader = conn.stream.reader(&reader_buf);
-                        var writer_buf: [4096]u8 = undefined;
-                        var buffered_writer = conn.stream.writer(&writer_buf);
-
-                        var http_server = std.http.Server.init(buffered_reader.interface(), &buffered_writer.interface);
-                        var request = http_server.receiveHead() catch continue;
-                        
-                        var matched = false;
-                        for (routes.items) |route| {
-                            if (std.mem.eql(u8, route.path, request.head.target)) {
-                                for (route.handler_lines) |h_line| {
-                                    const h_trimmed = std.mem.trim(u8, h_line, " \t\r");
-                                    if (std.mem.indexOf(u8, h_trimmed, "c.json(")) |json_idx| {
-                                        const o_p = std.mem.indexOfPos(u8, h_trimmed, json_idx, "(") orelse continue;
-                                        const c_p = std.mem.lastIndexOf(u8, h_trimmed, ")") orelse continue;
-                                        const data_expr = h_trimmed[o_p + 1 .. c_p];
-                                        const data_val = try evaluateExpression(allocator, data_expr, variables.*);
-                                        defer allocator.free(data_val);
-
-                                        _ = try request.respond(data_val, .{
-                                            .status = .ok,
-                                            .extra_headers = &.{.{ .name = "Content-Type", .value = "application/json" }},
-                                        });
-                                        matched = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (matched) break;
-                        }
-
-                        if (!matched) {
-                            _ = try request.respond("Not Found", .{ .status = .not_found });
-                        }
-                    }
+                    try startServer(allocator, port, routes, variables);
                 } else {
                     const close_p = std.mem.lastIndexOf(u8, trimmed, ")") orelse 0;
                     if (close_p > open_p) {
@@ -557,7 +571,30 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
 
                 const val_raw = std.mem.trim(u8, trimmed[index + 1 ..], " \t");
                 
-                if (std.mem.startsWith(u8, val_raw, "{")) {
+                if (std.mem.startsWith(u8, val_raw, "serve(")) {
+                    var port_val: []const u8 = "3000";
+                    if (std.mem.indexOf(u8, val_raw, "port:")) |p_idx| {
+                        const rest = val_raw[p_idx + 5 ..];
+                        const end_idx = std.mem.indexOfAny(u8, rest, "},)") orelse rest.len;
+                        port_val = try allocator.dupe(u8, std.mem.trim(u8, rest[0..end_idx], " \t\""));
+                    } else {
+                        // Multi-line serve call?
+                        var j = i + 1;
+                        while (j < lines.len) : (j += 1) {
+                            const s_line = std.mem.trim(u8, lines[j], " \t\r");
+                            if (std.mem.indexOf(u8, s_line, "port:")) |p_idx| {
+                                const rest = s_line[p_idx + 5 ..];
+                                const end_idx = std.mem.indexOfAny(u8, rest, "},)") orelse rest.len;
+                                port_val = try allocator.dupe(u8, std.mem.trim(u8, rest[0..end_idx], " \t\""));
+                                break;
+                            }
+                            if (std.mem.indexOf(u8, s_line, "})") != null or std.mem.indexOf(u8, s_line, ")") != null) break;
+                        }
+                    }
+                    try variables.put("__server_port__", port_val);
+                    if (variables.get(var_name)) |old| allocator.free(old);
+                    try variables.put(var_name, try allocator.dupe(u8, "[object Server]"));
+                } else if (std.mem.startsWith(u8, val_raw, "{")) {
                     // Object literal
                     if (std.mem.endsWith(u8, val_raw, "}")) {
                         // Single line object literal
