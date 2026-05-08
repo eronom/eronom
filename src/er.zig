@@ -170,8 +170,12 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
     var i: usize = 0;
     while (i < lines.len) : (i += 1) {
         const line = lines[i];
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len == 0) continue;
+        var line_trimmed = std.mem.trim(u8, line, " \t\r");
+        if (line_trimmed.len == 0) continue;
+        if (std.mem.endsWith(u8, line_trimmed, ";")) {
+            line_trimmed = std.mem.trim(u8, line_trimmed[0 .. line_trimmed.len - 1], " \t\r");
+        }
+        const trimmed = line_trimmed;
 
         if (std.mem.startsWith(u8, trimmed, "for ")) {
             const in_idx = std.mem.indexOf(u8, trimmed, " in ") orelse continue;
@@ -290,6 +294,54 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                 try variables.put(var_name, value_to_store);
                 if_was_executed.* = false;
             }
+        } else if (std.mem.indexOf(u8, trimmed, ".")) |dot_idx| {
+            if (std.mem.indexOfPos(u8, trimmed, dot_idx, "(")) |open_p| {
+                const close_p = std.mem.lastIndexOf(u8, trimmed, ")") orelse 0;
+                if (close_p > open_p) {
+                    const var_name = std.mem.trim(u8, trimmed[0..dot_idx], " \t");
+                    const method_name = std.mem.trim(u8, trimmed[dot_idx + 1 .. open_p], " \t");
+                    const arg_str = std.mem.trim(u8, trimmed[open_p + 1 .. close_p], " \t");
+
+                    if (std.mem.eql(u8, method_name, "push")) {
+                        if (variables.get(var_name)) |val| {
+                            const val_trimmed = std.mem.trim(u8, val, " \t");
+                            if (std.mem.startsWith(u8, val_trimmed, "[") and std.mem.endsWith(u8, val_trimmed, "]")) {
+                                const inner = std.mem.trim(u8, val_trimmed[1 .. val_trimmed.len - 1], " \t");
+                                const arg_val = try evaluateExpression(allocator, arg_str, variables.*);
+                                defer allocator.free(arg_val);
+
+                                var new_val: []u8 = undefined;
+                                if (inner.len == 0) {
+                                    new_val = try std.fmt.allocPrint(allocator, "[{s}]", .{arg_val});
+                                } else {
+                                    new_val = try std.fmt.allocPrint(allocator, "[{s}, {s}]", .{inner, arg_val});
+                                }
+
+                                if (variables.get(var_name)) |old| allocator.free(old);
+                                try variables.put(var_name, new_val);
+                            }
+                        }
+                    } else if (std.mem.eql(u8, method_name, "pop")) {
+                        if (variables.get(var_name)) |val| {
+                            const val_trimmed = std.mem.trim(u8, val, " \t");
+                            if (std.mem.startsWith(u8, val_trimmed, "[") and std.mem.endsWith(u8, val_trimmed, "]")) {
+                                const inner = std.mem.trim(u8, val_trimmed[1 .. val_trimmed.len - 1], " \t");
+                                var new_val: []u8 = undefined;
+                                if (std.mem.lastIndexOf(u8, inner, ",")) |comma_idx| {
+                                    const new_inner = std.mem.trim(u8, inner[0..comma_idx], " \t");
+                                    new_val = try std.fmt.allocPrint(allocator, "[{s}]", .{new_inner});
+                                } else {
+                                    new_val = try allocator.dupe(u8, "[]");
+                                }
+                                if (variables.get(var_name)) |old| allocator.free(old);
+                                try variables.put(var_name, new_val);
+                            }
+                        }
+                    }
+                    if_was_executed.* = false;
+                }
+            }
         }
+
     }
 }

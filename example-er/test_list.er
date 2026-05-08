@@ -1,0 +1,13 @@
+list = [1, 2, 3];
+list.push(4);
+print(list);
+list.push(5);
+print("New list: {list}");
+empty = [];
+empty.push(10);
+print(empty);
+empty.pop();
+print("Empty after pop: {empty}");
+single = [5];
+single.pop();
+print("Single after pop: {single}");
