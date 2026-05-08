@@ -1,3 +1,9 @@
-user = "vs"
 
-print(user)
+todos = [
+  { id: 1, text: "Learn Eronom", done: false }
+]
+
+get('/', (c) => {
+  return c.json(todos)
+})
+

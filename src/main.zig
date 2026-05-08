@@ -312,6 +312,43 @@ fn startServer(allocator: std.mem.Allocator, dir: []const u8, is_prod: bool, por
     }
 }
 
+fn handleDynamicApi(allocator: std.mem.Allocator, request: *std.http.Server.Request, target: []const u8) bool {
+    return handleDynamicApiInner(allocator, request, target) catch |err| {
+        std.debug.print("API Route Error: {any}\n", .{err});
+        return false;
+    };
+}
+
+fn handleDynamicApiInner(allocator: std.mem.Allocator, request: *std.http.Server.Request, target: []const u8) !bool {
+    if (!std.mem.startsWith(u8, target, "/api/")) return false;
+
+    var path_it = std.mem.tokenizeScalar(u8, target[5..], '/');
+    var current_api_path: std.ArrayList(u8) = .empty;
+    defer current_api_path.deinit(allocator);
+    try current_api_path.appendSlice(allocator, "api");
+
+    while (path_it.next()) |part| {
+        try current_api_path.append(allocator, '/');
+        try current_api_path.appendSlice(allocator, part);
+
+        const route_file = try std.fs.path.join(allocator, &.{ current_api_path.items, "route.er" });
+        defer allocator.free(route_file);
+
+        if (std.fs.cwd().statFile(route_file)) |_| {
+            const prefix = try std.fmt.allocPrint(allocator, "/{s}", .{current_api_path.items});
+            defer allocator.free(prefix);
+            if (try er.handleApiRequest(allocator, request, route_file, prefix)) return true;
+        } else |_| {}
+    }
+
+    const direct_er = try std.fmt.allocPrint(allocator, "api/{s}.er", .{target[5..]});
+    defer allocator.free(direct_er);
+    if (std.fs.cwd().statFile(direct_er)) |_| {
+        if (try er.handleApiRequest(allocator, request, direct_er, target)) return true;
+    } else |_| {}
+    return false;
+}
+
 fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Connection, dir: []const u8, app: *router.App, is_prod: bool) void {
     defer connection.stream.close();
 
@@ -362,6 +399,8 @@ fn handleConnection(allocator: std.mem.Allocator, connection: std.net.Server.Con
     }
 
     if (app.serveHTTP(&request) catch false) return;
+
+    if (handleDynamicApi(allocator, &request, target)) return;
 
     // Static file serving
     var full_path = std.fs.path.join(allocator, &.{ dir, target }) catch return;
