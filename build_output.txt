@@ -1,0 +1,25 @@
+install
++- install eronom
+   +- compile exe eronom Debug native 1 errors
+src/er.zig:14:51: error: struct 'array_list.Aligned([]const u8,null)' has no member named 'init'
+    var allocated_keys = std.ArrayList([]const u8).init(allocator);
+                         ~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
+/home/vishnus/.zvm/0.15.2/lib/std/array_list.zig:606:12: note: struct declared here
+    return struct {
+           ^~~~~~
+referenced by:
+    main: src/main.zig:99:27
+    callMain [inlined]: /home/vishnus/.zvm/0.15.2/lib/std/start.zig:627:37
+    callMainWithArgs [inlined]: /home/vishnus/.zvm/0.15.2/lib/std/start.zig:587:20
+    posixCallMainAndExit: /home/vishnus/.zvm/0.15.2/lib/std/start.zig:542:36
+    2 reference(s) hidden; use '-freference-trace=6' to see all references
+error: the following command failed with 1 compilation errors:
+/home/vishnus/.zvm/0.15.2/zig build-exe -ODebug --dep eronom -Mroot=/home/vishnus/Downloads/eronom/src/main.zig -Meronom=/home/vishnus/Downloads/eronom/src/root.zig --cache-dir .zig-cache --global-cache-dir /home/vishnus/.cache/zig --name eronom --zig-lib-dir /home/vishnus/.zvm/0.15.2/lib/ --listen=-
+
+Build Summary: 0/3 steps succeeded; 1 failed
+install transitive failure
++- install eronom transitive failure
+   +- compile exe eronom Debug native 1 errors
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/842bde79ff4ebbd4c75d9cc9010650a0/build /home/vishnus/.zvm/0.15.2/zig /home/vishnus/.zvm/0.15.2/lib /home/vishnus/Downloads/eronom .zig-cache /home/vishnus/.cache/zig --seed 0xaf11e018 -Zec1d8931355c7bed

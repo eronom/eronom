@@ -11,11 +11,16 @@ pub fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
     defer allocator.free(content);
 
     var variables = std.StringHashMap([]const u8).init(allocator);
+    var allocated_keys: std.ArrayList([]const u8) = .empty;
     defer {
         var it = variables.valueIterator();
         while (it.next()) |val| {
             allocator.free(val.*);
         }
+        for (allocated_keys.items) |key| {
+            allocator.free(key);
+        }
+        allocated_keys.deinit(allocator);
         variables.deinit();
     }
 
@@ -34,7 +39,7 @@ pub fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
     }
 
     var if_was_executed = false;
-    try executeStatements(allocator, lines, &variables, &if_was_executed);
+    try executeStatements(allocator, lines, &variables, &allocated_keys, &if_was_executed);
 }
 
 fn findClosingBrace(lines: [][]const u8, start_idx: usize) usize {
@@ -166,7 +171,7 @@ fn evaluateCondition(allocator: std.mem.Allocator, condition: []const u8, variab
     return false;
 }
 
-fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variables: *std.StringHashMap([]const u8), if_was_executed: *bool) anyerror!void {
+fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variables: *std.StringHashMap([]const u8), allocated_keys: *std.ArrayList([]const u8), if_was_executed: *bool) anyerror!void {
     var i: usize = 0;
     while (i < lines.len) : (i += 1) {
         const line = lines[i];
@@ -204,7 +209,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                 try variables.put(var_name, loop_val_str);
 
                 var dummy_if = false;
-                try executeStatements(allocator, block_lines, variables, &dummy_if);
+                try executeStatements(allocator, block_lines, variables, allocated_keys, &dummy_if);
             }
             i = block_end;
             if_was_executed.* = false;
@@ -219,7 +224,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
 
             if (cond_result) {
                 var dummy_if = false;
-                try executeStatements(allocator, block_lines, variables, &dummy_if);
+                try executeStatements(allocator, block_lines, variables, allocated_keys, &dummy_if);
                 if_was_executed.* = true;
             } else {
                 if_was_executed.* = false;
@@ -231,7 +236,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
 
             if (!if_was_executed.*) {
                 var dummy_if = false;
-                try executeStatements(allocator, block_lines, variables, &dummy_if);
+                try executeStatements(allocator, block_lines, variables, allocated_keys, &dummy_if);
             }
             i = block_end;
             if_was_executed.* = false;
@@ -286,12 +291,52 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                 }
 
                 const val_raw = std.mem.trim(u8, trimmed[index + 1 ..], " \t");
-                const value_to_store = try evaluateExpression(allocator, val_raw, variables.*);
-
-                if (variables.get(var_name)) |old_val| {
-                    allocator.free(old_val);
+                
+                if (std.mem.startsWith(u8, val_raw, "{")) {
+                    // Object literal
+                    if (std.mem.endsWith(u8, val_raw, "}")) {
+                        // Single line object literal
+                        const content = std.mem.trim(u8, val_raw[1..val_raw.len-1], " \t");
+                        var it = std.mem.splitSequence(u8, content, ",");
+                        while (it.next()) |entry| {
+                            if (std.mem.indexOf(u8, entry, ":")) |colon_idx| {
+                                const key = std.mem.trim(u8, entry[0..colon_idx], " \t");
+                                const val_expr = std.mem.trim(u8, entry[colon_idx+1..], " \t");
+                                const full_key = try std.fmt.allocPrint(allocator, "{s}.{s}", .{var_name, key});
+                                try allocated_keys.append(allocator, full_key);
+                                const val = try evaluateExpression(allocator, val_expr, variables.*);
+                                if (variables.get(full_key)) |old| allocator.free(old);
+                                try variables.put(full_key, val);
+                            }
+                        }
+                    } else {
+                        // Multi-line object literal
+                        i += 1;
+                        while (i < lines.len) : (i += 1) {
+                            const obj_line = std.mem.trim(u8, lines[i], " \t\r");
+                            if (std.mem.eql(u8, obj_line, "}")) break;
+                            
+                            const pair = if (std.mem.endsWith(u8, obj_line, ",")) obj_line[0..obj_line.len-1] else obj_line;
+                            if (std.mem.indexOf(u8, pair, ":")) |colon_idx| {
+                                const key = std.mem.trim(u8, pair[0..colon_idx], " \t");
+                                const val_expr = std.mem.trim(u8, pair[colon_idx+1..], " \t");
+                                const full_key = try std.fmt.allocPrint(allocator, "{s}.{s}", .{var_name, key});
+                                try allocated_keys.append(allocator, full_key);
+                                const val = try evaluateExpression(allocator, val_expr, variables.*);
+                                if (variables.get(full_key)) |old| allocator.free(old);
+                                try variables.put(full_key, val);
+                            }
+                        }
+                    }
+                    if (variables.get(var_name)) |old| allocator.free(old);
+                    try variables.put(var_name, try allocator.dupe(u8, "[object Object]"));
+                } else {
+                    const value_to_store = try evaluateExpression(allocator, val_raw, variables.*);
+                    if (variables.get(var_name)) |old_val| {
+                        allocator.free(old_val);
+                    }
+                    try variables.put(var_name, value_to_store);
                 }
-                try variables.put(var_name, value_to_store);
                 if_was_executed.* = false;
             }
         } else if (std.mem.indexOf(u8, trimmed, ".")) |dot_idx| {

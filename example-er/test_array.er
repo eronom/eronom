@@ -1,8 +1,8 @@
-list = [1, 2, 3];
-list.push(4);
-print(list);
-list.push(5);
-print("New list: {list}");
+array = [1, 2, 3];
+array.push(4);
+print(array);
+array.push(5);
+print("New array: {array}");
 empty = [];
 empty.push(10);
 print(empty);
