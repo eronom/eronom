@@ -60,6 +60,89 @@ pub fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
     }
 }
 
+pub fn handleApiRequest(allocator: std.mem.Allocator, request: *std.http.Server.Request, api_file_path: []const u8, api_prefix: []const u8) !bool {
+    const file = std.fs.cwd().openFile(api_file_path, .{}) catch return false;
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(content);
+
+    var variables = std.StringHashMap([]const u8).init(allocator);
+    var allocated_keys: std.ArrayList([]const u8) = .empty;
+    defer {
+        var it = variables.valueIterator();
+        while (it.next()) |val| {
+            allocator.free(val.*);
+        }
+        for (allocated_keys.items) |key| {
+            allocator.free(key);
+        }
+        allocated_keys.deinit(allocator);
+        variables.deinit();
+    }
+
+    var line_count: usize = 0;
+    var line_it_count = std.mem.splitSequence(u8, content, "\n");
+    while (line_it_count.next()) |_| line_count += 1;
+
+    var lines = try allocator.alloc([]const u8, line_count);
+    defer allocator.free(lines);
+
+    var line_it = std.mem.splitSequence(u8, content, "\n");
+    var line_idx: usize = 0;
+    while (line_it.next()) |line| {
+        lines[line_idx] = line;
+        line_idx += 1;
+    }
+
+    var if_was_executed = false;
+    var routes: std.ArrayList(Route) = .empty;
+    defer {
+        for (routes.items) |route| {
+            allocator.free(route.path);
+        }
+        routes.deinit(allocator);
+    }
+    try executeStatements(allocator, lines, &variables, &allocated_keys, &if_was_executed, &routes);
+
+    const target = request.head.target;
+    var clean_target = target;
+    if (std.mem.indexOfScalar(u8, clean_target, '?')) |idx| clean_target = clean_target[0..idx];
+    if (std.mem.indexOfScalar(u8, clean_target, '#')) |idx| clean_target = clean_target[0..idx];
+
+    // Check if target starts with api_prefix
+    if (!std.mem.startsWith(u8, clean_target, api_prefix)) return false;
+    const sub_path = clean_target[api_prefix.len..];
+
+    for (routes.items) |route| {
+        if (std.mem.eql(u8, route.method, @tagName(request.head.method))) {
+            if (std.mem.eql(u8, route.path, sub_path) or (route.path[0] != '/' and std.mem.eql(u8, route.path, sub_path[1..]))) {
+                for (route.handler_lines) |h_line| {
+                    const h_trimmed = std.mem.trim(u8, h_line, " \t\r");
+                    if (std.mem.indexOf(u8, h_trimmed, "c.json(")) |json_idx| {
+                        const o_p = std.mem.indexOfPos(u8, h_trimmed, json_idx, "(") orelse continue;
+                        const c_p = std.mem.lastIndexOf(u8, h_trimmed, ")") orelse continue;
+                        const data_expr = h_trimmed[o_p + 1 .. c_p];
+                        const data_val = try evaluateExpression(allocator, data_expr, variables);
+                        defer allocator.free(data_val);
+
+                        _ = try request.respond(data_val, .{
+                            .status = .ok,
+                            .extra_headers = &.{
+                                .{ .name = "Content-Type", .value = "application/json" },
+                                .{ .name = "Access-Control-Allow-Origin", .value = "*" },
+                            },
+                        });
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 fn startServer(allocator: std.mem.Allocator, port: u16, routes: *std.ArrayList(Route), variables: *std.StringHashMap([]const u8)) !void {
     const address = std.net.Address.parseIp("0.0.0.0", port) catch try std.net.Address.parseIp("127.0.0.1", port);
     var server = try address.listen(.{ .reuse_address = true });
@@ -464,6 +547,36 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                 std.debug.print("{s}\n", .{val});
             }
             if_was_executed.* = false;
+        } else if (std.mem.startsWith(u8, trimmed, "get(")) {
+            const open_p = std.mem.indexOf(u8, trimmed, "(") orelse continue;
+            const close_line_idx = findClosingBrace(lines, i);
+            const first_line = trimmed;
+            const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
+            const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
+            
+            const handler_lines = lines[i + 1 .. close_line_idx];
+            try routes.append(allocator, .{
+                .method = "GET",
+                .path = try allocator.dupe(u8, path_raw),
+                .handler_lines = handler_lines,
+            });
+            i = close_line_idx;
+            if_was_executed.* = false;
+        } else if (std.mem.startsWith(u8, trimmed, "post(")) {
+            const open_p = std.mem.indexOf(u8, trimmed, "(") orelse continue;
+            const close_line_idx = findClosingBrace(lines, i);
+            const first_line = trimmed;
+            const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
+            const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
+            
+            const handler_lines = lines[i + 1 .. close_line_idx];
+            try routes.append(allocator, .{
+                .method = "POST",
+                .path = try allocator.dupe(u8, path_raw),
+                .handler_lines = handler_lines,
+            });
+            i = close_line_idx;
+            if_was_executed.* = false;
         } else if (std.mem.startsWith(u8, trimmed, "return ")) {
             return;
         } else if (std.mem.indexOf(u8, trimmed, ".")) |dot_idx| {
@@ -486,14 +599,19 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                         .handler_lines = handler_lines,
                     });
                     i = close_line_idx;
-                } else if (std.mem.eql(u8, method_name, "listen")) {
-                    const close_p = std.mem.lastIndexOf(u8, trimmed, ")") orelse trimmed.len;
-                    const arg_str = std.mem.trim(u8, trimmed[open_p + 1 .. close_p], " \t");
-                    const port_s = try evaluateExpression(allocator, arg_str, variables.*);
-                    defer allocator.free(port_s);
-                    const port = std.fmt.parseInt(u16, port_s, 10) catch 3000;
-
-                    try startServer(allocator, port, routes, variables);
+                } else if (std.mem.eql(u8, method_name, "post")) {
+                    const close_line_idx = findClosingBrace(lines, i);
+                    const first_line = trimmed;
+                    const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
+                    const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
+                    
+                    const handler_lines = lines[i + 1 .. close_line_idx];
+                    try routes.append(allocator, .{
+                        .method = "POST",
+                        .path = try allocator.dupe(u8, path_raw),
+                        .handler_lines = handler_lines,
+                    });
+                    i = close_line_idx;
                 } else {
                     const close_p = std.mem.lastIndexOf(u8, trimmed, ")") orelse 0;
                     if (close_p > open_p) {
