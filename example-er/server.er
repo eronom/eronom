@@ -1,6 +1,6 @@
 app = Eronom()
 todos = [
-  { id: 1, text: "Learn Hono", done: false }
+  { id: 1, text: "Learn Eronom", done: false }
 ]
 
 // GET all todos
@@ -8,4 +8,4 @@ app.get('/todos', (c) => {
   return c.json(todos)
 })
 
-app.listen(3000)
+app.listen(4500)
