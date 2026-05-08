@@ -1,0 +1,15 @@
+let name : string = "Vishnu"
+let age = 100 + 5
+let nme : string = "vs"
+
+print("Name: {name}")
+print("Age: {age}")
+print("Short Name: {nme}")
+
+if (age > 100) {
+    print("{name} is old")
+}
+
+for i in 1..3 {
+    print("Loop {i}")
+}

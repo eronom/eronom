@@ -1,0 +1,27 @@
+
+
+let name : string = "Vishnuss"
+age = 18 +87
+
+ag2 = 2
+
+ag3 = age + ag2
+
+print("Name: {name}")
+print("Age: {age}")
+print("Ag2: {ag2}")
+print("Ag3: {ag3}")
+
+if (age > 100){
+
+
+    print("You are eligible for voting {age}")
+}
+else{
+    print("You are not eligible for voting {name}")
+}
+
+
+for i in 1..25 {
+    print("{i}")
+}
