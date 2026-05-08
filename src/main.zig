@@ -2,6 +2,7 @@ const std = @import("std");
 const eval = @import("eval.zig");
 const router = @import("router.zig");
 const compiler = @import("compiler.zig");
+const er = @import("er.zig");
 
 const Watcher = struct {
     mutex: std.Thread.Mutex = .{},
@@ -73,13 +74,29 @@ pub fn main() !void {
 
     var cmd: []const u8 = "dev";
     var dir: []const u8 = ".";
+    var port: u16 = 8080;
 
     if (args.len > 1) {
         if (std.mem.eql(u8, args[1], "build") or std.mem.eql(u8, args[1], "dev") or std.mem.eql(u8, args[1], "start") or std.mem.eql(u8, args[1], "init")) {
             cmd = args[1];
-            if (args.len > 2) dir = args[2];
+            var arg_idx: usize = 2;
+            while (arg_idx < args.len) : (arg_idx += 1) {
+                const arg = args[arg_idx];
+                if (std.mem.eql(u8, arg, "for") or std.mem.eql(u8, arg, "on") or std.mem.eql(u8, arg, "port")) {
+                    continue;
+                }
+                const maybe_port = std.fmt.parseInt(u16, arg, 10) catch null;
+                if (maybe_port) |p| {
+                    port = p;
+                } else {
+                    dir = arg;
+                }
+            }
         } else if (std.mem.endsWith(u8, args[1], ".em")) {
             try runEmFile(allocator, args[1]);
+            return;
+        } else if (std.mem.endsWith(u8, args[1], ".er")) {
+            try er.runFile(allocator, args[1]);
             return;
         } else {
             dir = args[1];
@@ -100,12 +117,12 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, cmd, "start")) {
-        try startServer(allocator, abs_dir, true);
+        try startServer(allocator, abs_dir, true, port);
         return;
     }
 
     // Default: dev
-    try startServer(allocator, abs_dir, false);
+    try startServer(allocator, abs_dir, false, port);
 }
 
 fn runEmFile(allocator: std.mem.Allocator, path: []const u8) !void {
@@ -273,8 +290,7 @@ fn buildProject(allocator: std.mem.Allocator, dir: []const u8) !void {
     }
 }
 
-fn startServer(allocator: std.mem.Allocator, dir: []const u8, is_prod: bool) !void {
-    const port: u16 = 8080;
+fn startServer(allocator: std.mem.Allocator, dir: []const u8, is_prod: bool, port: u16) !void {
     const address = try std.net.Address.parseIp("127.0.0.1", port);
     var server = try address.listen(.{ .reuse_address = true });
     defer server.deinit();

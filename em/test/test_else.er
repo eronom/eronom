@@ -1,7 +1,0 @@
-age = 20
-if (age > 17){
-    print("Eligible")
-}
-else{
-    print("Not eligible")
-}

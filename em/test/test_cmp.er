@@ -1,7 +1,0 @@
-x = "test"
-if (x == "test") {
-    print("Comparison works")
-}
-if (x != "other") {
-    print("Inequality works")
-}

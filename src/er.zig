@@ -1,5 +1,42 @@
 const std = @import("std");
 
+pub fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
+        std.debug.print("Error opening file: {any}\n", .{err});
+        return;
+    };
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(content);
+
+    var variables = std.StringHashMap([]const u8).init(allocator);
+    defer {
+        var it = variables.valueIterator();
+        while (it.next()) |val| {
+            allocator.free(val.*);
+        }
+        variables.deinit();
+    }
+
+    var line_count: usize = 0;
+    var line_it_count = std.mem.splitSequence(u8, content, "\n");
+    while (line_it_count.next()) |_| line_count += 1;
+
+    var lines = try allocator.alloc([]const u8, line_count);
+    defer allocator.free(lines);
+
+    var line_it = std.mem.splitSequence(u8, content, "\n");
+    var line_idx: usize = 0;
+    while (line_it.next()) |line| {
+        lines[line_idx] = line;
+        line_idx += 1;
+    }
+
+    var if_was_executed = false;
+    try executeStatements(allocator, lines, &variables, &if_was_executed);
+}
+
 fn findClosingBrace(lines: [][]const u8, start_idx: usize) usize {
     var depth: usize = 0;
     var i = start_idx;
@@ -255,53 +292,4 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
             }
         }
     }
-}
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
-    if (args.len < 2) {
-        std.debug.print("Usage: eronom <file.em>\n", .{});
-        return;
-    }
-
-    const file = std.fs.cwd().openFile(args[1], .{}) catch |err| {
-        std.debug.print("Error opening file: {any}\n", .{err});
-        return;
-    };
-    defer file.close();
-
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
-    defer allocator.free(content);
-
-    var variables = std.StringHashMap([]const u8).init(allocator);
-    defer {
-        var it = variables.valueIterator();
-        while (it.next()) |val| {
-            allocator.free(val.*);
-        }
-        variables.deinit();
-    }
-
-    var line_count: usize = 0;
-    var line_it_count = std.mem.splitSequence(u8, content, "\n");
-    while (line_it_count.next()) |_| line_count += 1;
-    
-    var lines = try allocator.alloc([]const u8, line_count);
-    defer allocator.free(lines);
-    
-    var line_it = std.mem.splitSequence(u8, content, "\n");
-    var line_idx: usize = 0;
-    while (line_it.next()) |line| {
-        lines[line_idx] = line;
-        line_idx += 1;
-    }
-
-    var if_was_executed = false;
-    try executeStatements(allocator, lines, &variables, &if_was_executed);
 }
