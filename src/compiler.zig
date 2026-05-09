@@ -321,7 +321,7 @@ fn injectSignalName(allocator: std.mem.Allocator, input: []const u8, name: []con
     return res.toOwnedSlice(allocator);
 }
 
-pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8, visited: *std.StringHashMap(bool)) !ProcessResult {
+pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: []const u8, content: []const u8, visited: *std.StringHashMap(bool)) !ProcessResult {
     var scripts: std.ArrayList([]const u8) = .empty;
     var styles: std.ArrayList([]const u8) = .empty;
     var signal_vars_list: std.ArrayList([]const u8) = .empty;
@@ -425,13 +425,13 @@ pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, 
                     const comp_path = try std.fs.path.join(allocator, &.{ base_dir, comp_filename });
                     defer allocator.free(comp_path);
 
-                    if (std.fs.cwd().statFile(comp_path)) |_| {
+                    if (std.Io.Dir.cwd().statFile(io, comp_path, .{})) |_| {
                         if (visited.get(comp_path) == null) {
                             try visited.put(try allocator.dupe(u8, comp_path), true);
-                            const comp_content = try std.fs.cwd().readFileAlloc(allocator, comp_path, 1024 * 1024);
+                            const comp_content = try std.Io.Dir.cwd().readFileAlloc(io, comp_path, allocator, @enumFromInt(1024 * 1024));
                             defer allocator.free(comp_content);
 
-                            var sub_res = try processComponentTree(allocator, base_dir, comp_content, visited);
+                            var sub_res = try processComponentTree(allocator, io, base_dir, comp_content, visited);
                             try html_buf.appendSlice(allocator, sub_res.html);
                             for (sub_res.scripts.items) |s| try scripts.append(allocator, s);
                             for (sub_res.styles.items) |s| try styles.append(allocator, s);
@@ -501,7 +501,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, base_dir: []const u8, 
     };
 }
 
-pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, content: []const u8, is_prod: bool) ![]const u8 {
+pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: []const u8, content: []const u8, is_prod: bool) ![]const u8 {
     var if_counter: usize = 0;
     var for_counter: usize = 0;
     var visited = std.StringHashMap(bool).init(allocator);
@@ -511,7 +511,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, base_dir: []const u8, c
         visited.deinit();
     }
 
-    var result = try processComponentTree(allocator, base_dir, content, &visited);
+    var result = try processComponentTree(allocator, io, base_dir, content, &visited);
 
     var final: std.ArrayList(u8) = .empty;
 

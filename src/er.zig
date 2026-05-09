@@ -6,14 +6,8 @@ const Route = struct {
     handler_lines: [][]const u8,
 };
 
-pub fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| {
-        std.debug.print("Error opening file: {any}\n", .{err});
-        return;
-    };
-    defer file.close();
-
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+pub fn runFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+    const content = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, @enumFromInt(1024 * 1024));
     defer allocator.free(content);
 
     var variables = std.StringHashMap([]const u8).init(allocator);
@@ -56,15 +50,12 @@ pub fn runFile(allocator: std.mem.Allocator, path: []const u8) !void {
 
     if (variables.get("__server_port__")) |port_s| {
         const port = std.fmt.parseInt(u16, port_s, 10) catch 3000;
-        try startServer(allocator, port, &routes, &variables);
+        try startServer(allocator, io, port, &routes, &variables);
     }
 }
 
-pub fn handleApiRequest(allocator: std.mem.Allocator, request: *std.http.Server.Request, api_file_path: []const u8, api_prefix: []const u8) !bool {
-    const file = std.fs.cwd().openFile(api_file_path, .{}) catch return false;
-    defer file.close();
-
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+pub fn handleApiRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, api_file_path: []const u8, api_prefix: []const u8) !bool {
+    const content = std.Io.Dir.cwd().readFileAlloc(io, api_file_path, allocator, @enumFromInt(1024 * 1024)) catch return false;
     defer allocator.free(content);
 
     var variables = std.StringHashMap([]const u8).init(allocator);
@@ -154,23 +145,23 @@ pub fn handleApiRequest(allocator: std.mem.Allocator, request: *std.http.Server.
     return false;
 }
 
-fn startServer(allocator: std.mem.Allocator, port: u16, routes: *std.ArrayList(Route), variables: *std.StringHashMap([]const u8)) !void {
-    const address = std.net.Address.parseIp("0.0.0.0", port) catch try std.net.Address.parseIp("127.0.0.1", port);
-    var server = try address.listen(.{ .reuse_address = true });
-    defer server.deinit();
+fn startServer(allocator: std.mem.Allocator, io: std.Io, port: u16, routes: *std.ArrayList(Route), variables: *std.StringHashMap([]const u8)) !void {
+    const address = std.Io.net.IpAddress.parse("0.0.0.0", port) catch try std.Io.net.IpAddress.parse("127.0.0.1", port);
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
 
     std.debug.print("lisinning port {d}\n", .{port});
 
     while (true) {
-        const conn = try server.accept();
-        defer conn.stream.close();
+        const conn = try server.accept(io);
+        defer conn.close(io);
 
         var reader_buf: [4096]u8 = undefined;
-        var buffered_reader = conn.stream.reader(&reader_buf);
+        var reader = conn.reader(io, &reader_buf);
         var writer_buf: [4096]u8 = undefined;
-        var buffered_writer = conn.stream.writer(&writer_buf);
+        var writer = conn.writer(io, &writer_buf);
 
-        var http_server = std.http.Server.init(buffered_reader.interface(), &buffered_writer.interface);
+        var http_server = std.http.Server.init(&reader.interface, &writer.interface);
         var request = http_server.receiveHead() catch continue;
 
         var matched = false;

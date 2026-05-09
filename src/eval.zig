@@ -282,8 +282,8 @@ const ExprParser = struct {
                     if (left == .string or right == .string) {
                         var buf: std.ArrayList(u8) = .empty;
                         defer buf.deinit(self.ev.allocator);
-                        try buf.writer(self.ev.allocator).print("{f}", .{left});
-                        try buf.writer(self.ev.allocator).print("{f}", .{right});
+                        try buf.print(self.ev.allocator, "{f}", .{left});
+                        try buf.print(self.ev.allocator, "{f}", .{right});
                         left = .{ .string = try buf.toOwnedSlice(self.ev.allocator) };
                     } else {
                         left = .{ .number = left.toNumber() + right.toNumber() };
