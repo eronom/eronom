@@ -320,9 +320,21 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
     }
 }
 
-fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_prod: bool, port: u16) !void {
-    const address = try std.Io.net.IpAddress.parse("0.0.0.0", port);
-    var server = try address.listen(io, .{ .reuse_address = true });
+fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_prod: bool, initial_port: u16) !void {
+    var port = initial_port;
+    var server: std.Io.net.Server = undefined;
+    while (true) {
+        const address = try std.Io.net.IpAddress.parse("0.0.0.0", port);
+        server = address.listen(io, .{ .reuse_address = false }) catch |err| {
+            if (err == error.AddressInUse) {
+                std.debug.print("Port {d} already opened, trying {d}...\n", .{ port, port + 1 });
+                port += 1;
+                continue;
+            }
+            return err;
+        };
+        break;
+    }
     defer server.deinit(io);
 
     std.debug.print("{s} server running at http://localhost:{d}\n", .{ if (is_prod) "Production" else "Dev", port });
