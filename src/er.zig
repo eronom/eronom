@@ -423,13 +423,11 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
                 defer allocator.free(formatted_v);
 
                 if (!first) {
-                    try obj_buf.appendSlice(allocator, ",\n    ");
-                } else {
-                    try obj_buf.appendSlice(allocator, "\n    ");
+                    try obj_buf.appendSlice(allocator, ",");
                 }
                 try obj_buf.append(allocator, '"');
                 try obj_buf.appendSlice(allocator, key);
-                try obj_buf.appendSlice(allocator, "\": ");
+                try obj_buf.appendSlice(allocator, "\":");
                 try obj_buf.appendSlice(allocator, formatted_v);
                 
                 if (variables.get(full_key)) |old| allocator.free(old);
@@ -437,11 +435,7 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
                 first = false;
             }
         }
-        if (!first) {
-            try obj_buf.appendSlice(allocator, "\n  }");
-        } else {
-            try obj_buf.append(allocator, '}');
-        }
+        try obj_buf.append(allocator, '}');
         return try obj_buf.toOwnedSlice(allocator);
     } else if (std.mem.startsWith(u8, trimmed, "[") and std.mem.endsWith(u8, trimmed, "]")) {
         const content = std.mem.trim(u8, trimmed[1 .. trimmed.len - 1], " \t\r\n");
@@ -456,9 +450,7 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
             const trimmed_elem = std.mem.trim(u8, elem, " \t\r\n");
             if (trimmed_elem.len == 0) continue;
             if (idx > 0) {
-                try list_buf.appendSlice(allocator, ",\n  ");
-            } else {
-                try list_buf.appendSlice(allocator, "\n  ");
+                try list_buf.appendSlice(allocator, ",");
             }
             const full_key = try std.fmt.allocPrint(allocator, "{s}.{d}", .{ prefix, idx });
             try allocated_keys.append(allocator, full_key);
@@ -481,11 +473,7 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
             try variables.put(full_key, v);
             idx += 1;
         }
-        if (idx > 0) {
-            try list_buf.appendSlice(allocator, "\n]");
-        } else {
-            try list_buf.append(allocator, ']');
-        }
+        try list_buf.append(allocator, ']');
         return try list_buf.toOwnedSlice(allocator);
     } else {
         return try evaluateExpression(allocator, trimmed, variables.*);
@@ -677,7 +665,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                                     if (inner.len == 0) {
                                         new_val = try std.fmt.allocPrint(allocator, "[{s}]", .{arg_val});
                                     } else {
-                                        new_val = try std.fmt.allocPrint(allocator, "[{s}, {s}]", .{inner, arg_val});
+                                        new_val = try std.fmt.allocPrint(allocator, "[{s},{s}]", .{inner, arg_val});
                                     }
                                     
                                     if (variables.get(prefix)) |old| allocator.free(old);
@@ -698,7 +686,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                                         var new_inner_buf: std.ArrayList(u8) = .empty;
                                         defer new_inner_buf.deinit(allocator);
                                         for (elems[0 .. elems.len - 1], 0..) |elem, idx| {
-                                            if (idx > 0) try new_inner_buf.appendSlice(allocator, ", ");
+                                            if (idx > 0) try new_inner_buf.appendSlice(allocator, ",");
                                             try new_inner_buf.appendSlice(allocator, elem);
                                         }
                                         new_val = try std.fmt.allocPrint(allocator, "[{s}]", .{new_inner_buf.items});
