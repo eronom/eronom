@@ -57,7 +57,6 @@ fn checkDirChanged(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, la
                 return try allocator.dupe(u8, entry.name);
             }
         } else if (entry.kind == .directory) {
-            // skip .zig-cache
             if (std.mem.eql(u8, entry.name, ".zig-cache")) continue;
             const sub_path = try std.fs.path.join(allocator, &.{ dir, entry.name });
             defer allocator.free(sub_path);
@@ -83,6 +82,7 @@ pub fn main(init: std.process.Init) !void {
     var cmd: []const u8 = "dev";
     var dir: []const u8 = ".";
     var port: u16 = 8080;
+    var port_from_cli = false;
 
     if (args.len > 1) {
         if (std.mem.eql(u8, args[1], "build") or std.mem.eql(u8, args[1], "dev") or std.mem.eql(u8, args[1], "start") or std.mem.eql(u8, args[1], "init")) {
@@ -96,6 +96,7 @@ pub fn main(init: std.process.Init) !void {
                 const maybe_port = std.fmt.parseInt(u16, arg, 10) catch null;
                 if (maybe_port) |p| {
                     port = p;
+                    port_from_cli = true;
                 } else {
                     dir = arg;
                 }
@@ -125,6 +126,34 @@ pub fn main(init: std.process.Init) !void {
     const abs_dir = try std.Io.Dir.cwd().realPathFileAlloc(io, dir, allocator);
     defer allocator.free(abs_dir);
 
+    if (!port_from_cli) {
+        var config_vars = std.StringHashMap([]const u8).init(allocator);
+        var allocated_keys: std.ArrayList([]const u8) = .empty;
+        var routes: std.ArrayList(er.Route) = .empty;
+        defer {
+            var it = config_vars.valueIterator();
+            while (it.next()) |v| allocator.free(v.*);
+            for (allocated_keys.items) |k| allocator.free(k);
+            config_vars.deinit();
+            allocated_keys.deinit(allocator);
+            for (routes.items) |r| allocator.free(r.path);
+            routes.deinit(allocator);
+        }
+
+        const config_files = [_][]const u8{ "config.er", "config.erm" };
+        for (config_files) |cf| {
+            const cp = std.fs.path.join(allocator, &.{ abs_dir, cf }) catch continue;
+            defer allocator.free(cp);
+            if (std.Io.Dir.cwd().statFile(io, cp, .{})) |_| {
+                er.evaluateFile(allocator, io, cp, &config_vars, &allocated_keys, &routes) catch continue;
+                if (config_vars.get("config.server.port")) |ps| {
+                    port = std.fmt.parseInt(u16, ps, 10) catch port;
+                }
+                break;
+            } else |_| {}
+        }
+    }
+
     if (std.mem.eql(u8, cmd, "init")) {
         try initProject(allocator, io, abs_dir);
         return;
@@ -140,7 +169,6 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    // Default: dev
     try startServer(allocator, io, abs_dir, false, port);
 }
 
@@ -152,7 +180,6 @@ fn initProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void 
     _ = allocator;
     std.debug.print("Initializing fresh Eronom project in {s}\n", .{dir});
     try std.Io.Dir.cwd().createDirPath(io, dir);
-    // Write index.erm and layout.erm (omitted for brevity, same as Go)
 }
 
 fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void {
@@ -160,7 +187,6 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
     defer allocator.free(build_dir);
     std.debug.print("Building project to {s}\n", .{build_dir});
 
-    // Clean and recreate build directory
     std.Io.Dir.cwd().deleteTree(io, build_dir) catch {};
     try std.Io.Dir.cwd().createDirPath(io, build_dir);
 
@@ -174,7 +200,6 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
         layouts.deinit();
     }
 
-    // Pass 1: find layouts
     {
         var iter_dir = try std.Io.Dir.cwd().openDir(io, dir, .{ .iterate = true });
         defer iter_dir.close(io);
@@ -198,7 +223,6 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
         }
     }
 
-    // Pass 2: process files
     {
         var iter_dir = try std.Io.Dir.cwd().openDir(io, dir, .{ .iterate = true });
         defer iter_dir.close(io);
@@ -206,7 +230,6 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
         defer walker.deinit();
 
         while (try walker.next(io)) |entry| {
-            // Skip build directory, source code, and build artifacts
             const skip_dirs = [_][]const u8{ "build", "src", "zig-out", ".zig-cache", "test", ".git", ".github", "tmp", ".agents" };
             var skip = false;
             for (skip_dirs) |sd| {
@@ -223,7 +246,6 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
             if (entry.kind == .file) {
                 if (std.mem.endsWith(u8, entry.basename, ".erm")) {
                     if (std.mem.eql(u8, entry.basename, "layout.erm") or std.mem.eql(u8, entry.basename, "virtual_root.erm")) continue;
-                    // Skip components (Uppercase)
                     if (entry.basename.len > 0 and std.ascii.isUpper(entry.basename[0])) continue;
 
                     const content = try entry.dir.readFileAlloc(io, entry.basename, allocator, @enumFromInt(1024 * 1024));
@@ -232,7 +254,6 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
                     const content_hmr = try std.mem.replaceOwned(u8, allocator, content, "import.meta.hot", "window.hmr");
                     defer allocator.free(content_hmr);
 
-                    // Find closest layout
                     var current_dir = try allocator.dupe(u8, rel_dir);
                     defer allocator.free(current_dir);
                     var layout_content: ?[]const u8 = null;
@@ -266,8 +287,7 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
                     const processed = try compiler.processErmComponent(allocator, io, abs_file_dir, final_content, true);
                     defer allocator.free(processed);
 
-                    // Determine output path (pretty URLs)
-                    const base_name = entry.basename[0 .. entry.basename.len - 4]; // remove .erm
+                    const base_name = entry.basename[0 .. entry.basename.len - 4];
                     var out_path: []const u8 = undefined;
                     if (std.mem.eql(u8, base_name, "index") or std.mem.eql(u8, base_name, "page")) {
                         out_path = try std.fs.path.join(allocator, &.{ build_dir, rel_dir, "index.html" });
@@ -279,7 +299,6 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
                     try std.Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(out_path).?);
                     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = out_path, .data = processed });
                 } else {
-                    // Skip Zig/source relevant files
                     const skip_exts = [_][]const u8{ ".zig", ".go", ".mod", ".sum" };
                     var skip_file = false;
                     for (skip_exts) |ext| {
@@ -302,14 +321,13 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
 }
 
 fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_prod: bool, port: u16) !void {
-    const address = try std.Io.net.IpAddress.parse("127.0.0.1", port);
+    const address = try std.Io.net.IpAddress.parse("0.0.0.0", port);
     var server = try address.listen(io, .{ .reuse_address = true });
     defer server.deinit(io);
 
     std.debug.print("{s} server running at http://localhost:{d}\n", .{ if (is_prod) "Production" else "Dev", port });
 
     var app = router.App.init(allocator);
-    // defer app.deinit();
 
     if (!is_prod) {
         _ = try std.Thread.spawn(.{}, watchFiles, .{ allocator, io, dir });
@@ -369,27 +387,19 @@ fn handleConnection(allocator: std.mem.Allocator, io: std.Io, connection: std.Io
     var writer = connection.writer(io, &writer_buf);
 
     var http_server = std.http.Server.init(&reader.interface, &writer.interface);
-
     var request = http_server.receiveHead() catch return;
     var target = request.head.target;
 
-    // Strip query parameters for routing
-    if (std.mem.indexOfScalar(u8, target, '?')) |q_idx| {
-        target = target[0..q_idx];
-    }
-    if (std.mem.indexOfScalar(u8, target, '#')) |f_idx| {
-        target = target[0..f_idx];
-    }
+    if (std.mem.indexOfScalar(u8, target, '?')) |q_idx| target = target[0..q_idx];
+    if (std.mem.indexOfScalar(u8, target, '#')) |f_idx| target = target[0..f_idx];
 
     std.debug.print("Request: {s} {s}\n", .{ @tagName(request.head.method), target });
 
-    // Block direct access to .erm files
     if (std.mem.endsWith(u8, target, ".erm")) {
         _ = request.respond("Not Found", .{ .status = .not_found }) catch {};
         return;
     }
 
-    // HMR Endpoint
     if (!is_prod and std.mem.eql(u8, target, "/__hmr")) {
         const response_headers = "HTTP/1.1 200 OK\r\n" ++
             "Content-Type: text/event-stream\r\n" ++
@@ -419,14 +429,23 @@ fn handleConnection(allocator: std.mem.Allocator, io: std.Io, connection: std.Io
     }
 
     if (app.serveHTTP(&request) catch false) return;
-
     if (handleDynamicApi(allocator, io, &request, target)) return;
 
-    // Static file serving
+    {
+        const server_er = try std.fs.path.join(allocator, &.{ dir, "server.er" });
+        defer allocator.free(server_er);
+        if (std.Io.Dir.cwd().statFile(io, server_er, .{})) |_| {
+            if (er.handleApiRequest(allocator, io, &request, server_er, "") catch |err| blk: {
+                std.debug.print("Error in server.er: {any}\n", .{err});
+                break :blk false;
+            }) return;
+        } else |_| {}
+    }
+
     var full_path = std.fs.path.join(allocator, &.{ dir, target }) catch return;
     defer allocator.free(full_path);
 
-    var stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch |err| blk: {
+    var stat = std.Io.Dir.cwd().statFile(io, full_path, .{} ) catch |err| blk: {
         if (err == error.FileNotFound and !std.mem.endsWith(u8, full_path, ".erm")) {
             const erm_path = try std.fmt.allocPrint(allocator, "{s}.erm", .{full_path});
             defer allocator.free(erm_path);
@@ -462,15 +481,12 @@ fn handleConnection(allocator: std.mem.Allocator, io: std.Io, connection: std.Io
         }
     }
 
-    // Handle .erm processing
     if (std.mem.endsWith(u8, full_path, ".erm")) {
         const content = std.Io.Dir.cwd().readFileAlloc(io, full_path, allocator, @enumFromInt(1024 * 1024)) catch return;
         defer allocator.free(content);
-
         const content_hmr = std.mem.replaceOwned(u8, allocator, content, "import.meta.hot", "window.hmr") catch content;
         defer if (content_hmr.ptr != content.ptr) allocator.free(@constCast(content_hmr));
 
-        // Find closest layout
         var current_dir = allocator.dupe(u8, std.fs.path.dirname(full_path) orelse ".") catch return;
         defer allocator.free(current_dir);
         var layout_content: ?[]const u8 = null;
@@ -481,10 +497,8 @@ fn handleConnection(allocator: std.mem.Allocator, io: std.Io, connection: std.Io
                 layout_content = c;
                 break;
             } else |_| {}
-
             if (std.mem.eql(u8, current_dir, dir)) break;
             const parent = std.fs.path.dirname(current_dir) orelse break;
-            if (std.mem.eql(u8, parent, current_dir)) break;
             const next = allocator.dupe(u8, parent) catch break;
             allocator.free(current_dir);
             current_dir = next;

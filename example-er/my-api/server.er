@@ -1,7 +1,4 @@
-app = serve({
-  port: 4000,
-  
-})
+app = route()
 todos = [
   { id: 1, text: "Learn Eronom", done: false }
 ]

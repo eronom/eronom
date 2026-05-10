@@ -1,28 +1,17 @@
 const std = @import("std");
 
-const Route = struct {
+pub const Route = struct {
     method: []const u8,
     path: []const u8,
     handler_lines: [][]const u8,
 };
 
-pub fn runFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
-    const content = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, @enumFromInt(1024 * 1024));
+pub fn evaluateFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, variables: *std.StringHashMap([]const u8), allocated_keys: *std.ArrayList([]const u8), routes: *std.ArrayList(Route)) !void {
+    const content = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, @enumFromInt(1024 * 1024)) catch |err| {
+        if (err == error.FileNotFound) return;
+        return err;
+    };
     defer allocator.free(content);
-
-    var variables = std.StringHashMap([]const u8).init(allocator);
-    var allocated_keys: std.ArrayList([]const u8) = .empty;
-    defer {
-        var it = variables.valueIterator();
-        while (it.next()) |val| {
-            allocator.free(val.*);
-        }
-        for (allocated_keys.items) |key| {
-            allocator.free(key);
-        }
-        allocated_keys.deinit(allocator);
-        variables.deinit();
-    }
 
     var line_count: usize = 0;
     var line_it_count = std.mem.splitSequence(u8, content, "\n");
@@ -39,14 +28,34 @@ pub fn runFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void
     }
 
     var if_was_executed = false;
+    try executeStatements(allocator, lines, variables, allocated_keys, &if_was_executed, routes);
+}
+
+pub fn runFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+    var variables = std.StringHashMap([]const u8).init(allocator);
+    var allocated_keys: std.ArrayList([]const u8) = .empty;
+    defer {
+        var it = variables.valueIterator();
+        while (it.next()) |val| {
+            allocator.free(val.*);
+        }
+        for (allocated_keys.items) |key| {
+            allocator.free(key);
+        }
+        allocated_keys.deinit(allocator);
+        variables.deinit();
+    }
+
     var routes: std.ArrayList(Route) = .empty;
     defer {
         for (routes.items) |route| {
             allocator.free(route.path);
+            allocator.free(route.handler_lines);
         }
         routes.deinit(allocator);
     }
-    try executeStatements(allocator, lines, &variables, &allocated_keys, &if_was_executed, &routes);
+
+    try evaluateFile(allocator, io, path, &variables, &allocated_keys, &routes);
 
     if (variables.get("__server_port__")) |port_s| {
         const port = std.fmt.parseInt(u16, port_s, 10) catch 3000;
@@ -55,7 +64,10 @@ pub fn runFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void
 }
 
 pub fn handleApiRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, api_file_path: []const u8, api_prefix: []const u8) !bool {
-    const content = std.Io.Dir.cwd().readFileAlloc(io, api_file_path, allocator, @enumFromInt(1024 * 1024)) catch return false;
+    const content = std.Io.Dir.cwd().readFileAlloc(io, api_file_path, allocator, @enumFromInt(1024 * 1024)) catch |err| {
+        std.debug.print("Failed to read API file {s}: {any}\n", .{api_file_path, err});
+        return false;
+    };
     defer allocator.free(content);
 
     var variables = std.StringHashMap([]const u8).init(allocator);
@@ -91,6 +103,7 @@ pub fn handleApiRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.
     defer {
         for (routes.items) |route| {
             allocator.free(route.path);
+            allocator.free(route.handler_lines);
         }
         routes.deinit(allocator);
     }
@@ -101,20 +114,24 @@ pub fn handleApiRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.
     if (std.mem.indexOfScalar(u8, clean_target, '?')) |idx| clean_target = clean_target[0..idx];
     if (std.mem.indexOfScalar(u8, clean_target, '#')) |idx| clean_target = clean_target[0..idx];
 
-    // Check if target starts with api_prefix
-    if (!std.mem.startsWith(u8, clean_target, api_prefix)) return false;
-    const sub_path = clean_target[api_prefix.len..];
+    var sub_path = clean_target;
+    if (api_prefix.len > 0 and std.mem.startsWith(u8, clean_target, api_prefix)) {
+        sub_path = clean_target[api_prefix.len..];
+    }
+    if (sub_path.len == 0) sub_path = "/";
 
     for (routes.items) |route| {
         if (std.mem.eql(u8, route.method, @tagName(request.head.method))) {
             var match = std.mem.eql(u8, route.path, sub_path);
             if (!match) {
-                if (std.mem.eql(u8, route.path, "/") and sub_path.len == 0) {
+                if (std.mem.eql(u8, route.path, "/") and (std.mem.eql(u8, sub_path, "") or std.mem.eql(u8, sub_path, "/"))) {
                     match = true;
                 } else if (sub_path.len > 0 and sub_path[0] == '/') {
                     if (std.mem.eql(u8, route.path, sub_path[1..])) match = true;
                 } else if (route.path.len > 0 and route.path[0] == '/') {
                     if (std.mem.eql(u8, route.path[1..], sub_path)) match = true;
+                } else if (std.mem.endsWith(u8, sub_path, "/") and sub_path.len > 1) {
+                    if (std.mem.eql(u8, route.path, sub_path[0..sub_path.len-1])) match = true;
                 }
             }
 
@@ -200,8 +217,8 @@ fn findClosingBrace(lines: [][]const u8, start_idx: usize) usize {
     while (i < lines.len) : (i += 1) {
         const trimmed = std.mem.trim(u8, lines[i], " \t\r");
         for (trimmed) |char| {
-            if (char == '{') depth += 1;
-            if (char == '}') {
+            if (char == '{' or char == '[') depth += 1;
+            if (char == '}' or char == ']') {
                 if (depth > 0) {
                     depth -= 1;
                     if (depth == 0) return i;
@@ -247,7 +264,6 @@ fn evaluateExpression(allocator: std.mem.Allocator, expr: []const u8, variables:
 
     const trimmed = try normalizeKey(allocator, trimmed_orig);
     defer allocator.free(trimmed);
-
 
     const low_ops = [_][]const u8{ "+", "-" };
     for (low_ops) |op| {
@@ -343,7 +359,7 @@ fn evaluateCondition(allocator: std.mem.Allocator, condition: []const u8, variab
         if (std.mem.eql(u8, op, ">=")) return left_num.? >= right_num.?;
         if (std.mem.eql(u8, op, "<=")) return left_num.? <= right_num.?;
         if (std.mem.eql(u8, op, "==")) return left_num.? == right_num.?;
-        if (std.mem.eql(u8, op, "!=")) return left_num.? != right_num.?;
+        if (std.mem.eql(u8, op, "!=")) return !std.mem.eql(u8, left_val, right_val);
     } else {
         if (std.mem.eql(u8, op, "==")) return std.mem.eql(u8, left_val, right_val);
         if (std.mem.eql(u8, op, "!=")) return !std.mem.eql(u8, left_val, right_val);
@@ -352,22 +368,45 @@ fn evaluateCondition(allocator: std.mem.Allocator, condition: []const u8, variab
     return false;
 }
 
+fn splitBraceSafe(allocator: std.mem.Allocator, content: []const u8, separator: u8) ![][]const u8 {
+    var res: std.ArrayList([]const u8) = .empty;
+    defer res.deinit(allocator);
+    var depth: i32 = 0;
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < content.len) : (i += 1) {
+        const char = content[i];
+        if (char == '{' or char == '[') depth += 1;
+        if (char == '}' or char == ']') depth -= 1;
+        if (char == separator and depth == 0) {
+            try res.append(allocator, content[start..i]);
+            start = i + 1;
+        }
+    }
+    try res.append(allocator, content[start..]);
+    return try res.toOwnedSlice(allocator);
+}
+
 fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]const u8), allocated_keys: *std.ArrayList([]const u8), prefix: []const u8, val_str: []const u8) anyerror![]const u8 {
-    const trimmed = std.mem.trim(u8, val_str, " \t\r");
+    const trimmed = std.mem.trim(u8, val_str, " \t\r\n");
     if (trimmed.len == 0) return try allocator.dupe(u8, "");
 
     if (std.mem.startsWith(u8, trimmed, "{") and std.mem.endsWith(u8, trimmed, "}")) {
-        const content = std.mem.trim(u8, trimmed[1 .. trimmed.len - 1], " \t");
-        var it = std.mem.splitSequence(u8, content, ",");
+        const content = std.mem.trim(u8, trimmed[1 .. trimmed.len - 1], " \t\r\n");
+        const entries = try splitBraceSafe(allocator, content, ',');
+        defer allocator.free(entries);
+        
         var obj_buf: std.ArrayList(u8) = .empty;
         defer obj_buf.deinit(allocator);
         try obj_buf.append(allocator, '{');
         var first = true;
-        while (it.next()) |entry| {
-            if (std.mem.indexOf(u8, entry, ":")) |colon_idx| {
-                const key = std.mem.trim(u8, entry[0..colon_idx], " \t");
-                const v_expr = std.mem.trim(u8, entry[colon_idx + 1 ..], " \t");
-                const full_key = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ prefix, key });
+        for (entries) |entry| {
+            const trimmed_entry = std.mem.trim(u8, entry, " \t\r\n");
+            if (trimmed_entry.len == 0) continue;
+            if (std.mem.indexOf(u8, trimmed_entry, ":")) |colon_idx| {
+                const key = std.mem.trim(u8, trimmed_entry[0..colon_idx], " \t\r\n");
+                const v_expr = std.mem.trim(u8, trimmed_entry[colon_idx + 1 ..], " \t\r\n");
+                const full_key = if (prefix.len > 0) try std.fmt.allocPrint(allocator, "{s}.{s}", .{ prefix, key }) else try allocator.dupe(u8, key);
                 try allocated_keys.append(allocator, full_key);
                 const v = try parseRecursive(allocator, variables, allocated_keys, full_key, v_expr);
                 
@@ -405,14 +444,16 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
         }
         return try obj_buf.toOwnedSlice(allocator);
     } else if (std.mem.startsWith(u8, trimmed, "[") and std.mem.endsWith(u8, trimmed, "]")) {
-        const content = std.mem.trim(u8, trimmed[1 .. trimmed.len - 1], " \t");
-        var it = std.mem.splitSequence(u8, content, ",");
+        const content = std.mem.trim(u8, trimmed[1 .. trimmed.len - 1], " \t\r\n");
+        const entries = try splitBraceSafe(allocator, content, ',');
+        defer allocator.free(entries);
+        
         var list_buf: std.ArrayList(u8) = .empty;
         defer list_buf.deinit(allocator);
         try list_buf.append(allocator, '[');
         var idx: usize = 0;
-        while (it.next()) |elem| {
-            const trimmed_elem = std.mem.trim(u8, elem, " \t");
+        for (entries) |elem| {
+            const trimmed_elem = std.mem.trim(u8, elem, " \t\r\n");
             if (trimmed_elem.len == 0) continue;
             if (idx > 0) {
                 try list_buf.appendSlice(allocator, ",\n  ");
@@ -522,10 +563,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
             if_was_executed.* = false;
         } else if (std.mem.startsWith(u8, trimmed, "print(")) {
             const open_p = std.mem.indexOf(u8, trimmed, "(") orelse continue;
-            const close_p = std.mem.lastIndexOf(u8, trimmed, ")") orelse {
-                std.debug.print("Syntax Error: Missing ')'\n", .{});
-                continue;
-            };
+            const close_p = std.mem.lastIndexOf(u8, trimmed, ")") orelse continue;
             const arg = std.mem.trim(u8, trimmed[open_p + 1 .. close_p], " \t");
 
             if (std.mem.startsWith(u8, arg, "\"") and std.mem.endsWith(u8, arg, "\"")) {
@@ -557,7 +595,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
             const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
             const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
             
-            const handler_lines = lines[i + 1 .. close_line_idx];
+            const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
             try routes.append(allocator, .{
                 .method = "GET",
                 .path = try allocator.dupe(u8, path_raw),
@@ -572,7 +610,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
             const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
             const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
             
-            const handler_lines = lines[i + 1 .. close_line_idx];
+            const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
             try routes.append(allocator, .{
                 .method = "POST",
                 .path = try allocator.dupe(u8, path_raw),
@@ -595,7 +633,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                     const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
                     const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
                     
-                    const handler_lines = lines[i + 1 .. close_line_idx];
+                    const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
                     try routes.append(allocator, .{
                         .method = "GET",
                         .path = try allocator.dupe(u8, path_raw),
@@ -608,7 +646,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                     const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
                     const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
                     
-                    const handler_lines = lines[i + 1 .. close_line_idx];
+                    const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
                     try routes.append(allocator, .{
                         .method = "POST",
                         .path = try allocator.dupe(u8, path_raw),
@@ -626,8 +664,9 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                                      const inner = std.mem.trim(u8, val_trimmed[1 .. val_trimmed.len - 1], " \t");
                                     var count: usize = 0;
                                     if (inner.len > 0) {
-                                        var it = std.mem.splitSequence(u8, inner, ",");
-                                        while (it.next()) |_| count += 1;
+                                        const elems = try splitBraceSafe(allocator, inner, ',');
+                                        count = elems.len;
+                                        allocator.free(elems);
                                     }
                                     
                                     const prefix = try std.fmt.allocPrint(allocator, "{s}.{d}", .{var_name, count});
@@ -654,12 +693,19 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                                 if (std.mem.startsWith(u8, val_trimmed, "[") and std.mem.endsWith(u8, val_trimmed, "]")) {
                                     const inner = std.mem.trim(u8, val_trimmed[1 .. val_trimmed.len - 1], " \t");
                                     var new_val: []u8 = undefined;
-                                    if (std.mem.lastIndexOf(u8, inner, ",")) |comma_idx| {
-                                        const new_inner = std.mem.trim(u8, inner[0..comma_idx], " \t");
-                                        new_val = try std.fmt.allocPrint(allocator, "[{s}]", .{new_inner});
+                                    const elems = try splitBraceSafe(allocator, inner, ',');
+                                    if (elems.len > 0) {
+                                        var new_inner_buf: std.ArrayList(u8) = .empty;
+                                        defer new_inner_buf.deinit(allocator);
+                                        for (elems[0 .. elems.len - 1], 0..) |elem, idx| {
+                                            if (idx > 0) try new_inner_buf.appendSlice(allocator, ", ");
+                                            try new_inner_buf.appendSlice(allocator, elem);
+                                        }
+                                        new_val = try std.fmt.allocPrint(allocator, "[{s}]", .{new_inner_buf.items});
                                     } else {
                                         new_val = try allocator.dupe(u8, "[]");
                                     }
+                                    allocator.free(elems);
                                     if (variables.get(var_name)) |old| allocator.free(old);
                                     try variables.put(var_name, new_val);
                                 }
@@ -692,18 +738,19 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
 
                 const val_raw = std.mem.trim(u8, trimmed[index + 1 ..], " \t");
                 
-                if (std.mem.startsWith(u8, val_raw, "serve(")) {
-                    var port_val: []const u8 = "3000";
+                if (std.mem.startsWith(u8, val_raw, "serve(") or std.mem.startsWith(u8, val_raw, "route(")) {
+                    var port_val: []const u8 = try allocator.dupe(u8, "3000");
                     if (std.mem.indexOf(u8, val_raw, "port:")) |p_idx| {
+                        allocator.free(port_val);
                         const rest = val_raw[p_idx + 5 ..];
                         const end_idx = std.mem.indexOfAny(u8, rest, "},)") orelse rest.len;
                         port_val = try allocator.dupe(u8, std.mem.trim(u8, rest[0..end_idx], " \t\""));
                     } else {
-                        // Multi-line serve call?
                         var j = i + 1;
                         while (j < lines.len) : (j += 1) {
                             const s_line = std.mem.trim(u8, lines[j], " \t\r");
                             if (std.mem.indexOf(u8, s_line, "port:")) |p_idx| {
+                                allocator.free(port_val);
                                 const rest = s_line[p_idx + 5 ..];
                                 const end_idx = std.mem.indexOfAny(u8, rest, "},)") orelse rest.len;
                                 port_val = try allocator.dupe(u8, std.mem.trim(u8, rest[0..end_idx], " \t\""));
@@ -716,73 +763,33 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                     if (variables.get(var_name)) |old| allocator.free(old);
                     try variables.put(var_name, try allocator.dupe(u8, "[object Server]"));
                 } else if (std.mem.startsWith(u8, val_raw, "{")) {
-                    // Object literal
-                    if (std.mem.endsWith(u8, val_raw, "}")) {
-                        // Single line object literal
-                        const v = try parseRecursive(allocator, variables, allocated_keys, var_name, val_raw);
-                        if (variables.get(var_name)) |old| allocator.free(old);
-                        try variables.put(var_name, v);
-                    } else {
-                        // Multi-line object literal
-                        i += 1;
-                        while (i < lines.len) : (i += 1) {
-                            const obj_line = std.mem.trim(u8, lines[i], " \t\r");
-                            if (std.mem.eql(u8, obj_line, "}")) break;
-                            
-                            const pair = if (std.mem.endsWith(u8, obj_line, ",")) obj_line[0..obj_line.len-1] else obj_line;
-                            if (std.mem.indexOf(u8, pair, ":")) |colon_idx| {
-                                const key = std.mem.trim(u8, pair[0..colon_idx], " \t");
-                                const val_expr = std.mem.trim(u8, pair[colon_idx+1..], " \t");
-                                const full_key = try std.fmt.allocPrint(allocator, "{s}.{s}", .{var_name, key});
-                                try allocated_keys.append(allocator, full_key);
-                                const val = try parseRecursive(allocator, variables, allocated_keys, full_key, val_expr);
-                                if (variables.get(full_key)) |old| allocator.free(old);
-                                try variables.put(full_key, val);
-                            }
-                        }
-                        if (variables.get(var_name)) |old| allocator.free(old);
-                        try variables.put(var_name, try allocator.dupe(u8, "[object Object]"));
+                    const block_end = findClosingBrace(lines, i);
+                    var obj_buf: std.ArrayList(u8) = .empty;
+                    defer obj_buf.deinit(allocator);
+                    try obj_buf.appendSlice(allocator, val_raw);
+                    var j = i + 1;
+                    while (j <= block_end) : (j += 1) {
+                        try obj_buf.append(allocator, '\n');
+                        try obj_buf.appendSlice(allocator, lines[j]);
                     }
+                    i = block_end;
+                    const v = try parseRecursive(allocator, variables, allocated_keys, var_name, obj_buf.items);
+                    if (variables.get(var_name)) |old| allocator.free(old);
+                    try variables.put(var_name, v);
                 } else if (std.mem.startsWith(u8, val_raw, "[")) {
-                    // List literal
-                    var list_str: std.ArrayList(u8) = .empty;
-                    defer list_str.deinit(allocator);
-                    try list_str.append(allocator, '[');
-                    
-                    var idx: usize = 0;
-                    if (std.mem.endsWith(u8, val_raw, "]")) {
-                        // Single line list
-                        const v = try parseRecursive(allocator, variables, allocated_keys, var_name, val_raw);
-                        if (variables.get(var_name)) |old| allocator.free(old);
-                        try variables.put(var_name, v);
-                    } else {
-                        // Multi-line list
-                        i += 1;
-                        while (i < lines.len) : (i += 1) {
-                            const list_line = std.mem.trim(u8, lines[i], " \t\r");
-                            if (std.mem.eql(u8, list_line, "]")) break;
-                            const entry = if (std.mem.endsWith(u8, list_line, ",")) list_line[0..list_line.len-1] else list_line;
-                            const trimmed_entry = std.mem.trim(u8, entry, " \t\r");
-                            if (trimmed_entry.len == 0) continue;
-
-                            if (idx > 0) {
-                                try list_str.appendSlice(allocator, ",\n  ");
-                            } else {
-                                try list_str.appendSlice(allocator, "\n  ");
-                            }
-                            const prefix = try std.fmt.allocPrint(allocator, "{s}.{d}", .{var_name, idx});
-                            try allocated_keys.append(allocator, prefix);
-                            const val = try parseRecursive(allocator, variables, allocated_keys, prefix, trimmed_entry);
-                            try list_str.appendSlice(allocator, val);
-                            if (variables.get(prefix)) |old| allocator.free(old);
-                            try variables.put(prefix, val);
-                            idx += 1;
-                        }
-                        if (idx > 0) try list_str.appendSlice(allocator, "\n");
-                        try list_str.append(allocator, ']');
-                        if (variables.get(var_name)) |old| allocator.free(old);
-                        try variables.put(var_name, try list_str.toOwnedSlice(allocator));
+                    const block_end = findClosingBrace(lines, i);
+                    var list_buf: std.ArrayList(u8) = .empty;
+                    defer list_buf.deinit(allocator);
+                    try list_buf.appendSlice(allocator, val_raw);
+                    var j = i + 1;
+                    while (j <= block_end) : (j += 1) {
+                        try list_buf.append(allocator, '\n');
+                        try list_buf.appendSlice(allocator, lines[j]);
                     }
+                    i = block_end;
+                    const v = try parseRecursive(allocator, variables, allocated_keys, var_name, list_buf.items);
+                    if (variables.get(var_name)) |old| allocator.free(old);
+                    try variables.put(var_name, v);
                 } else {
                     const value_to_store = try evaluateExpression(allocator, val_raw, variables.*);
                     if (variables.get(var_name)) |old_val| {
@@ -793,6 +800,5 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                 if_was_executed.* = false;
             }
         }
-
     }
 }
