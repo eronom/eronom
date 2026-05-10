@@ -121,7 +121,6 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("  [file]  Run an .er or .em file directly\n", .{});
         return;
     }
-
     const abs_dir = try std.Io.Dir.cwd().realPathFileAlloc(io, dir, allocator);
     defer allocator.free(abs_dir);
 
@@ -135,7 +134,27 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    if (std.mem.eql(u8, cmd, "start")) {
+    
+
+    // Auto-load port from config.er if it exists in abs_dir
+    const config_path = try std.fs.path.join(allocator, &.{ abs_dir, "config.er" });
+    defer allocator.free(config_path);
+    if (std.Io.Dir.cwd().statFile(io, config_path, .{})) |_| {
+        const c_content = try std.Io.Dir.cwd().readFileAlloc(io, config_path, allocator, @enumFromInt(1024 * 1024));
+        defer allocator.free(c_content);
+        if (std.mem.indexOf(u8, c_content, "port:")) |p_idx| {
+            const raw_rest = c_content[p_idx + 5 ..];
+            const rest = std.mem.trim(u8, raw_rest, " \t\r\n");
+            var it = std.mem.tokenizeAny(u8, rest, " \t\r\n,}");
+            if (it.next()) |p_str| {
+                const p_str_clean = std.mem.trim(u8, p_str, "\"");
+                if (std.fmt.parseInt(u16, p_str_clean, 10)) |p| {
+                    port = p;
+                } else |_| {}
+            }
+        }
+    } else |_| {}
+if (std.mem.eql(u8, cmd, "start")) {
         try startServer(allocator, io, abs_dir, true, port);
         return;
     }
@@ -323,40 +342,48 @@ fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_pro
     }
 }
 
-fn handleDynamicApi(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, target: []const u8) bool {
-    return handleDynamicApiInner(allocator, io, request, target) catch |err| {
+fn handleDynamicApi(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, target: []const u8, dir: []const u8) bool {
+    return handleDynamicApiInner(allocator, io, request, target, dir) catch |err| {
         std.debug.print("API Route Error: {any}\n", .{err});
         return false;
     };
 }
 
-fn handleDynamicApiInner(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, target: []const u8) !bool {
-    if (!std.mem.startsWith(u8, target, "/api/")) return false;
+fn handleDynamicApiInner(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, target: []const u8, dir: []const u8) !bool {
+    if (std.mem.startsWith(u8, target, "/api/")) {
+        var path_it = std.mem.tokenizeScalar(u8, target[4..], '/');
+        var current_api_path: std.ArrayList(u8) = .empty;
+        defer current_api_path.deinit(allocator);
+        try current_api_path.appendSlice(allocator, "api");
 
-    var path_it = std.mem.tokenizeScalar(u8, target[4..], '/');
-    var current_api_path: std.ArrayList(u8) = .empty;
-    defer current_api_path.deinit(allocator);
-    try current_api_path.appendSlice(allocator, "api");
+        while (path_it.next()) |part| {
+            try current_api_path.append(allocator, '/');
+            try current_api_path.appendSlice(allocator, part);
 
-    while (path_it.next()) |part| {
-        try current_api_path.append(allocator, '/');
-        try current_api_path.appendSlice(allocator, part);
+            const route_file = try std.fs.path.join(allocator, &.{ current_api_path.items, "route.er" });
+            defer allocator.free(route_file);
 
-        const route_file = try std.fs.path.join(allocator, &.{ current_api_path.items, "route.er" });
-        defer allocator.free(route_file);
+            if (std.Io.Dir.cwd().statFile(io, route_file, .{})) |_| {
+                const prefix = try std.fmt.allocPrint(allocator, "/{s}", .{current_api_path.items});
+                defer allocator.free(prefix);
+                if (try er.handleApiRequest(allocator, io, request, route_file, prefix)) return true;
+            } else |_| {}
+        }
 
-        if (std.Io.Dir.cwd().statFile(io, route_file, .{})) |_| {
-            const prefix = try std.fmt.allocPrint(allocator, "/{s}", .{current_api_path.items});
-            defer allocator.free(prefix);
-            if (try er.handleApiRequest(allocator, io, request, route_file, prefix)) return true;
+        const direct_er = try std.fmt.allocPrint(allocator, "api/{s}.er", .{target[5..]});
+        defer allocator.free(direct_er);
+        if (std.Io.Dir.cwd().statFile(io, direct_er, .{})) |_| {
+            if (try er.handleApiRequest(allocator, io, request, direct_er, target)) return true;
         } else |_| {}
     }
 
-    const direct_er = try std.fmt.allocPrint(allocator, "api/{s}.er", .{target[5..]});
-    defer allocator.free(direct_er);
-    if (std.Io.Dir.cwd().statFile(io, direct_er, .{})) |_| {
-        if (try er.handleApiRequest(allocator, io, request, direct_er, target)) return true;
+    // Try server.er in the root for any path (including top-level ones)
+    const root_server = try std.fs.path.join(allocator, &.{ dir, "server.er" });
+    defer allocator.free(root_server);
+    if (std.Io.Dir.cwd().statFile(io, root_server, .{})) |_| {
+        if (try er.handleApiRequest(allocator, io, request, root_server, "")) return true;
     } else |_| {}
+
     return false;
 }
 
@@ -420,7 +447,7 @@ fn handleConnection(allocator: std.mem.Allocator, io: std.Io, connection: std.Io
 
     if (app.serveHTTP(&request) catch false) return;
 
-    if (handleDynamicApi(allocator, io, &request, target)) return;
+    if (handleDynamicApi(allocator, io, &request, target, dir)) return;
 
     // Static file serving
     var full_path = std.fs.path.join(allocator, &.{ dir, target }) catch return;

@@ -1,7 +1,5 @@
-app = serve({
-  port: 4000,
-  
-})
+app = route()
+
 todos = [
   { id: 1, text: "Learn Eronom", done: false }
 ]
@@ -10,4 +8,3 @@ todos = [
 app.get('/todos', (c) => {
   return c.json(todos)
 })
-
