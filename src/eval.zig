@@ -430,9 +430,9 @@ fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) anyerro
     }
     if (p >= s.len) return .{ .val = null, .pos = p };
 
-    // signal()
-    if (std.mem.startsWith(u8, s[p..], "signal(")) {
-        p += 7;
+    // atom()
+    if (std.mem.startsWith(u8, s[p..], "atom(")) {
+        p += 5;
         const inner = try parseJSValue(s, p, allocator);
         p = inner.pos;
         while (p < s.len and s[p] != ')') p += 1;

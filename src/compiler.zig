@@ -98,7 +98,7 @@ pub const ProcessResult = struct {
     html: []const u8,
     scripts: std.ArrayList([]const u8),
     styles: std.ArrayList([]const u8),
-    signal_vars: std.ArrayList([]const u8),
+    atom_vars: std.ArrayList([]const u8),
 
     pub fn deinit(self: *ProcessResult, allocator: std.mem.Allocator) void {
         allocator.free(self.html);
@@ -106,12 +106,12 @@ pub const ProcessResult = struct {
         self.scripts.deinit(allocator);
         for (self.styles.items) |s| allocator.free(s);
         self.styles.deinit(allocator);
-        for (self.signal_vars.items) |s| allocator.free(s);
-        self.signal_vars.deinit(allocator);
+        for (self.atom_vars.items) |s| allocator.free(s);
+        self.atom_vars.deinit(allocator);
     }
 };
 
-fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *std.ArrayList([]const u8), events: *std.ArrayList([]const u8), signals: []const []const u8) ![]const u8 {
+fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *std.ArrayList([]const u8), events: *std.ArrayList([]const u8), atoms: []const []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     var in_tag = false;
@@ -147,7 +147,7 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                 if (depth == 0) {
                     var expr: []const u8 = try allocator.dupe(u8, html[i + 1 .. j - 1]);
 
-                    for (signals) |sig| {
+                    for (atoms) |sig| {
                         const new_expr = try replaceWord(allocator, expr, sig, ".value");
                         allocator.free(expr);
                         expr = new_expr;
@@ -188,7 +188,7 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
                         if (depth == 0) {
                             var expr: []const u8 = try allocator.dupe(u8, html[k + 2 .. j - 1]);
 
-                            for (signals) |sig| {
+                            for (atoms) |sig| {
                                 const new_expr = try replaceWord(allocator, expr, sig, ".value");
                                 allocator.free(expr);
                                 expr = new_expr;
@@ -282,7 +282,7 @@ fn replaceWord(allocator: std.mem.Allocator, input: []const u8, word: []const u8
     return res.toOwnedSlice(allocator);
 }
 
-fn injectSignalName(allocator: std.mem.Allocator, input: []const u8, name: []const u8) ![]const u8 {
+fn injectAtomName(allocator: std.mem.Allocator, input: []const u8, name: []const u8) ![]const u8 {
     var res: std.ArrayList(u8) = .empty;
     defer res.deinit(allocator);
     var i: usize = 0;
@@ -294,9 +294,9 @@ fn injectSignalName(allocator: std.mem.Allocator, input: []const u8, name: []con
             if (k < input.len and input[k] == '=') {
                 k += 1;
                 while (k < input.len and std.ascii.isWhitespace(input[k])) k += 1;
-                if (std.mem.startsWith(u8, input[k..], "signal(")) {
+                if (std.mem.startsWith(u8, input[k..], "atom(")) {
                     var depth: usize = 1;
-                    var j = k + 7;
+                    var j = k + 5;
                     while (j < input.len and depth > 0) {
                         if (input[j] == '(') depth += 1 else if (input[j] == ')') depth -= 1;
                         j += 1;
@@ -307,7 +307,7 @@ fn injectSignalName(allocator: std.mem.Allocator, input: []const u8, name: []con
                         try res.appendSlice(allocator, name);
                         try res.appendSlice(allocator, "\")");
 
-                        const remaining = try injectSignalName(allocator, input[j..], name);
+                        const remaining = try injectAtomName(allocator, input[j..], name);
                         defer allocator.free(remaining);
                         try res.appendSlice(allocator, remaining);
                         return res.toOwnedSlice(allocator);
@@ -324,7 +324,7 @@ fn injectSignalName(allocator: std.mem.Allocator, input: []const u8, name: []con
 pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: []const u8, content: []const u8, visited: *std.StringHashMap(bool)) !ProcessResult {
     var scripts: std.ArrayList([]const u8) = .empty;
     var styles: std.ArrayList([]const u8) = .empty;
-    var signal_vars_list: std.ArrayList([]const u8) = .empty;
+    var atom_vars_list: std.ArrayList([]const u8) = .empty;
 
     var h = std.hash.Fnv1a_32.init();
     h.update(content);
@@ -341,15 +341,15 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
             const content_start = (std.mem.indexOfScalar(u8, script_tag, '>') orelse 0) + 1;
             const script_content = std.mem.trim(u8, script_tag[content_start .. script_tag.len - 9], " \t\n\r");
 
-            var sj: usize = 0;
-            while (sj < script_content.len) {
-                const signal_call = "signal(";
-                const signal_idx = std.mem.indexOf(u8, script_content[sj..], signal_call);
-                if (signal_idx) |idx| {
-                    const call_pos = sj + idx;
+            var aj: usize = 0;
+            while (aj < script_content.len) {
+                const atom_call = "atom(";
+                const atom_idx = std.mem.indexOf(u8, script_content[aj..], atom_call);
+                if (atom_idx) |idx| {
+                    const call_pos = aj + idx;
                     var eq_pos: ?usize = null;
                     var k = call_pos;
-                    while (k > sj) {
+                    while (k > aj) {
                         k -= 1;
                         if (script_content[k] == '=') {
                             eq_pos = k;
@@ -361,7 +361,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
                     if (eq_pos) |ep| {
                         var name_end: ?usize = null;
                         var m = ep;
-                        while (m > sj) {
+                        while (m > aj) {
                             m -= 1;
                             if (std.ascii.isWhitespace(script_content[m])) continue;
                             if (std.ascii.isAlphanumeric(script_content[m]) or script_content[m] == '_' or script_content[m] == '$') {
@@ -373,7 +373,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
 
                         if (name_end) |ne| {
                             var m_start = ne;
-                            while (m_start > sj) {
+                            while (m_start > aj) {
                                 m_start -= 1;
                                 if (!(std.ascii.isAlphanumeric(script_content[m_start]) or script_content[m_start] == '_' or script_content[m_start] == '$')) {
                                     m_start += 1;
@@ -383,19 +383,19 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
                             const name = script_content[m_start..ne];
                             if (name.len > 1) {
                                 var already = false;
-                                for (signal_vars_list.items) |existing| {
+                                for (atom_vars_list.items) |existing| {
                                     if (std.mem.eql(u8, existing, name)) {
                                         already = true;
                                         break;
                                     }
                                 }
                                 if (!already) {
-                                    try signal_vars_list.append(allocator, try allocator.dupe(u8, name));
+                                    try atom_vars_list.append(allocator, try allocator.dupe(u8, name));
                                 }
                             }
                         }
                     }
-                    sj = call_pos + signal_call.len;
+                    aj = call_pos + atom_call.len;
                 } else break;
             }
 
@@ -435,20 +435,20 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
                             try html_buf.appendSlice(allocator, sub_res.html);
                             for (sub_res.scripts.items) |s| try scripts.append(allocator, s);
                             for (sub_res.styles.items) |s| try styles.append(allocator, s);
-                            for (sub_res.signal_vars.items) |sv| {
+                             for (sub_res.atom_vars.items) |sv| {
                                 var already = false;
-                                for (signal_vars_list.items) |existing| {
+                                for (atom_vars_list.items) |existing| {
                                     if (std.mem.eql(u8, existing, sv)) {
                                         already = true;
                                         break;
                                     }
                                 }
-                                if (!already) try signal_vars_list.append(allocator, sv) else allocator.free(sv);
+                                if (!already) try atom_vars_list.append(allocator, sv) else allocator.free(sv);
                             }
                             // Cleanup sub_res structures but not the items we moved
                             sub_res.scripts.deinit(allocator);
                             sub_res.styles.deinit(allocator);
-                            sub_res.signal_vars.deinit(allocator);
+                            sub_res.atom_vars.deinit(allocator);
                             allocator.free(sub_res.html);
                             i += tag_end + 1;
                             continue;
@@ -466,12 +466,12 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
 
     for (scripts.items, 0..) |s, si| {
         var transformed: []const u8 = try allocator.dupe(u8, s);
-        for (signal_vars_list.items) |sig| {
-            const new_injected = try injectSignalName(allocator, transformed, sig);
+        for (atom_vars_list.items) |sig| {
+            const new_injected = try injectAtomName(allocator, transformed, sig);
             allocator.free(transformed);
             transformed = new_injected;
         }
-        for (signal_vars_list.items) |sig| {
+        for (atom_vars_list.items) |sig| {
             const new_transformed = try replaceWord(allocator, transformed, sig, ".value");
             allocator.free(transformed);
             transformed = new_transformed;
@@ -482,7 +482,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
 
     var bindings: std.ArrayList([]const u8) = .empty;
     var events: std.ArrayList([]const u8) = .empty;
-    const reactive_html = try parseReactivity(allocator, html_buf.items, &bindings, &events, signal_vars_list.items);
+    const reactive_html = try parseReactivity(allocator, html_buf.items, &bindings, &events, atom_vars_list.items);
     html_buf.deinit(allocator);
 
     const scoped_html = try scopeHTML(allocator, reactive_html, scope_id);
@@ -497,7 +497,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
         .html = scoped_html,
         .scripts = scripts,
         .styles = styles,
-        .signal_vars = signal_vars_list,
+        .atom_vars = atom_vars_list,
     };
 }
 
@@ -705,10 +705,10 @@ pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: [
         const vars_part = std.mem.trim(u8, header[0..in_idx], " ");
         const collection_expr_raw = std.mem.trim(u8, header[in_idx + 4 ..], " ");
 
-        // Transform signal vars in collection_expr
+        // Transform atom vars in collection_expr
         var collection_expr: []const u8 = try allocator.dupe(u8, collection_expr_raw);
         defer allocator.free(collection_expr);
-        for (result.signal_vars.items) |sig| {
+        for (result.atom_vars.items) |sig| {
             const new_ce = try replaceWord(allocator, collection_expr, sig, ".value");
             allocator.free(collection_expr);
             collection_expr = new_ce;
@@ -754,7 +754,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: [
                         if (depth == 0) {
                             var sub_expr: []const u8 = try allocator.dupe(u8, body[bit + 1 .. j - 1]);
                             defer allocator.free(sub_expr);
-                            for (result.signal_vars.items) |sig| {
+                            for (result.atom_vars.items) |sig| {
                                 const new_se = try replaceWord(allocator, sub_expr, sig, ".value");
                                 allocator.free(sub_expr);
                                 sub_expr = new_se;
@@ -878,7 +878,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: [
 
             var cond_expr: []const u8 = try allocator.dupe(u8, cond_expr_raw);
             defer allocator.free(cond_expr);
-            for (result.signal_vars.items) |sig| {
+            for (result.atom_vars.items) |sig| {
                 const new_ce = try replaceWord(allocator, cond_expr, sig, ".value");
                 allocator.free(cond_expr);
                 cond_expr = new_ce;
@@ -949,15 +949,23 @@ pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: [
 
     const runtime =
         \\(() => {
-        \\  window.__hmr_data = window.__hmr_data || { signals: {} };
-        \\  if (!window.__hmr_data.signals) window.__hmr_data.signals = {};
+        \\  window.__hmr_data = window.__hmr_data || { atoms: {} };
+        \\  if (!window.__hmr_data.atoms) window.__hmr_data.atoms = {};
         \\  window.__erm_b64utf8 = function(str) {
         \\      return decodeURIComponent(escape(window.atob(str)));
         \\    };
-        \\    let activeEffect = null;
-        \\  window.signal = function(val, name) {
-        \\    if (name && window.__hmr_data.signals[name] !== undefined) {
-        \\      val = window.__hmr_data.signals[name];
+        \\  window.atom = function(val, name) {
+        \\    if (name && window.__hmr_data.atoms[name] !== undefined) {
+        \\      val = window.__hmr_data.atoms[name];
+        \\    }
+        \\    if (typeof val === 'function') {
+        \\      return {
+        \\        _getter: val,
+        \\        get value() { return this._getter(); },
+        \\        toString() { return this.value; },
+        \\        valueOf() { return this.value; },
+        \\        [Symbol.toPrimitive]() { return this.value; }
+        \\      };
         \\    }
         \\    const subscribers = new Set();
         \\    const container = { 
@@ -969,7 +977,6 @@ pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: [
         \\    return new Proxy(container, {
         \\      get(target, prop) {
         \\        if (prop === 'value') {
-        \\          if (activeEffect) subscribers.add(activeEffect);
         \\          return target._val;
         \\        }
         \\        return target[prop];
@@ -977,8 +984,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: [
         \\      set(target, prop, newVal) {
         \\        if (prop === 'value') {
         \\          target._val = newVal;
-        \\          if (name) window.__hmr_data.signals[name] = newVal;
-        \\          subscribers.forEach(fn => fn());
+        \\          if (name) window.__hmr_data.atoms[name] = newVal;
         \\          if (window.__erm_update) window.__erm_update();
         \\          return true;
         \\        }
@@ -1031,7 +1037,7 @@ pub fn processErmComponent(allocator: std.mem.Allocator, io: std.Io, base_dir: [
         \\  setTimeout(_initReactivity, 10);
     ;
 
-    if (result.scripts.items.len > 0 or result.signal_vars.items.len > 0) {
+    if (result.scripts.items.len > 0 or result.atom_vars.items.len > 0) {
         try final.appendSlice(allocator, "<script>\n");
         try final.appendSlice(allocator, runtime);
         try final.appendSlice(allocator, "\n");

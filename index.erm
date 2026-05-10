@@ -1,11 +1,12 @@
 <script>
 
-    let count = signal(0);
-    let todoText = signal('');
-    let todos = signal([]);
+    let count = atom(0);
+    let double = atom(() => count * 2);
+    let todoText = atom('');
+    let todos = atom([]);
     
-    let showExtraContent = signal(true);
-    let porridge = signal({ temperature: 100 });
+    let showExtraContent = atom(true);
+    let porridge = atom({ temperature: 100 });
 
 
     const fetchTodos = async () => {
@@ -33,13 +34,13 @@
     });
 
     // TEST: Background updates now work automatically!
-    let timer = signal(0);
+    let timer = atom(0);
     setInterval(() => {
         timer++;
     }, 1000);
 
     let randomNum = Math.floor(Math.random() * 1000);
-    let items = signal([1, 2, 3, 4, 5]);
+    let items = atom([1, 2, 3, 4, 5]);
 </script>
 
 
@@ -51,6 +52,7 @@ gvfcjb hyun
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
     <h3>Reactive Signal Demo (Svelte-like)</h3>
     <button onClick={()=>{count++}}>Count {count}</button>
+    <p>Double (Count * 2): <strong>{double}</strong></p>
     <p>Background Timer: <strong>{timer}s</strong></p>
 </div>
 
