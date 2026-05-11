@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    const allocator = std.testing.allocator;
     const html = "<div>Count {count}</div><button onClick={()=>{count++}}>Add</button>";
     var bindings: std.ArrayList([]const u8) = .empty;
     defer bindings.deinit(allocator);

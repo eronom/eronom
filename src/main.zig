@@ -38,6 +38,7 @@ fn watchFiles(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void {
         io.sleep(std.Io.Duration.fromMilliseconds(200), .awake) catch {};
         const changed = try checkDirChanged(allocator, io, dir, &last_check);
         if (changed) |path| {
+            defer allocator.free(path);
             global_watcher.notify(io, path);
         }
     }
