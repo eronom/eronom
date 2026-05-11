@@ -1,12 +1,25 @@
 <script>
 
-    let count = signal(0);
-    let todoText = signal('');
-    let todos = signal([]);
+    let count = atom(0);
+    let double = atom(() => count * 2);
+    let todoText = atom('');
+    let todos = atom([]);
     
-    let showExtraContent = signal(true);
-    let porridge = signal({ temperature: 100 });
+    let showExtraContent = atom(true);
+    let porridge = atom({ temperature: 100 });
 
+
+    const fetchTodos = async () => {
+        try {
+            const response = await fetch('/api/todo');
+            if (response.ok) {
+                const data = await response.json();
+                todos = data;
+            }
+        } catch (e) {
+            console.error('Fetch error:', e);
+        }
+    };
 
     document.addEventListener('DOMContentLoaded', () => {
         const app = document.getElementById('app');
@@ -17,16 +30,17 @@
                 timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
             }, 1);
         }
+        fetchTodos();
     });
 
     // TEST: Background updates now work automatically!
-    let timer = signal(0);
+    let timer = atom(0);
     setInterval(() => {
         timer++;
     }, 1000);
 
     let randomNum = Math.floor(Math.random() * 1000);
-    let items = signal([1, 2, 3, 4, 5]);
+    let items = atom([1, 2, 3, 4, 5]);
 </script>
 
 
@@ -38,6 +52,7 @@ gvfcjb hyun
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
     <h3>Reactive Signal Demo (Svelte-like)</h3>
     <button onClick={()=>{count++}}>Count {count}</button>
+    <p>Double (Count * 2): <strong>{double}</strong></p>
     <p>Background Timer: <strong>{timer}s</strong></p>
 </div>
 
@@ -58,6 +73,20 @@ gvfcjb hyun
     {#for item,i in items}
         <p>Item key as {i} : {item}</p>
     {/for}
+</div>
+
+<h1>hello api todos </h1>
+
+<div style="padding: 20px; border: 2px solid #e67e22; border-radius: 10px; margin-bottom: 20px;">
+    <h3>API Todo Demo (from <code>/api/todo</code>)</h3>
+    <button onClick={fetchTodos}>Refresh API Todos</button>
+    <div style="margin-top: 10px;">
+        {#for todo in todos}
+            <div style="padding: 10px; background: #2c3e50; border-radius: 5px; margin-bottom: 5px; color: white;">
+                <strong>{todo.text}</strong> - {todo.done ? '✅' : '❌'}
+            </div>
+        {/for}
+    </div>
 </div>
 
 {#if porridge.temperature > 100}

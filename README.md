@@ -1,6 +1,6 @@
 # Eronom
 
-An ultra-fast, zero-dependency, Vite-style Hot Module Replacement (HMR) development server built natively in Go. 
+An ultra-fast, zero-dependency, Vite-style Hot Module Replacement (HMR) development server built natively in zig. 
 
 Eronom is specifically designed to parse and seamlessly hot-swap `.erm` single-file components (which combine HTML, CSS, and JS) in real-time, completely eliminating the need for full page refreshes during UI development.
 
@@ -8,14 +8,14 @@ Eronom is specifically designed to parse and seamlessly hot-swap `.erm` single-f
 * **Zero Dependencies:** No Node.js, `npm`, or massive `node_modules` folders required.
 * **Authentic HMR:** Intelligently hot-swaps CSS and surgically replaces inner DOM nodes instantly without blinking the browser.
 * **Intelligent Vanilla JS Engine:** Automatically intercepts `DOMContentLoaded` and `load` events, securely dismounts ghost `setInterval` loops, and natively evaluates injected JavaScript without leaking state.
-* **Sub-millisecond Feedback:** Powered by Go's native HTTP execution and local filesystem watchers.
+* **Sub-millisecond Feedback:** Powered by zig's native HTTP execution and local filesystem watchers.
 
 ## 🚀 Getting Started
 
 ### 1. Build the engine
 To build the server into a tiny, portable executable, run:
 ```bash
-go build -o eronom-server main.go
+zig build 
 ```
 
 ### 2. Run the dev server
@@ -23,7 +23,7 @@ Run the engine in any project directory containing your `.erm` components:
 ```bash
 ./eronom-server
 ```
-*(Alternatively, you can just run `go run main.go` to compile on the fly)*
+
 
 ### 3. Start Coding
 Navigate to `http://localhost:8080/` in your browser. 
