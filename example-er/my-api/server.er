@@ -1,6 +1,6 @@
 app = route()
 todos = [
-  { id: 1, text: "Learn Eronom", done: false }
+  { id: 1, text: "Learn Eronomsss", done: false }
 ]
 
 // GET all todos

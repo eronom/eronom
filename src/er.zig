@@ -169,7 +169,7 @@ fn startServer(allocator: std.mem.Allocator, io: std.Io, initial_port: u16, rout
         const address = std.Io.net.IpAddress.parse("0.0.0.0", port) catch try std.Io.net.IpAddress.parse("127.0.0.1", port);
         server = address.listen(io, .{ .reuse_address = false }) catch |err| {
             if (err == error.AddressInUse) {
-                std.debug.print("Port {d} already opened, trying {d}...\n", .{ port, port + 1 });
+                std.debug.print("Port {d} is in use, trying port {d}\n", .{ port, port + 1 });
                 port += 1;
                 continue;
             }

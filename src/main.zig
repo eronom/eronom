@@ -77,6 +77,20 @@ pub fn main(init: std.process.Init) !void {
     global_watcher.mutex = .init;
     global_watcher.cond = .init;
 
+    const sig_handler = struct {
+        fn handle(sig: @TypeOf(std.posix.SIG.INT)) callconv(.c) void {
+            _ = sig;
+            std.process.exit(0);
+        }
+    }.handle;
+    var sa = std.posix.Sigaction{
+        .handler = .{ .handler = sig_handler },
+        .mask = std.mem.zeroes(std.posix.sigset_t),
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.INT, &sa, null);
+    std.posix.sigaction(std.posix.SIG.TERM, &sa, null);
+
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     var cmd: []const u8 = "dev";
@@ -299,7 +313,7 @@ fn buildProject(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void
                     try std.Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(out_path).?);
                     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = out_path, .data = processed });
                 } else {
-                    const skip_exts = [_][]const u8{ ".zig", ".go", ".mod", ".sum" };
+                    const skip_exts = [_][]const u8{".zig"};
                     var skip_file = false;
                     for (skip_exts) |ext| {
                         if (std.mem.endsWith(u8, entry.basename, ext)) {
@@ -327,7 +341,7 @@ fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_pro
         const address = try std.Io.net.IpAddress.parse("0.0.0.0", port);
         server = address.listen(io, .{ .reuse_address = false }) catch |err| {
             if (err == error.AddressInUse) {
-                std.debug.print("Port {d} already opened, trying {d}...\n", .{ port, port + 1 });
+                std.debug.print("Port {d} is in use, trying port {d}\n", .{ port, port + 1 });
                 port += 1;
                 continue;
             }
@@ -457,7 +471,7 @@ fn handleConnection(allocator: std.mem.Allocator, io: std.Io, connection: std.Io
     var full_path = std.fs.path.join(allocator, &.{ dir, target }) catch return;
     defer allocator.free(full_path);
 
-    var stat = std.Io.Dir.cwd().statFile(io, full_path, .{} ) catch |err| blk: {
+    var stat = std.Io.Dir.cwd().statFile(io, full_path, .{}) catch |err| blk: {
         if (err == error.FileNotFound and !std.mem.endsWith(u8, full_path, ".erm")) {
             const erm_path = try std.fmt.allocPrint(allocator, "{s}.erm", .{full_path});
             defer allocator.free(erm_path);
