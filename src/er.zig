@@ -526,36 +526,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                 std.debug.print("{s}\n", .{val});
             }
             if_was_executed.* = false;
-        } else if (std.mem.startsWith(u8, trimmed, "get(")) {
-            const open_p = std.mem.indexOf(u8, trimmed, "(") orelse continue;
-            const close_line_idx = findClosingBrace(lines, i);
-            const first_line = trimmed;
-            const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
-            const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
-            
-            const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
-            try routes.append(allocator, .{
-                .method = "GET",
-                .path = try allocator.dupe(u8, path_raw),
-                .handler_lines = handler_lines,
-            });
-            i = close_line_idx;
-            if_was_executed.* = false;
-        } else if (std.mem.startsWith(u8, trimmed, "post(")) {
-            const open_p = std.mem.indexOf(u8, trimmed, "(") orelse continue;
-            const close_line_idx = findClosingBrace(lines, i);
-            const first_line = trimmed;
-            const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
-            const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
-            
-            const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
-            try routes.append(allocator, .{
-                .method = "POST",
-                .path = try allocator.dupe(u8, path_raw),
-                .handler_lines = handler_lines,
-            });
-            i = close_line_idx;
-            if_was_executed.* = false;
+
         } else if (std.mem.startsWith(u8, trimmed, "return ")) {
             return;
         } else if (std.mem.indexOf(u8, trimmed, ".")) |dot_idx| {
@@ -565,33 +536,32 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                 try allocated_keys.append(allocator, var_name);
                 const method_name = std.mem.trim(u8, trimmed[dot_idx + 1 .. open_p], " \t");
 
-                if (std.mem.eql(u8, method_name, "get")) {
-                    const close_line_idx = findClosingBrace(lines, i);
-                    const first_line = trimmed;
-                    const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
-                    const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
-                    
-                    const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
-                    try routes.append(allocator, .{
-                        .method = "GET",
-                        .path = try allocator.dupe(u8, path_raw),
-                        .handler_lines = handler_lines,
-                    });
-                    i = close_line_idx;
-                } else if (std.mem.eql(u8, method_name, "post")) {
-                    const close_line_idx = findClosingBrace(lines, i);
-                    const first_line = trimmed;
-                    const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
-                    const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
-                    
-                    const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
-                    try routes.append(allocator, .{
-                        .method = "POST",
-                        .path = try allocator.dupe(u8, path_raw),
-                        .handler_lines = handler_lines,
-                    });
-                    i = close_line_idx;
-                } else {
+                const methods = [_][]const u8{ "get", "post", "put", "delete", "patch" };
+                var found_method = false;
+                for (methods) |m| {
+                    if (std.mem.eql(u8, method_name, m)) {
+                        found_method = true;
+                        const close_line_idx = findClosingBrace(lines, i);
+                        const first_line = trimmed;
+                        const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
+                        const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
+                        
+                        const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
+                        const method_upper = try allocator.alloc(u8, m.len);
+                        _ = std.ascii.upperString(method_upper, m);
+                        try allocated_keys.append(allocator, method_upper);
+
+                        try routes.append(allocator, .{
+                            .method = method_upper,
+                            .path = try allocator.dupe(u8, path_raw),
+                            .handler_lines = handler_lines,
+                        });
+                        i = close_line_idx;
+                        break;
+                    }
+                }
+
+                if (!found_method) {
                     const close_p = std.mem.lastIndexOf(u8, trimmed, ")") orelse 0;
                     if (close_p > open_p) {
                         const arg_str = std.mem.trim(u8, trimmed[open_p + 1 .. close_p], " \t");
