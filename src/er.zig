@@ -57,10 +57,7 @@ pub fn runFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void
 
     try evaluateFile(allocator, io, path, &variables, &allocated_keys, &routes);
 
-    if (variables.get("__server_port__")) |port_s| {
-        const port = std.fmt.parseInt(u16, port_s, 10) catch 3000;
-        try startServer(allocator, io, port, &routes, &variables);
-    }
+
 }
 
 pub fn handleApiRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.http.Server.Request, api_file_path: []const u8, api_prefix: []const u8) !bool {
@@ -162,66 +159,7 @@ pub fn handleApiRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.
     return false;
 }
 
-fn startServer(allocator: std.mem.Allocator, io: std.Io, initial_port: u16, routes: *std.ArrayList(Route), variables: *std.StringHashMap([]const u8)) !void {
-    var port = initial_port;
-    var server: std.Io.net.Server = undefined;
-    while (true) {
-        const address = std.Io.net.IpAddress.parse("0.0.0.0", port) catch try std.Io.net.IpAddress.parse("127.0.0.1", port);
-        server = address.listen(io, .{ .reuse_address = false }) catch |err| {
-            if (err == error.AddressInUse) {
-                std.debug.print("Port {d} is in use, trying port {d}\n", .{ port, port + 1 });
-                port += 1;
-                continue;
-            }
-            return err;
-        };
-        break;
-    }
-    defer server.deinit(io);
 
-    std.debug.print("lisinning port {d}\n", .{port});
-
-    while (true) {
-        const conn = try server.accept(io);
-        defer conn.close(io);
-
-        var reader_buf: [4096]u8 = undefined;
-        var reader = conn.reader(io, &reader_buf);
-        var writer_buf: [4096]u8 = undefined;
-        var writer = conn.writer(io, &writer_buf);
-
-        var http_server = std.http.Server.init(&reader.interface, &writer.interface);
-        var request = http_server.receiveHead() catch continue;
-
-        var matched = false;
-        for (routes.items) |route| {
-            if (std.mem.eql(u8, route.path, request.head.target)) {
-                for (route.handler_lines) |h_line| {
-                    const h_trimmed = std.mem.trim(u8, h_line, " \t\r");
-                    if (std.mem.indexOf(u8, h_trimmed, "c.json(")) |json_idx| {
-                        const o_p = std.mem.indexOfPos(u8, h_trimmed, json_idx, "(") orelse continue;
-                        const c_p = std.mem.lastIndexOf(u8, h_trimmed, ")") orelse continue;
-                        const data_expr = h_trimmed[o_p + 1 .. c_p];
-                        const data_val = try evaluateExpression(allocator, data_expr, variables.*);
-                        defer allocator.free(data_val);
-
-                        _ = try request.respond(data_val, .{
-                            .status = .ok,
-                            .extra_headers = &.{.{ .name = "Content-Type", .value = "application/json" }},
-                        });
-                        matched = true;
-                        break;
-                    }
-                }
-            }
-            if (matched) break;
-        }
-
-        if (!matched) {
-            _ = try request.respond("Not Found", .{ .status = .not_found });
-        }
-    }
-}
 
 fn findClosingBrace(lines: [][]const u8, start_idx: usize) usize {
     var depth: usize = 0;

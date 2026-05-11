@@ -339,7 +339,30 @@ fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_pro
     var server: std.Io.net.Server = undefined;
     while (true) {
         const address = try std.Io.net.IpAddress.parse("0.0.0.0", port);
-        server = address.listen(io, .{ .reuse_address = false }) catch |err| {
+        
+        // Linux-specific: Try to connect to see if another process is actively listening.
+        // This distinguishes an active process from a port in TIME_WAIT.
+        const test_fd = std.os.linux.socket(std.os.linux.AF.INET, std.os.linux.SOCK.STREAM, 0);
+        if (test_fd >= 0) {
+            const fd: i32 = @intCast(test_fd);
+            defer _ = std.os.linux.close(fd);
+            var sa: std.os.linux.sockaddr.in = std.mem.zeroes(std.os.linux.sockaddr.in);
+            sa.family = std.os.linux.AF.INET;
+            sa.port = std.mem.nativeToBig(u16, port);
+            sa.addr = 0x0100007f; // 127.0.0.1
+            
+            const connect_res = std.os.linux.connect(fd, @ptrCast(&sa), @sizeOf(std.os.linux.sockaddr.in));
+            if (connect_res == 0) {
+                // Connection succeeded! Another process is listening.
+                std.debug.print("Port {d} is in use (active process), trying port {d}\n", .{ port, port + 1 });
+                port += 1;
+                continue;
+            }
+        }
+
+        // Try binding with reuse_address = true to handle TIME_WAIT.
+        // Our connect check above ensures we don't accidentally "reuse" an active listener.
+        server = address.listen(io, .{ .reuse_address = true }) catch |err| {
             if (err == error.AddressInUse) {
                 std.debug.print("Port {d} is in use, trying port {d}\n", .{ port, port + 1 });
                 port += 1;
