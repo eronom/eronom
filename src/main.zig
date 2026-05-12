@@ -137,7 +137,9 @@ pub fn main(init: std.process.Init) !void {
             try runEmFile(allocator, io, args[1]);
             return;
         } else if (std.mem.endsWith(u8, args[1], ".er")) {
-            try er.runFile(allocator, io, args[1]);
+            er.runFile(allocator, io, args[1]) catch {
+                std.process.exit(1);
+            };
             return;
         } else {
             dir = args[1];
@@ -159,12 +161,12 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(abs_dir);
 
     if (!port_from_cli) {
-        var config_vars = std.StringHashMap([]const u8).init(allocator);
+        var config_vars = std.StringHashMap(er.Variable).init(allocator);
         var allocated_keys: std.ArrayList([]const u8) = .empty;
         var routes: std.ArrayList(er.Route) = .empty;
         defer {
             var it = config_vars.valueIterator();
-            while (it.next()) |v| allocator.free(v.*);
+            while (it.next()) |v| allocator.free(v.value);
             for (allocated_keys.items) |k| allocator.free(k);
             config_vars.deinit();
             allocated_keys.deinit(allocator);
@@ -183,7 +185,7 @@ pub fn main(init: std.process.Init) !void {
             if (std.Io.Dir.cwd().statFile(io, cp, .{})) |_| {
                 er.evaluateFile(allocator, io, cp, &config_vars, &allocated_keys, &routes) catch continue;
                 if (config_vars.get("config.server.port")) |ps| {
-                    port = std.fmt.parseInt(u16, ps, 10) catch port;
+                    port = std.fmt.parseInt(u16, ps.value, 10) catch port;
                 }
                 break;
             } else |_| {}

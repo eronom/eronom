@@ -279,12 +279,12 @@ const ExprParser = struct {
                     if (left == .string or right == .string) {
                         var buf: std.ArrayList(u8) = .empty;
                         errdefer buf.deinit(self.ev.allocator);
-                        
+
                         var val1_buf: [128]u8 = undefined;
                         var val2_buf: [128]u8 = undefined;
                         const s1 = std.fmt.bufPrint(&val1_buf, "{d}", .{left.toNumber()}) catch "";
                         const s2 = std.fmt.bufPrint(&val2_buf, "{d}", .{right.toNumber()}) catch "";
-                        
+
                         try buf.appendSlice(self.ev.allocator, s1);
                         try buf.appendSlice(self.ev.allocator, s2);
                         left = .{ .string = try buf.toOwnedSlice(self.ev.allocator) };
