@@ -100,6 +100,7 @@ pub fn handleApiRequest(allocator: std.mem.Allocator, io: std.Io, request: *std.
     defer {
         for (routes.items) |route| {
             allocator.free(route.path);
+            for (route.handler_lines) |line| allocator.free(line);
             allocator.free(route.handler_lines);
         }
         routes.deinit(allocator);
@@ -176,7 +177,7 @@ fn findClosingBrace(lines: [][]const u8, start_idx: usize) usize {
             }
         }
     }
-    return i;
+    return lines.len;
 }
 
 fn normalizeKey(allocator: std.mem.Allocator, key: []const u8) anyerror![]const u8 {
@@ -184,6 +185,7 @@ fn normalizeKey(allocator: std.mem.Allocator, key: []const u8) anyerror![]const 
         return try allocator.dupe(u8, key);
     }
     var res: std.ArrayList(u8) = .empty;
+    errdefer res.deinit(allocator);
     for (key) |char| {
         if (char == '[') {
             try res.append(allocator, '.');
@@ -320,7 +322,7 @@ fn evaluateCondition(allocator: std.mem.Allocator, condition: []const u8, variab
 
 fn splitBraceSafe(allocator: std.mem.Allocator, content: []const u8, separator: u8) ![][]const u8 {
     var res: std.ArrayList([]const u8) = .empty;
-    defer res.deinit(allocator);
+    errdefer res.deinit(allocator);
     var depth: i32 = 0;
     var start: usize = 0;
     var i: usize = 0;
@@ -347,7 +349,7 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
         defer allocator.free(entries);
         
         var obj_buf: std.ArrayList(u8) = .empty;
-        defer obj_buf.deinit(allocator);
+        errdefer obj_buf.deinit(allocator);
         try obj_buf.append(allocator, '{');
         var first = true;
         for (entries) |entry| {
@@ -357,6 +359,7 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
                 const key = std.mem.trim(u8, trimmed_entry[0..colon_idx], " \t\r\n");
                 const v_expr = std.mem.trim(u8, trimmed_entry[colon_idx + 1 ..], " \t\r\n");
                 const full_key = if (prefix.len > 0) try std.fmt.allocPrint(allocator, "{s}.{s}", .{ prefix, key }) else try allocator.dupe(u8, key);
+                errdefer allocator.free(full_key);
                 try allocated_keys.append(allocator, full_key);
                 const v = try parseRecursive(allocator, variables, allocated_keys, full_key, v_expr);
                 
@@ -373,7 +376,7 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
                 defer allocator.free(formatted_v);
 
                 if (!first) {
-                    try obj_buf.appendSlice(allocator, ",");
+                    try obj_buf.append(allocator, ',');
                 }
                 try obj_buf.append(allocator, '"');
                 try obj_buf.appendSlice(allocator, key);
@@ -403,11 +406,12 @@ fn parseRecursive(allocator: std.mem.Allocator, variables: *std.StringHashMap([]
                 try list_buf.appendSlice(allocator, ",");
             }
             const full_key = try std.fmt.allocPrint(allocator, "{s}.{d}", .{ prefix, idx });
+            errdefer allocator.free(full_key);
             try allocated_keys.append(allocator, full_key);
             const v = try parseRecursive(allocator, variables, allocated_keys, full_key, trimmed_elem);
             
             var formatted_v: []const u8 = undefined;
-            if (std.fmt.parseInt(i64, v, 10) catch null) |_| {
+            if (std.fmt.parseFloat(f64, v) catch null) |_| {
                 formatted_v = try allocator.dupe(u8, v);
             } else if (std.mem.eql(u8, v, "true") or std.mem.eql(u8, v, "false")) {
                 formatted_v = try allocator.dupe(u8, v);
@@ -546,7 +550,11 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                         const comma_idx = std.mem.indexOf(u8, first_line, ",") orelse first_line.len;
                         const path_raw = std.mem.trim(u8, first_line[open_p + 1 .. comma_idx], " \t'\"");
                         
-                        const handler_lines = try allocator.dupe([]const u8, lines[i + 1 .. close_line_idx]);
+                        const handler_lines = try allocator.alloc([]const u8, close_line_idx - (i + 1));
+                        errdefer allocator.free(handler_lines);
+                        for (handler_lines, 0..) |*hl, hli| {
+                            hl.* = try allocator.dupe(u8, lines[i + 1 + hli]);
+                        }
                         const method_upper = try allocator.alloc(u8, m.len);
                         _ = std.ascii.upperString(method_upper, m);
                         try allocated_keys.append(allocator, method_upper);
@@ -642,6 +650,7 @@ fn executeStatements(allocator: std.mem.Allocator, lines: [][]const u8, variable
                     var_name_raw = std.mem.trim(u8, decl_part[0..colon_idx], " \t");
                 }
                 const var_name = try normalizeKey(allocator, var_name_raw);
+                errdefer allocator.free(var_name);
                 try allocated_keys.append(allocator, var_name);
 
                 const val_raw = std.mem.trim(u8, trimmed[index + 1 ..], " \t");

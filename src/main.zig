@@ -4,6 +4,9 @@ const router = @import("router.zig");
 const compiler = @import("compiler.zig");
 const er = @import("er.zig");
 
+var should_exit = std.atomic.Value(bool).init(false);
+var global_server_fd: i32 = -1;
+
 const Watcher = struct {
     mutex: std.Io.Mutex = .init,
     cond: std.Io.Condition = .init,
@@ -23,10 +26,17 @@ const Watcher = struct {
     pub fn wait(self: *Watcher, io: std.Io, last_count: usize) usize {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
-        while (self.change_count == last_count) {
+        while (self.change_count == last_count and !should_exit.load(.acquire)) {
             self.cond.waitUncancelable(io, &self.mutex);
         }
         return self.change_count;
+    }
+
+    pub fn deinit(self: *Watcher) void {
+        if (self.last_path) |path| {
+            self.allocator.free(path);
+            self.last_path = null;
+        }
     }
 };
 
@@ -34,8 +44,9 @@ var global_watcher: Watcher = undefined;
 
 fn watchFiles(allocator: std.mem.Allocator, io: std.Io, dir: []const u8) !void {
     var last_check = std.Io.Timestamp.now(io, .awake);
-    while (true) {
+    while (!should_exit.load(.acquire)) {
         io.sleep(std.Io.Duration.fromMilliseconds(200), .awake) catch {};
+        if (should_exit.load(.acquire)) break;
         const changed = try checkDirChanged(allocator, io, dir, &last_check);
         if (changed) |path| {
             defer allocator.free(path);
@@ -70,7 +81,9 @@ fn checkDirChanged(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, la
 }
 
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
     const io = init.io;
 
     global_watcher.allocator = allocator;
@@ -81,7 +94,11 @@ pub fn main(init: std.process.Init) !void {
     const sig_handler = struct {
         fn handle(sig: @TypeOf(std.posix.SIG.INT)) callconv(.c) void {
             _ = sig;
-            std.process.exit(0);
+            should_exit.store(true, .release);
+            if (global_server_fd != -1) {
+                // Shutdown the listening socket to unblock accept() without invalidating the FD
+                _ = std.os.linux.shutdown(global_server_fd, 2); // 2 is SHUT_RDWR
+            }
         }
     }.handle;
     var sa = std.posix.Sigaction{
@@ -151,7 +168,11 @@ pub fn main(init: std.process.Init) !void {
             for (allocated_keys.items) |k| allocator.free(k);
             config_vars.deinit();
             allocated_keys.deinit(allocator);
-            for (routes.items) |r| allocator.free(r.path);
+            for (routes.items) |r| {
+                allocator.free(r.path);
+                for (r.handler_lines) |line| allocator.free(line);
+                allocator.free(r.handler_lines);
+            }
             routes.deinit(allocator);
         }
 
@@ -181,10 +202,11 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.mem.eql(u8, cmd, "start")) {
         try startServer(allocator, io, abs_dir, true, port);
-        return;
+    } else {
+        try startServer(allocator, io, abs_dir, false, port);
     }
 
-    try startServer(allocator, io, abs_dir, false, port);
+    global_watcher.deinit();
 }
 
 fn runEmFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
@@ -340,7 +362,7 @@ fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_pro
     var server: std.Io.net.Server = undefined;
     while (true) {
         const address = try std.Io.net.IpAddress.parse("0.0.0.0", port);
-        
+
         // Linux-specific: Try to connect to see if another process is actively listening.
         // This distinguishes an active process from a port in TIME_WAIT.
         const test_fd = std.os.linux.socket(std.os.linux.AF.INET, std.os.linux.SOCK.STREAM, 0);
@@ -351,7 +373,7 @@ fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_pro
             sa.family = std.os.linux.AF.INET;
             sa.port = std.mem.nativeToBig(u16, port);
             sa.addr = 0x0100007f; // 127.0.0.1
-            
+
             const connect_res = std.os.linux.connect(fd, @ptrCast(&sa), @sizeOf(std.os.linux.sockaddr.in));
             if (connect_res == 0) {
                 // Connection succeeded! Another process is listening.
@@ -371,23 +393,31 @@ fn startServer(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, is_pro
             }
             return err;
         };
+        global_server_fd = server.socket.handle;
         break;
     }
-    defer server.deinit(io);
+    defer {
+        server.deinit(io);
+        global_server_fd = -1;
+    }
 
     std.debug.print("{s} server running at http://localhost:{d}\n", .{ if (is_prod) "Production" else "Dev", port });
 
     var app = router.App.init(allocator);
+    defer app.deinit();
 
     if (!is_prod) {
-        _ = try std.Thread.spawn(.{}, watchFiles, .{ allocator, io, dir });
+        (try std.Thread.spawn(.{}, watchFiles, .{ allocator, io, dir })).detach();
     }
 
     const app_ptr = &app;
 
-    while (true) {
-        const connection = try server.accept(io);
-        _ = try std.Thread.spawn(.{}, handleConnection, .{ allocator, io, connection, dir, app_ptr, is_prod });
+    while (!should_exit.load(.acquire)) {
+        const connection = server.accept(io) catch |err| {
+            if (should_exit.load(.acquire)) break;
+            return err;
+        };
+        (try std.Thread.spawn(.{}, handleConnection, .{ allocator, io, connection, dir, app_ptr, is_prod })).detach();
     }
 }
 
@@ -464,8 +494,9 @@ fn handleConnection(allocator: std.mem.Allocator, io: std.Io, connection: std.Io
         }
 
         var last_count = global_watcher.change_count;
-        while (true) {
+        while (!should_exit.load(.acquire)) {
             last_count = global_watcher.wait(io, last_count);
+            if (should_exit.load(.acquire)) break;
             const path = global_watcher.last_path orelse "unknown";
             var json_buf: [1024]u8 = undefined;
             const json = std.fmt.bufPrint(&json_buf, "data: {{\"type\": \"update\", \"path\": \"{s}\"}}\n\n", .{path}) catch continue;

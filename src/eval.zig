@@ -61,7 +61,7 @@ pub const Value = union(enum) {
                 var first = true;
                 while (it.next()) |entry| {
                     if (!first) try writer.writeAll(", ");
-                    try writer.print("\"{s}\": {f}", .{ entry.key_ptr.*, entry.value_ptr.* });
+                    try writer.print("\"{s}\": {}", .{ entry.key_ptr.*, entry.value_ptr.* });
                     first = false;
                 }
                 try writer.writeAll(" }");
@@ -70,7 +70,7 @@ pub const Value = union(enum) {
                 try writer.writeAll("[ ");
                 for (l.items, 0..) |v, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try writer.print("{f}", .{v});
+                    try writer.print("{}", .{v});
                 }
                 try writer.writeAll(" ]");
             },
@@ -118,12 +118,7 @@ pub const ErmEval = struct {
     }
 
     pub fn set(self: *ErmEval, name: []const u8, val: Value) !void {
-        const entry = try self.vars.getOrPutValue(try self.allocator.dupe(u8, name), val);
-        if (entry.key_ptr.* != name) {
-            // Already existed, entry.key_ptr was already duped.
-            // But we duped it again above. This is a leak or double-dupe.
-            // Better logic:
-        }
+        try self.set_owned(name, val);
     }
 
     pub fn set_owned(self: *ErmEval, name: []const u8, val: Value) !void {
@@ -131,7 +126,9 @@ pub const ErmEval = struct {
             v.deinit(self.allocator);
             v.* = val;
         } else {
-            try self.vars.put(try self.allocator.dupe(u8, name), val);
+            const duped_name = try self.allocator.dupe(u8, name);
+            errdefer self.allocator.free(duped_name);
+            try self.vars.put(duped_name, val);
         }
     }
 
@@ -281,9 +278,15 @@ const ExprParser = struct {
                 if (c == '+') {
                     if (left == .string or right == .string) {
                         var buf: std.ArrayList(u8) = .empty;
-                        defer buf.deinit(self.ev.allocator);
-                        try buf.print(self.ev.allocator, "{f}", .{left});
-                        try buf.print(self.ev.allocator, "{f}", .{right});
+                        errdefer buf.deinit(self.ev.allocator);
+                        
+                        var val1_buf: [128]u8 = undefined;
+                        var val2_buf: [128]u8 = undefined;
+                        const s1 = std.fmt.bufPrint(&val1_buf, "{d}", .{left.toNumber()}) catch "";
+                        const s2 = std.fmt.bufPrint(&val2_buf, "{d}", .{right.toNumber()}) catch "";
+                        
+                        try buf.appendSlice(self.ev.allocator, s1);
+                        try buf.appendSlice(self.ev.allocator, s2);
                         left = .{ .string = try buf.toOwnedSlice(self.ev.allocator) };
                     } else {
                         left = .{ .number = left.toNumber() + right.toNumber() };
@@ -438,7 +441,19 @@ fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) anyerro
         while (p < s.len and s[p] != ')') p += 1;
         if (p < s.len) p += 1;
         var m = std.StringHashMap(Value).init(allocator);
-        if (inner.val) |v| try m.put(try allocator.dupe(u8, "value"), v);
+        errdefer {
+            var it = m.iterator();
+            while (it.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            m.deinit();
+        }
+        if (inner.val) |v| {
+            const key = try allocator.dupe(u8, "value");
+            errdefer allocator.free(key);
+            try m.put(key, v);
+        }
         return .{ .val = .{ .map = m }, .pos = p };
     }
 
@@ -448,7 +463,7 @@ fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) anyerro
         p += 1;
         const start = p;
         while (p < s.len and s[p] != quote) p += 1;
-        const val = allocator.dupe(u8, s[start..p]) catch "";
+        const val = try allocator.dupe(u8, s[start..p]);
         if (p < s.len) p += 1;
         return .{ .val = .{ .string = val }, .pos = p };
     }
@@ -466,6 +481,10 @@ fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) anyerro
     if (s[p] == '[') {
         p += 1;
         var list: std.ArrayList(Value) = .empty;
+        errdefer {
+            for (list.items) |*v| v.deinit(allocator);
+            list.deinit(allocator);
+        }
         while (p < s.len and s[p] != ']') {
             const inner = try parseJSValue(s, p, allocator);
             if (inner.val) |v| {
@@ -482,17 +501,26 @@ fn parseJSValue(s: []const u8, pos: usize, allocator: std.mem.Allocator) anyerro
     if (s[p] == '{') {
         p += 1;
         var map = std.StringHashMap(Value).init(allocator);
+        errdefer {
+            var it = map.iterator();
+            while (it.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+                entry.value_ptr.deinit(allocator);
+            }
+            map.deinit();
+        }
         while (p < s.len and s[p] != '}') {
             while (p < s.len and std.ascii.isWhitespace(s[p])) p += 1;
             const start = p;
             while (p < s.len and (std.ascii.isAlphanumeric(s[p]) or s[p] == '_' or s[p] == '$')) p += 1;
             const key = try allocator.dupe(u8, s[start..p]);
+            errdefer allocator.free(key);
             while (p < s.len and (std.ascii.isWhitespace(s[p]) or s[p] == ':')) p += 1;
             const inner = try parseJSValue(s, p, allocator);
             if (inner.val) |v| {
                 try map.put(key, v);
             } else {
-                allocator.free(key);
+                return error.InvalidObjectValue;
             }
             p = inner.pos;
             while (p < s.len and (s[p] == ',' or std.ascii.isWhitespace(s[p]))) p += 1;
