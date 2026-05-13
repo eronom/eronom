@@ -231,7 +231,7 @@ pub fn inject_atom_name(input: &str, name: &str) -> String {
     res
 }
 
-pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashMap<String, bool>) -> anyhow::Result<ProcessResult> {
+pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashMap<String, bool>, slot_html: Option<&str>) -> anyhow::Result<ProcessResult> {
     let mut scripts = Vec::new();
     let mut styles = Vec::new();
     let mut atom_vars = Vec::new();
@@ -335,7 +335,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                         if !visited.contains_key(&comp_path_str) {
                             visited.insert(comp_path_str.clone(), true);
                             let comp_content = std::fs::read_to_string(&comp_path)?;
-                            let mut sub_res = process_component_tree(base_dir, &comp_content, visited)?;
+                            let mut sub_res = process_component_tree(base_dir, &comp_content, visited, None)?;
                             html_buf.push_str(&sub_res.html);
                             scripts.append(&mut sub_res.scripts);
                             styles.append(&mut sub_res.styles);
@@ -346,6 +346,13 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                             continue;
                         }
                     }
+                }
+                if tag_name == "slot" {
+                    if let Some(s) = slot_html {
+                        html_buf.push_str(s);
+                    }
+                    i += tag_end + 1;
+                    continue;
                 }
             }
             html_buf.push('<');
@@ -475,7 +482,34 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
 
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> anyhow::Result<String> {
     let mut visited = HashMap::new();
-    let result = process_component_tree(base_dir, content, &mut visited)?;
+    
+    // Automatic Layout support: if layout.erm exists in the directory, wrap the content.
+    // Don't wrap if the content itself seems to be a full document or if we're already rendering layout.erm.
+    let layout_path = std::path::Path::new(base_dir).join("layout.erm");
+    let mut result = if layout_path.exists() && !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
+        let layout_content = std::fs::read_to_string(&layout_path)?;
+        // Check if the current content is NOT layout.erm itself by comparing content (simple check)
+        if content.trim() != layout_content.trim() {
+            let page_res = process_component_tree(base_dir, content, &mut visited, None)?;
+            let mut layout_res = process_component_tree(base_dir, &layout_content, &mut visited, Some(&page_res.html))?;
+            
+            // Merge all assets from page into layout
+            for s in page_res.scripts {
+                if !layout_res.scripts.contains(&s) { layout_res.scripts.push(s); }
+            }
+            for s in page_res.styles {
+                if !layout_res.styles.contains(&s) { layout_res.styles.push(s); }
+            }
+            for v in page_res.atom_vars {
+                if !layout_res.atom_vars.contains(&v) { layout_res.atom_vars.push(v); }
+            }
+            layout_res
+        } else {
+            process_component_tree(base_dir, content, &mut visited, None)?
+        }
+    } else {
+        process_component_tree(base_dir, content, &mut visited, None)?
+    };
 
     let mut final_html = String::new();
 
