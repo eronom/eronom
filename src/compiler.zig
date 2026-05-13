@@ -3,6 +3,7 @@ const eval = @import("eval.zig");
 
 pub fn scopeCSS(allocator: std.mem.Allocator, css: []const u8, scopeID: []const u8) ![]const u8 {
     var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
     var i: usize = 0;
     while (i < css.len) {
         const brace_idx = std.mem.indexOfScalarPos(u8, css, i, '{') orelse break;
@@ -51,6 +52,7 @@ pub fn scopeCSS(allocator: std.mem.Allocator, css: []const u8, scopeID: []const 
 
 pub fn scopeHTML(allocator: std.mem.Allocator, html: []const u8, scopeID: []const u8) ![]const u8 {
     var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
     var i: usize = 0;
     while (i < html.len) {
         const tag_start = std.mem.indexOfScalarPos(u8, html, i, '<') orelse {
@@ -113,6 +115,7 @@ pub const ProcessResult = struct {
 
 fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *std.ArrayList([]const u8), events: *std.ArrayList([]const u8), atoms: []const []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
     var i: usize = 0;
     var in_tag = false;
 
@@ -224,6 +227,7 @@ fn parseReactivity(allocator: std.mem.Allocator, html: []const u8, bindings: *st
 fn replaceWord(allocator: std.mem.Allocator, input: []const u8, word: []const u8, suffix: []const u8) ![]const u8 {
     if (word.len <= 1) return try allocator.dupe(u8, input); // Extra safety
     var res: std.ArrayList(u8) = .empty;
+    defer res.deinit(allocator);
     var i: usize = 0;
     var in_string: ?u8 = null;
     while (i < input.len) {
@@ -325,6 +329,14 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
     var scripts: std.ArrayList([]const u8) = .empty;
     var styles: std.ArrayList([]const u8) = .empty;
     var atom_vars_list: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (scripts.items) |s| allocator.free(s);
+        scripts.deinit(allocator);
+        for (styles.items) |s| allocator.free(s);
+        styles.deinit(allocator);
+        for (atom_vars_list.items) |s| allocator.free(s);
+        atom_vars_list.deinit(allocator);
+    }
 
     var h = std.hash.Fnv1a_32.init();
     h.update(content);
@@ -333,6 +345,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
     const scope_id = try std.fmt.bufPrint(&scope_id_buf, "data-e-{x}", .{hash_val});
 
     var html_buf: std.ArrayList(u8) = .empty;
+    errdefer html_buf.deinit(allocator);
     var i: usize = 0;
     while (i < content.len) {
         if (std.mem.startsWith(u8, content[i..], "<script")) {
@@ -435,7 +448,7 @@ pub fn processComponentTree(allocator: std.mem.Allocator, io: std.Io, base_dir: 
                             try html_buf.appendSlice(allocator, sub_res.html);
                             for (sub_res.scripts.items) |s| try scripts.append(allocator, s);
                             for (sub_res.styles.items) |s| try styles.append(allocator, s);
-                             for (sub_res.atom_vars.items) |sv| {
+                            for (sub_res.atom_vars.items) |sv| {
                                 var already = false;
                                 for (atom_vars_list.items) |existing| {
                                     if (std.mem.eql(u8, existing, sv)) {
