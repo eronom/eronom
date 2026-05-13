@@ -60,6 +60,7 @@ impl fmt::Display for Value {
     }
 }
 
+#[derive(Clone)]
 pub struct ErmEval {
     pub vars: HashMap<String, Value>,
 }

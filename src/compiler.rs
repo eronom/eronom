@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use crate::eval::{self, ErmEval};
 use fnv::FnvHasher;
 use std::hash::Hasher;
+use base64::{Engine as _, engine::general_purpose};
 
 pub fn scope_css(css: &str, scope_id: &str) -> anyhow::Result<String> {
     let mut result = String::new();
@@ -113,36 +114,45 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
     let mut res = String::new();
     let mut i = 0;
     let mut in_string: Option<char> = None;
-    let bytes = input.as_bytes();
     while i < input.len() {
+        let c = input[i..].chars().next().unwrap();
         if let Some(quote) = in_string {
-            if bytes[i] as char == quote && (i == 0 || (i > 0 && bytes[i - 1] != b'\\')) {
+            if c == quote && (i == 0 || input[..i].chars().last() != Some('\\')) {
                 in_string = None;
             }
-            res.push(bytes[i] as char);
-            i += 1;
+            res.push(c);
+            i += c.len_utf8();
             continue;
         }
 
-        if bytes[i] == b'"' || bytes[i] == b'\'' {
-            in_string = Some(bytes[i] as char);
-            res.push(bytes[i] as char);
+        if c == '"' || c == '\'' {
+            in_string = Some(c);
+            res.push(c);
             i += 1;
             continue;
         }
 
         if input[i..].starts_with(word) {
             let end = i + word.len();
-            let before_ok = i == 0 || (!bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_' && bytes[i - 1] != b'$');
-            let after_ok = end == input.len() || (!bytes[end].is_ascii_alphanumeric() && bytes[end] != b'_' && bytes[end] != b'$');
+            let before_ok = i == 0 || {
+                let prev_c = input[..i].chars().last().unwrap();
+                !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '$'
+            };
+            let after_ok = end == input.len() || {
+                let next_c = input[end..].chars().next().unwrap();
+                !next_c.is_alphanumeric() && next_c != '_' && next_c != '$'
+            };
 
             if before_ok && after_ok {
                 let mut is_decl = false;
                 for kw in ["let", "const", "var"] {
                     if i >= kw.len() + 1 {
                         let start = i - kw.len() - 1;
-                        if &input[start..i - 1] == kw && bytes[i - 1].is_ascii_whitespace() {
-                            let pre_kw_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+                        if &input[start..i - 1] == kw && input[i-1..i].chars().next().unwrap().is_whitespace() {
+                            let pre_kw_ok = start == 0 || {
+                                let pre_c = input[..start].chars().last().unwrap();
+                                !pre_c.is_alphanumeric()
+                            };
                             if pre_kw_ok {
                                 is_decl = true;
                                 break;
@@ -163,8 +173,8 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
                 continue;
             }
         }
-        res.push(bytes[i] as char);
-        i += 1;
+        res.push(c);
+        i += c.len_utf8();
     }
     res
 }
@@ -176,21 +186,32 @@ pub fn inject_atom_name(input: &str, name: &str) -> String {
         if input[i..].starts_with(name) {
             let end = i + name.len();
             let mut k = end;
-            while k < input.len() && (input.as_bytes()[k].is_ascii_whitespace() || input.as_bytes()[k] == b':') {
-                k += 1;
+            while k < input.len() {
+                let c = input[k..].chars().next().unwrap();
+                if c.is_whitespace() || c == ':' {
+                    k += c.len_utf8();
+                } else {
+                    break;
+                }
             }
-            if k < input.len() && input.as_bytes()[k] == b'=' {
+            if k < input.len() && input[k..].starts_with('=') {
                 k += 1;
-                while k < input.len() && input.as_bytes()[k].is_ascii_whitespace() {
-                    k += 1;
+                while k < input.len() {
+                    let c = input[k..].chars().next().unwrap();
+                    if c.is_whitespace() {
+                        k += c.len_utf8();
+                    } else {
+                        break;
+                    }
                 }
                 if input[k..].starts_with("atom(") {
                     let mut depth = 1;
                     let mut j = k + 5;
                     while j < input.len() && depth > 0 {
-                        if input.as_bytes()[j] == b'(' { depth += 1; }
-                        else if input.as_bytes()[j] == b')' { depth -= 1; }
-                        j += 1;
+                        let c = input[j..].chars().next().unwrap();
+                        if c == '(' { depth += 1; }
+                        else if c == ')' { depth -= 1; }
+                        j += c.len_utf8();
                     }
                     if depth == 0 {
                         res.push_str(&input[i..j - 1]);
@@ -203,8 +224,9 @@ pub fn inject_atom_name(input: &str, name: &str) -> String {
                 }
             }
         }
-        res.push(input.as_bytes()[i] as char);
-        i += 1;
+        let c = input[i..].chars().next().unwrap();
+        res.push(c);
+        i += c.len_utf8();
     }
     res
 }
@@ -455,47 +477,508 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
     let mut visited = HashMap::new();
     let result = process_component_tree(base_dir, content, &mut visited)?;
 
+    let mut final_html = String::new();
+
+    // HMR Client Script
+    if !is_prod {
+        final_html.push_str(r#"<script>
+(function() {
+  if (window.__hmr_initialized) return;
+  window.__hmr_initialized = true;
+  console.log("[HMR] Initialized");
+
+  window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
+  window.hmr = {
+    data: window.__hmr_data || {},
+    accept: (cb) => window.__hmr_hooks.accept.push(cb),
+    dispose: (cb) => window.__hmr_hooks.dispose.push(cb),
+    invalidate: () => location.reload()
+  };
+  window.__hmr_data = window.hmr.data;
+
+  window.__hmr_intervals = window.__hmr_intervals || [];
+  const originalSetInterval = window.setInterval;
+  window.setInterval = function(fn, t) {
+    let id = originalSetInterval(fn, t);
+    window.__hmr_intervals.push(id);
+    return id;
+  };
+
+  window.__hmr_listeners = window.__hmr_listeners || [];
+  const originalDocAddEventListener = document.addEventListener;
+  document.addEventListener = function(type, listener, options) {
+    window.__hmr_listeners.push({ target: document, type, listener, options });
+    return originalDocAddEventListener.call(document, type, listener, options);
+  };
+
+  const originalWinAddEventListener = window.addEventListener;
+  window.addEventListener = function(type, listener, options) {
+    window.__hmr_listeners.push({ target: window, type, listener, options });
+    return originalWinAddEventListener.call(window, type, listener, options);
+  };
+
+  const originalElementAddEventListener = Element.prototype.addEventListener;
+  Element.prototype.addEventListener = function(type, listener, options) {
+    window.__hmr_listeners.push({ target: this, type, listener, options });
+    return originalElementAddEventListener.call(this, type, listener, options);
+  };
+
+  const es = new EventSource("/__hmr");
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'reload') {
+      location.reload();
+    } else if (data.type === 'update') {
+      const path = data.path || 'unknown';
+      console.log("[HMR] Update received for: " + path);
+
+      if (path.endsWith('.css')) {
+          let links = document.querySelectorAll('link[rel="stylesheet"]');
+          let found = false;
+          links.forEach(link => {
+              if (link.href.includes(path)) {
+                  link.href = path + '?t=' + new Date().getTime();
+                  found = true;
+              }
+          });
+          if (found) return;
+      }
+
+      fetch(location.href)
+        .then(r => r.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          document.title = doc.title;
+
+          function morph(oldNode, newNode) {
+            if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
+              oldNode.replaceWith(newNode.cloneNode(true));
+              return;
+            }
+            if (oldNode.nodeType === Node.TEXT_NODE) {
+              if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
+              return;
+            }
+            const oldAttrs = oldNode.attributes;
+            const newAttrs = newNode.attributes;
+            if (oldAttrs && newAttrs) {
+              for (let i = 0; i < newAttrs.length; i++) {
+                const attr = newAttrs[i];
+                if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
+              }
+              for (let i = 0; i < oldAttrs.length; i++) {
+                const attr = oldAttrs[i];
+                if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
+              }
+            }
+            const oldChildren = Array.from(oldNode.childNodes);
+            const newChildren = Array.from(newNode.childNodes);
+            const max = Math.max(oldChildren.length, newChildren.length);
+            for (let i = 0; i < max; i++) {
+              if (i >= oldChildren.length) {
+                oldNode.appendChild(newChildren[i].cloneNode(true));
+              } else if (i >= newChildren.length) {
+                oldNode.removeChild(oldChildren[i]);
+              } else {
+                morph(oldChildren[i], newChildren[i]);
+              }
+            }
+          }
+
+          const newStyles = doc.querySelectorAll('style');
+          if (newStyles.length > 0) {
+              let styleContainer = document.getElementById('__erm_styles');
+              if (!styleContainer) {
+                  styleContainer = document.createElement('div');
+                  styleContainer.id = '__erm_styles';
+                  document.head.appendChild(styleContainer);
+              }
+              styleContainer.innerHTML = '';
+              newStyles.forEach(s => styleContainer.appendChild(s.cloneNode(true)));
+          }
+
+          window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
+          window.__hmr_hooks.dispose = [];
+          window.__hmr_hooks.accept = [];
+          window.__hmr_intervals.forEach(clearInterval);
+          window.__hmr_intervals = [];
+          window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
+            target.removeEventListener(type, listener, options);
+            if (target.__erm_listener_added) delete target.__erm_listener_added;
+          });
+          window.__hmr_listeners = [];
+
+          morph(document.body, doc.body);
+
+          const scripts = document.body.querySelectorAll('script');
+          scripts.forEach(s => {
+            if (s.textContent.includes("__hmr_initialized")) return;
+            const newScript = document.createElement('script');
+            newScript.text = s.innerHTML;
+            if(s.src) {
+               let sUrl = new URL(s.src, location.href);
+               sUrl.searchParams.set('t', new Date().getTime());
+               newScript.src = sUrl.href;
+            }
+            s.replaceWith(newScript);
+          });
+          document.dispatchEvent(new Event('DOMContentLoaded'));
+          window.dispatchEvent(new Event('load'));
+          if (window.__erm_update) window.__erm_update();
+        });
+    }
+  };
+})();
+</script>"#);
+    }
+
+    let mut ev = ErmEval::new();
     let mut script_all = String::new();
-    script_all.push_str("window.__erm_bindings = []; window.__erm_events = [];");
     for s in &result.scripts {
         script_all.push_str(s);
         script_all.push('\n');
     }
-    
-    // Add the framework runtime
-    script_all.push_str(r#"
-        function __erm_update() {
-            window.__erm_bindings.forEach(b => {
-                const el = document.getElementById(b.id);
-                if (el) el.innerText = b.get();
-            });
+    ev.parse_script_vars(&script_all)?;
+
+    let mut res_html = result.html.clone();
+    let mut for_counter = 0;
+    let mut if_counter = 0;
+
+    // Process {#for}
+    while let Some(start_idx) = res_html.find("{#for ") {
+        let end_for_idx = match res_html[start_idx..].find("{/for}") {
+            Some(idx) => idx,
+            None => break,
+        };
+        let full_end_idx = start_idx + end_for_idx + 6;
+
+        let header_start = start_idx + 6;
+        let header_end = match res_html[header_start..].find('}') {
+            Some(idx) => idx,
+            None => break,
+        };
+        let full_header_end = header_start + header_end;
+
+        let header = &res_html[header_start..full_header_end];
+        let body = &res_html[full_header_end + 1..start_idx + end_for_idx];
+
+        // Parse "item, i in items"
+        let in_idx = match header.find(" in ") {
+            Some(idx) => idx,
+            None => break,
+        };
+        let vars_part = header[0..in_idx].trim();
+        let collection_expr_raw = header[in_idx + 4..].trim();
+
+        let mut collection_expr = collection_expr_raw.to_string();
+        for sig in &result.atom_vars {
+            collection_expr = replace_word(&collection_expr, sig, ".value");
         }
-        window.__erm_update = __erm_update;
-        document.addEventListener('DOMContentLoaded', () => {
-            window.__erm_events.forEach(e => {
-                const el = document.getElementById(e.id);
-                if (el) el.addEventListener(e.event, e.handler);
-            });
-            __erm_update();
-        });
-    "#);
 
-    if !is_prod {
-        script_all.push_str("(function(){ if(window.__hmr_initialized) return; window.__hmr_initialized=true; console.log('[HMR] Initialized'); })();");
+        let mut item_name = "";
+        let mut index_name = "";
+        if let Some(comma_idx) = vars_part.find(',') {
+            item_name = vars_part[0..comma_idx].trim();
+            index_name = vars_part[comma_idx + 1..].trim();
+        } else {
+            item_name = vars_part;
+        }
+
+        let anchor_id = format!("erm-for-{}", for_counter);
+        for_counter += 1;
+
+        // SSR For Loop
+        let mut ssr_html = String::new();
+        let collection_val = ev.eval(&collection_expr).unwrap_or(eval::Value::Null);
+        if let eval::Value::List(items) = collection_val {
+            for (idx, item) in items.iter().enumerate() {
+                let mut sub_ev = ev.clone();
+                sub_ev.set(item_name, item.clone());
+                if !index_name.is_empty() {
+                    sub_ev.set(index_name, eval::Value::Number(idx as f64));
+                }
+
+                // Simple template replacement for SSR
+                let mut bit = 0;
+                while bit < body.len() {
+                    let c = body[bit..].chars().next().unwrap();
+                    if c == '{' && !body[bit..].starts_with("{#") && !body[bit..].starts_with("{/") && !body[bit..].starts_with("{:") {
+                        if let Some(brace_end) = body[bit..].find('}') {
+                            let mut sub_expr = body[bit + 1..bit + brace_end].to_string();
+                            for sig in &result.atom_vars {
+                                sub_expr = replace_word(&sub_expr, sig, ".value");
+                            }
+                            let val = sub_ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
+                            ssr_html.push_str(&val.to_string());
+                            bit += brace_end + 1;
+                            continue;
+                        }
+                    }
+                    ssr_html.push(c);
+                    bit += c.len_utf8();
+                }
+            }
+        }
+
+        let body_b64 = general_purpose::STANDARD.encode(body);
+        let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
+
+        let logic = format!(r#"
+            window.__erm_bindings.push({{
+                update: () => {{
+                    let __erm_anchor = document.getElementById("{}");
+                    if (__erm_anchor) {{
+                        let __erm_items = [];
+                        try {{ __erm_items = ({}); }} catch(e) {{}}
+                        if (!Array.isArray(__erm_items)) __erm_items = [];
+                        let __erm_itemsJson = JSON.stringify(__erm_items);
+                        if (__erm_anchor.__erm_last_items !== __erm_itemsJson) {{
+                            __erm_anchor.__erm_last_items = __erm_itemsJson;
+                            let __erm_template = __erm_b64utf8("{}");
+                            let __erm_html = "";
+                            __erm_items.forEach(({}) => {{
+                                let __erm_iter_html = __erm_template.replace(/\{{([^{{}}#/:][^{{}}]*)\}}/g, (m, expr) => {{
+                                    try {{ 
+                                        let val = eval(expr); 
+                                        return val === undefined ? "" : val;
+                                    }} catch(e) {{ return ""; }}
+                                }});
+                                __erm_html += __erm_iter_html;
+                            }});
+                            __erm_anchor.innerHTML = __erm_html;
+                        }}
+                    }}
+                }}
+            }});"#, anchor_id, collection_expr, body_b64, js_params);
+        
+        let mut final_scripts = result.scripts.clone();
+        final_scripts.push(logic);
+        
+        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
+        res_html = res_html.replace(&res_html[start_idx..full_end_idx], &anchor_html);
     }
 
-    let res_html = result.html.clone();
-    
-    let mut output = String::new();
-    output.push_str("<!DOCTYPE html><html><head>");
-    for s in &result.styles {
-        output.push_str(&format!("<style>{}</style>", s));
-    }
-    output.push_str("</head><body>");
-    output.push_str(&res_html);
-    output.push_str("<script>");
-    output.push_str(&script_all);
-    output.push_str("</script></body></html>");
+    // Process {#if}
+    while let Some(start_idx) = res_html.find("{#if ") {
+        let mut end_if_idx = None;
+        let mut depth = 1;
+        let mut j = start_idx + 5;
+        while j < res_html.len() {
+            if res_html[j..].starts_with("{#if ") {
+                depth += 1;
+                j += 5;
+            } else if res_html[j..].starts_with("{/if}") {
+                depth -= 1;
+                if depth == 0 {
+                    end_if_idx = Some(j);
+                    break;
+                }
+                j += 5;
+            } else {
+                let c = res_html[j..].chars().next().unwrap();
+                j += c.len_utf8();
+            }
+        }
 
-    Ok(output)
+        let eidx = match end_if_idx { Some(idx) => idx, None => break };
+        let full_block = &res_html[start_idx..eidx + 5];
+
+        let anchor_id = format!("erm-if-{}", if_counter);
+        if_counter += 1;
+
+        let mut branches_js = String::new();
+        let mut ssr_html_res = String::new();
+        let mut ssr_found = false;
+
+        let mut rem = full_block;
+        while !rem.is_empty() {
+            let mut cond_expr = "true".to_string();
+            let mut body_start = 0;
+            let mut is_else = false;
+
+            if rem.starts_with("{#if ") {
+                let end_brace = rem.find('}').unwrap_or(0);
+                cond_expr = rem[5..end_brace].trim().to_string();
+                body_start = end_brace + 1;
+            } else if rem.starts_with("{:else if ") {
+                let end_brace = rem.find('}').unwrap_or(0);
+                cond_expr = rem[10..end_brace].trim().to_string();
+                body_start = end_brace + 1;
+            } else if rem.starts_with("{:else}") {
+                cond_expr = "true".to_string();
+                body_start = 7;
+                is_else = true;
+            } else { break; }
+
+            for sig in &result.atom_vars {
+                cond_expr = replace_word(&cond_expr, sig, ".value");
+            }
+
+            let next_else = rem[body_start..].find("{:else").unwrap_or_else(|| rem[body_start..].find("{/if}").unwrap_or(0));
+            let body = &rem[body_start..body_start + next_else];
+
+            let body_b64 = general_purpose::STANDARD.encode(body);
+
+            if !ssr_found {
+                let cond_val = if is_else { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
+                if cond_val {
+                    ssr_html_res = body.to_string();
+                    ssr_found = true;
+                }
+            }
+
+            if branches_js.is_empty() {
+                branches_js.push_str(&format!("if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64));
+            } else if is_else {
+                branches_js.push_str(&format!(" else {{ __erm_new = __erm_b64utf8(\"{}\"); }}", body_b64));
+            } else {
+                branches_js.push_str(&format!(" else if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64));
+            }
+
+            rem = &rem[body_start + next_else..];
+            if rem.starts_with("{/if}") { break; }
+        }
+
+        let logic = format!(r#"
+            window.__erm_bindings.push({{
+                update: () => {{
+                    let __erm_anchor = document.getElementById("{}");
+                    if (__erm_anchor) {{
+                        let __erm_new = "";
+                        {}
+                        if (__erm_anchor.__erm_last !== __erm_new) {{
+                            __erm_anchor.__erm_last = __erm_new;
+                            __erm_anchor.innerHTML = __erm_new;
+                            if (window.__erm_update) window.__erm_update();
+                        }}
+                    }}
+                }}
+            }});"#, anchor_id, branches_js);
+        
+        // This is a bit hacky, we should probably append to a list
+        final_html.push_str(&format!("<script>{}</script>", logic));
+
+        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
+        res_html = res_html.replace(full_block, &anchor_html);
+    }
+
+    final_html.push_str(&res_html);
+
+    if !result.styles.is_empty() {
+        final_html.push_str("\n<style>\n");
+        for s in &result.styles {
+            final_html.push_str(s);
+            final_html.push('\n');
+        }
+        final_html.push_str("</style>\n");
+    }
+
+    let runtime = r#"
+(() => {
+  window.__hmr_data = window.__hmr_data || { atoms: {} };
+  if (!window.__hmr_data.atoms) window.__hmr_data.atoms = {};
+  window.__erm_b64utf8 = function(str) {
+      return decodeURIComponent(escape(window.atob(str)));
+    };
+  window.atom = function(val, name) {
+    if (name && window.__hmr_data.atoms[name] !== undefined) {
+      val = window.__hmr_data.atoms[name];
+    }
+    if (typeof val === 'function') {
+      return {
+        _getter: val,
+        get value() { return this._getter(); },
+        toString() { return this.value; },
+        valueOf() { return this.value; },
+        [Symbol.toPrimitive]() { return this.value; }
+      };
+    }
+    const container = { 
+      _val: val,
+      toString() { return this._val; },
+      valueOf() { return this._val; },
+      [Symbol.toPrimitive]() { return this._val; }
+    };
+    return new Proxy(container, {
+      get(target, prop) {
+        if (prop === 'value') return target._val;
+        return target[prop];
+      },
+      set(target, prop, newVal) {
+        if (prop === 'value') {
+          target._val = newVal;
+          if (name) window.__hmr_data.atoms[name] = newVal;
+          if (window.__erm_update) window.__erm_update();
+          return true;
+        }
+        target[prop] = newVal;
+        return true;
+      }
+    });
+  };
+  window.__erm_bindings = [];
+  window.__erm_events = [];
+  let _updateQueued = false;
+  window.__erm_update = function() {
+    if (_updateQueued) return;
+    _updateQueued = true;
+    requestAnimationFrame(() => {
+      window.__erm_bindings.forEach(b => {
+        try {
+          if (typeof b.update === 'function') {
+            b.update();
+          } else {
+            let val = b.get();
+            if (b.last !== val) {
+              b.last = val;
+              let el = document.getElementById(b.id);
+              if (el) el.innerText = val === undefined ? '' : val;
+            }
+          }
+        } catch(e) {}
+      });
+      if (typeof _initReactivity === 'function') _initReactivity();
+      _updateQueued = false;
+    });
+  };
+  function _initReactivity() {
+    window.__erm_events.forEach(ev => {
+      let el = document.getElementById(ev.id);
+      if (el && !el.__erm_listener_added) {
+         el.addEventListener(ev.event, ev.handler);
+         el.__erm_listener_added = true;
+      }
+    });
+    window.__erm_update();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initReactivity);
+  } else {
+    _initReactivity();
+  }
+  setTimeout(_initReactivity, 10);
+"#;
+
+    if !result.scripts.is_empty() || !result.atom_vars.is_empty() {
+        final_html.push_str("<script>\n");
+        final_html.push_str(runtime);
+        final_html.push('\n');
+        for s in &result.scripts {
+            final_html.push_str(s);
+            final_html.push('\n');
+        }
+        final_html.push_str("})();\n</script>\n");
+    }
+
+    // Wrap in standard HTML template if not already there (though process_erm_component usually does this)
+    if !final_html.contains("<html") {
+        let mut output = String::new();
+        output.push_str("<!DOCTYPE html><html><head></head><body>");
+        output.push_str(&final_html);
+        output.push_str("</body></html>");
+        return Ok(output);
+    }
+
+    Ok(final_html)
 }
