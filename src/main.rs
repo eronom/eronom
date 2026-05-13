@@ -69,6 +69,12 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
 
         println!("Request: {} {}", request.method(), target);
 
+        if target.ends_with(".erm") {
+            let response = Response::from_string("Not Found").with_status_code(404);
+            request.respond(response).ok();
+            continue;
+        }
+
         let mut file_path = if target == "/" {
             base_path.join("index.erm")
         } else {
@@ -84,8 +90,11 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
 
         if file_path.is_dir() {
             let index_erm = file_path.join("index.erm");
+            let page_erm = file_path.join("page.erm");
             if index_erm.exists() {
                 file_path = index_erm;
+            } else if page_erm.exists() {
+                file_path = page_erm;
             }
         }
 

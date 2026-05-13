@@ -480,30 +480,50 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
     out
 }
 
+
+
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> anyhow::Result<String> {
     let mut visited = HashMap::new();
     
-    // Automatic Layout support: if layout.erm exists in the directory, wrap the content.
-    // Don't wrap if the content itself seems to be a full document or if we're already rendering layout.erm.
-    let layout_path = std::path::Path::new(base_dir).join("layout.erm");
-    let mut result = if layout_path.exists() && !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
-        let layout_content = std::fs::read_to_string(&layout_path)?;
-        // Check if the current content is NOT layout.erm itself by comparing content (simple check)
-        if content.trim() != layout_content.trim() {
-            let page_res = process_component_tree(base_dir, content, &mut visited, None)?;
-            let mut layout_res = process_component_tree(base_dir, &layout_content, &mut visited, Some(&page_res.html))?;
-            
-            // Merge all assets from page into layout
-            for s in page_res.scripts {
-                if !layout_res.scripts.contains(&s) { layout_res.scripts.push(s); }
+    // Automatic Layout support: search for layout.erm in current and parent directories.
+    let mut layout_path = None;
+    let mut curr = std::path::PathBuf::from(base_dir);
+    loop {
+        let p = curr.join("layout.erm");
+        if p.exists() {
+            layout_path = Some(p);
+            break;
+        }
+        if let Some(parent) = curr.parent() {
+            if curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
+                break;
             }
-            for s in page_res.styles {
-                if !layout_res.styles.contains(&s) { layout_res.styles.push(s); }
+            curr = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    let mut result = if let Some(lp) = layout_path {
+        if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
+            let layout_content = std::fs::read_to_string(&lp)?;
+            if content.trim() != layout_content.trim() {
+                let page_res = process_component_tree(base_dir, content, &mut visited, None)?;
+                let mut layout_res = process_component_tree(&lp.parent().unwrap().to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html))?;
+                
+                for s in page_res.scripts {
+                    if !layout_res.scripts.contains(&s) { layout_res.scripts.push(s); }
+                }
+                for s in page_res.styles {
+                    if !layout_res.styles.contains(&s) { layout_res.styles.push(s); }
+                }
+                for v in page_res.atom_vars {
+                    if !layout_res.atom_vars.contains(&v) { layout_res.atom_vars.push(v); }
+                }
+                layout_res
+            } else {
+                process_component_tree(base_dir, content, &mut visited, None)?
             }
-            for v in page_res.atom_vars {
-                if !layout_res.atom_vars.contains(&v) { layout_res.atom_vars.push(v); }
-            }
-            layout_res
         } else {
             process_component_tree(base_dir, content, &mut visited, None)?
         }
@@ -511,11 +531,295 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
         process_component_tree(base_dir, content, &mut visited, None)?
     };
 
-    let mut final_html = String::new();
+    let mut ev = ErmEval::new();
+    let mut script_all = String::new();
+    for s in &result.scripts {
+        script_all.push_str(s);
+        script_all.push('\n');
+    }
+    ev.parse_script_vars(&script_all)?;
 
-    // HMR Client Script
+    let mut res_html = result.html.clone();
+    let mut block_logic = Vec::new();
+    let mut for_counter = 0;
+    let mut if_counter = 0;
+
+    // Process {#for}
+    while let Some(start_idx) = res_html.find("{#for ") {
+        let end_for_idx = match res_html[start_idx..].find("{/for}") {
+            Some(idx) => idx,
+            None => break,
+        };
+        let full_end_idx = start_idx + end_for_idx + 6;
+        let header_start = start_idx + 6;
+        let header_end = match res_html[header_start..].find('}') {
+            Some(idx) => idx,
+            None => break,
+        };
+        let full_header_end = header_start + header_end;
+        let header = &res_html[header_start..full_header_end];
+        let body = &res_html[full_header_end + 1..start_idx + end_for_idx];
+        let in_idx = match header.find(" in ") {
+            Some(idx) => idx,
+            None => break,
+        };
+        let vars_part = header[0..in_idx].trim();
+        let collection_expr_raw = header[in_idx + 4..].trim();
+        let mut collection_expr = collection_expr_raw.to_string();
+        for sig in &result.atom_vars {
+            collection_expr = replace_word(&collection_expr, sig, ".value");
+        }
+        let mut item_name = "";
+        let mut index_name = "";
+        if let Some(comma_idx) = vars_part.find(',') {
+            item_name = vars_part[0..comma_idx].trim();
+            index_name = vars_part[comma_idx + 1..].trim();
+        } else {
+            item_name = vars_part;
+        }
+        let anchor_id = format!("erm-for-{}", for_counter);
+        for_counter += 1;
+        let mut ssr_html = String::new();
+        let collection_val = ev.eval(&collection_expr).unwrap_or(eval::Value::Null);
+        if let eval::Value::List(items) = collection_val {
+            for (idx, item) in items.iter().enumerate() {
+                let mut sub_ev = ev.clone();
+                sub_ev.set(item_name, item.clone());
+                if !index_name.is_empty() {
+                    sub_ev.set(index_name, eval::Value::Number(idx as f64));
+                }
+                let mut bit = 0;
+                while bit < body.len() {
+                    let c = body[bit..].chars().next().unwrap();
+                    if c == '{' && !body[bit..].starts_with("{#") && !body[bit..].starts_with("{/") && !body[bit..].starts_with("{:") {
+                        if let Some(brace_end) = body[bit..].find('}') {
+                            let mut sub_expr = body[bit + 1..bit + brace_end].to_string();
+                            for sig in &result.atom_vars {
+                                sub_expr = replace_word(&sub_expr, sig, ".value");
+                            }
+                            let val = sub_ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
+                            ssr_html.push_str(&val.to_string());
+                            bit += brace_end + 1;
+                            continue;
+                        }
+                    }
+                    ssr_html.push(c);
+                    bit += c.len_utf8();
+                }
+            }
+        }
+        let body_b64 = general_purpose::STANDARD.encode(body);
+        let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
+        let logic = format!(r#"
+            window.__erm_bindings.push({{
+                update: () => {{
+                    let __erm_anchor = document.getElementById("{}");
+                    if (__erm_anchor) {{
+                        let __erm_items = [];
+                        try {{ __erm_items = ({}); }} catch(e) {{}}
+                        if (!Array.isArray(__erm_items)) __erm_items = [];
+                        let __erm_itemsJson = JSON.stringify(__erm_items);
+                        if (__erm_anchor.__erm_last_items !== __erm_itemsJson) {{
+                            __erm_anchor.__erm_last_items = __erm_itemsJson;
+                            let __erm_template = __erm_b64utf8("{}");
+                            let __erm_html = "";
+                            __erm_items.forEach(({}) => {{
+                                let __erm_iter_html = __erm_template.replace(/\{{([^{{}}#/:][^{{}}]*)\}}/g, (m, expr) => {{
+                                    try {{ 
+                                        let val = eval(expr); 
+                                        return val === undefined ? "" : val;
+                                    }} catch(e) {{ return ""; }}
+                                }});
+                                __erm_html += __erm_iter_html;
+                            }});
+                            __erm_anchor.innerHTML = __erm_html;
+                        }}
+                    }}
+                }}
+            }});"#, anchor_id, collection_expr, body_b64, js_params);
+        block_logic.push(logic);
+        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
+        res_html = res_html.replace(&res_html[start_idx..full_end_idx], &anchor_html);
+    }
+
+    // Process {#if}
+    while let Some(start_idx) = res_html.find("{#if ") {
+        let mut end_if_idx = None;
+        let mut depth = 1;
+        let mut j = start_idx + 5;
+        while j < res_html.len() {
+            if res_html[j..].starts_with("{#if ") { depth += 1; j += 5; }
+            else if res_html[j..].starts_with("{/if}") { depth -= 1; if depth == 0 { end_if_idx = Some(j); break; } j += 5; }
+            else { let c = res_html[j..].chars().next().unwrap(); j += c.len_utf8(); }
+        }
+        let eidx = match end_if_idx { Some(idx) => idx, None => break };
+        let full_block = &res_html[start_idx..eidx + 5];
+        let anchor_id = format!("erm-if-{}", if_counter);
+        if_counter += 1;
+        let mut branches_js = String::new();
+        let mut ssr_html_res = String::new();
+        let mut ssr_found = false;
+        let mut rem = full_block;
+        while !rem.is_empty() {
+            let mut cond_expr = "true".to_string();
+            let mut body_start = 0;
+            let mut is_else = false;
+            if rem.starts_with("{#if ") {
+                let end_brace = rem.find('}').unwrap_or(0);
+                cond_expr = rem[5..end_brace].trim().to_string();
+                body_start = end_brace + 1;
+            } else if rem.starts_with("{:else if ") {
+                let end_brace = rem.find('}').unwrap_or(0);
+                cond_expr = rem[10..end_brace].trim().to_string();
+                body_start = end_brace + 1;
+            } else if rem.starts_with("{:else}") {
+                cond_expr = "true".to_string();
+                body_start = 7;
+                is_else = true;
+            } else { break; }
+            for sig in &result.atom_vars {
+                cond_expr = replace_word(&cond_expr, sig, ".value");
+            }
+            let next_else = rem[body_start..].find("{:else").unwrap_or_else(|| rem[body_start..].find("{/if}").unwrap_or(0));
+            let body = &rem[body_start..body_start + next_else];
+            let body_b64 = general_purpose::STANDARD.encode(body);
+            if !ssr_found {
+                let cond_val = if is_else { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
+                if cond_val { ssr_html_res = body.to_string(); ssr_found = true; }
+            }
+            if branches_js.is_empty() { branches_js.push_str(&format!("if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64)); }
+            else if is_else { branches_js.push_str(&format!(" else {{ __erm_new = __erm_b64utf8(\"{}\"); }}", body_b64)); }
+            else { branches_js.push_str(&format!(" else if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64)); }
+            rem = &rem[body_start + next_else..];
+            if rem.starts_with("{/if}") { break; }
+        }
+        let logic = format!(r#"
+            window.__erm_bindings.push({{
+                update: () => {{
+                    let __erm_anchor = document.getElementById("{}");
+                    if (__erm_anchor) {{
+                        let __erm_new = "";
+                        {}
+                        if (__erm_anchor.__erm_last !== __erm_new) {{
+                            __erm_anchor.__erm_last = __erm_new;
+                            __erm_anchor.innerHTML = __erm_new;
+                            if (window.__erm_update) window.__erm_update();
+                        }}
+                    }}
+                }}
+            }});"#, anchor_id, branches_js);
+        block_logic.push(logic);
+        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
+        res_html = res_html.replace(full_block, &anchor_html);
+    }
+
+    let mut assets = String::new();
+    if !result.styles.is_empty() {
+        assets.push_str("\n<style id=\"__erm_styles\">\n");
+        for s in &result.styles { assets.push_str(s); assets.push('\n'); }
+        assets.push_str("</style>\n");
+    }
+
+    let runtime = r#"
+(() => {
+  window.__hmr_data = window.__hmr_data || { atoms: {} };
+  if (!window.__hmr_data.atoms) window.__hmr_data.atoms = {};
+  window.__erm_b64utf8 = function(str) {
+      return decodeURIComponent(escape(window.atob(str)));
+    };
+  window.atom = function(val, name) {
+    if (name && window.__hmr_data.atoms[name] !== undefined) {
+      val = window.__hmr_data.atoms[name];
+    }
+    if (typeof val === 'function') {
+      return {
+        _getter: val,
+        get value() { return this._getter(); },
+        toString() { return this.value; },
+        valueOf() { return this.value; },
+        [Symbol.toPrimitive]() { return this.value; }
+      };
+    }
+    const container = { 
+      _val: val,
+      toString() { return this._val; },
+      valueOf() { return this._val; },
+      [Symbol.toPrimitive]() { return this._val; }
+    };
+    return new Proxy(container, {
+      get(target, prop) {
+        if (prop === 'value') return target._val;
+        let res = target[prop];
+        if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
+           const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
+           if (methods.includes(prop)) {
+             return (...args) => {
+               const result = target._val[prop].apply(target._val, args);
+               if (window.__erm_update) window.__erm_update();
+               return result;
+             };
+           }
+        }
+        return res !== undefined ? res : target._val[prop];
+      },
+      set(target, prop, newVal) {
+        if (prop === 'value') {
+          target._val = newVal;
+          if (name) window.__hmr_data.atoms[name] = newVal;
+          if (window.__erm_update) window.__erm_update();
+          return true;
+        }
+        target[prop] = newVal;
+        return true;
+      }
+    });
+  };
+  window.__erm_bindings = [];
+  window.__erm_events = [];
+  let _updateQueued = false;
+  window.__erm_update = function() {
+    if (_updateQueued) return;
+    _updateQueued = true;
+    requestAnimationFrame(() => {
+      window.__erm_bindings.forEach(b => {
+        try {
+          if (typeof b.update === 'function') { b.update(); } 
+          else {
+            let val = b.get();
+            if (b.last !== val) { b.last = val; let el = document.getElementById(b.id); if (el) el.innerText = val === undefined ? '' : val; }
+          }
+        } catch(e) {}
+      });
+      if (typeof _initReactivity === 'function') _initReactivity();
+      _updateQueued = false;
+    });
+  };
+  function _initReactivity() {
+    window.__erm_events.forEach(ev => {
+      let el = document.getElementById(ev.id);
+      if (el && !el.__erm_listener_added) { el.addEventListener(ev.event, ev.handler); el.__erm_listener_added = true; }
+    });
+    window.__erm_update();
+  }
+  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _initReactivity); } 
+  else { _initReactivity(); }
+  setTimeout(_initReactivity, 10);
+})();
+"#;
+
+    if !result.scripts.is_empty() || !result.atom_vars.is_empty() || !block_logic.is_empty() {
+        assets.push_str("<script>\n");
+        assets.push_str(runtime);
+        assets.push('\n');
+        for s in &result.scripts { assets.push_str(s); assets.push('\n'); }
+        for s in &block_logic { assets.push_str(s); assets.push('\n'); }
+        assets.push_str("</script>\n");
+    }
+
+    let mut output = res_html;
+    
     if !is_prod {
-        final_html.push_str(r#"<script>
+        let hmr_script = r#"<script>
 (function() {
   if (window.__hmr_initialized) return;
   window.__hmr_initialized = true;
@@ -664,369 +968,29 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
     }
   };
 })();
-</script>"#);
-    }
-
-    let mut ev = ErmEval::new();
-    let mut script_all = String::new();
-    for s in &result.scripts {
-        script_all.push_str(s);
-        script_all.push('\n');
-    }
-    ev.parse_script_vars(&script_all)?;
-
-    let mut res_html = result.html.clone();
-    let mut block_logic = Vec::new();
-    let mut for_counter = 0;
-    let mut if_counter = 0;
-
-    // Process {#for}
-    while let Some(start_idx) = res_html.find("{#for ") {
-        let end_for_idx = match res_html[start_idx..].find("{/for}") {
-            Some(idx) => idx,
-            None => break,
-        };
-        let full_end_idx = start_idx + end_for_idx + 6;
-
-        let header_start = start_idx + 6;
-        let header_end = match res_html[header_start..].find('}') {
-            Some(idx) => idx,
-            None => break,
-        };
-        let full_header_end = header_start + header_end;
-
-        let header = &res_html[header_start..full_header_end];
-        let body = &res_html[full_header_end + 1..start_idx + end_for_idx];
-
-        // Parse "item, i in items"
-        let in_idx = match header.find(" in ") {
-            Some(idx) => idx,
-            None => break,
-        };
-        let vars_part = header[0..in_idx].trim();
-        let collection_expr_raw = header[in_idx + 4..].trim();
-
-        let mut collection_expr = collection_expr_raw.to_string();
-        for sig in &result.atom_vars {
-            collection_expr = replace_word(&collection_expr, sig, ".value");
-        }
-
-        let mut item_name = "";
-        let mut index_name = "";
-        if let Some(comma_idx) = vars_part.find(',') {
-            item_name = vars_part[0..comma_idx].trim();
-            index_name = vars_part[comma_idx + 1..].trim();
+</script>"#;
+        if let Some(pos) = output.find("<head>") {
+            output.insert_str(pos + 6, hmr_script);
         } else {
-            item_name = vars_part;
+            output.insert_str(0, hmr_script);
         }
-
-        let anchor_id = format!("erm-for-{}", for_counter);
-        for_counter += 1;
-
-        // SSR For Loop
-        let mut ssr_html = String::new();
-        let collection_val = ev.eval(&collection_expr).unwrap_or(eval::Value::Null);
-        if let eval::Value::List(items) = collection_val {
-            for (idx, item) in items.iter().enumerate() {
-                let mut sub_ev = ev.clone();
-                sub_ev.set(item_name, item.clone());
-                if !index_name.is_empty() {
-                    sub_ev.set(index_name, eval::Value::Number(idx as f64));
-                }
-
-                // Simple template replacement for SSR
-                let mut bit = 0;
-                while bit < body.len() {
-                    let c = body[bit..].chars().next().unwrap();
-                    if c == '{' && !body[bit..].starts_with("{#") && !body[bit..].starts_with("{/") && !body[bit..].starts_with("{:") {
-                        if let Some(brace_end) = body[bit..].find('}') {
-                            let mut sub_expr = body[bit + 1..bit + brace_end].to_string();
-                            for sig in &result.atom_vars {
-                                sub_expr = replace_word(&sub_expr, sig, ".value");
-                            }
-                            let val = sub_ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
-                            ssr_html.push_str(&val.to_string());
-                            bit += brace_end + 1;
-                            continue;
-                        }
-                    }
-                    ssr_html.push(c);
-                    bit += c.len_utf8();
-                }
-            }
-        }
-
-        let body_b64 = general_purpose::STANDARD.encode(body);
-        let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
-
-        let logic = format!(r#"
-            window.__erm_bindings.push({{
-                update: () => {{
-                    let __erm_anchor = document.getElementById("{}");
-                    if (__erm_anchor) {{
-                        let __erm_items = [];
-                        try {{ __erm_items = ({}); }} catch(e) {{}}
-                        if (!Array.isArray(__erm_items)) __erm_items = [];
-                        let __erm_itemsJson = JSON.stringify(__erm_items);
-                        if (__erm_anchor.__erm_last_items !== __erm_itemsJson) {{
-                            __erm_anchor.__erm_last_items = __erm_itemsJson;
-                            let __erm_template = __erm_b64utf8("{}");
-                            let __erm_html = "";
-                            __erm_items.forEach(({}) => {{
-                                let __erm_iter_html = __erm_template.replace(/\{{([^{{}}#/:][^{{}}]*)\}}/g, (m, expr) => {{
-                                    try {{ 
-                                        let val = eval(expr); 
-                                        return val === undefined ? "" : val;
-                                    }} catch(e) {{ return ""; }}
-                                }});
-                                __erm_html += __erm_iter_html;
-                            }});
-                            __erm_anchor.innerHTML = __erm_html;
-                        }}
-                    }}
-                }}
-            }});"#, anchor_id, collection_expr, body_b64, js_params);
-        
-        block_logic.push(logic);
-        
-        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
-        res_html = res_html.replace(&res_html[start_idx..full_end_idx], &anchor_html);
     }
 
-    // Process {#if}
-    while let Some(start_idx) = res_html.find("{#if ") {
-        let mut end_if_idx = None;
-        let mut depth = 1;
-        let mut j = start_idx + 5;
-        while j < res_html.len() {
-            if res_html[j..].starts_with("{#if ") {
-                depth += 1;
-                j += 5;
-            } else if res_html[j..].starts_with("{/if}") {
-                depth -= 1;
-                if depth == 0 {
-                    end_if_idx = Some(j);
-                    break;
-                }
-                j += 5;
-            } else {
-                let c = res_html[j..].chars().next().unwrap();
-                j += c.len_utf8();
-            }
-        }
-
-        let eidx = match end_if_idx { Some(idx) => idx, None => break };
-        let full_block = &res_html[start_idx..eidx + 5];
-
-        let anchor_id = format!("erm-if-{}", if_counter);
-        if_counter += 1;
-
-        let mut branches_js = String::new();
-        let mut ssr_html_res = String::new();
-        let mut ssr_found = false;
-
-        let mut rem = full_block;
-        while !rem.is_empty() {
-            let mut cond_expr = "true".to_string();
-            let mut body_start = 0;
-            let mut is_else = false;
-
-            if rem.starts_with("{#if ") {
-                let end_brace = rem.find('}').unwrap_or(0);
-                cond_expr = rem[5..end_brace].trim().to_string();
-                body_start = end_brace + 1;
-            } else if rem.starts_with("{:else if ") {
-                let end_brace = rem.find('}').unwrap_or(0);
-                cond_expr = rem[10..end_brace].trim().to_string();
-                body_start = end_brace + 1;
-            } else if rem.starts_with("{:else}") {
-                cond_expr = "true".to_string();
-                body_start = 7;
-                is_else = true;
-            } else { break; }
-
-            for sig in &result.atom_vars {
-                cond_expr = replace_word(&cond_expr, sig, ".value");
-            }
-
-            let next_else = rem[body_start..].find("{:else").unwrap_or_else(|| rem[body_start..].find("{/if}").unwrap_or(0));
-            let body = &rem[body_start..body_start + next_else];
-
-            let body_b64 = general_purpose::STANDARD.encode(body);
-
-            if !ssr_found {
-                let cond_val = if is_else { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
-                if cond_val {
-                    ssr_html_res = body.to_string();
-                    ssr_found = true;
-                }
-            }
-
-            if branches_js.is_empty() {
-                branches_js.push_str(&format!("if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64));
-            } else if is_else {
-                branches_js.push_str(&format!(" else {{ __erm_new = __erm_b64utf8(\"{}\"); }}", body_b64));
-            } else {
-                branches_js.push_str(&format!(" else if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64));
-            }
-
-            rem = &rem[body_start + next_else..];
-            if rem.starts_with("{/if}") { break; }
-        }
-
-        let logic = format!(r#"
-            window.__erm_bindings.push({{
-                update: () => {{
-                    let __erm_anchor = document.getElementById("{}");
-                    if (__erm_anchor) {{
-                        let __erm_new = "";
-                        {}
-                        if (__erm_anchor.__erm_last !== __erm_new) {{
-                            __erm_anchor.__erm_last = __erm_new;
-                            __erm_anchor.innerHTML = __erm_new;
-                            if (window.__erm_update) window.__erm_update();
-                        }}
-                    }}
-                }}
-            }});"#, anchor_id, branches_js);
-        
-        block_logic.push(logic);
-
-        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
-        res_html = res_html.replace(full_block, &anchor_html);
+    if let Some(pos) = output.find("</head>") {
+        output.insert_str(pos, &assets);
+    } else if let Some(pos) = output.find("</body>") {
+        output.insert_str(pos, &assets);
+    } else {
+        output.push_str(&assets);
     }
 
-    final_html.push_str(&res_html);
-
-    if !result.styles.is_empty() {
-        final_html.push_str("\n<style>\n");
-        for s in &result.styles {
-            final_html.push_str(s);
-            final_html.push('\n');
-        }
-        final_html.push_str("</style>\n");
+    if !output.contains("<html") {
+        let mut final_res = String::new();
+        final_res.push_str("<!DOCTYPE html><html><head></head><body>");
+        final_res.push_str(&output);
+        final_res.push_str("</body></html>");
+        return Ok(final_res);
     }
 
-    let runtime = r#"
-(() => {
-  window.__hmr_data = window.__hmr_data || { atoms: {} };
-  if (!window.__hmr_data.atoms) window.__hmr_data.atoms = {};
-  window.__erm_b64utf8 = function(str) {
-      return decodeURIComponent(escape(window.atob(str)));
-    };
-  window.atom = function(val, name) {
-    if (name && window.__hmr_data.atoms[name] !== undefined) {
-      val = window.__hmr_data.atoms[name];
-    }
-    if (typeof val === 'function') {
-      return {
-        _getter: val,
-        get value() { return this._getter(); },
-        toString() { return this.value; },
-        valueOf() { return this.value; },
-        [Symbol.toPrimitive]() { return this.value; }
-      };
-    }
-    const container = { 
-      _val: val,
-      toString() { return this._val; },
-      valueOf() { return this._val; },
-      [Symbol.toPrimitive]() { return this._val; }
-    };
-    return new Proxy(container, {
-      get(target, prop) {
-        if (prop === 'value') return target._val;
-        let res = target[prop];
-        if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
-           const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
-           if (methods.includes(prop)) {
-             return (...args) => {
-               const result = target._val[prop].apply(target._val, args);
-               if (window.__erm_update) window.__erm_update();
-               return result;
-             };
-           }
-        }
-        return res !== undefined ? res : target._val[prop];
-      },
-      set(target, prop, newVal) {
-        if (prop === 'value') {
-          target._val = newVal;
-          if (name) window.__hmr_data.atoms[name] = newVal;
-          if (window.__erm_update) window.__erm_update();
-          return true;
-        }
-        target[prop] = newVal;
-        return true;
-      }
-    });
-  };
-  window.__erm_bindings = [];
-  window.__erm_events = [];
-  let _updateQueued = false;
-  window.__erm_update = function() {
-    if (_updateQueued) return;
-    _updateQueued = true;
-    requestAnimationFrame(() => {
-      window.__erm_bindings.forEach(b => {
-        try {
-          if (typeof b.update === 'function') {
-            b.update();
-          } else {
-            let val = b.get();
-            if (b.last !== val) {
-              b.last = val;
-              let el = document.getElementById(b.id);
-              if (el) el.innerText = val === undefined ? '' : val;
-            }
-          }
-        } catch(e) {}
-      });
-      if (typeof _initReactivity === 'function') _initReactivity();
-      _updateQueued = false;
-    });
-  };
-  function _initReactivity() {
-    window.__erm_events.forEach(ev => {
-      let el = document.getElementById(ev.id);
-      if (el && !el.__erm_listener_added) {
-         el.addEventListener(ev.event, ev.handler);
-         el.__erm_listener_added = true;
-      }
-    });
-    window.__erm_update();
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _initReactivity);
-  } else {
-    _initReactivity();
-  }
-  setTimeout(_initReactivity, 10);
-"#;
-
-    if !result.scripts.is_empty() || !result.atom_vars.is_empty() || !block_logic.is_empty() {
-        final_html.push_str("<script>\n");
-        final_html.push_str(runtime);
-        final_html.push('\n');
-        for s in &result.scripts {
-            final_html.push_str(s);
-            final_html.push('\n');
-        }
-        for s in &block_logic {
-            final_html.push_str(s);
-            final_html.push('\n');
-        }
-        final_html.push_str("})();\n</script>\n");
-    }
-
-    // Wrap in standard HTML template if not already there (though process_erm_component usually does this)
-    if !final_html.contains("<html") {
-        let mut output = String::new();
-        output.push_str("<!DOCTYPE html><html><head></head><body>");
-        output.push_str(&final_html);
-        output.push_str("</body></html>");
-        return Ok(output);
-    }
-
-    Ok(final_html)
+    Ok(output)
 }
