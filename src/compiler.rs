@@ -504,7 +504,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
         }
     }
 
-    let mut result = if let Some(lp) = layout_path {
+    let result = if let Some(lp) = layout_path {
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
             let layout_content = std::fs::read_to_string(&lp)?;
             if content.trim() != layout_content.trim() {
@@ -569,14 +569,11 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
         for sig in &result.atom_vars {
             collection_expr = replace_word(&collection_expr, sig, ".value");
         }
-        let mut item_name = "";
-        let mut index_name = "";
-        if let Some(comma_idx) = vars_part.find(',') {
-            item_name = vars_part[0..comma_idx].trim();
-            index_name = vars_part[comma_idx + 1..].trim();
+        let (item_name, index_name) = if let Some(comma_idx) = vars_part.find(',') {
+            (vars_part[0..comma_idx].trim(), vars_part[comma_idx + 1..].trim())
         } else {
-            item_name = vars_part;
-        }
+            (vars_part, "")
+        };
         let anchor_id = format!("erm-for-{}", for_counter);
         for_counter += 1;
         let mut ssr_html = String::new();
@@ -661,22 +658,17 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
         let mut ssr_found = false;
         let mut rem = full_block;
         while !rem.is_empty() {
-            let mut cond_expr = "true".to_string();
-            let mut body_start = 0;
-            let mut is_else = false;
-            if rem.starts_with("{#if ") {
+            let (mut cond_expr, body_start, is_else) = if rem.starts_with("{#if ") {
                 let end_brace = rem.find('}').unwrap_or(0);
-                cond_expr = rem[5..end_brace].trim().to_string();
-                body_start = end_brace + 1;
+                (rem[5..end_brace].trim().to_string(), end_brace + 1, false)
             } else if rem.starts_with("{:else if ") {
                 let end_brace = rem.find('}').unwrap_or(0);
-                cond_expr = rem[10..end_brace].trim().to_string();
-                body_start = end_brace + 1;
+                (rem[10..end_brace].trim().to_string(), end_brace + 1, false)
             } else if rem.starts_with("{:else}") {
-                cond_expr = "true".to_string();
-                body_start = 7;
-                is_else = true;
-            } else { break; }
+                ("true".to_string(), 7, true)
+            } else {
+                break;
+            };
             for sig in &result.atom_vars {
                 cond_expr = replace_word(&cond_expr, sig, ".value");
             }
