@@ -642,6 +642,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
     ev.parse_script_vars(&script_all)?;
 
     let mut res_html = result.html.clone();
+    let mut block_logic = Vec::new();
     let mut for_counter = 0;
     let mut if_counter = 0;
 
@@ -752,8 +753,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
                 }}
             }});"#, anchor_id, collection_expr, body_b64, js_params);
         
-        let mut final_scripts = result.scripts.clone();
-        final_scripts.push(logic);
+        block_logic.push(logic);
         
         let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
         res_html = res_html.replace(&res_html[start_idx..full_end_idx], &anchor_html);
@@ -856,8 +856,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
                 }}
             }});"#, anchor_id, branches_js);
         
-        // This is a bit hacky, we should probably append to a list
-        final_html.push_str(&format!("<script>{}</script>", logic));
+        block_logic.push(logic);
 
         let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
         res_html = res_html.replace(full_block, &anchor_html);
@@ -903,7 +902,18 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
     return new Proxy(container, {
       get(target, prop) {
         if (prop === 'value') return target._val;
-        return target[prop];
+        let res = target[prop];
+        if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
+           const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
+           if (methods.includes(prop)) {
+             return (...args) => {
+               const result = target._val[prop].apply(target._val, args);
+               if (window.__erm_update) window.__erm_update();
+               return result;
+             };
+           }
+        }
+        return res !== undefined ? res : target._val[prop];
       },
       set(target, prop, newVal) {
         if (prop === 'value') {
@@ -960,11 +970,15 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
   setTimeout(_initReactivity, 10);
 "#;
 
-    if !result.scripts.is_empty() || !result.atom_vars.is_empty() {
+    if !result.scripts.is_empty() || !result.atom_vars.is_empty() || !block_logic.is_empty() {
         final_html.push_str("<script>\n");
         final_html.push_str(runtime);
         final_html.push('\n');
         for s in &result.scripts {
+            final_html.push_str(s);
+            final_html.push('\n');
+        }
+        for s in &block_logic {
             final_html.push_str(s);
             final_html.push('\n');
         }
