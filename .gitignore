@@ -1,10 +1,2 @@
 build/
-tmp/
-.zig-cache/
-zig-out/
-
-
-
-# Added by cargo
-
 /target
