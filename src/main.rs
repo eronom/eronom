@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use eronom::er;
 use eronom::compiler;
 use tiny_http::{Server, Response, Header};
 use std::fs;
+use std::collections::HashMap;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -87,7 +88,8 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path) -> anyhow
 
                 let content = fs::read_to_string(&path)?;
                 let parent = path.parent().unwrap().to_string_lossy();
-                match compiler::process_erm_component(&parent, &content, true) {
+                let params = HashMap::new();
+                match compiler::process_erm_component(&parent, &content, true, &params) {
                     Ok(processed) => {
                         let mut html_dest = dest_path.clone();
                         if name_str == "page.erm" || name_str == "index.erm" {
@@ -130,34 +132,17 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
             continue;
         }
 
-        let mut file_path = if target == "/" {
-            base_path.join("index.erm")
+        let (file_path, params) = if let Some(res) = resolve_dynamic_route(&base_path, target) {
+            res
         } else {
-            base_path.join(&target[1..])
+            (base_path.join(&target[1..]), HashMap::new())
         };
-        
-        if !file_path.exists() && !target.ends_with(".erm") {
-            let erm_variant = base_path.join(format!("{}.erm", &target[1..]));
-            if erm_variant.exists() {
-                file_path = erm_variant;
-            }
-        }
-
-        if file_path.is_dir() {
-            let index_erm = file_path.join("index.erm");
-            let page_erm = file_path.join("page.erm");
-            if index_erm.exists() {
-                file_path = index_erm;
-            } else if page_erm.exists() {
-                file_path = page_erm;
-            }
-        }
 
         if file_path.exists() && file_path.is_file() {
             if file_path.extension().map_or(false, |ext| ext == "erm") {
                 let content = fs::read_to_string(&file_path)?;
                 let parent = file_path.parent().unwrap().to_string_lossy();
-                match compiler::process_erm_component(&parent, &content, is_prod) {
+                match compiler::process_erm_component(&parent, &content, is_prod, &params) {
                     Ok(processed) => {
                         let response = Response::from_string(processed)
                             .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap());
@@ -179,4 +164,80 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn resolve_dynamic_route(root: &Path, target: &str) -> Option<(PathBuf, HashMap<String, String>)> {
+    let target = target.split('?').next().unwrap_or(target);
+    let target = target.split('#').next().unwrap_or(target);
+    let target = target.trim_start_matches('/');
+    
+    let segments: Vec<&str> = if target.is_empty() {
+        vec![]
+    } else {
+        target.split('/').collect()
+    };
+
+    find_recursive(root, &segments, 0)
+}
+
+fn find_recursive(current_dir: &Path, segments: &[&str], index: usize) -> Option<(PathBuf, HashMap<String, String>)> {
+    if index == segments.len() {
+        let index_erm = current_dir.join("index.erm");
+        if index_erm.exists() { return Some((index_erm, HashMap::new())); }
+        let page_erm = current_dir.join("page.erm");
+        if page_erm.exists() { return Some((page_erm, HashMap::new())); }
+        return None;
+    }
+
+    let segment = segments[index];
+
+    // 1. Try exact match directory
+    let dir_path = current_dir.join(segment);
+    if dir_path.is_dir() {
+        if let Some(res) = find_recursive(&dir_path, segments, index + 1) {
+            return Some(res);
+        }
+    }
+
+    // 2. Try exact match file (for last segment)
+    if index == segments.len() - 1 {
+        let erm_path = current_dir.join(format!("{}.erm", segment));
+        if erm_path.is_file() {
+            return Some((erm_path, HashMap::new()));
+        }
+        let direct_path = current_dir.join(segment);
+        if direct_path.is_file() {
+            return Some((direct_path, HashMap::new()));
+        }
+    }
+
+    // 3. Try dynamic segments
+    if let Ok(entries) = fs::read_dir(current_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            
+            if name_str.starts_with('[') {
+                if name_str.ends_with(']') {
+                    // It's a directory [param]
+                    let param_name = &name_str[1..name_str.len() - 1];
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Some((f_path, mut params)) = find_recursive(&path, segments, index + 1) {
+                            params.insert(param_name.to_string(), segment.to_string());
+                            return Some((f_path, params));
+                        }
+                    }
+                } else if name_str.ends_with("].erm") && index == segments.len() - 1 {
+                    // It's a file [param].erm
+                    let param_name = &name_str[1..name_str.len() - 5];
+                    let mut params = HashMap::new();
+                    params.insert(param_name.to_string(), segment.to_string());
+                    return Some((entry.path(), params));
+                }
+            }
+        }
+    }
+
+    None
 }

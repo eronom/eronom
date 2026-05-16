@@ -482,7 +482,7 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
 
 
 
-pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> anyhow::Result<String> {
+pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let mut visited = HashMap::new();
     
     // Automatic Layout support: search for layout.erm in current and parent directories.
@@ -532,12 +532,18 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
     };
 
     let mut ev = ErmEval::new();
+    let mut params_map = HashMap::new();
+    for (k, v) in params {
+        params_map.insert(k.clone(), eval::Value::String(v.clone()));
+    }
+    ev.set("__erm_params", eval::Value::Map(params_map));
     let mut script_all = String::new();
     for s in &result.scripts {
         script_all.push_str(s);
         script_all.push('\n');
     }
-    ev.parse_script_vars(&script_all)?;
+    let script_for_eval = script_all.replace("useParams()", "__erm_params");
+    ev.parse_script_vars(&script_for_eval)?;
 
     let mut res_html = result.html.clone();
     let mut block_logic = Vec::new();
@@ -766,6 +772,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
       }
     });
   };
+  window.useParams = function() { return window.__erm_params || {}; };
   window.__erm_bindings = [];
   window.__erm_events = [];
   let _updateQueued = false;
@@ -799,11 +806,20 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool) -> an
 })();
 "#;
 
-    if !result.scripts.is_empty() || !result.atom_vars.is_empty() || !block_logic.is_empty() {
+  let mut params_js = String::from("window.__erm_params = {");
+    for (k, v) in params {
+        params_js.push_str(&format!("\"{}\": \"{}\",", k, v.replace("\"", "\\\"")));
+    }
+    params_js.push_str("};");
+    
+    let mut scripts_to_inject = result.scripts.clone();
+    scripts_to_inject.insert(0, params_js);
+
+    if !scripts_to_inject.is_empty() || !result.atom_vars.is_empty() || !block_logic.is_empty() {
         assets.push_str("<script>\n");
         assets.push_str(runtime);
         assets.push('\n');
-        for s in &result.scripts { assets.push_str(s); assets.push('\n'); }
+        for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
         for s in &block_logic { assets.push_str(s); assets.push('\n'); }
         assets.push_str("</script>\n");
     }
