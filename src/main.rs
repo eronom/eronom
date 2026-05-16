@@ -127,10 +127,38 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
 
         println!("Request: {} {}", method, target);
 
-        // Check for server.er API handling
-        let api_file = base_path.join("server.er");
-        if api_file.exists() {
-            match er::handle_api_request(&mut request, api_file.to_str().unwrap()) {
+        // API Routing
+        let mut api_file = None;
+        let mut api_base_path = "/".to_string();
+
+        if target.starts_with("/api") {
+            let rel_path = target.trim_start_matches('/');
+            
+            // 1. Try [path]/route.er
+            let route_er = base_path.join(rel_path).join("route.er");
+            if route_er.exists() {
+                api_file = Some(route_er);
+                api_base_path = target.to_string();
+            } else {
+                // 2. Try [path].er
+                let direct_er = base_path.join(format!("{}.er", rel_path));
+                if direct_er.exists() {
+                    api_file = Some(direct_er);
+                    api_base_path = target.to_string();
+                }
+            }
+        }
+
+        if api_file.is_none() {
+            let server_er = base_path.join("server.er");
+            if server_er.exists() {
+                api_file = Some(server_er);
+                api_base_path = "/".to_string();
+            }
+        }
+
+        if let Some(file) = api_file {
+            match er::handle_api_request(&mut request, file.to_str().unwrap(), &api_base_path) {
                 Ok(Some(response)) => {
                     request.respond(response).ok();
                     continue;

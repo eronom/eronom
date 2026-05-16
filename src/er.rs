@@ -239,7 +239,7 @@ pub fn execute_statements(
                 i = block_end;
                 
                 // Try to parse as JSON to flatten it
-                if let Ok(json_val) = parse_json_like(&full_val) {
+                if let Ok(json_val) = parse_json(&full_val) {
                     flatten_json(var_name, &json_val, variables, line_offset + i, path);
                 } else {
                     variables.insert(
@@ -270,37 +270,35 @@ pub fn execute_statements(
     Ok(())
 }
 
-fn parse_json_like(s: &str) -> anyhow::Result<serde_json::Value> {
-    // Basic cleanup for non-strict JSON (like unquoted keys)
-    let mut cleaned = String::new();
-    let mut in_quote = false;
-    let mut last_char = ' ';
+fn parse_json(s: &str) -> anyhow::Result<serde_json::Value> {
+    let mut hack = s.to_string();
     
-    for c in s.chars() {
-        if c == '"' || c == '\'' {
-            in_quote = !in_quote;
-            cleaned.push('"');
-        } else if !in_quote && c.is_alphanumeric() && (last_char == '{' || last_char == ',' || last_char.is_whitespace()) {
-            // Potential unquoted key
-            cleaned.push('"');
-            cleaned.push(c);
-            // We'd need a more complex parser to find the end of the key, 
-            // but let's try to just use serde_json if it's already valid or simple.
-        } else {
-            cleaned.push(c);
-        }
-        if !c.is_whitespace() { last_char = c; }
+    // 1. Quote unquoted keys: { id: 1 } -> { "id": 1 }
+    // We look for a word followed by a colon, preceded by {, comma, or start of string
+    let re_keys = Regex::new(r"([{,]\s*)(\w+)\s*:").unwrap();
+    hack = re_keys.replace_all(&hack, "$1\"$2\":").to_string();
+    
+    // 2. Handle first key in an object if it's at the start of the string
+    let re_first_key = Regex::new(r"^\s*(\w+)\s*:").unwrap();
+    hack = re_first_key.replace_all(&hack, "\"$1\":").to_string();
+
+    // 3. Remove trailing commas: [1, 2, ] -> [1, 2]
+    let re_comma = Regex::new(r",\s*([\]}])").unwrap();
+    hack = re_comma.replace_all(&hack, "$1").to_string();
+    
+    // 4. Convert single quotes to double quotes (naive but helpful)
+    // Only if not already valid JSON
+    if let Ok(v) = serde_json::from_str(&hack) {
+        return Ok(v);
     }
     
-    // Fallback to simple serde_json if possible, or manual parsing for very simple cases
-    serde_json::from_str(s).or_else(|_| {
-        // If it fails, maybe it's the unquoted keys. This is a very rough hack.
-        let mut hack = s.to_string();
-        // Quote keys: text: -> "text":
-        let re = Regex::new(r"(\w+)\s*:").unwrap();
-        hack = re.replace_all(&hack, "\"$1\":").to_string();
-        serde_json::from_str(&hack).map_err(|e| e.into())
-    })
+    let hack2 = hack.replace('\'', "\"");
+    if let Ok(v) = serde_json::from_str(&hack2) {
+        return Ok(v);
+    }
+
+    // Fallback to original
+    serde_json::from_str(s).map_err(|e| e.into())
 }
 
 fn flatten_json(prefix: &str, val: &serde_json::Value, variables: &mut HashMap<String, Variable>, line: usize, path: &str) {
@@ -343,6 +341,7 @@ fn flatten_json(prefix: &str, val: &serde_json::Value, variables: &mut HashMap<S
 pub fn handle_api_request(
     request: &mut tiny_http::Request,
     api_file_path: &str,
+    base_path: &str,
 ) -> anyhow::Result<Option<tiny_http::Response<std::io::Cursor<Vec<u8>>>>> {
     let mut variables = HashMap::new();
     let mut routes = Vec::new();
@@ -363,17 +362,34 @@ pub fn handle_api_request(
     let mut clean_target = target;
     if let Some(idx) = clean_target.find('?') { clean_target = &clean_target[..idx]; }
     if let Some(idx) = clean_target.find('#') { clean_target = &clean_target[..idx]; }
+    
+    let mut clean_target_str = clean_target.to_string();
+    if clean_target_str.len() > 1 && clean_target_str.ends_with('/') {
+        clean_target_str.pop();
+    }
+    let clean_target = clean_target_str.as_str();
 
     for route in routes {
         if route.method == request.method().to_string() {
-            let mut match_route = route.path == clean_target;
+            let mut full_route_path = base_path.to_string();
+            if !full_route_path.ends_with('/') && !route.path.starts_with('/') {
+                full_route_path.push('/');
+            }
+            if full_route_path.ends_with('/') && route.path.starts_with('/') {
+                full_route_path.push_str(&route.path[1..]);
+            } else {
+                full_route_path.push_str(&route.path);
+            }
+
+            // Normalize: remove trailing slash if not root
+            if full_route_path.len() > 1 && full_route_path.ends_with('/') {
+                full_route_path.pop();
+            }
+            
+            let mut match_route = full_route_path == clean_target;
             if !match_route {
-                if route.path == "/" && (clean_target == "" || clean_target == "/") {
+                if full_route_path == "/" && (clean_target == "" || clean_target == "/") {
                     match_route = true;
-                } else if !clean_target.is_empty() && clean_target.starts_with('/') {
-                    if route.path == &clean_target[1..] { match_route = true; }
-                } else if !route.path.is_empty() && route.path.starts_with('/') {
-                    if &route.path[1..] == clean_target { match_route = true; }
                 }
             }
 
