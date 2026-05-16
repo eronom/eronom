@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use regex::Regex;
 
 #[derive(Clone, Debug)]
 pub struct Route {
@@ -49,7 +50,7 @@ pub fn execute_statements(
     while i < lines.len() {
         let line = lines[i];
         let mut line_trimmed = line.trim();
-        if line_trimmed.is_empty() {
+        if line_trimmed.is_empty() || line_trimmed.starts_with("//") {
             i += 1;
             continue;
         }
@@ -173,6 +174,28 @@ pub fn execute_statements(
             *if_was_executed = false;
         } else if trimmed.starts_with("return") {
             return Ok(());
+        } else if let Some(dot_idx) = trimmed.find('.') {
+            if let Some(open_p) = trimmed[dot_idx..].find('(') {
+                let actual_open_p = dot_idx + open_p;
+                let method_name = trimmed[dot_idx + 1..actual_open_p].trim();
+                let methods = ["get", "post", "put", "delete", "patch"];
+                
+                if methods.contains(&method_name) {
+                    let first_line = trimmed;
+                    let comma_idx = first_line.find(',').unwrap_or(first_line.len());
+                    let path_raw = first_line[actual_open_p + 1..comma_idx].trim().trim_matches(|c| c == '\'' || c == '"');
+                    
+                    let block_end = find_closing_brace(lines, i);
+                    let handler_lines = lines[i + 1..block_end].iter().map(|s| s.to_string()).collect();
+                    
+                    routes.push(Route {
+                        method: method_name.to_uppercase(),
+                        path: path_raw.to_string(),
+                        handler_lines,
+                    });
+                    i = block_end;
+                }
+            }
         } else if let Some(index) = trimmed.find('=') {
             // Assignment logic
             let mut is_decl = false;
@@ -205,21 +228,178 @@ pub fn execute_statements(
             }
 
             let val_raw = trimmed[index + 1..].trim();
-            let val = evaluate_expression(val_raw, variables);
-
-            variables.insert(
-                var_name.to_string(),
-                Variable {
-                    value: val,
-                    is_mutable: current_is_mutable,
-                    decl_line: line_offset + i,
-                    decl_path: path.to_string(),
-                },
-            );
+            
+            if val_raw.starts_with('{') || val_raw.starts_with('[') {
+                let block_end = find_closing_brace(lines, i);
+                let mut full_val = val_raw.to_string();
+                for j in i + 1..=block_end {
+                    full_val.push('\n');
+                    full_val.push_str(lines[j]);
+                }
+                i = block_end;
+                
+                // Try to parse as JSON to flatten it
+                if let Ok(json_val) = parse_json_like(&full_val) {
+                    flatten_json(var_name, &json_val, variables, line_offset + i, path);
+                } else {
+                    variables.insert(
+                        var_name.to_string(),
+                        Variable {
+                            value: full_val,
+                            is_mutable: current_is_mutable,
+                            decl_line: line_offset + i,
+                            decl_path: path.to_string(),
+                        },
+                    );
+                }
+            } else {
+                let val = evaluate_expression(val_raw, variables);
+                variables.insert(
+                    var_name.to_string(),
+                    Variable {
+                        value: val,
+                        is_mutable: current_is_mutable,
+                        decl_line: line_offset + i,
+                        decl_path: path.to_string(),
+                    },
+                );
+            }
         }
         i += 1;
     }
     Ok(())
+}
+
+fn parse_json_like(s: &str) -> anyhow::Result<serde_json::Value> {
+    // Basic cleanup for non-strict JSON (like unquoted keys)
+    let mut cleaned = String::new();
+    let mut in_quote = false;
+    let mut last_char = ' ';
+    
+    for c in s.chars() {
+        if c == '"' || c == '\'' {
+            in_quote = !in_quote;
+            cleaned.push('"');
+        } else if !in_quote && c.is_alphanumeric() && (last_char == '{' || last_char == ',' || last_char.is_whitespace()) {
+            // Potential unquoted key
+            cleaned.push('"');
+            cleaned.push(c);
+            // We'd need a more complex parser to find the end of the key, 
+            // but let's try to just use serde_json if it's already valid or simple.
+        } else {
+            cleaned.push(c);
+        }
+        if !c.is_whitespace() { last_char = c; }
+    }
+    
+    // Fallback to simple serde_json if possible, or manual parsing for very simple cases
+    serde_json::from_str(s).or_else(|_| {
+        // If it fails, maybe it's the unquoted keys. This is a very rough hack.
+        let mut hack = s.to_string();
+        // Quote keys: text: -> "text":
+        let re = Regex::new(r"(\w+)\s*:").unwrap();
+        hack = re.replace_all(&hack, "\"$1\":").to_string();
+        serde_json::from_str(&hack).map_err(|e| e.into())
+    })
+}
+
+fn flatten_json(prefix: &str, val: &serde_json::Value, variables: &mut HashMap<String, Variable>, line: usize, path: &str) {
+    match val {
+        serde_json::Value::Object(map) => {
+            variables.insert(prefix.to_string(), Variable {
+                value: serde_json::to_string(val).unwrap_or_default(),
+                is_mutable: true,
+                decl_line: line,
+                decl_path: path.to_string(),
+            });
+            for (k, v) in map {
+                let new_prefix = format!("{}.{}", prefix, k);
+                flatten_json(&new_prefix, v, variables, line, path);
+            }
+        }
+        serde_json::Value::Array(list) => {
+            variables.insert(prefix.to_string(), Variable {
+                value: serde_json::to_string(val).unwrap_or_default(),
+                is_mutable: true,
+                decl_line: line,
+                decl_path: path.to_string(),
+            });
+            for (i, v) in list.iter().enumerate() {
+                let new_prefix = format!("{}.{}", prefix, i);
+                flatten_json(&new_prefix, v, variables, line, path);
+            }
+        }
+        _ => {
+            variables.insert(prefix.to_string(), Variable {
+                value: val.to_string().trim_matches('"').to_string(),
+                is_mutable: true,
+                decl_line: line,
+                decl_path: path.to_string(),
+            });
+        }
+    }
+}
+
+pub fn handle_api_request(
+    request: &mut tiny_http::Request,
+    api_file_path: &str,
+) -> anyhow::Result<Option<tiny_http::Response<std::io::Cursor<Vec<u8>>>>> {
+    let mut variables = HashMap::new();
+    let mut routes = Vec::new();
+    
+    // Handle POST body if present
+    if request.method() == &tiny_http::Method::Post {
+        let mut body = String::new();
+        // Note: this consumes the body reader
+        request.as_reader().read_to_string(&mut body).ok();
+        if let Ok(json_body) = serde_json::from_str::<serde_json::Value>(&body) {
+            flatten_json("body", &json_body, &mut variables, 0, api_file_path);
+        }
+    }
+    
+    evaluate_file(api_file_path, &mut variables, &mut routes)?;
+
+    let target = request.url();
+    let mut clean_target = target;
+    if let Some(idx) = clean_target.find('?') { clean_target = &clean_target[..idx]; }
+    if let Some(idx) = clean_target.find('#') { clean_target = &clean_target[..idx]; }
+
+    for route in routes {
+        if route.method == request.method().to_string() {
+            let mut match_route = route.path == clean_target;
+            if !match_route {
+                if route.path == "/" && (clean_target == "" || clean_target == "/") {
+                    match_route = true;
+                } else if !clean_target.is_empty() && clean_target.starts_with('/') {
+                    if route.path == &clean_target[1..] { match_route = true; }
+                } else if !route.path.is_empty() && route.path.starts_with('/') {
+                    if &route.path[1..] == clean_target { match_route = true; }
+                }
+            }
+
+            if match_route {
+                for h_line in route.handler_lines {
+                    let h_trimmed = h_line.trim();
+                    if let Some(json_idx) = h_trimmed.find("c.json(") {
+                        if let Some(o_p) = h_trimmed[json_idx..].find('(') {
+                            let actual_o_p = json_idx + o_p;
+                            if let Some(c_p) = h_trimmed.rfind(')') {
+                                let data_expr = &h_trimmed[actual_o_p + 1..c_p];
+                                let data_val = evaluate_expression(data_expr, &variables);
+                                
+                                let response = tiny_http::Response::from_string(data_val)
+                                    .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap())
+                                    .with_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+                                return Ok(Some(response));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn find_closing_brace(lines: &[&str], start_idx: usize) -> usize {
@@ -244,12 +424,27 @@ fn find_closing_brace(lines: &[&str], start_idx: usize) -> usize {
 
 fn evaluate_expression(expr: &str, variables: &HashMap<String, Variable>) -> String {
     let trimmed = expr.trim();
+    if trimmed.is_empty() { return String::new(); }
+    
     if trimmed.starts_with('"') && trimmed.ends_with('"') {
         return trimmed[1..trimmed.len() - 1].to_string();
     }
+    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return trimmed[1..trimmed.len() - 1].to_string();
+    }
+    
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        return trimmed.to_string();
+    }
+    
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        return trimmed.to_string();
+    }
+
     if let Some(v) = variables.get(trimmed) {
         return v.value.clone();
     }
+    
     // Basic math
     if let Some(plus_idx) = trimmed.find('+') {
         let left = evaluate_expression(&trimmed[..plus_idx], variables);

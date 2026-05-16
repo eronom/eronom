@@ -118,13 +118,32 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
 
     let base_path = fs::canonicalize(dir)?;
 
-    for request in server.incoming_requests() {
-        let url = request.url();
-        let mut target = url;
+    for mut request in server.incoming_requests() {
+        let url = request.url().to_string();
+        let method = request.method().to_string();
+        let mut target = &url[..];
         if let Some(idx) = target.find('?') { target = &target[..idx]; }
         if let Some(idx) = target.find('#') { target = &target[..idx]; }
 
-        println!("Request: {} {}", request.method(), target);
+        println!("Request: {} {}", method, target);
+
+        // Check for server.er API handling
+        let api_file = base_path.join("server.er");
+        if api_file.exists() {
+            match er::handle_api_request(&mut request, api_file.to_str().unwrap()) {
+                Ok(Some(response)) => {
+                    request.respond(response).ok();
+                    continue;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("API Error: {}", e);
+                    let response = Response::from_string(format!("API Error: {}", e)).with_status_code(500);
+                    request.respond(response).ok();
+                    continue;
+                }
+            }
+        }
 
         if target.ends_with(".erm") {
             let response = Response::from_string("Not Found").with_status_code(404);
