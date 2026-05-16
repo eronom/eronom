@@ -52,6 +52,61 @@ fn build_project(dir: &str) -> anyhow::Result<()> {
         fs::remove_dir_all(&build_dir)?;
     }
     fs::create_dir_all(&build_dir)?;
+
+    let base_path = fs::canonicalize(dir)?;
+    build_dir_recursive(&base_path, &base_path, &build_dir)?;
+
+    Ok(())
+}
+
+fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path) -> anyhow::Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if name_str.starts_with('.') || name_str == "target" || name_str == "build" || name_str == "node_modules" || name_str == "src" {
+            continue;
+        }
+
+        if path.is_dir() {
+            build_dir_recursive(root, &path, build_root)?;
+        } else {
+            let rel_path = path.strip_prefix(root)?;
+            let dest_path = build_root.join(rel_path);
+
+            if name_str.ends_with(".erm") {
+                if name_str == "layout.erm" {
+                    continue;
+                }
+                // Skip components (starts with uppercase)
+                if name_str.chars().next().unwrap().is_ascii_uppercase() {
+                    continue;
+                }
+
+                let content = fs::read_to_string(&path)?;
+                let parent = path.parent().unwrap().to_string_lossy();
+                match compiler::process_erm_component(&parent, &content, true) {
+                    Ok(processed) => {
+                        let mut html_dest = dest_path.clone();
+                        if name_str == "page.erm" || name_str == "index.erm" {
+                            html_dest.set_file_name("index.html");
+                        } else {
+                            html_dest.set_extension("html");
+                        }
+                        if let Some(parent) = html_dest.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(html_dest, processed)?;
+                    }
+                    Err(e) => {
+                        eprintln!("Error compiling {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
