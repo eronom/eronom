@@ -483,6 +483,7 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
 
 
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
+    let content = content.replace("import.meta.hot", "window.hmr");
     let mut visited = HashMap::new();
     
     // Automatic Layout support: search for layout.erm in current and parent directories.
@@ -508,7 +509,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
             let layout_content = std::fs::read_to_string(&lp)?;
             if content.trim() != layout_content.trim() {
-                let page_res = process_component_tree(base_dir, content, &mut visited, None)?;
+                let page_res = process_component_tree(base_dir, &content, &mut visited, None)?;
                 let mut layout_res = process_component_tree(&lp.parent().unwrap().to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html))?;
                 
                 for s in page_res.scripts {
@@ -522,13 +523,13 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                 }
                 layout_res
             } else {
-                process_component_tree(base_dir, content, &mut visited, None)?
+                process_component_tree(base_dir, &content, &mut visited, None)?
             }
         } else {
-            process_component_tree(base_dir, content, &mut visited, None)?
+            process_component_tree(base_dir, &content, &mut visited, None)?
         }
     } else {
-        process_component_tree(base_dir, content, &mut visited, None)?
+        process_component_tree(base_dir, &content, &mut visited, None)?
     };
 
     let mut ev = ErmEval::new();
@@ -869,112 +870,122 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     return originalElementAddEventListener.call(this, type, listener, options);
   };
 
-  const es = new EventSource("/__hmr");
-  es.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'reload') {
-      location.reload();
-    } else if (data.type === 'update') {
-      const path = data.path || 'unknown';
-      console.log("[HMR] Update received for: " + path);
+  let hmrVersion = 0;
+  const pollHMR = () => {
+    fetch("/__hmr?v=" + hmrVersion)
+      .then(r => r.json())
+      .then(data => {
+        hmrVersion = data.version || 0;
+        if (data.type === 'reload') {
+          location.reload();
+        } else if (data.type === 'update') {
+          const path = data.path || 'unknown';
+          console.log("[HMR] Update received for: " + path);
 
-      if (path.endsWith('.css')) {
-          let links = document.querySelectorAll('link[rel="stylesheet"]');
-          let found = false;
-          links.forEach(link => {
-              if (link.href.includes(path)) {
-                  link.href = path + '?t=' + new Date().getTime();
-                  found = true;
+          if (path.endsWith('.css')) {
+              let links = document.querySelectorAll('link[rel="stylesheet"]');
+              let found = false;
+              links.forEach(link => {
+                  if (link.href.includes(path)) {
+                      link.href = path + '?t=' + new Date().getTime();
+                      found = true;
+                  }
+              });
+              if (found) {
+                pollHMR();
+                return;
               }
-          });
-          if (found) return;
-      }
-
-      fetch(location.href)
-        .then(r => r.text())
-        .then(html => {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(html, 'text/html');
-          document.title = doc.title;
-
-          function morph(oldNode, newNode) {
-            if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
-              oldNode.replaceWith(newNode.cloneNode(true));
-              return;
-            }
-            if (oldNode.nodeType === Node.TEXT_NODE) {
-              if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
-              return;
-            }
-            const oldAttrs = oldNode.attributes;
-            const newAttrs = newNode.attributes;
-            if (oldAttrs && newAttrs) {
-              for (let i = 0; i < newAttrs.length; i++) {
-                const attr = newAttrs[i];
-                if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
-              }
-              for (let i = 0; i < oldAttrs.length; i++) {
-                const attr = oldAttrs[i];
-                if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
-              }
-            }
-            const oldChildren = Array.from(oldNode.childNodes);
-            const newChildren = Array.from(newNode.childNodes);
-            const max = Math.max(oldChildren.length, newChildren.length);
-            for (let i = 0; i < max; i++) {
-              if (i >= oldChildren.length) {
-                oldNode.appendChild(newChildren[i].cloneNode(true));
-              } else if (i >= newChildren.length) {
-                oldNode.removeChild(oldChildren[i]);
-              } else {
-                morph(oldChildren[i], newChildren[i]);
-              }
-            }
           }
 
-          const newStyles = doc.querySelectorAll('style');
-          if (newStyles.length > 0) {
-              let styleContainer = document.getElementById('__erm_styles');
-              if (!styleContainer) {
-                  styleContainer = document.createElement('div');
-                  styleContainer.id = '__erm_styles';
-                  document.head.appendChild(styleContainer);
+          fetch(location.href)
+            .then(r => r.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(html, 'text/html');
+              document.title = doc.title;
+
+              function morph(oldNode, newNode) {
+                if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
+                  oldNode.replaceWith(newNode.cloneNode(true));
+                  return;
+                }
+                if (oldNode.nodeType === Node.TEXT_NODE) {
+                  if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
+                  return;
+                }
+                const oldAttrs = oldNode.attributes;
+                const newAttrs = newNode.attributes;
+                if (oldAttrs && newAttrs) {
+                  for (let i = 0; i < newAttrs.length; i++) {
+                    const attr = newAttrs[i];
+                    if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
+                  }
+                  for (let i = 0; i < oldAttrs.length; i++) {
+                    const attr = oldAttrs[i];
+                    if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
+                  }
+                }
+                const oldChildren = Array.from(oldNode.childNodes);
+                const newChildren = Array.from(newNode.childNodes);
+                const max = Math.max(oldChildren.length, newChildren.length);
+                for (let i = 0; i < max; i++) {
+                  if (i >= oldChildren.length) {
+                    oldNode.appendChild(newChildren[i].cloneNode(true));
+                  } else if (i >= newChildren.length) {
+                    oldNode.removeChild(oldChildren[i]);
+                  } else {
+                    morph(oldChildren[i], newChildren[i]);
+                  }
+                }
               }
-              styleContainer.innerHTML = '';
-              newStyles.forEach(s => styleContainer.appendChild(s.cloneNode(true)));
-          }
 
-          window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
-          window.__hmr_hooks.dispose = [];
-          window.__hmr_hooks.accept = [];
-          window.__hmr_intervals.forEach(clearInterval);
-          window.__hmr_intervals = [];
-          window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
-            target.removeEventListener(type, listener, options);
-            if (target.__erm_listener_added) delete target.__erm_listener_added;
-          });
-          window.__hmr_listeners = [];
+              const newStyles = doc.querySelectorAll('style');
+              if (newStyles.length > 0) {
+                  let styleContainer = document.getElementById('__erm_styles');
+                  if (!styleContainer) {
+                      styleContainer = document.createElement('div');
+                      styleContainer.id = '__erm_styles';
+                      document.head.appendChild(styleContainer);
+                  }
+                  styleContainer.innerHTML = '';
+                  newStyles.forEach(s => styleContainer.appendChild(s.cloneNode(true)));
+              }
 
-          morph(document.body, doc.body);
+              window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
+              window.__hmr_hooks.dispose = [];
+              window.__hmr_hooks.accept = [];
+              window.__hmr_intervals.forEach(clearInterval);
+              window.__hmr_intervals = [];
+              window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
+                target.removeEventListener(type, listener, options);
+                if (target.__erm_listener_added) delete target.__erm_listener_added;
+              });
+              window.__hmr_listeners = [];
 
-          const scripts = document.body.querySelectorAll('script');
-          scripts.forEach(s => {
-            if (s.textContent.includes("__hmr_initialized")) return;
-            const newScript = document.createElement('script');
-            newScript.text = s.innerHTML;
-            if(s.src) {
-               let sUrl = new URL(s.src, location.href);
-               sUrl.searchParams.set('t', new Date().getTime());
-               newScript.src = sUrl.href;
-            }
-            s.replaceWith(newScript);
-          });
-          document.dispatchEvent(new Event('DOMContentLoaded'));
-          window.dispatchEvent(new Event('load'));
-          if (window.__erm_update) window.__erm_update();
-        });
-    }
+              morph(document.body, doc.body);
+
+              const scripts = document.body.querySelectorAll('script');
+              scripts.forEach(s => {
+                if (s.textContent.includes("__hmr_initialized")) return;
+                const newScript = document.createElement('script');
+                newScript.text = s.innerHTML;
+                if(s.src) {
+                   let sUrl = new URL(s.src, location.href);
+                   sUrl.searchParams.set('t', new Date().getTime());
+                   newScript.src = sUrl.href;
+                }
+                s.replaceWith(newScript);
+              });
+              document.dispatchEvent(new Event('DOMContentLoaded'));
+              window.dispatchEvent(new Event('load'));
+              if (window.__erm_update) window.__erm_update();
+              pollHMR();
+            }).catch(() => setTimeout(pollHMR, 1000));
+        }
+      })
+      .catch(() => setTimeout(pollHMR, 1000));
   };
+  pollHMR();
 })();
 </script>"#;
         if let Some(pos) = output.find("<head>") {

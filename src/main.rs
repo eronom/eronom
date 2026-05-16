@@ -4,6 +4,7 @@ use eronom::compiler;
 use tiny_http::{Server, Response, Header};
 use std::fs;
 use std::collections::HashMap;
+use serde_json;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -112,103 +113,205 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path) -> anyhow
     Ok(())
 }
 
+use std::sync::{Arc, Mutex, Condvar};
+use std::thread;
+use std::time::{Duration, SystemTime};
+
+struct Watcher {
+    last_path: Mutex<Option<String>>,
+    change_count: Mutex<usize>,
+    cond: Condvar,
+}
+
+impl Watcher {
+    fn new() -> Self {
+        Watcher {
+            last_path: Mutex::new(None),
+            change_count: Mutex::new(0),
+            cond: Condvar::new(),
+        }
+    }
+
+    fn notify(&self, path: String) {
+        let mut count = self.change_count.lock().unwrap();
+        *count += 1;
+        let mut lp = self.last_path.lock().unwrap();
+        *lp = Some(path);
+        self.cond.notify_all();
+    }
+
+    fn wait(&self, last_count: usize) -> (usize, String) {
+        let mut count = self.change_count.lock().unwrap();
+        while *count == last_count {
+            count = self.cond.wait(count).unwrap();
+        }
+        let lp = self.last_path.lock().unwrap();
+        (*count, lp.clone().unwrap_or_else(|| "unknown".to_string()))
+    }
+}
+
+fn check_dir_changed(root: &Path, current: &Path, last_check: &mut SystemTime) -> anyhow::Result<Option<String>> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = entry.metadata()?;
+        let mtime = metadata.modified()?;
+
+        if mtime > *last_check {
+            *last_check = mtime;
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            return Ok(Some(rel.to_string_lossy().to_string()));
+        }
+
+        if path.is_dir() {
+            let name = entry.file_name();
+            if name == "target" || name == ".git" || name == "build" || name == "src" { continue; }
+            if let Ok(Some(p)) = check_dir_changed(root, &path, last_check) {
+                return Ok(Some(p));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn watch_files(dir: PathBuf, watcher: Arc<Watcher>) {
+    let mut last_check = SystemTime::now();
+    loop {
+        thread::sleep(Duration::from_millis(200));
+        if let Ok(Some(path)) = check_dir_changed(&dir, &dir, &mut last_check) {
+            watcher.notify(path);
+        }
+    }
+}
+
 fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
-    let server = Server::http(format!("0.0.0.0:{}", port)).map_err(|e| anyhow::anyhow!(e))?;
+    let server = Arc::new(Server::http(format!("0.0.0.0:{}", port)).map_err(|e| anyhow::anyhow!(e))?);
     println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
 
     let base_path = fs::canonicalize(dir)?;
+    let watcher = Arc::new(Watcher::new());
+
+    if !is_prod {
+        let w = Arc::clone(&watcher);
+        let d = base_path.clone();
+        thread::spawn(move || {
+            watch_files(d, w);
+        });
+    }
 
     for mut request in server.incoming_requests() {
-        let url = request.url().to_string();
-        let method = request.method().to_string();
-        let mut target = &url[..];
-        if let Some(idx) = target.find('?') { target = &target[..idx]; }
-        if let Some(idx) = target.find('#') { target = &target[..idx]; }
+        let base_path = base_path.clone();
+        let watcher = Arc::clone(&watcher);
+        
+        thread::spawn(move || {
+            let url = request.url().to_string();
+            let method = request.method().to_string();
+            let mut target = &url[..];
+            if let Some(idx) = target.find('?') { target = &target[..idx]; }
+            if let Some(idx) = target.find('#') { target = &target[..idx]; }
 
-        println!("Request: {} {}", method, target);
+            println!("Request: {} {}", method, target);
 
-        // API Routing
-        let mut api_file = None;
-        let mut api_base_path = "/".to_string();
+            if !is_prod && target == "/__hmr" {
+                let last_count: usize = url.find("v=").and_then(|idx| {
+                    url[idx+2..].split('&').next().and_then(|s| s.parse().ok())
+                }).unwrap_or(0);
+                let (new_count, path) = watcher.wait(last_count);
+                let json = serde_json::json!({
+                    "type": "update",
+                    "path": path,
+                    "version": new_count
+                });
+                let response = Response::from_string(json.to_string())
+                    .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap())
+                    .with_header(Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+                request.respond(response).ok();
+                return;
+            }
 
-        if target.starts_with("/api") {
-            let rel_path = target.trim_start_matches('/');
-            
-            // 1. Try [path]/route.er
-            let route_er = base_path.join(rel_path).join("route.er");
-            if route_er.exists() {
-                api_file = Some(route_er);
-                api_base_path = target.to_string();
-            } else {
-                // 2. Try [path].er
-                let direct_er = base_path.join(format!("{}.er", rel_path));
-                if direct_er.exists() {
-                    api_file = Some(direct_er);
+            // API Routing
+            let mut api_file = None;
+            let mut api_base_path = "/".to_string();
+
+            if target.starts_with("/api") {
+                let rel_path = target.trim_start_matches('/');
+                
+                // 1. Try [path]/route.er
+                let route_er = base_path.join(rel_path).join("route.er");
+                if route_er.exists() {
+                    api_file = Some(route_er);
                     api_base_path = target.to_string();
-                }
-            }
-        }
-
-        if api_file.is_none() {
-            let server_er = base_path.join("server.er");
-            if server_er.exists() {
-                api_file = Some(server_er);
-                api_base_path = "/".to_string();
-            }
-        }
-
-        if let Some(file) = api_file {
-            match er::handle_api_request(&mut request, file.to_str().unwrap(), &api_base_path) {
-                Ok(Some(response)) => {
-                    request.respond(response).ok();
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    eprintln!("API Error: {}", e);
-                    let response = Response::from_string(format!("API Error: {}", e)).with_status_code(500);
-                    request.respond(response).ok();
-                    continue;
-                }
-            }
-        }
-
-        if target.ends_with(".erm") {
-            let response = Response::from_string("Not Found").with_status_code(404);
-            request.respond(response).ok();
-            continue;
-        }
-
-        let (file_path, params) = if let Some(res) = resolve_dynamic_route(&base_path, target) {
-            res
-        } else {
-            (base_path.join(&target[1..]), HashMap::new())
-        };
-
-        if file_path.exists() && file_path.is_file() {
-            if file_path.extension().map_or(false, |ext| ext == "erm") {
-                let content = fs::read_to_string(&file_path)?;
-                let parent = file_path.parent().unwrap().to_string_lossy();
-                match compiler::process_erm_component(&parent, &content, is_prod, &params) {
-                    Ok(processed) => {
-                        let response = Response::from_string(processed)
-                            .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap());
-                        request.respond(response).ok();
+                } else {
+                    // 2. Try [path].er
+                    let direct_er = base_path.join(format!("{}.er", rel_path));
+                    if direct_er.exists() {
+                        api_file = Some(direct_er);
+                        api_base_path = target.to_string();
                     }
+                }
+            }
+
+            if api_file.is_none() {
+                let server_er = base_path.join("server.er");
+                if server_er.exists() {
+                    api_file = Some(server_er);
+                    api_base_path = "/".to_string();
+                }
+            }
+
+            if let Some(file) = api_file {
+                match er::handle_api_request(&mut request, file.to_str().unwrap(), &api_base_path) {
+                    Ok(Some(response)) => {
+                        request.respond(response).ok();
+                        return;
+                    }
+                    Ok(None) => {}
                     Err(e) => {
-                        let response = Response::from_string(format!("Error: {}", e)).with_status_code(500);
+                        eprintln!("API Error: {}", e);
+                        let response = Response::from_string(format!("API Error: {}", e)).with_status_code(500);
                         request.respond(response).ok();
+                        return;
                     }
+                }
+            }
+
+            if target.ends_with(".erm") {
+                let response = Response::from_string("Not Found").with_status_code(404);
+                request.respond(response).ok();
+                return;
+            }
+
+            let (file_path, params) = if let Some(res) = resolve_dynamic_route(&base_path, target) {
+                res
+            } else {
+                (base_path.join(&target[1..]), HashMap::new())
+            };
+
+            if file_path.exists() && file_path.is_file() {
+                if file_path.extension().map_or(false, |ext| ext == "erm") {
+                    let content = fs::read_to_string(&file_path).unwrap_or_default();
+                    let parent = file_path.parent().unwrap().to_string_lossy();
+                    match compiler::process_erm_component(&parent, &content, is_prod, &params) {
+                        Ok(processed) => {
+                            let response = Response::from_string(processed)
+                                .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap());
+                            request.respond(response).ok();
+                        }
+                        Err(e) => {
+                            let response = Response::from_string(format!("Error: {}", e)).with_status_code(500);
+                            request.respond(response).ok();
+                        }
+                    }
+                } else {
+                    let content = fs::read(&file_path).unwrap_or_default();
+                    let response = Response::from_data(content);
+                    request.respond(response).ok();
                 }
             } else {
-                let content = fs::read(&file_path)?;
-                let response = Response::from_data(content);
+                let response = Response::from_string("Not Found").with_status_code(404);
                 request.respond(response).ok();
             }
-        } else {
-            let response = Response::from_string("Not Found").with_status_code(404);
-            request.respond(response).ok();
-        }
+        });
     }
     Ok(())
 }
