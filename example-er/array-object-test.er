@@ -2,6 +2,7 @@ let todos = [
   { id: 1, text: "Learn Eronom", done: false }
 ]
 
+
 print(todos)
 
 print("First todo: {todos[0].text}")

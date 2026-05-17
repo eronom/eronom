@@ -7,6 +7,13 @@ use std::collections::HashMap;
 use backend::{Compiler, Value, VM};
 use frontend::{lex, Parser};
 
+struct GcGuard;
+impl Drop for GcGuard {
+    fn drop(&mut self) {
+        backend::gc_free_all();
+    }
+}
+
 thread_local! {
     pub static ROUTES: std::cell::RefCell<Vec<(String, String, Value)>> = std::cell::RefCell::new(Vec::new());
     pub static RESPONSE: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
@@ -16,7 +23,8 @@ fn route_fn(_args: Vec<Value>) -> Value {
     let mut obj = HashMap::new();
     obj.insert("get".to_string(), Value::NativeFunction(app_get));
     obj.insert("post".to_string(), Value::NativeFunction(app_post));
-    Value::Object(std::rc::Rc::new(std::cell::RefCell::new(obj)))
+    let ptr = backend::gc_allocate(backend::GcData::Object(obj));
+    Value::Object(ptr)
 }
 
 fn app_get(args: Vec<Value>) -> Value {
@@ -51,18 +59,27 @@ fn value_to_json(val: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         Value::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
-        Value::Array(arr) => {
-            let items: Vec<String> = arr.borrow().iter().map(value_to_json).collect();
-            format!("[{}]", items.join(","))
-        }
-        Value::Object(obj) => {
-            let items: Vec<String> = obj
-                .borrow()
-                .iter()
-                .map(|(k, v)| format!("\"{}\":{}", k, value_to_json(v)))
-                .collect();
-            format!("{{{}}}", items.join(","))
-        }
+        Value::Array(ptr) => unsafe {
+            match &(**ptr).data {
+                backend::GcData::Array(arr) => {
+                    let items: Vec<String> = arr.iter().map(value_to_json).collect();
+                    format!("[{}]", items.join(","))
+                }
+                _ => unreachable!(),
+            }
+        },
+        Value::Object(ptr) => unsafe {
+            match &(**ptr).data {
+                backend::GcData::Object(obj) => {
+                    let items: Vec<String> = obj
+                        .iter()
+                        .map(|(k, v)| format!("\"{}\":{}", k, value_to_json(v)))
+                        .collect();
+                    format!("{{{}}}", items.join(","))
+                }
+                _ => unreachable!(),
+            }
+        },
         _ => "\"<function>\"".to_string(),
     }
 }
@@ -72,6 +89,20 @@ pub fn handle_api_request(
     api_file_path: &str,
     base_path: &str,
 ) -> anyhow::Result<Option<tiny_http::Response<std::io::Cursor<Vec<u8>>>>> {
+    let _guard = GcGuard;
+
+    // Register ROUTES as GC roots
+    backend::GC_ROOTS.with(|roots| {
+        roots.borrow_mut().clear();
+        roots.borrow_mut().push(Box::new(|| {
+            ROUTES.with(|r| {
+                for (_, _, handler) in r.borrow().iter() {
+                    backend::mark_value(handler);
+                }
+            });
+        }));
+    });
+
     let content = match std::fs::read_to_string(api_file_path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -163,7 +194,7 @@ pub fn handle_api_request(
     if let Some(handler) = matched_handler {
         let mut c_obj = HashMap::new();
         c_obj.insert("json".to_string(), Value::NativeFunction(c_json));
-        let c_val = Value::Object(std::rc::Rc::new(std::cell::RefCell::new(c_obj)));
+        let c_val = Value::Object(backend::gc_allocate(backend::GcData::Object(c_obj)));
 
         // We need to call the handler in the VM.
         // We can do this by pushing the handler and args, and generating a dummy function, 
@@ -244,6 +275,7 @@ fn native_print(args: Vec<Value>) -> Value {
 }
 
 pub fn run_file(path: &str) -> anyhow::Result<()> {
+    let _guard = GcGuard;
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),

@@ -1,8 +1,94 @@
 use crate::frontend::{Expr, LiteralValue, Stmt, TokenType};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
+
+pub enum GcData {
+    Array(Vec<Value>),
+    Object(HashMap<String, Value>),
+}
+
+pub struct GcObject {
+    pub marked: bool,
+    pub next: *mut GcObject,
+    pub data: GcData,
+}
+
+thread_local! {
+    pub static GC_HEAD: std::cell::Cell<*mut GcObject> = std::cell::Cell::new(std::ptr::null_mut());
+    pub static ALLOC_COUNT: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    pub static GC_ROOTS: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
+}
+
+pub fn gc_allocate(data: GcData) -> *mut GcObject {
+    GC_HEAD.with(|head| {
+        let obj = Box::new(GcObject {
+            marked: false,
+            next: head.get(),
+            data,
+        });
+        let ptr = Box::into_raw(obj);
+        head.set(ptr);
+        ALLOC_COUNT.with(|c| c.set(c.get() + 1));
+        ptr
+    })
+}
+
+pub fn gc_free_all() {
+    unsafe {
+        GC_HEAD.with(|head| {
+            let mut curr = head.get();
+            head.set(std::ptr::null_mut());
+            while !curr.is_null() {
+                let next = (*curr).next;
+                let _ = Box::from_raw(curr);
+                curr = next;
+            }
+        });
+    }
+    ALLOC_COUNT.with(|c| c.set(0));
+}
+
+pub fn mark_value(val: &Value) {
+    match val {
+        Value::Array(ptr) | Value::ArrayMethod(ptr, _) => {
+            mark_object(*ptr);
+        }
+        Value::Object(ptr) => {
+            mark_object(*ptr);
+        }
+        Value::Function(func) => {
+            for constant in &func.chunk.constants {
+                mark_value(constant);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub fn mark_object(ptr: *mut GcObject) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        if (*ptr).marked {
+            return;
+        }
+        (*ptr).marked = true;
+        match &(*ptr).data {
+            GcData::Array(arr) => {
+                for val in arr {
+                    mark_value(val);
+                }
+            }
+            GcData::Object(obj) => {
+                for val in obj.values() {
+                    mark_value(val);
+                }
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub enum Value {
@@ -10,11 +96,11 @@ pub enum Value {
     Boolean(bool),
     Number(f64),
     String(String),
-    Array(Rc<RefCell<Vec<Value>>>),
-    Object(Rc<RefCell<HashMap<String, Value>>>),
+    Array(*mut GcObject),
+    Object(*mut GcObject),
     Function(Rc<Function>),
     NativeFunction(fn(Vec<Value>) -> Value),
-    ArrayMethod(Rc<RefCell<Vec<Value>>>, String),
+    ArrayMethod(*mut GcObject, String),
 }
 
 impl fmt::Display for Value {
@@ -24,18 +110,27 @@ impl fmt::Display for Value {
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
-            Value::Array(arr) => {
-                let items: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
-                write!(f, "[{}]", items.join(", "))
-            }
-            Value::Object(obj) => {
-                let items: Vec<String> = obj
-                    .borrow()
-                    .iter()
-                    .map(|(k, v)| format!("\"{}\": {}", k, v))
-                    .collect();
-                write!(f, "{{{}}}", items.join(", "))
-            }
+            Value::Array(ptr) => unsafe {
+                match &(**ptr).data {
+                    GcData::Array(arr) => {
+                        let items: Vec<String> = arr.iter().map(|v| v.to_string()).collect();
+                        write!(f, "[{}]", items.join(", "))
+                    }
+                    _ => unreachable!(),
+                }
+            },
+            Value::Object(ptr) => unsafe {
+                match &(**ptr).data {
+                    GcData::Object(obj) => {
+                        let items: Vec<String> = obj
+                            .iter()
+                            .map(|(k, v)| format!("\"{}\": {}", k, v))
+                            .collect();
+                        write!(f, "{{{}}}", items.join(", "))
+                    }
+                    _ => unreachable!(),
+                }
+            },
             Value::Function(_) => write!(f, "[Function]"),
             Value::NativeFunction(_) => write!(f, "[NativeFunction]"),
             Value::ArrayMethod(_, name) => write!(f, "[ArrayMethod {}]", name),
@@ -50,11 +145,10 @@ impl PartialEq for Value {
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Number(a), Value::Number(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
-            // Simple reference equality for objects/arrays for now
-            (Value::Array(a), Value::Array(b)) => Rc::ptr_eq(a, b),
-            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Object(a), Value::Object(b)) => a == b,
             (Value::ArrayMethod(a_arr, a_name), Value::ArrayMethod(b_arr, b_name)) => {
-                Rc::ptr_eq(a_arr, b_arr) && a_name == b_name
+                a_arr == b_arr && a_name == b_name
             }
             _ => false,
         }
@@ -465,8 +559,59 @@ impl VM {
         self.execute()
     }
 
+    pub fn collect_garbage(&mut self) {
+        // 1. Mark roots
+        for val in &self.stack {
+            mark_value(val);
+        }
+        for val in self.globals.values() {
+            mark_value(val);
+        }
+        for frame in &self.frames {
+            for constant in &frame.function.chunk.constants {
+                mark_value(constant);
+            }
+        }
+        GC_ROOTS.with(|roots| {
+            if let Ok(borrowed) = roots.try_borrow() {
+                for root_fn in borrowed.iter() {
+                    root_fn();
+                }
+            }
+        });
+
+        // 2. Sweep
+        unsafe {
+            GC_HEAD.with(|head| {
+                let mut prev: *mut GcObject = std::ptr::null_mut();
+                let mut curr = head.get();
+                while !curr.is_null() {
+                    if (*curr).marked {
+                        (*curr).marked = false;
+                        prev = curr;
+                        curr = (*curr).next;
+                    } else {
+                        let unreached = curr;
+                        curr = (*curr).next;
+                        if prev.is_null() {
+                            head.set(curr);
+                        } else {
+                            (*prev).next = curr;
+                        }
+                        let _ = Box::from_raw(unreached);
+                    }
+                }
+            });
+        }
+        ALLOC_COUNT.with(|c| c.set(0));
+    }
+
     fn execute(&mut self) -> Result<Value, String> {
         loop {
+            if ALLOC_COUNT.with(|c| c.get()) >= 100 {
+                self.collect_garbage();
+            }
+
             let frame = self.frames.last_mut().unwrap();
             if frame.ip >= frame.function.chunk.code.len() {
                 break;
@@ -615,8 +760,8 @@ impl VM {
                         elements.push(self.stack.pop().unwrap());
                     }
                     elements.reverse();
-                    self.stack
-                        .push(Value::Array(Rc::new(RefCell::new(elements))));
+                    let ptr = gc_allocate(GcData::Array(elements));
+                    self.stack.push(Value::Array(ptr));
                 }
                 OpCode::MakeObject(count) => {
                     let mut obj = HashMap::new();
@@ -628,25 +773,36 @@ impl VM {
                         };
                         obj.insert(key, val);
                     }
-                    self.stack.push(Value::Object(Rc::new(RefCell::new(obj))));
+                    let ptr = gc_allocate(GcData::Object(obj));
+                    self.stack.push(Value::Object(ptr));
                 }
                 OpCode::GetProperty(name) => {
                     let obj = self.stack.pop().unwrap();
                     match obj {
-                        Value::Object(map) => {
-                            let val = map.borrow().get(&name).cloned().unwrap_or(Value::Null);
-                            self.stack.push(val);
+                        Value::Object(ptr) => unsafe {
+                            match &(*ptr).data {
+                                GcData::Object(map) => {
+                                    let val = map.get(&name).cloned().unwrap_or(Value::Null);
+                                    self.stack.push(val);
+                                }
+                                _ => unreachable!(),
+                            }
                         }
-                        Value::Array(arr) => {
-                            if name == "push" || name == "pop" {
-                                self.stack.push(Value::ArrayMethod(arr.clone(), name.clone()));
-                            } else if name == "length" {
-                                self.stack.push(Value::Number(arr.borrow().len() as f64));
-                            } else if let Ok(idx) = name.parse::<usize>() {
-                                let val = arr.borrow().get(idx).cloned().unwrap_or(Value::Null);
-                                self.stack.push(val);
-                            } else {
-                                self.stack.push(Value::Null);
+                        Value::Array(ptr) => unsafe {
+                            match &(*ptr).data {
+                                GcData::Array(arr) => {
+                                    if name == "push" || name == "pop" {
+                                        self.stack.push(Value::ArrayMethod(ptr, name.clone()));
+                                    } else if name == "length" {
+                                        self.stack.push(Value::Number(arr.len() as f64));
+                                    } else if let Ok(idx) = name.parse::<usize>() {
+                                        let val = arr.get(idx).cloned().unwrap_or(Value::Null);
+                                        self.stack.push(val);
+                                    } else {
+                                        self.stack.push(Value::Null);
+                                    }
+                                }
+                                _ => unreachable!(),
                             }
                         }
                         _ => return Err("Only objects have properties".into()),
@@ -656,23 +812,32 @@ impl VM {
                     let val = self.stack.pop().unwrap();
                     let obj = self.stack.pop().unwrap();
                     match obj {
-                        Value::Object(map) => {
-                            map.borrow_mut().insert(name, val.clone());
-                            self.stack.push(val);
-                        }
-                        Value::Array(arr) => {
-                            if let Ok(idx) = name.parse::<usize>() {
-                                let mut borrowed = arr.borrow_mut();
-                                if idx < borrowed.len() {
-                                    borrowed[idx] = val.clone();
-                                } else if idx == borrowed.len() {
-                                    borrowed.push(val.clone());
-                                } else {
-                                    return Err(format!("Index {} out of bounds for array of length {}", idx, borrowed.len()).into());
+                        Value::Object(ptr) => unsafe {
+                            match &mut (*ptr).data {
+                                GcData::Object(map) => {
+                                    map.insert(name, val.clone());
+                                    self.stack.push(val);
                                 }
-                                self.stack.push(val);
-                            } else {
-                                return Err("Cannot set non-numeric property on array".into());
+                                _ => unreachable!(),
+                            }
+                        }
+                        Value::Array(ptr) => unsafe {
+                            match &mut (*ptr).data {
+                                GcData::Array(arr) => {
+                                    if let Ok(idx) = name.parse::<usize>() {
+                                        if idx < arr.len() {
+                                            arr[idx] = val.clone();
+                                        } else if idx == arr.len() {
+                                            arr.push(val.clone());
+                                        } else {
+                                            return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
+                                        }
+                                        self.stack.push(val);
+                                    } else {
+                                        return Err("Cannot set non-numeric property on array".into());
+                                    }
+                                }
+                                _ => unreachable!(),
                             }
                         }
                         _ => return Err("Only objects have properties".into()),
@@ -704,7 +869,7 @@ impl VM {
                             let result = native(args);
                             self.stack.push(result);
                         }
-                        Value::ArrayMethod(arr, method) => {
+                        Value::ArrayMethod(ptr, method) => {
                             let mut args = Vec::with_capacity(arg_count);
                             for _ in 0..arg_count {
                                 args.push(self.stack.pop().unwrap());
@@ -712,15 +877,22 @@ impl VM {
                             args.reverse();
                             self.stack.pop(); // pop callee
 
-                            let result = if method == "push" {
-                                for arg in args {
-                                    arr.borrow_mut().push(arg);
+                            let result = unsafe {
+                                match &mut (*ptr).data {
+                                    GcData::Array(arr) => {
+                                        if method == "push" {
+                                            for arg in args {
+                                                arr.push(arg);
+                                            }
+                                            Value::Number(arr.len() as f64)
+                                        } else if method == "pop" {
+                                            arr.pop().unwrap_or(Value::Null)
+                                        } else {
+                                            Value::Null
+                                        }
+                                    }
+                                    _ => unreachable!(),
                                 }
-                                Value::Number(arr.borrow().len() as f64)
-                            } else if method == "pop" {
-                                arr.borrow_mut().pop().unwrap_or(Value::Null)
-                            } else {
-                                Value::Null
                             };
                             self.stack.push(result);
                         }
@@ -740,22 +912,37 @@ impl VM {
                     let index = self.stack.pop().unwrap();
                     let obj = self.stack.pop().unwrap();
                     match (&obj, &index) {
-                        (Value::Array(arr), Value::Number(n)) => {
+                        (Value::Array(ptr), Value::Number(n)) => unsafe {
                             let idx = *n as usize;
-                            let val = arr.borrow().get(idx).cloned().unwrap_or(Value::Null);
-                            self.stack.push(val);
+                            match &(**ptr).data {
+                                GcData::Array(arr) => {
+                                    let val = arr.get(idx).cloned().unwrap_or(Value::Null);
+                                    self.stack.push(val);
+                                }
+                                _ => unreachable!(),
+                            }
                         }
-                        (Value::Array(arr), Value::String(s)) => {
+                        (Value::Array(ptr), Value::String(s)) => unsafe {
                             if let Ok(idx) = s.parse::<usize>() {
-                                let val = arr.borrow().get(idx).cloned().unwrap_or(Value::Null);
-                                self.stack.push(val);
+                                match &(**ptr).data {
+                                    GcData::Array(arr) => {
+                                        let val = arr.get(idx).cloned().unwrap_or(Value::Null);
+                                        self.stack.push(val);
+                                    }
+                                    _ => unreachable!(),
+                                }
                             } else {
                                 self.stack.push(Value::Null);
                             }
                         }
-                        (Value::Object(map), Value::String(s)) => {
-                            let val = map.borrow().get(s).cloned().unwrap_or(Value::Null);
-                            self.stack.push(val);
+                        (Value::Object(ptr), Value::String(s)) => unsafe {
+                            match &(**ptr).data {
+                                GcData::Object(map) => {
+                                    let val = map.get(s).cloned().unwrap_or(Value::Null);
+                                    self.stack.push(val);
+                                }
+                                _ => unreachable!(),
+                            }
                         }
                         _ => return Err("Only arrays can be indexed by numbers, and objects by strings".into()),
                     }
@@ -765,36 +952,49 @@ impl VM {
                     let index = self.stack.pop().unwrap();
                     let obj = self.stack.pop().unwrap();
                     match (&obj, &index) {
-                        (Value::Array(arr), Value::Number(n)) => {
+                        (Value::Array(ptr), Value::Number(n)) => unsafe {
                             let idx = *n as usize;
-                            let mut borrowed = arr.borrow_mut();
-                            if idx < borrowed.len() {
-                                borrowed[idx] = val.clone();
-                            } else if idx == borrowed.len() {
-                                borrowed.push(val.clone());
-                            } else {
-                                return Err(format!("Index {} out of bounds for array of length {}", idx, borrowed.len()).into());
-                            }
-                            self.stack.push(val);
-                        }
-                        (Value::Array(arr), Value::String(s)) => {
-                            if let Ok(idx) = s.parse::<usize>() {
-                                let mut borrowed = arr.borrow_mut();
-                                if idx < borrowed.len() {
-                                    borrowed[idx] = val.clone();
-                                } else if idx == borrowed.len() {
-                                    borrowed.push(val.clone());
-                                } else {
-                                    return Err(format!("Index {} out of bounds for array of length {}", idx, borrowed.len()).into());
+                            match &mut (**ptr).data {
+                                GcData::Array(arr) => {
+                                    if idx < arr.len() {
+                                        arr[idx] = val.clone();
+                                    } else if idx == arr.len() {
+                                        arr.push(val.clone());
+                                    } else {
+                                        return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
+                                    }
+                                    self.stack.push(val);
                                 }
-                                self.stack.push(val);
+                                _ => unreachable!(),
+                            }
+                        }
+                        (Value::Array(ptr), Value::String(s)) => unsafe {
+                            if let Ok(idx) = s.parse::<usize>() {
+                                match &mut (**ptr).data {
+                                    GcData::Array(arr) => {
+                                        if idx < arr.len() {
+                                            arr[idx] = val.clone();
+                                        } else if idx == arr.len() {
+                                            arr.push(val.clone());
+                                        } else {
+                                            return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
+                                        }
+                                        self.stack.push(val);
+                                    }
+                                    _ => unreachable!(),
+                                }
                             } else {
                                 return Err("Cannot set non-numeric property on array".into());
                             }
                         }
-                        (Value::Object(map), Value::String(s)) => {
-                            map.borrow_mut().insert(s.clone(), val.clone());
-                            self.stack.push(val);
+                        (Value::Object(ptr), Value::String(s)) => unsafe {
+                            match &mut (**ptr).data {
+                                GcData::Object(map) => {
+                                    map.insert(s.clone(), val.clone());
+                                    self.stack.push(val);
+                                }
+                                _ => unreachable!(),
+                            }
                         }
                         _ => return Err("Only arrays can be indexed by numbers, and objects by strings".into()),
                     }
