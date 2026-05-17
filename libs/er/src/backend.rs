@@ -23,7 +23,7 @@ impl fmt::Display for Value {
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
-            Value::Array(arr) => write!(f, "[Array]"), // basic formatting
+            Value::Array(_arr) => write!(f, "[Array]"), // basic formatting
             Value::Object(_) => write!(f, "[Object]"),
             Value::Function(_) => write!(f, "[Function]"),
             Value::NativeFunction(_) => write!(f, "[NativeFunction]"),
