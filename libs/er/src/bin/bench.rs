@@ -1,36 +1,32 @@
 /// Benchmark: VM-based vs Legacy tree-walking interpreter
-/// Run with: cargo run --bin bench
+/// Run with: cargo run --release --bin bench -p er
 
 use std::rc::Rc;
 use std::time::Instant;
 
 fn main() {
+    // Pure compute — NO print calls (I/O dominates timing and floods the terminal)
     let source = r#"
 let x = 0
 
-for i in 1..1000 {
+for i in 1..10000 {
     let val = i + i
-    if (val > 500) {
+    if (val > 5000) {
         let dummy = val + 1
     } else {
         let dummy = val + 2
     }
 }
-
-for j in 1..100 {
-    print("{j}")
-}
 "#;
 
-    let iterations = 10;
+    let iterations = 50;
 
-    println!("=== ER Language Benchmark ===");
-    println!("Running {} iterations each\n", iterations);
+    eprintln!("=== ER Language Benchmark ===");
+    eprintln!("  Script: 10,000 loop iterations with arithmetic + conditionals");
+    eprintln!("  Runs:   {} iterations each\n", iterations);
 
     // --- Legacy (tree-walking) benchmark ---
-    println!("--- Legacy Tree-Walking Interpreter ---");
-    // Warmup
-    er::legacy::run_source(source).ok();
+    er::legacy::run_source(source).ok(); // warmup
 
     let start = Instant::now();
     for _ in 0..iterations {
@@ -38,18 +34,10 @@ for j in 1..100 {
     }
     let legacy_elapsed = start.elapsed();
     let legacy_avg = legacy_elapsed / iterations;
-    println!("  Total:   {:?}", legacy_elapsed);
-    println!("  Average: {:?}\n", legacy_avg);
 
     // --- VM-based benchmark ---
-    println!("--- VM-Based (Bytecode) Interpreter ---");
-
-    fn native_print(args: Vec<er::backend::Value>) -> er::backend::Value {
-        let mut outputs = Vec::new();
-        for arg in args {
-            outputs.push(arg.to_string());
-        }
-        println!("{}", outputs.join(" "));
+    fn noop_print(args: Vec<er::backend::Value>) -> er::backend::Value {
+        let _ = args;
         er::backend::Value::Null
     }
 
@@ -61,7 +49,7 @@ for j in 1..100 {
         let compiler = er::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
-        vm.register_global("print", er::backend::Value::NativeFunction(native_print));
+        vm.register_global("print", er::backend::Value::NativeFunction(noop_print));
         vm.run(Rc::new(function)).ok();
     }
 
@@ -73,16 +61,13 @@ for j in 1..100 {
         let compiler = er::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
-        vm.register_global("print", er::backend::Value::NativeFunction(native_print));
+        vm.register_global("print", er::backend::Value::NativeFunction(noop_print));
         vm.run(Rc::new(function)).ok();
     }
     let vm_elapsed = start.elapsed();
     let vm_avg = vm_elapsed / iterations;
-    println!("  Total:   {:?}", vm_elapsed);
-    println!("  Average: {:?}\n", vm_avg);
 
     // --- Compile-only benchmark ---
-    println!("--- VM Compile Only (no execution) ---");
     let start = Instant::now();
     for _ in 0..iterations {
         let tokens = er::frontend::lex(source);
@@ -93,21 +78,22 @@ for j in 1..100 {
     }
     let compile_elapsed = start.elapsed();
     let compile_avg = compile_elapsed / iterations;
-    println!("  Total:   {:?}", compile_elapsed);
-    println!("  Average: {:?}\n", compile_avg);
 
-    // --- Summary ---
-    println!("========== RESULTS ==========");
-    println!("  Legacy avg:       {:?}", legacy_avg);
-    println!("  VM avg:           {:?}", vm_avg);
-    println!("  Compile-only avg: {:?}", compile_avg);
+    // --- Results ---
+    eprintln!("┌──────────────────────────────────────────┐");
+    eprintln!("│          ER BENCHMARK RESULTS            │");
+    eprintln!("├──────────────────────────────────────────┤");
+    eprintln!("│  Legacy (tree-walk)  │  avg {:>12?}  │", legacy_avg);
+    eprintln!("│  VM (bytecode)       │  avg {:>12?}  │", vm_avg);
+    eprintln!("│  Compile only        │  avg {:>12?}  │", compile_avg);
+    eprintln!("├──────────────────────────────────────────┤");
 
     if vm_avg < legacy_avg {
         let speedup = legacy_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-        println!("\n  ✅ VM is {:.2}x FASTER than legacy", speedup);
+        eprintln!("│  ✅ VM is {:.2}x FASTER than legacy       │", speedup);
     } else {
         let slowdown = vm_avg.as_nanos() as f64 / legacy_avg.as_nanos() as f64;
-        println!("\n  ⚠️  VM is {:.2}x SLOWER than legacy", slowdown);
+        eprintln!("│  ⚠️  VM is {:.2}x SLOWER than legacy       │", slowdown);
     }
-    println!("=============================");
+    eprintln!("└──────────────────────────────────────────┘");
 }
