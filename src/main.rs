@@ -10,7 +10,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut cmd = "dev";
     let mut dir = ".";
-    let mut port: u16 = 8080;
+    let mut port_override: Option<u16> = None;
 
     if args.len() > 1 {
         let first_arg = &args[1];
@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
                 dir = &args[2];
             }
             if args.len() > 3 {
-                port = args[3].parse().unwrap_or(8080);
+                port_override = args[3].parse().ok();
             }
         } else if first_arg.ends_with(".er") {
             er::run_file(first_arg)?;
@@ -33,8 +33,8 @@ fn main() -> anyhow::Result<()> {
     match cmd {
         "init" => init_project(dir)?,
         "build" => build_project(dir)?,
-        "start" => start_server(dir, true, port)?,
-        "dev" => start_server(dir, false, port)?,
+        "start" => start_server(dir, true, port_override)?,
+        "dev" => start_server(dir, false, port_override)?,
         _ => anyhow::bail!("Unknown command: {}", cmd),
     }
 
@@ -184,11 +184,144 @@ fn watch_files(dir: PathBuf, watcher: Arc<Watcher>) {
     }
 }
 
-fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
+fn handle_python_api_request(
+    request: &mut tiny_http::Request,
+    file_path: &Path,
+    api_base_path: &str,
+) -> anyhow::Result<Option<tiny_http::Response<std::io::Cursor<Vec<u8>>>>> {
+    use std::process::{Command, Stdio};
+    use std::io::Write;
+
+    let url = request.url().to_string();
+    let query_string = url.split('?').nth(1).unwrap_or("");
+    
+    let mut body_bytes = Vec::new();
+    request.as_reader().read_to_end(&mut body_bytes).ok();
+    let body_str = String::from_utf8_lossy(&body_bytes).to_string();
+
+    let venv_python = Path::new(".venv").join("bin").join("python3");
+    let python_cmd = if venv_python.exists() {
+        venv_python.to_string_lossy().to_string()
+    } else {
+        "python3".to_string()
+    };
+
+    let file_path_str = file_path.to_string_lossy().to_string();
+    
+    let mut child = Command::new(python_cmd)
+        .arg("config.py")
+        .env("ROUTE_FILE_PATH", &file_path_str)
+        .env("REQUEST_METHOD", request.method().to_string())
+        .env("REQUEST_PATH", &url)
+        .env("QUERY_STRING", query_string)
+        .env("API_BASE_PATH", api_base_path)
+        .env("REQUEST_BODY", &body_str)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&body_bytes).ok();
+    }
+
+    let output = child.wait_with_output()?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        anyhow::bail!("Python script exited with error: {}", err_msg);
+    }
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
+    
+    let mut headers = Vec::new();
+    let body_content;
+    
+    let delimiter = if stdout_str.contains("\r\n\r\n") {
+        Some("\r\n\r\n")
+    } else if stdout_str.contains("\n\n") {
+        Some("\n\n")
+    } else {
+        None
+    };
+
+    if let Some(delim) = delimiter {
+        let parts: Vec<&str> = stdout_str.splitn(2, delim).collect();
+        let headers_part = parts[0];
+        let body_part = parts[1];
+        
+        let mut has_content_type = false;
+        let mut status_code = 200;
+        
+        for line in headers_part.lines() {
+            if let Some(idx) = line.find(':') {
+                let name = line[..idx].trim();
+                let value = line[idx+1..].trim();
+                if name.eq_ignore_ascii_case("status") {
+                    if let Some(code) = value.split_whitespace().next().and_then(|s| s.parse::<u16>().ok()) {
+                        status_code = code;
+                    }
+                } else {
+                    if name.eq_ignore_ascii_case("content-type") {
+                        has_content_type = true;
+                    }
+                    headers.push((name.to_string(), value.to_string()));
+                }
+            }
+        }
+        
+        body_content = body_part.as_bytes().to_vec();
+        
+        let mut response = tiny_http::Response::from_data(body_content).with_status_code(status_code);
+        for (name, value) in headers {
+            response = response.with_header(tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap());
+        }
+        if !has_content_type {
+            response = response.with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap());
+        }
+        response = response.with_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+        Ok(Some(response))
+    } else {
+        let trimmed = stdout_str.trim();
+        let is_json = (trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']'));
+        let content_type = if is_json { "application/json" } else { "text/plain; charset=utf-8" };
+        
+        let response = tiny_http::Response::from_string(stdout_str)
+            .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap())
+            .with_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+        Ok(Some(response))
+    }
+}
+
+fn start_server(dir: &str, is_prod: bool, port_override: Option<u16>) -> anyhow::Result<()> {
+    let base_path = fs::canonicalize(dir)?;
+    
+    // Load config if config.er exists
+    let config_path = base_path.join("config.er");
+    let mut api_lang = None;
+    let mut port = 8080;
+
+    if config_path.exists() {
+        match er::load_config(config_path.to_str().unwrap()) {
+            Ok(cfg) => {
+                if let Some(p) = cfg.port {
+                    port = p;
+                }
+                api_lang = cfg.api_lang;
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to load config.er: {}", e);
+            }
+        }
+    }
+
+    if let Some(p) = port_override {
+        port = p;
+    }
+
     let server = Arc::new(Server::http(format!("0.0.0.0:{}", port)).map_err(|e| anyhow::anyhow!(e))?);
     println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
 
-    let base_path = fs::canonicalize(dir)?;
     let watcher = Arc::new(Watcher::new());
 
     if !is_prod {
@@ -202,6 +335,7 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
     for mut request in server.incoming_requests() {
         let base_path = base_path.clone();
         let watcher = Arc::clone(&watcher);
+        let api_lang = api_lang.clone();
         
         thread::spawn(move || {
             let url = request.url().to_string();
@@ -232,35 +366,42 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
             // API Routing
             let mut api_file = None;
             let mut api_base_path = "/".to_string();
+            let is_python = api_lang.as_deref() == Some("python");
+            let ext = if is_python { "py" } else { "er" };
 
             if target.starts_with("/api") {
                 let rel_path = target.trim_start_matches('/');
                 
-                // 1. Try [path]/route.er
-                let route_er = base_path.join(rel_path).join("route.er");
-                if route_er.exists() {
-                    api_file = Some(route_er);
+                // 1. Try [path]/route.[ext]
+                let route_file = base_path.join(rel_path).join(format!("route.{}", ext));
+                if route_file.exists() {
+                    api_file = Some(route_file);
                     api_base_path = target.to_string();
                 } else {
-                    // 2. Try [path].er
-                    let direct_er = base_path.join(format!("{}.er", rel_path));
-                    if direct_er.exists() {
-                        api_file = Some(direct_er);
+                    // 2. Try [path].[ext]
+                    let direct_file = base_path.join(format!("{}.{}", rel_path, ext));
+                    if direct_file.exists() {
+                        api_file = Some(direct_file);
                         api_base_path = target.to_string();
                     }
                 }
             }
 
             if api_file.is_none() {
-                let server_er = base_path.join("server.er");
-                if server_er.exists() {
-                    api_file = Some(server_er);
+                let server_file = base_path.join(format!("server.{}", ext));
+                if server_file.exists() {
+                    api_file = Some(server_file);
                     api_base_path = "/".to_string();
                 }
             }
 
             if let Some(file) = api_file {
-                match er::handle_api_request(&mut request, file.to_str().unwrap(), &api_base_path) {
+                let res = if is_python {
+                    handle_python_api_request(&mut request, &file, &api_base_path)
+                } else {
+                    er::handle_api_request(&mut request, file.to_str().unwrap(), &api_base_path)
+                };
+                match res {
                     Ok(Some(response)) => {
                         request.respond(response).ok();
                         return;

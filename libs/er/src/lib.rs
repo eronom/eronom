@@ -304,3 +304,61 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct Config {
+    pub port: Option<u16>,
+    pub api_lang: Option<String>,
+}
+
+pub fn load_config(path: &str) -> anyhow::Result<Config> {
+    let _guard = GcGuard;
+    let mut config = Config::default();
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(config),
+        Err(e) => return Err(e.into()),
+    };
+
+    let tokens = lex(&content);
+    let mut parser = Parser::new(tokens);
+    let stmts = match parser.parse() {
+        Ok(s) => s,
+        Err(e) => anyhow::bail!("Parse error: {}", e),
+    };
+
+    let compiler = Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => anyhow::bail!("Compile error: {}", e),
+    };
+
+    let mut vm = VM::new();
+    vm.register_global("config", Value::Null);
+    if let Err(e) = vm.run(std::rc::Rc::new(function)) {
+        anyhow::bail!("VM Runtime error: {}", e);
+    }
+
+    if let Some(Value::Object(ptr)) = vm.get_global("config") {
+        unsafe {
+            if let backend::GcData::Object(obj) = &(**ptr).data {
+                if let Some(Value::Object(server_ptr)) = obj.get("server") {
+                    if let backend::GcData::Object(server_obj) = &(**server_ptr).data {
+                        if let Some(Value::Number(p)) = server_obj.get("port") {
+                            config.port = Some(*p as u16);
+                        }
+                    }
+                }
+                if let Some(Value::Object(api_ptr)) = obj.get("api") {
+                    if let backend::GcData::Object(api_obj) = &(**api_ptr).data {
+                        if let Some(Value::String(lang)) = api_obj.get("lang") {
+                            config.api_lang = Some(lang.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(config)
+}

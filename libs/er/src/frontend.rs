@@ -709,7 +709,8 @@ impl Parser {
                     self.consume(TokenType::Colon, "Expected ':' after property key.")?;
                     let value = self.expression()?;
                     pairs.push((key, value));
-                    if !self.match_token(&[TokenType::Comma]) {
+                    let _ = self.match_token(&[TokenType::Comma]);
+                    if self.check(&TokenType::RightBrace) || self.is_at_end() {
                         break;
                     }
                 }
