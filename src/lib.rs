@@ -1,6 +1,6 @@
 //! By convention, lib.rs is the root source file when making a library.
 
-pub mod er;
+pub use er;
 pub mod compiler;
 pub mod eval;
 pub mod router;
