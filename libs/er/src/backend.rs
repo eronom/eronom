@@ -14,6 +14,7 @@ pub enum Value {
     Object(Rc<RefCell<HashMap<String, Value>>>),
     Function(Rc<Function>),
     NativeFunction(fn(Vec<Value>) -> Value),
+    ArrayMethod(Rc<RefCell<Vec<Value>>>, String),
 }
 
 impl fmt::Display for Value {
@@ -23,10 +24,21 @@ impl fmt::Display for Value {
             Value::Boolean(b) => write!(f, "{}", b),
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
-            Value::Array(_arr) => write!(f, "[Array]"), // basic formatting
-            Value::Object(_) => write!(f, "[Object]"),
+            Value::Array(arr) => {
+                let items: Vec<String> = arr.borrow().iter().map(|v| v.to_string()).collect();
+                write!(f, "[{}]", items.join(", "))
+            }
+            Value::Object(obj) => {
+                let items: Vec<String> = obj
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| format!("\"{}\": {}", k, v))
+                    .collect();
+                write!(f, "{{{}}}", items.join(", "))
+            }
             Value::Function(_) => write!(f, "[Function]"),
             Value::NativeFunction(_) => write!(f, "[NativeFunction]"),
+            Value::ArrayMethod(_, name) => write!(f, "[ArrayMethod {}]", name),
         }
     }
 }
@@ -41,6 +53,9 @@ impl PartialEq for Value {
             // Simple reference equality for objects/arrays for now
             (Value::Array(a), Value::Array(b)) => Rc::ptr_eq(a, b),
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            (Value::ArrayMethod(a_arr, a_name), Value::ArrayMethod(b_arr, b_name)) => {
+                Rc::ptr_eq(a_arr, b_arr) && a_name == b_name
+            }
             _ => false,
         }
     }
@@ -80,6 +95,8 @@ pub enum OpCode {
     MakeObject(usize), // key-value pairs (so 2x elements on stack)
     GetProperty(String),
     SetProperty(String),
+    GetIndex,
+    SetIndex,
 }
 
 #[derive(Clone, Default)]
@@ -350,6 +367,17 @@ impl Compiler {
                     .add_constant(Value::Function(Rc::new(func)));
                 self.current_chunk().write(OpCode::Constant(idx));
             }
+            Expr::GetIndex(obj, index) => {
+                self.compile_expr(obj)?;
+                self.compile_expr(index)?;
+                self.current_chunk().write(OpCode::GetIndex);
+            }
+            Expr::SetIndex(obj, index, val) => {
+                self.compile_expr(obj)?;
+                self.compile_expr(index)?;
+                self.compile_expr(val)?;
+                self.current_chunk().write(OpCode::SetIndex);
+            }
         }
         Ok(())
     }
@@ -609,6 +637,18 @@ impl VM {
                             let val = map.borrow().get(&name).cloned().unwrap_or(Value::Null);
                             self.stack.push(val);
                         }
+                        Value::Array(arr) => {
+                            if name == "push" || name == "pop" {
+                                self.stack.push(Value::ArrayMethod(arr.clone(), name.clone()));
+                            } else if name == "length" {
+                                self.stack.push(Value::Number(arr.borrow().len() as f64));
+                            } else if let Ok(idx) = name.parse::<usize>() {
+                                let val = arr.borrow().get(idx).cloned().unwrap_or(Value::Null);
+                                self.stack.push(val);
+                            } else {
+                                self.stack.push(Value::Null);
+                            }
+                        }
                         _ => return Err("Only objects have properties".into()),
                     }
                 }
@@ -619,6 +659,21 @@ impl VM {
                         Value::Object(map) => {
                             map.borrow_mut().insert(name, val.clone());
                             self.stack.push(val);
+                        }
+                        Value::Array(arr) => {
+                            if let Ok(idx) = name.parse::<usize>() {
+                                let mut borrowed = arr.borrow_mut();
+                                if idx < borrowed.len() {
+                                    borrowed[idx] = val.clone();
+                                } else if idx == borrowed.len() {
+                                    borrowed.push(val.clone());
+                                } else {
+                                    return Err(format!("Index {} out of bounds for array of length {}", idx, borrowed.len()).into());
+                                }
+                                self.stack.push(val);
+                            } else {
+                                return Err("Cannot set non-numeric property on array".into());
+                            }
                         }
                         _ => return Err("Only objects have properties".into()),
                     }
@@ -649,6 +704,26 @@ impl VM {
                             let result = native(args);
                             self.stack.push(result);
                         }
+                        Value::ArrayMethod(arr, method) => {
+                            let mut args = Vec::with_capacity(arg_count);
+                            for _ in 0..arg_count {
+                                args.push(self.stack.pop().unwrap());
+                            }
+                            args.reverse();
+                            self.stack.pop(); // pop callee
+
+                            let result = if method == "push" {
+                                for arg in args {
+                                    arr.borrow_mut().push(arg);
+                                }
+                                Value::Number(arr.borrow().len() as f64)
+                            } else if method == "pop" {
+                                arr.borrow_mut().pop().unwrap_or(Value::Null)
+                            } else {
+                                Value::Null
+                            };
+                            self.stack.push(result);
+                        }
                         _ => return Err("Can only call functions".into()),
                     }
                 }
@@ -660,6 +735,69 @@ impl VM {
                         _ => false,
                     };
                     self.stack.push(Value::Boolean(res));
+                }
+                OpCode::GetIndex => {
+                    let index = self.stack.pop().unwrap();
+                    let obj = self.stack.pop().unwrap();
+                    match (&obj, &index) {
+                        (Value::Array(arr), Value::Number(n)) => {
+                            let idx = *n as usize;
+                            let val = arr.borrow().get(idx).cloned().unwrap_or(Value::Null);
+                            self.stack.push(val);
+                        }
+                        (Value::Array(arr), Value::String(s)) => {
+                            if let Ok(idx) = s.parse::<usize>() {
+                                let val = arr.borrow().get(idx).cloned().unwrap_or(Value::Null);
+                                self.stack.push(val);
+                            } else {
+                                self.stack.push(Value::Null);
+                            }
+                        }
+                        (Value::Object(map), Value::String(s)) => {
+                            let val = map.borrow().get(s).cloned().unwrap_or(Value::Null);
+                            self.stack.push(val);
+                        }
+                        _ => return Err("Only arrays can be indexed by numbers, and objects by strings".into()),
+                    }
+                }
+                OpCode::SetIndex => {
+                    let val = self.stack.pop().unwrap();
+                    let index = self.stack.pop().unwrap();
+                    let obj = self.stack.pop().unwrap();
+                    match (&obj, &index) {
+                        (Value::Array(arr), Value::Number(n)) => {
+                            let idx = *n as usize;
+                            let mut borrowed = arr.borrow_mut();
+                            if idx < borrowed.len() {
+                                borrowed[idx] = val.clone();
+                            } else if idx == borrowed.len() {
+                                borrowed.push(val.clone());
+                            } else {
+                                return Err(format!("Index {} out of bounds for array of length {}", idx, borrowed.len()).into());
+                            }
+                            self.stack.push(val);
+                        }
+                        (Value::Array(arr), Value::String(s)) => {
+                            if let Ok(idx) = s.parse::<usize>() {
+                                let mut borrowed = arr.borrow_mut();
+                                if idx < borrowed.len() {
+                                    borrowed[idx] = val.clone();
+                                } else if idx == borrowed.len() {
+                                    borrowed.push(val.clone());
+                                } else {
+                                    return Err(format!("Index {} out of bounds for array of length {}", idx, borrowed.len()).into());
+                                }
+                                self.stack.push(val);
+                            } else {
+                                return Err("Cannot set non-numeric property on array".into());
+                            }
+                        }
+                        (Value::Object(map), Value::String(s)) => {
+                            map.borrow_mut().insert(s.clone(), val.clone());
+                            self.stack.push(val);
+                        }
+                        _ => return Err("Only arrays can be indexed by numbers, and objects by strings".into()),
+                    }
                 }
             }
         }

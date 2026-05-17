@@ -1,6 +1,5 @@
 
-
-user = {
+let user = {
   name: "Vishnu",
   age: 25
 }

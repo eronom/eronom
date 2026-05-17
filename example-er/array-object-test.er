@@ -1,5 +1,5 @@
-todos = [
-  { id: 1, text: "Learn Eronom", done: false },
+let todos = [
+  { id: 1, text: "Learn Eronom", done: false }
 ]
 
 print(todos)

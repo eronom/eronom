@@ -90,7 +90,7 @@ impl<'a> Lexer<'a> {
 
     fn skip_whitespace(&mut self) {
         while let Some(&c) = self.peek() {
-            if c.is_whitespace() {
+            if c.is_whitespace() || c == ';' {
                 self.advance();
             } else if c == '/' {
                 // Peek ahead to see if it's a comment
@@ -304,6 +304,8 @@ pub enum Expr {
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
     Function(Vec<String>, Box<Stmt>),
+    GetIndex(Box<Expr>, Box<Expr>),
+    SetIndex(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -498,6 +500,8 @@ impl Parser {
                 return Ok(Expr::Assign(name, Box::new(value)));
             } else if let Expr::Get(obj, name) = expr {
                 return Ok(Expr::Set(obj, name, Box::new(value)));
+            } else if let Expr::GetIndex(obj, index) = expr {
+                return Ok(Expr::SetIndex(obj, index, Box::new(value)));
             }
             return Err("Invalid assignment target.".to_string());
         }
@@ -585,8 +589,19 @@ impl Parser {
                 self.consume(TokenType::RightParen, "Expected ')' after arguments.")?;
                 expr = Expr::Call(Box::new(expr), args);
             } else if self.match_token(&[TokenType::Dot]) {
-                let name = self.consume_ident("Expected property name after '.'.")?;
+                let name = if self.check_ident() {
+                    self.consume_ident("Expected property name.")?
+                } else if let TokenType::Number(n) = self.peek().ty.clone() {
+                    self.advance();
+                    n.to_string()
+                } else {
+                    return Err(format!("Error at line {}: Expected property name or number after '.'.", self.peek().line));
+                };
                 expr = Expr::Get(Box::new(expr), name);
+            } else if self.match_token(&[TokenType::LeftBracket]) {
+                let index = self.expression()?;
+                self.consume(TokenType::RightBracket, "Expected ']' after index.")?;
+                expr = Expr::GetIndex(Box::new(expr), Box::new(index));
             } else {
                 break;
             }
