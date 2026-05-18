@@ -1,0 +1,10 @@
+app = route()
+todos = [
+  { id: 1, text: "Learn Eronomsssvvsaaa", done: false }
+]
+
+// GET all todos
+app.get('/todos', (c) => {
+  return c.json(todos)
+})
+
