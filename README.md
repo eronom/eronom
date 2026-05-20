@@ -1,6 +1,6 @@
 # Eronom
 
-An ultra-fast, zero-dependency, Vite-style Hot Module Replacement (HMR) development server built natively in zig. 
+An ultra-fast, zero-dependency, Vite-style Hot Module Replacement (HMR) development server built natively in rust. 
 
 Eronom is specifically designed to parse and seamlessly hot-swap `.erm` single-file components (which combine HTML, CSS, and JS) in real-time, completely eliminating the need for full page refreshes during UI development.
 
@@ -8,14 +8,14 @@ Eronom is specifically designed to parse and seamlessly hot-swap `.erm` single-f
 * **Zero Dependencies:** No Node.js, `npm`, or massive `node_modules` folders required.
 * **Authentic HMR:** Intelligently hot-swaps CSS and surgically replaces inner DOM nodes instantly without blinking the browser.
 * **Intelligent Vanilla JS Engine:** Automatically intercepts `DOMContentLoaded` and `load` events, securely dismounts ghost `setInterval` loops, and natively evaluates injected JavaScript without leaking state.
-* **Sub-millisecond Feedback:** Powered by zig's native HTTP execution and local filesystem watchers.
+* **Sub-millisecond Feedback:** Powered by rust's native HTTP execution and local filesystem watchers.
 
 ## 🚀 Getting Started
 
 ### 1. Build the engine
 To build the server into a tiny, portable executable, run:
 ```bash
-zig build 
+rust build 
 ```
 
 ### 2. Run the dev server
