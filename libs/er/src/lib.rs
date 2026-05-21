@@ -4,8 +4,8 @@ pub mod legacy;
 
 use std::collections::HashMap;
 
-use backend::{Compiler, Value, VM};
-use frontend::{lex, Parser};
+use backend::{Compiler, VM, Value};
+use frontend::{Parser, lex};
 
 struct GcGuard;
 impl Drop for GcGuard {
@@ -30,7 +30,10 @@ fn route_fn(_args: Vec<Value>) -> Value {
 fn app_get(args: Vec<Value>) -> Value {
     if args.len() >= 2 {
         if let (Value::String(path), handler) = (&args[0], &args[1]) {
-            ROUTES.with(|r| r.borrow_mut().push(("GET".to_string(), path.to_string(), handler.clone())));
+            ROUTES.with(|r| {
+                r.borrow_mut()
+                    .push(("GET".to_string(), path.to_string(), handler.clone()))
+            });
         }
     }
     Value::Null
@@ -39,7 +42,10 @@ fn app_get(args: Vec<Value>) -> Value {
 fn app_post(args: Vec<Value>) -> Value {
     if args.len() >= 2 {
         if let (Value::String(path), handler) = (&args[0], &args[1]) {
-            ROUTES.with(|r| r.borrow_mut().push(("POST".to_string(), path.to_string(), handler.clone())));
+            ROUTES.with(|r| {
+                r.borrow_mut()
+                    .push(("POST".to_string(), path.to_string(), handler.clone()))
+            });
         }
     }
     Value::Null
@@ -197,7 +203,7 @@ pub fn handle_api_request(
         let c_val = Value::Object(backend::gc_allocate(backend::GcData::Object(c_obj)));
 
         // We need to call the handler in the VM.
-        // We can do this by pushing the handler and args, and generating a dummy function, 
+        // We can do this by pushing the handler and args, and generating a dummy function,
         // OR we can expose a `call_function` method on VM.
         // Let's just create a small bytecode chunk to call it, or run it directly.
         match handler {
@@ -205,7 +211,7 @@ pub fn handle_api_request(
                 // To keep it simple, let's just clear the VM and run the function
                 let mut call_vm = VM::new();
                 call_vm.register_global("route", Value::NativeFunction(route_fn));
-                
+
                 // We need the handler on the stack, then the args, then OpCode::Call.
                 // Let's create a new function that just calls our handler.
                 let mut call_chunk = backend::Chunk::default();
@@ -221,16 +227,28 @@ pub fn handle_api_request(
                     chunk: call_chunk,
                     arity: 0,
                 };
-                
+
                 if let Err(e) = call_vm.run(std::rc::Rc::new(wrapper)) {
                     anyhow::bail!("VM Runtime error in handler: {}", e);
                 }
-                
+
                 let response_str = RESPONSE.with(|r| r.borrow().clone());
                 if let Some(json_data) = response_str {
                     let response = tiny_http::Response::from_string(json_data)
-                        .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap())
-                        .with_header(tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap());
+                        .with_header(
+                            tiny_http::Header::from_bytes(
+                                &b"Content-Type"[..],
+                                &b"application/json"[..],
+                            )
+                            .unwrap(),
+                        )
+                        .with_header(
+                            tiny_http::Header::from_bytes(
+                                &b"Access-Control-Allow-Origin"[..],
+                                &b"*"[..],
+                            )
+                            .unwrap(),
+                        );
                     return Ok(Some(response));
                 }
             }

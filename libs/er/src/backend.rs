@@ -88,7 +88,7 @@ pub fn gc_mark_value(val: &Value) {
                 (*(*ptr)).color = GcColor::Gray;
                 GRAY_STACK.with(|gs| gs.borrow_mut().push(*ptr));
             }
-        }
+        },
         Value::Function(func) => {
             for constant in &func.chunk.constants {
                 gc_mark_value(constant);
@@ -359,7 +359,9 @@ impl Compiler {
                 self.current_chunk().write(OpCode::Pop);
             }
             Stmt::Print(expr) => {
-                let name_idx = self.current_chunk().add_constant(Value::String(Rc::from("print")));
+                let name_idx = self
+                    .current_chunk()
+                    .add_constant(Value::String(Rc::from("print")));
                 self.current_chunk().write(OpCode::GetGlobal(name_idx));
                 self.compile_expr(expr)?;
                 self.current_chunk().write(OpCode::Call(1));
@@ -524,13 +526,17 @@ impl Compiler {
             }
             Expr::Get(obj, name) => {
                 self.compile_expr(obj)?;
-                let name_idx = self.current_chunk().add_constant(Value::String(Rc::from(name.as_str())));
+                let name_idx = self
+                    .current_chunk()
+                    .add_constant(Value::String(Rc::from(name.as_str())));
                 self.current_chunk().write(OpCode::GetProperty(name_idx));
             }
             Expr::Set(obj, name, val) => {
                 self.compile_expr(obj)?;
                 self.compile_expr(val)?;
-                let name_idx = self.current_chunk().add_constant(Value::String(Rc::from(name.as_str())));
+                let name_idx = self
+                    .current_chunk()
+                    .add_constant(Value::String(Rc::from(name.as_str())));
                 self.current_chunk().write(OpCode::SetProperty(name_idx));
             }
             Expr::Array(items) => {
@@ -672,7 +678,7 @@ impl VM {
                 if ALLOC_COUNT.with(|c| c.get()) >= 10 {
                     GC_PHASE.with(|p| p.set(GcPhase::Mark));
                     GRAY_STACK.with(|gs| gs.borrow_mut().clear());
-                    
+
                     for val in &self.stack {
                         mark_value(val);
                     }
@@ -792,7 +798,14 @@ impl VM {
 
         // Cache active frame's instruction pointer and end pointer
         let mut ip = unsafe { frame.function.chunk.code.as_ptr().add(frame.ip) };
-        let mut ip_end = unsafe { frame.function.chunk.code.as_ptr().add(frame.function.chunk.code.len()) };
+        let mut ip_end = unsafe {
+            frame
+                .function
+                .chunk
+                .code
+                .as_ptr()
+                .add(frame.function.chunk.code.len())
+        };
 
         while ip < ip_end {
             let instruction = unsafe { *ip };
@@ -821,7 +834,14 @@ impl VM {
 
                     frame = unsafe { &mut *frame_ptr };
                     ip = unsafe { frame.function.chunk.code.as_ptr().add(frame.ip) };
-                    ip_end = unsafe { frame.function.chunk.code.as_ptr().add(frame.function.chunk.code.len()) };
+                    ip_end = unsafe {
+                        frame
+                            .function
+                            .chunk
+                            .code
+                            .as_ptr()
+                            .add(frame.function.chunk.code.len())
+                    };
                 }
                 OpCode::Negate => {
                     if let Value::Number(n) = unsafe { self.stack.last_mut().unwrap_unchecked() } {
@@ -842,10 +862,12 @@ impl VM {
                             let a = self.stack.pop().unwrap_unchecked();
                             match (a, b) {
                                 (Value::String(sa), sb) => {
-                                    self.stack.push(Value::String(Rc::from(format!("{}{}", sa, sb))));
+                                    self.stack
+                                        .push(Value::String(Rc::from(format!("{}{}", sa, sb))));
                                 }
                                 (sa, Value::String(sb)) => {
-                                    self.stack.push(Value::String(Rc::from(format!("{}{}", sa, sb))));
+                                    self.stack
+                                        .push(Value::String(Rc::from(format!("{}{}", sa, sb))));
                                 }
                                 _ => return Err("Operands must be numbers or strings".into()),
                             }
@@ -978,7 +1000,10 @@ impl VM {
                     if self.globals.contains_key(&name) {
                         self.globals.insert(name, val);
                     } else {
-                        return Err(format!("Variable '{}' not declared. It needs to be declared with 'let' or 'const'.", name));
+                        return Err(format!(
+                            "Variable '{}' not declared. It needs to be declared with 'let' or 'const'.",
+                            name
+                        ));
                     }
                 }
                 OpCode::GetLocal(idx) => {
@@ -1049,14 +1074,16 @@ impl VM {
                                 }
                                 _ => unreachable!(),
                             }
-                        }
+                        },
                         Value::Array(ptr) => unsafe {
                             match &(*ptr).data {
                                 GcData::Array(arr) => {
                                     if &*name == "push" {
-                                        self.stack.push(Value::ArrayMethod(ptr, ArrayMethodType::Push));
+                                        self.stack
+                                            .push(Value::ArrayMethod(ptr, ArrayMethodType::Push));
                                     } else if &*name == "pop" {
-                                        self.stack.push(Value::ArrayMethod(ptr, ArrayMethodType::Pop));
+                                        self.stack
+                                            .push(Value::ArrayMethod(ptr, ArrayMethodType::Pop));
                                     } else if &*name == "length" {
                                         self.stack.push(Value::Number(arr.len() as f64));
                                     } else if let Ok(idx) = name.parse::<usize>() {
@@ -1068,7 +1095,7 @@ impl VM {
                                 }
                                 _ => unreachable!(),
                             }
-                        }
+                        },
                         _ => return Err("Only objects have properties".into()),
                     }
                 }
@@ -1089,7 +1116,7 @@ impl VM {
                                 }
                                 _ => unreachable!(),
                             }
-                        }
+                        },
                         Value::Array(ptr) => unsafe {
                             match &mut (*ptr).data {
                                 GcData::Array(arr) => {
@@ -1099,17 +1126,24 @@ impl VM {
                                         } else if idx == arr.len() {
                                             arr.push(val.clone());
                                         } else {
-                                            return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
+                                            return Err(format!(
+                                                "Index {} out of bounds for array of length {}",
+                                                idx,
+                                                arr.len()
+                                            )
+                                            .into());
                                         }
                                         gc_write_barrier(ptr, &val);
                                         self.stack.push(val);
                                     } else {
-                                        return Err("Cannot set non-numeric property on array".into());
+                                        return Err(
+                                            "Cannot set non-numeric property on array".into()
+                                        );
                                     }
                                 }
                                 _ => unreachable!(),
                             }
-                        }
+                        },
                         _ => return Err("Only objects have properties".into()),
                     }
                 }
@@ -1124,7 +1158,8 @@ impl VM {
                                 ));
                             }
                             unsafe {
-                                frame.ip = ip.offset_from(frame.function.chunk.code.as_ptr()) as usize;
+                                frame.ip =
+                                    ip.offset_from(frame.function.chunk.code.as_ptr()) as usize;
                             }
                             self.frames.push(CallFrame {
                                 function: func,
@@ -1137,7 +1172,14 @@ impl VM {
                             };
                             frame = unsafe { &mut *frame_ptr };
                             ip = unsafe { frame.function.chunk.code.as_ptr().add(frame.ip) };
-                            ip_end = unsafe { frame.function.chunk.code.as_ptr().add(frame.function.chunk.code.len()) };
+                            ip_end = unsafe {
+                                frame
+                                    .function
+                                    .chunk
+                                    .code
+                                    .as_ptr()
+                                    .add(frame.function.chunk.code.len())
+                            };
                         }
                         Value::NativeFunction(native) => {
                             let mut args = Vec::with_capacity(arg_count);
@@ -1159,20 +1201,16 @@ impl VM {
 
                             let result = unsafe {
                                 match &mut (*ptr).data {
-                                    GcData::Array(arr) => {
-                                        match method {
-                                            ArrayMethodType::Push => {
-                                                for arg in args {
-                                                    gc_write_barrier(ptr, &arg);
-                                                    arr.push(arg);
-                                                }
-                                                Value::Number(arr.len() as f64)
+                                    GcData::Array(arr) => match method {
+                                        ArrayMethodType::Push => {
+                                            for arg in args {
+                                                gc_write_barrier(ptr, &arg);
+                                                arr.push(arg);
                                             }
-                                            ArrayMethodType::Pop => {
-                                                arr.pop().unwrap_or(Value::Null)
-                                            }
+                                            Value::Number(arr.len() as f64)
                                         }
-                                    }
+                                        ArrayMethodType::Pop => arr.pop().unwrap_or(Value::Null),
+                                    },
                                     _ => unreachable!(),
                                 }
                             };
@@ -1203,7 +1241,7 @@ impl VM {
                                 }
                                 _ => unreachable!(),
                             }
-                        }
+                        },
                         (Value::Array(ptr), Value::String(s)) => unsafe {
                             if let Ok(idx) = s.parse::<usize>() {
                                 match &(**ptr).data {
@@ -1216,7 +1254,7 @@ impl VM {
                             } else {
                                 self.stack.push(Value::Null);
                             }
-                        }
+                        },
                         (Value::Object(ptr), Value::String(s)) => unsafe {
                             match &(**ptr).data {
                                 GcData::Object(map) => {
@@ -1225,8 +1263,13 @@ impl VM {
                                 }
                                 _ => unreachable!(),
                             }
+                        },
+                        _ => {
+                            return Err(
+                                "Only arrays can be indexed by numbers, and objects by strings"
+                                    .into(),
+                            );
                         }
-                        _ => return Err("Only arrays can be indexed by numbers, and objects by strings".into()),
                     }
                 }
                 OpCode::SetIndex => {
@@ -1243,14 +1286,19 @@ impl VM {
                                     } else if idx == arr.len() {
                                         arr.push(val.clone());
                                     } else {
-                                        return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
+                                        return Err(format!(
+                                            "Index {} out of bounds for array of length {}",
+                                            idx,
+                                            arr.len()
+                                        )
+                                        .into());
                                     }
                                     gc_write_barrier(*ptr, &val);
                                     self.stack.push(val);
                                 }
                                 _ => unreachable!(),
                             }
-                        }
+                        },
                         (Value::Array(ptr), Value::String(s)) => unsafe {
                             if let Ok(idx) = s.parse::<usize>() {
                                 match &mut (**ptr).data {
@@ -1260,7 +1308,12 @@ impl VM {
                                         } else if idx == arr.len() {
                                             arr.push(val.clone());
                                         } else {
-                                            return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
+                                            return Err(format!(
+                                                "Index {} out of bounds for array of length {}",
+                                                idx,
+                                                arr.len()
+                                            )
+                                            .into());
                                         }
                                         gc_write_barrier(*ptr, &val);
                                         self.stack.push(val);
@@ -1270,7 +1323,7 @@ impl VM {
                             } else {
                                 return Err("Cannot set non-numeric property on array".into());
                             }
-                        }
+                        },
                         (Value::Object(ptr), Value::String(s)) => unsafe {
                             match &mut (**ptr).data {
                                 GcData::Object(map) => {
@@ -1280,8 +1333,13 @@ impl VM {
                                 }
                                 _ => unreachable!(),
                             }
+                        },
+                        _ => {
+                            return Err(
+                                "Only arrays can be indexed by numbers, and objects by strings"
+                                    .into(),
+                            );
                         }
-                        _ => return Err("Only arrays can be indexed by numbers, and objects by strings".into()),
                     }
                 }
             }
