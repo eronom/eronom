@@ -221,6 +221,90 @@ print(os.clock() - start)
         }
     }
 
+    // --- Node benchmark ---
+    let run_node_file =
+        |args: &[&str], source: &str| -> Result<String, Box<dyn std::error::Error>> {
+            let temp_filename = "temp_bench_node.js";
+            std::fs::write(temp_filename, source)?;
+            let output = std::process::Command::new("node")
+                .args(args)
+                .arg(temp_filename)
+                .output();
+            let _ = std::fs::remove_file(temp_filename);
+            let output = output?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            } else {
+                Err("Command failed".into())
+            }
+        };
+
+    let node_source = r#"
+let x = 0
+for (let i = 1; i < 10000; i++) {
+    let val = i + i
+    if (val > 5000) {
+        let dummy = val + 1
+    } else {
+        let dummy = val + 2
+    }
+}
+"#;
+
+    let node_pure_source = format!(
+        r#"
+const start = performance.now();
+for (let r = 0; r < {}; r++) {{
+    let x = 0;
+    for (let i = 1; i < 10000; i++) {{
+        let val = i + i;
+        if (val > 5000) {{
+            let dummy = val + 1;
+        }} else {{
+            let dummy = val + 2;
+        }}
+    }}
+}}
+console.log((performance.now() - start) / 1000);
+"#,
+        iterations
+    );
+
+    let mut node_pure_avg = std::time::Duration::from_secs(0);
+    if let Ok(output) = run_node_file(&[], &node_pure_source) {
+        if let Ok(secs) = output.trim().parse::<f64>() {
+            node_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
+        }
+    }
+
+    let mut node_cli_avg = std::time::Duration::from_secs(0);
+    if std::process::Command::new("node")
+        .arg("-v")
+        .output()
+        .is_ok()
+    {
+        let temp_filename = "temp_bench_node_cli.js";
+        if std::fs::write(temp_filename, node_source).is_ok() {
+            let start = Instant::now();
+            let mut success = true;
+            for _ in 0..iterations {
+                if !std::process::Command::new("node")
+                    .arg(temp_filename)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                {
+                    success = false;
+                    break;
+                }
+            }
+            let _ = std::fs::remove_file(temp_filename);
+            if success {
+                node_cli_avg = start.elapsed() / iterations;
+            }
+        }
+    }
+
     // --- Results ---
     eprintln!("┌──────────────────────────────────────────┐");
     eprintln!("│          ER BENCHMARK RESULTS            │");
@@ -250,6 +334,12 @@ print(os.clock() - start)
             "│  Luau+Codegen (CLI)  │  avg {:>12?}  │",
             luau_codegen_cli_avg
         );
+    }
+    if node_pure_avg.as_nanos() > 0 {
+        eprintln!("│  Node (pure run)     │  avg {:>12?}  │", node_pure_avg);
+    }
+    if node_cli_avg.as_nanos() > 0 {
+        eprintln!("│  Node (external CLI) │  avg {:>12?}  │", node_cli_avg);
     }
     eprintln!("├──────────────────────────────────────────┤");
 
@@ -310,6 +400,26 @@ print(os.clock() - start)
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / luau_codegen_cli_avg.as_nanos() as f64;
             eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Luau (cg CLI)│", slowdown);
+        }
+    }
+
+    if node_pure_avg.as_nanos() > 0 {
+        if vm_avg < node_pure_avg {
+            let speedup = node_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            eprintln!("│  ✅ VM is {:.2}x FASTER than Node (pure)  │", speedup);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
+            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Node (pure)  │", slowdown);
+        }
+    }
+
+    if node_cli_avg.as_nanos() > 0 {
+        if vm_avg < node_cli_avg {
+            let speedup = node_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            eprintln!("│  ✅ VM is {:.2}x FASTER than Node (CLI)   │", speedup);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
+            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Node (CLI)   │", slowdown);
         }
     }
 
