@@ -1,6 +1,5 @@
 /// Benchmark: VM-based vs Legacy tree-walking interpreter
 /// Run with: cargo run --release --bin bench -p er
-use std::rc::Rc;
 use std::time::Instant;
 
 fn main() {
@@ -49,7 +48,7 @@ for i in 1..10000 {
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
         vm.register_global("print", er::backend::Value::NativeFunction(noop_print));
-        vm.run(Rc::new(function)).ok();
+        vm.run(function).ok();
     }
 
     let start = Instant::now();
@@ -61,7 +60,7 @@ for i in 1..10000 {
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
         vm.register_global("print", er::backend::Value::NativeFunction(noop_print));
-        vm.run(Rc::new(function)).ok();
+        vm.run(function).ok();
     }
     let vm_elapsed = start.elapsed();
     let vm_avg = vm_elapsed / iterations;

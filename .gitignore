@@ -1,5 +1,6 @@
 build/
 
-# Added by cargo
+/gc
+/luau
 
 /target

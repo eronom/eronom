@@ -1,4 +1,5 @@
-pub mod backend;
+pub mod vm;
+pub use vm as backend;
 pub mod frontend;
 pub mod legacy;
 
@@ -29,10 +30,10 @@ fn route_fn(_args: Vec<Value>) -> Value {
 
 fn app_get(args: Vec<Value>) -> Value {
     if args.len() >= 2 {
-        if let (Value::String(path), handler) = (&args[0], &args[1]) {
+        if let (Some(path), handler) = (args[0].as_str(), args[1]) {
             ROUTES.with(|r| {
                 r.borrow_mut()
-                    .push(("GET".to_string(), path.to_string(), handler.clone()))
+                    .push(("GET".to_string(), path.to_string(), handler))
             });
         }
     }
@@ -41,10 +42,10 @@ fn app_get(args: Vec<Value>) -> Value {
 
 fn app_post(args: Vec<Value>) -> Value {
     if args.len() >= 2 {
-        if let (Value::String(path), handler) = (&args[0], &args[1]) {
+        if let (Some(path), handler) = (args[0].as_str(), args[1]) {
             ROUTES.with(|r| {
                 r.borrow_mut()
-                    .push(("POST".to_string(), path.to_string(), handler.clone()))
+                    .push(("POST".to_string(), path.to_string(), handler))
             });
         }
     }
@@ -64,7 +65,12 @@ fn value_to_json(val: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
+        Value::String(ptr) => unsafe {
+            match &(**ptr).data {
+                backend::GcData::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
+                _ => unreachable!(),
+            }
+        },
         Value::Array(ptr) => unsafe {
             match &(**ptr).data {
                 backend::GcData::Array(arr) => {
@@ -139,12 +145,11 @@ pub fn handle_api_request(
     if request.method() == &tiny_http::Method::Post {
         let mut body = String::new();
         request.as_reader().read_to_string(&mut body).ok();
-        // In a real implementation we'd parse JSON and register it as a global 'body' variable.
-        // For simplicity, we just inject it as a string for now.
-        vm.register_global("body_raw", Value::String(std::rc::Rc::from(body)));
+        let body_ptr = backend::gc_allocate(backend::GcData::String(body));
+        vm.register_global("body_raw", Value::String(body_ptr));
     }
 
-    if let Err(e) = vm.run(std::rc::Rc::new(function)) {
+    if let Err(e) = vm.run(function) {
         anyhow::bail!("VM Runtime error: {}", e);
     }
 
@@ -190,7 +195,7 @@ pub fn handle_api_request(
                 }
 
                 if match_route {
-                    matched_handler = Some(handler.clone());
+                    matched_handler = Some(*handler);
                     break;
                 }
             }
@@ -202,20 +207,13 @@ pub fn handle_api_request(
         c_obj.insert(std::rc::Rc::from("json"), Value::NativeFunction(c_json));
         let c_val = Value::Object(backend::gc_allocate(backend::GcData::Object(c_obj)));
 
-        // We need to call the handler in the VM.
-        // We can do this by pushing the handler and args, and generating a dummy function,
-        // OR we can expose a `call_function` method on VM.
-        // Let's just create a small bytecode chunk to call it, or run it directly.
         match handler {
-            Value::Function(func) => {
-                // To keep it simple, let's just clear the VM and run the function
+            Value::Function(func_ptr) => {
                 let mut call_vm = VM::new();
                 call_vm.register_global("route", Value::NativeFunction(route_fn));
 
-                // We need the handler on the stack, then the args, then OpCode::Call.
-                // Let's create a new function that just calls our handler.
                 let mut call_chunk = backend::Chunk::default();
-                let f_idx = call_chunk.add_constant(Value::Function(func.clone()));
+                let f_idx = call_chunk.add_constant(Value::Function(func_ptr));
                 call_chunk.write(backend::OpCode::Constant(f_idx));
                 let arg_idx = call_chunk.add_constant(c_val);
                 call_chunk.write(backend::OpCode::Constant(arg_idx));
@@ -228,7 +226,7 @@ pub fn handle_api_request(
                     arity: 0,
                 };
 
-                if let Err(e) = call_vm.run(std::rc::Rc::new(wrapper)) {
+                if let Err(e) = call_vm.run(wrapper) {
                     anyhow::bail!("VM Runtime error in handler: {}", e);
                 }
 
@@ -316,7 +314,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     let mut vm = VM::new();
     vm.register_global("print", Value::NativeFunction(native_print));
 
-    if let Err(e) = vm.run(std::rc::Rc::new(function)) {
+    if let Err(e) = vm.run(function) {
         anyhow::bail!("VM Runtime error: {}", e);
     }
 
