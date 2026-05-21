@@ -85,6 +85,7 @@ pub fn gc_free_all() {
     PREV_SWEEP_PTR.with(|p| p.set(std::ptr::null_mut()));
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn gc_mark_value(val: &Value) {
     if (val.0 & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
         let tag = val.0 & 0xffff_0000_0000_0000;
@@ -100,6 +101,7 @@ pub fn gc_mark_value(val: &Value) {
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn gc_mark_object(ptr: *mut GcObject) {
     if ptr.is_null() {
         return;
@@ -112,6 +114,7 @@ pub fn gc_mark_object(ptr: *mut GcObject) {
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn gc_blacken_object(ptr: *mut GcObject) {
     unsafe {
         if ptr.is_null() {
@@ -147,6 +150,7 @@ pub fn mark_object(ptr: *mut GcObject) {
     gc_mark_object(ptr);
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn gc_write_barrier(parent: *mut GcObject, child: &Value) {
     unsafe {
         if parent.is_null() {

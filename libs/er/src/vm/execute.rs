@@ -18,6 +18,13 @@ pub struct CallFrame {
     pub function: *mut GcObject,
     pub ip: usize,
     pub slots_offset: usize,
+    pub dest_reg: usize,
+}
+
+impl Default for VM {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VM {
@@ -43,6 +50,7 @@ impl VM {
             function: func_ptr,
             ip: 0,
             slots_offset: self.stack.len(),
+            dest_reg: 0,
         });
 
         self.execute()
@@ -169,7 +177,7 @@ impl VM {
         res
     }
 
-    fn execute_loop(&mut self, original_len: usize) -> Result<Value, String> {
+    fn execute_loop(&mut self, _original_len: usize) -> Result<Value, String> {
         unsafe {
             let mut frame_ptr = {
                 let len = self.frames.len();
@@ -193,20 +201,15 @@ impl VM {
             let mut ip = code_ptr.add(frame.ip);
 
             let mut stack_start = self.stack.as_mut_ptr();
-            let mut stack_top = stack_start.add(original_len);
             let mut frame_slots = stack_start.add(slots_offset);
 
             macro_rules! sync_stack {
-                () => {
-                    let len = stack_top.offset_from(stack_start) as usize;
-                    self.stack.set_len(len);
-                };
+                () => {};
             }
 
             macro_rules! reload_stack {
                 () => {
                     stack_start = self.stack.as_mut_ptr();
-                    stack_top = stack_start.add(self.stack.len());
                     frame_slots = stack_start.add(slots_offset);
                 };
             }
@@ -216,56 +219,54 @@ impl VM {
                 ip = ip.add(1);
 
                 match instruction.op {
-                    OpCode::Constant => {
+                    OpCode::LoadConst => {
+                        let dest = instruction.ra as usize;
                         let val = *constants_ptr.add(instruction.operand as usize);
-                        *stack_top = val;
-                        stack_top = stack_top.add(1);
+                        *frame_slots.add(dest) = val;
                     }
-                    OpCode::Return => {
-                        let result = {
-                            stack_top = stack_top.sub(1);
-                            *stack_top
-                        };
-                        let frame_slots_offset = slots_offset;
-
-                        self.frames.pop();
-                        if self.frames.is_empty() {
-                            let len = stack_top.offset_from(stack_start) as usize;
-                            self.stack.set_len(len);
-                            return Ok(result);
-                        }
-
-                        frame_ptr = {
-                            let len = self.frames.len();
-                            self.frames.as_mut_ptr().add(len - 1)
-                        };
-                        
-                        stack_top = stack_start.add(frame_slots_offset);
-                        *stack_top = result;
-                        stack_top = stack_top.add(1);
-
-                        frame = &mut *frame_ptr;
-                        func = get_func!(frame.function);
-                        code_ptr = func.chunk.code.as_ptr();
-                        constants_ptr = func.chunk.constants.as_ptr();
-                        slots_offset = frame.slots_offset;
-                        frame_slots = stack_start.add(slots_offset);
-                        ip = code_ptr.add(frame.ip);
+                    OpCode::LoadNull => {
+                        let dest = instruction.ra as usize;
+                        *frame_slots.add(dest) = Value::null();
+                    }
+                    OpCode::LoadBool => {
+                        let dest = instruction.ra as usize;
+                        *frame_slots.add(dest) = Value::boolean(instruction.rb != 0);
+                    }
+                    OpCode::Move => {
+                        let dest = instruction.ra as usize;
+                        let src = instruction.rb as usize;
+                        *frame_slots.add(dest) = *frame_slots.add(src);
                     }
                     OpCode::Negate => {
-                        let val_ptr = stack_top.sub(1);
-                        if (*val_ptr).is_number() {
-                            *val_ptr = Value::number(-(*val_ptr).as_number());
+                        let dest = instruction.ra as usize;
+                        let src = instruction.rb as usize;
+                        let val = *frame_slots.add(src);
+                        if val.is_number() {
+                            *frame_slots.add(dest) = Value::number_unchecked(-val.as_number());
+                        } else {
+                            return Err("Operand must be a number".into());
                         }
                     }
-                    OpCode::Add => {
-                        stack_top = stack_top.sub(1);
-                        let b = *stack_top;
-                        let a_ptr = stack_top.sub(1);
-                        if (*a_ptr).is_number() && b.is_number() {
-                            *a_ptr = Value::number((*a_ptr).as_number() + b.as_number());
+                    OpCode::Not => {
+                        let dest = instruction.ra as usize;
+                        let src = instruction.rb as usize;
+                        let val = *frame_slots.add(src);
+                        let res = if val.is_boolean() {
+                            !val.as_boolean()
+                        } else if val.is_null() {
+                            true
                         } else {
-                            let a = *a_ptr;
+                            false
+                        };
+                        *frame_slots.add(dest) = Value::boolean(res);
+                    }
+                    OpCode::Add => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::number_unchecked(a.as_number() + b.as_number());
+                        } else {
                             if a.is_string() {
                                 let sa_str = match &(*a.as_gc_ptr()).data {
                                     GcData::String(s) => s,
@@ -274,7 +275,7 @@ impl VM {
                                 let sb_str = b.to_string();
                                 let new_str = format!("{}{}", sa_str, sb_str);
                                 let new_ptr = gc_allocate(GcData::String(new_str));
-                                *a_ptr = Value::string(new_ptr);
+                                *frame_slots.add(dest) = Value::string(new_ptr);
                             } else if b.is_string() {
                                 let sa_str = a.to_string();
                                 let sb_str = match &(*b.as_gc_ptr()).data {
@@ -283,61 +284,67 @@ impl VM {
                                 };
                                 let new_str = format!("{}{}", sa_str, sb_str);
                                 let new_ptr = gc_allocate(GcData::String(new_str));
-                                *a_ptr = Value::string(new_ptr);
+                                *frame_slots.add(dest) = Value::string(new_ptr);
                             } else {
-                                sync_stack!();
                                 return Err("Operands must be numbers or strings".into());
                             }
                         }
                     }
                     OpCode::Sub => {
-                        stack_top = stack_top.sub(1);
-                        let b = *stack_top;
-                        let a_ptr = stack_top.sub(1);
-                        if (*a_ptr).is_number() && b.is_number() {
-                            *a_ptr = Value::number((*a_ptr).as_number() - b.as_number());
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::number_unchecked(a.as_number() - b.as_number());
+                        } else {
+                            return Err("Operands must be numbers".into());
                         }
                     }
                     OpCode::Mul => {
-                        stack_top = stack_top.sub(1);
-                        let b = *stack_top;
-                        let a_ptr = stack_top.sub(1);
-                        if (*a_ptr).is_number() && b.is_number() {
-                            *a_ptr = Value::number((*a_ptr).as_number() * b.as_number());
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::number_unchecked(a.as_number() * b.as_number());
+                        } else {
+                            return Err("Operands must be numbers".into());
                         }
                     }
                     OpCode::Div => {
-                        stack_top = stack_top.sub(1);
-                        let b = *stack_top;
-                        let a_ptr = stack_top.sub(1);
-                        if (*a_ptr).is_number() && b.is_number() {
-                            *a_ptr = Value::number((*a_ptr).as_number() / b.as_number());
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::number_unchecked(a.as_number() / b.as_number());
+                        } else {
+                            return Err("Operands must be numbers".into());
                         }
                     }
                     OpCode::Equal => {
-                        stack_top = stack_top.sub(1);
-                        let b = *stack_top;
-                        let a_ptr = stack_top.sub(1);
-                        *a_ptr = Value::boolean(*a_ptr == b);
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        *frame_slots.add(dest) = Value::boolean(a == b);
                     }
                     OpCode::Greater => {
-                        stack_top = stack_top.sub(1);
-                        let b = *stack_top;
-                        let a_ptr = stack_top.sub(1);
-                        if (*a_ptr).is_number() && b.is_number() {
-                            *a_ptr = Value::boolean((*a_ptr).as_number() > b.as_number());
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::boolean(a.as_number() > b.as_number());
+                        } else {
+                            return Err("Operands must be numbers".into());
                         }
                     }
                     OpCode::Less => {
-                        stack_top = stack_top.sub(1);
-                        let b = *stack_top;
-                        let a_ptr = stack_top.sub(1);
-                        if (*a_ptr).is_number() && b.is_number() {
-                            *a_ptr = Value::boolean((*a_ptr).as_number() < b.as_number());
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::boolean(a.as_number() < b.as_number());
+                        } else {
+                            return Err("Operands must be numbers".into());
                         }
-                    }
-                    OpCode::Pop => {
-                        stack_top = stack_top.sub(1);
                     }
                     OpCode::DefineGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
@@ -345,8 +352,7 @@ impl VM {
                             GcData::String(s) => Rc::from(s.as_str()),
                             _ => unreachable!(),
                         };
-                        stack_top = stack_top.sub(1);
-                        let val = *stack_top;
+                        let val = *frame_slots.add(instruction.ra as usize);
                         self.globals.insert(name, val);
                     }
                     OpCode::GetGlobal => {
@@ -356,86 +362,71 @@ impl VM {
                             _ => unreachable!(),
                         };
                         if let Some(val) = self.globals.get(name) {
-                            *stack_top = *val;
-                            stack_top = stack_top.add(1);
+                            *frame_slots.add(instruction.ra as usize) = *val;
                         } else {
-                            sync_stack!();
                             return Err(format!("Undefined variable '{}'", name));
                         }
                     }
                     OpCode::SetGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match &(*name_val.as_gc_ptr()).data {
+                        let name: Rc<str> = match &(*name_val.as_gc_ptr()).data {
                             GcData::String(s) => Rc::from(s.as_str()),
                             _ => unreachable!(),
                         };
-                        let val = *stack_top.sub(1);
-                        if self.globals.contains_key(&name) {
-                            self.globals.insert(name, val);
-                        } else {
-                            sync_stack!();
-                            return Err(format!(
-                                "Variable '{}' not declared. It needs to be declared with 'let' or 'const'.",
-                                name
-                            ));
-                        }
-                    }
-                    OpCode::GetLocal => {
-                        let val = *frame_slots.add(instruction.operand as usize);
-                        *stack_top = val;
-                        stack_top = stack_top.add(1);
-                    }
-                    OpCode::SetLocal => {
-                        let val = *stack_top.sub(1);
-                        *frame_slots.add(instruction.operand as usize) = val;
-                    }
-                    OpCode::JumpIfFalse => {
-                        let val = *stack_top.sub(1);
-                        let is_false = if val.is_boolean() {
-                            !val.as_boolean()
-                        } else if val.is_null() {
-                            true
-                        } else {
-                            false
-                        };
-                        if is_false {
-                            ip = ip.add(instruction.operand as usize);
+                        let val = *frame_slots.add(instruction.ra as usize);
+                        match self.globals.entry(name.clone()) {
+                            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                entry.insert(val);
+                            }
+                            std::collections::hash_map::Entry::Vacant(_) => {
+                                return Err(format!(
+                                    "Variable '{}' not declared. It needs to be declared with 'let' or 'const'.",
+                                    name
+                                ));
+                            }
                         }
                     }
                     OpCode::Jump => {
                         ip = ip.add(instruction.operand as usize);
                     }
+                    OpCode::JumpIfFalse => {
+                        let val = *frame_slots.add(instruction.ra as usize);
+                        let is_false = val.0 == super::value::TAG_FALSE || val.0 == super::value::TAG_NULL;
+                        if is_false {
+                            ip = ip.add(instruction.operand as usize);
+                        }
+                    }
                     OpCode::Loop => {
                         ip = ip.sub(instruction.operand as usize);
                     }
                     OpCode::MakeArray => {
+                        let dest = instruction.ra as usize;
+                        let start_reg = instruction.rb as usize;
                         let count = instruction.operand as usize;
                         sync_stack!();
                         self.gc_trigger();
                         reload_stack!();
-                        
+
                         let mut elements = Vec::with_capacity(count);
-                        stack_top = stack_top.sub(count);
                         for i in 0..count {
-                            elements.push(*stack_top.add(i));
+                            elements.push(*frame_slots.add(start_reg + i));
                         }
                         let ptr = gc_allocate(GcData::Array(elements));
-                        *stack_top = Value::array(ptr);
-                        stack_top = stack_top.add(1);
+                        *frame_slots.add(dest) = Value::array(ptr);
                     }
                     OpCode::MakeObject => {
+                        let dest = instruction.ra as usize;
+                        let start_reg = instruction.rb as usize;
                         let count = instruction.operand as usize;
                         sync_stack!();
                         self.gc_trigger();
                         reload_stack!();
 
                         let mut obj = HashMap::new();
-                        stack_top = stack_top.sub(count * 2);
                         for i in 0..count {
-                            let key_val = *stack_top.add(i * 2);
-                            let val = *stack_top.add(i * 2 + 1);
+                            let key_val = *frame_slots.add(start_reg + i * 2);
+                            let val = *frame_slots.add(start_reg + i * 2 + 1);
                             if !key_val.is_string() {
-                                sync_stack!();
                                 return Err("Object key must be string".into());
                             }
                             let key = match &(*key_val.as_gc_ptr()).data {
@@ -445,23 +436,23 @@ impl VM {
                             obj.insert(key, val);
                         }
                         let ptr = gc_allocate(GcData::Object(obj));
-                        *stack_top = Value::object(ptr);
-                        stack_top = stack_top.add(1);
+                        *frame_slots.add(dest) = Value::object(ptr);
                     }
                     OpCode::GetProperty => {
+                        let dest = instruction.ra as usize;
+                        let obj_reg = instruction.rb as usize;
                         let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name = match &(*name_val.as_gc_ptr()).data {
                             GcData::String(s) => s.as_str(),
                             _ => unreachable!(),
                         };
-                        let obj_ptr = stack_top.sub(1);
-                        let obj = *obj_ptr;
+                        let obj = *frame_slots.add(obj_reg);
                         if obj.is_object() {
                             let ptr = obj.as_gc_ptr();
                             match &(*ptr).data {
                                 GcData::Object(map) => {
                                     let val = map.get(name).cloned().unwrap_or(Value::null());
-                                    *obj_ptr = val;
+                                    *frame_slots.add(dest) = val;
                                 }
                                 _ => unreachable!(),
                             }
@@ -470,42 +461,40 @@ impl VM {
                             match &(*ptr).data {
                                 GcData::Array(arr) => {
                                     if name == "push" {
-                                        *obj_ptr = Value::array_method_push(ptr);
+                                        *frame_slots.add(dest) = Value::array_method_push(ptr);
                                     } else if name == "pop" {
-                                        *obj_ptr = Value::array_method_pop(ptr);
+                                        *frame_slots.add(dest) = Value::array_method_pop(ptr);
                                     } else if name == "length" {
-                                        *obj_ptr = Value::number(arr.len() as f64);
+                                        *frame_slots.add(dest) = Value::number(arr.len() as f64);
                                     } else if let Ok(idx) = name.parse::<usize>() {
                                         let val = arr.get(idx).cloned().unwrap_or(Value::null());
-                                        *obj_ptr = val;
+                                        *frame_slots.add(dest) = val;
                                     } else {
-                                        *obj_ptr = Value::null();
+                                        *frame_slots.add(dest) = Value::null();
                                     }
                                 }
                                 _ => unreachable!(),
                             }
                         } else {
-                            sync_stack!();
-                            return Err("Only objects have properties".into());
+                            return Err("Only objects and arrays have properties".into());
                         }
                     }
                     OpCode::SetProperty => {
+                        let obj_reg = instruction.ra as usize;
+                        let val_reg = instruction.rb as usize;
                         let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name = match &(*name_val.as_gc_ptr()).data {
                             GcData::String(s) => s.as_str(),
                             _ => unreachable!(),
                         };
-                        stack_top = stack_top.sub(2);
-                        let obj = *stack_top;
-                        let val = *stack_top.add(1);
+                        let obj = *frame_slots.add(obj_reg);
+                        let val = *frame_slots.add(val_reg);
                         if obj.is_object() {
                             let ptr = obj.as_gc_ptr();
                             match &mut (*ptr).data {
                                 GcData::Object(map) => {
                                     map.insert(Rc::from(name), val);
                                     gc_write_barrier(ptr, &val);
-                                    *stack_top = val;
-                                    stack_top = stack_top.add(1);
                                 }
                                 _ => unreachable!(),
                             }
@@ -519,7 +508,6 @@ impl VM {
                                         } else if idx == arr.len() {
                                             arr.push(val);
                                         } else {
-                                            sync_stack!();
                                             return Err(format!(
                                                 "Index {} out of bounds for array of length {}",
                                                 idx,
@@ -527,113 +515,20 @@ impl VM {
                                             ));
                                         }
                                         gc_write_barrier(ptr, &val);
-                                        *stack_top = val;
-                                        stack_top = stack_top.add(1);
                                     } else {
-                                        sync_stack!();
                                         return Err("Cannot set non-numeric property on array".into());
                                     }
                                 }
                                 _ => unreachable!(),
                             }
                         } else {
-                            sync_stack!();
-                            return Err("Only objects have properties".into());
+                            return Err("Only objects and arrays have properties".into());
                         }
-                    }
-                    OpCode::Call => {
-                        let arg_count = instruction.operand as usize;
-                        let callee = *stack_top.sub(arg_count + 1);
-                        if callee.is_function() {
-                            let func_ptr = callee.as_gc_ptr();
-                            let func_val = get_func!(func_ptr);
-                            if arg_count != func_val.arity {
-                                sync_stack!();
-                                return Err(format!(
-                                    "Expected {} args but got {}",
-                                    func_val.arity, arg_count
-                                ));
-                            }
-                            frame.ip = ip.offset_from(code_ptr) as usize;
-                            let current_stack_len = stack_top.offset_from(stack_start) as usize;
-                            self.frames.push(CallFrame {
-                                function: func_ptr,
-                                ip: 0,
-                                slots_offset: current_stack_len - arg_count,
-                            });
-                            frame_ptr = {
-                                let len = self.frames.len();
-                                self.frames.as_mut_ptr().add(len - 1)
-                            };
-                            frame = &mut *frame_ptr;
-                            func = get_func!(frame.function);
-                            code_ptr = func.chunk.code.as_ptr();
-                            constants_ptr = func.chunk.constants.as_ptr();
-                            slots_offset = frame.slots_offset;
-                            frame_slots = stack_start.add(slots_offset);
-                            ip = code_ptr.add(frame.ip);
-                        } else if callee.is_native_function() {
-                            let native = callee.as_native_fn();
-                            let mut args = Vec::with_capacity(arg_count);
-                            stack_top = stack_top.sub(arg_count);
-                            for i in 0..arg_count {
-                                args.push(*stack_top.add(i));
-                            }
-                            stack_top = stack_top.sub(1); // pop function
-                            sync_stack!();
-                            let result = native(args);
-                            reload_stack!();
-                            *stack_top = result;
-                            stack_top = stack_top.add(1);
-                        } else if callee.is_array_method_push() || callee.is_array_method_pop() {
-                            let ptr = callee.as_gc_ptr();
-                            let mut args = Vec::with_capacity(arg_count);
-                            stack_top = stack_top.sub(arg_count);
-                            for i in 0..arg_count {
-                                args.push(*stack_top.add(i));
-                            }
-                            stack_top = stack_top.sub(1); // pop callee
-
-                            sync_stack!();
-                            let result = match &mut (*ptr).data {
-                                GcData::Array(arr) => {
-                                    if callee.is_array_method_push() {
-                                        for arg in args {
-                                            gc_write_barrier(ptr, &arg);
-                                            arr.push(arg);
-                                        }
-                                        Value::number(arr.len() as f64)
-                                    } else {
-                                        arr.pop().unwrap_or(Value::null())
-                                    }
-                                }
-                                _ => unreachable!(),
-                            };
-                            reload_stack!();
-                            *stack_top = result;
-                            stack_top = stack_top.add(1);
-                        } else {
-                            sync_stack!();
-                            return Err("Can only call functions".into());
-                        }
-                    }
-                    OpCode::Not => {
-                        stack_top = stack_top.sub(1);
-                        let val = *stack_top;
-                        let res = if val.is_boolean() {
-                            !val.as_boolean()
-                        } else if val.is_null() {
-                            true
-                        } else {
-                            false
-                        };
-                        *stack_top = Value::boolean(res);
-                        stack_top = stack_top.add(1);
                     }
                     OpCode::GetIndex => {
-                        stack_top = stack_top.sub(2);
-                        let obj = *stack_top;
-                        let index = *stack_top.add(1);
+                        let dest = instruction.ra as usize;
+                        let obj = *frame_slots.add(instruction.rb as usize);
+                        let index = *frame_slots.add(instruction.rc as usize);
                         if obj.is_array() {
                             let ptr = obj.as_gc_ptr();
                             if index.is_number() {
@@ -641,8 +536,7 @@ impl VM {
                                 match &(*ptr).data {
                                     GcData::Array(arr) => {
                                         let val = arr.get(idx).cloned().unwrap_or(Value::null());
-                                        *stack_top = val;
-                                        stack_top = stack_top.add(1);
+                                        *frame_slots.add(dest) = val;
                                     }
                                     _ => unreachable!(),
                                 }
@@ -655,17 +549,14 @@ impl VM {
                                     match &(*ptr).data {
                                         GcData::Array(arr) => {
                                             let val = arr.get(idx).cloned().unwrap_or(Value::null());
-                                            *stack_top = val;
-                                            stack_top = stack_top.add(1);
+                                            *frame_slots.add(dest) = val;
                                         }
                                         _ => unreachable!(),
                                     }
                                 } else {
-                                    *stack_top = Value::null();
-                                    stack_top = stack_top.add(1);
+                                    *frame_slots.add(dest) = Value::null();
                                 }
                             } else {
-                                sync_stack!();
                                 return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
                         } else if obj.is_object() {
@@ -678,25 +569,21 @@ impl VM {
                                 match &(*ptr).data {
                                     GcData::Object(map) => {
                                         let val = map.get(s).cloned().unwrap_or(Value::null());
-                                        *stack_top = val;
-                                        stack_top = stack_top.add(1);
+                                        *frame_slots.add(dest) = val;
                                     }
                                     _ => unreachable!(),
                                 }
                             } else {
-                                sync_stack!();
                                 return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
                         } else {
-                            sync_stack!();
                             return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                         }
                     }
                     OpCode::SetIndex => {
-                        stack_top = stack_top.sub(3);
-                        let obj = *stack_top;
-                        let index = *stack_top.add(1);
-                        let val = *stack_top.add(2);
+                        let obj = *frame_slots.add(instruction.ra as usize);
+                        let index = *frame_slots.add(instruction.rb as usize);
+                        let val = *frame_slots.add(instruction.rc as usize);
                         if obj.is_array() {
                             let ptr = obj.as_gc_ptr();
                             if index.is_number() {
@@ -708,7 +595,6 @@ impl VM {
                                         } else if idx == arr.len() {
                                             arr.push(val);
                                         } else {
-                                            sync_stack!();
                                             return Err(format!(
                                                 "Index {} out of bounds for array of length {}",
                                                 idx,
@@ -716,8 +602,6 @@ impl VM {
                                             ));
                                         }
                                         gc_write_barrier(ptr, &val);
-                                        *stack_top = val;
-                                        stack_top = stack_top.add(1);
                                     }
                                     _ => unreachable!(),
                                 }
@@ -734,7 +618,6 @@ impl VM {
                                             } else if idx == arr.len() {
                                                 arr.push(val);
                                             } else {
-                                                sync_stack!();
                                                 return Err(format!(
                                                     "Index {} out of bounds for array of length {}",
                                                     idx,
@@ -742,17 +625,13 @@ impl VM {
                                                 ));
                                             }
                                             gc_write_barrier(ptr, &val);
-                                            *stack_top = val;
-                                            stack_top = stack_top.add(1);
                                         }
                                         _ => unreachable!(),
                                     }
                                 } else {
-                                    sync_stack!();
                                     return Err("Cannot set non-numeric property on array".into());
                                 }
                             } else {
-                                sync_stack!();
                                 return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
                         } else if obj.is_object() {
@@ -766,19 +645,108 @@ impl VM {
                                     GcData::Object(map) => {
                                         map.insert(s, val);
                                         gc_write_barrier(ptr, &val);
-                                        *stack_top = val;
-                                        stack_top = stack_top.add(1);
                                     }
                                     _ => unreachable!(),
                                 }
                             } else {
-                                sync_stack!();
                                 return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
                         } else {
-                            sync_stack!();
                             return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                         }
+                    }
+                    OpCode::Call => {
+                        let dest = instruction.ra as usize;
+                        let func_reg = instruction.rb as usize;
+                        let arg_count = instruction.operand as usize;
+                        let callee = *frame_slots.add(func_reg);
+                        if callee.is_function() {
+                            let func_ptr = callee.as_gc_ptr();
+                            let func_val = get_func!(func_ptr);
+                            if arg_count != func_val.arity {
+                                return Err(format!(
+                                    "Expected {} args but got {}",
+                                    func_val.arity, arg_count
+                                ));
+                            }
+                            frame.ip = ip.offset_from(code_ptr) as usize;
+                            let new_slots_offset = slots_offset + func_reg + 1;
+                            self.frames.push(CallFrame {
+                                function: func_ptr,
+                                ip: 0,
+                                slots_offset: new_slots_offset,
+                                dest_reg: dest,
+                            });
+                            frame_ptr = {
+                                let len = self.frames.len();
+                                self.frames.as_mut_ptr().add(len - 1)
+                            };
+                            frame = &mut *frame_ptr;
+                            func = get_func!(frame.function);
+                            code_ptr = func.chunk.code.as_ptr();
+                            constants_ptr = func.chunk.constants.as_ptr();
+                            slots_offset = frame.slots_offset;
+                            frame_slots = stack_start.add(slots_offset);
+                            ip = code_ptr.add(frame.ip);
+                        } else if callee.is_native_function() {
+                            let native = callee.as_native_fn();
+                            let mut args = Vec::with_capacity(arg_count);
+                            for i in 0..arg_count {
+                                args.push(*frame_slots.add(func_reg + 1 + i));
+                            }
+                            sync_stack!();
+                            let result = native(args);
+                            reload_stack!();
+                            *frame_slots.add(dest) = result;
+                        } else if callee.is_array_method_push() || callee.is_array_method_pop() {
+                            let ptr = callee.as_gc_ptr();
+                            let mut args = Vec::with_capacity(arg_count);
+                            for i in 0..arg_count {
+                                args.push(*frame_slots.add(func_reg + 1 + i));
+                            }
+                            sync_stack!();
+                            let result = match &mut (*ptr).data {
+                                GcData::Array(arr) => {
+                                    if callee.is_array_method_push() {
+                                        for arg in args {
+                                            gc_write_barrier(ptr, &arg);
+                                            arr.push(arg);
+                                        }
+                                        Value::number(arr.len() as f64)
+                                    } else {
+                                        arr.pop().unwrap_or(Value::null())
+                                    }
+                                }
+                                _ => unreachable!(),
+                            };
+                            reload_stack!();
+                            *frame_slots.add(dest) = result;
+                        } else {
+                            return Err("Can only call functions".into());
+                        }
+                    }
+                    OpCode::Return => {
+                        let result = *frame_slots.add(instruction.ra as usize);
+                        let caller_dest_reg = frame.dest_reg;
+
+                        self.frames.pop();
+                        if self.frames.is_empty() {
+                            return Ok(result);
+                        }
+
+                        frame_ptr = {
+                            let len = self.frames.len();
+                            self.frames.as_mut_ptr().add(len - 1)
+                        };
+                        frame = &mut *frame_ptr;
+                        func = get_func!(frame.function);
+                        code_ptr = func.chunk.code.as_ptr();
+                        constants_ptr = func.chunk.constants.as_ptr();
+                        slots_offset = frame.slots_offset;
+                        frame_slots = stack_start.add(slots_offset);
+                        ip = code_ptr.add(frame.ip);
+
+                        *frame_slots.add(caller_dest_reg) = result;
                     }
                 }
             }
@@ -790,6 +758,68 @@ impl VM {
 mod tests {
     use super::*;
     use super::super::gc::gc_free_all;
+    use super::super::compiler::Compiler;
+
+    fn run_code(source: &str) -> Result<VM, String> {
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().map_err(|e| e.to_string())?;
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts)?;
+        let mut vm = VM::new();
+        vm.run(function)?;
+        Ok(vm)
+    }
+
+    #[test]
+    fn test_arithmetic() {
+        let vm = run_code("let res = 5 + 10 * 2").unwrap();
+        assert_eq!(vm.get_global("res").unwrap().as_number(), 25.0);
+    }
+
+    #[test]
+    fn test_logical() {
+        let vm = run_code("let res1 = true and false\nlet res2 = false or true").unwrap();
+        assert_eq!(vm.get_global("res1").unwrap().as_boolean(), false);
+        assert_eq!(vm.get_global("res2").unwrap().as_boolean(), true);
+    }
+
+    #[test]
+    fn test_for_loop() {
+        let vm = run_code("let sum = 0\nfor i in 1..5 {\n  sum = sum + i\n}").unwrap();
+        assert_eq!(vm.get_global("sum").unwrap().as_number(), 10.0);
+    }
+
+    #[test]
+    fn test_if_else() {
+        let vm = run_code("let res = 0\nif (1 < 2) {\n  res = 10\n} else {\n  res = 20\n}").unwrap();
+        assert_eq!(vm.get_global("res").unwrap().as_number(), 10.0);
+    }
+
+    #[test]
+    fn test_function_call() {
+        let vm = run_code("let add = (a, b) => {\n  return a + b\n}\nlet res = add(3, 4)").unwrap();
+        assert_eq!(vm.get_global("res").unwrap().as_number(), 7.0);
+    }
+
+    #[test]
+    fn test_recursion() {
+        let vm = run_code("let fib = (n) => {\n  if (n < 2) { return n }\n  return fib(n - 1) + fib(n - 2)\n}\nlet res = fib(5)").unwrap();
+        assert_eq!(vm.get_global("res").unwrap().as_number(), 5.0);
+    }
+
+    #[test]
+    fn test_array() {
+        let vm = run_code("let arr = [10, 20]\narr.push(30)\nlet l = arr.length\nlet val = arr[1]").unwrap();
+        assert_eq!(vm.get_global("l").unwrap().as_number(), 3.0);
+        assert_eq!(vm.get_global("val").unwrap().as_number(), 20.0);
+    }
+
+    #[test]
+    fn test_object() {
+        let vm = run_code("let obj = { x: 100 }\nobj.x = 200\nlet val = obj.x").unwrap();
+        assert_eq!(vm.get_global("val").unwrap().as_number(), 200.0);
+    }
 
     #[test]
     fn test_incremental_garbage_collector() {

@@ -25,11 +25,7 @@ impl Value {
 
     #[inline(always)]
     pub fn boolean(b: bool) -> Self {
-        if b {
-            Value(TAG_TRUE)
-        } else {
-            Value(TAG_FALSE)
-        }
+        Value(TAG_FALSE + (b as u64 * 0x0001_0000_0000_0000))
     }
 
     #[inline(always)]
@@ -39,6 +35,11 @@ impl Value {
             bits = 0x7ff8_0000_0000_0000; // Canonical NaN
         }
         Value(bits)
+    }
+
+    #[inline(always)]
+    pub fn number_unchecked(n: f64) -> Self {
+        Value(n.to_bits())
     }
 
     #[inline(always)]

@@ -16,25 +16,24 @@ pub struct Function {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpCode {
-    Constant,
-    Return,
+    LoadConst,
+    LoadNull,
+    LoadBool,
+    Move,
     Negate,
+    Not,
     Add,
     Sub,
     Mul,
     Div,
-    Not,
     Equal,
     Greater,
     Less,
-    Pop,
     DefineGlobal,
     GetGlobal,
     SetGlobal,
-    GetLocal,
-    SetLocal,
-    JumpIfFalse,
     Jump,
+    JumpIfFalse,
     Loop,
     Call,
     MakeArray,
@@ -43,11 +42,15 @@ pub enum OpCode {
     SetProperty,
     GetIndex,
     SetIndex,
+    Return,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Instruction {
     pub op: OpCode,
+    pub ra: u8,
+    pub rb: u8,
+    pub rc: u8,
     pub operand: u32,
 }
 
@@ -63,15 +66,13 @@ impl Chunk {
         self.constants.len() - 1
     }
 
-    pub fn write(&mut self, op: OpCode) {
-        self.code.push(Instruction { op, operand: 0 });
-    }
-
-    pub fn write_operand(&mut self, op: OpCode, operand: usize) {
+    pub fn write_instruction(&mut self, op: OpCode, ra: u8, rb: u8, rc: u8, operand: u32) {
         self.code.push(Instruction {
             op,
-            operand: operand as u32,
+            ra,
+            rb,
+            rc,
+            operand,
         });
     }
 }
-
