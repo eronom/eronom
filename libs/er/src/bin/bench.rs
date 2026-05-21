@@ -24,16 +24,6 @@ for i in 1..10000 {
     eprintln!("  Script: 10,000 loop iterations with arithmetic + conditionals");
     eprintln!("  Runs:   {} iterations each\n", iterations);
 
-    // --- Legacy (tree-walking) benchmark ---
-    er::legacy::run_source(source).ok(); // warmup
-
-    let start = Instant::now();
-    for _ in 0..iterations {
-        er::legacy::run_source(source).ok();
-    }
-    let legacy_elapsed = start.elapsed();
-    let legacy_avg = legacy_elapsed / iterations;
-
     // --- VM-based benchmark ---
     fn noop_print(args: Vec<er::backend::Value>) -> er::backend::Value {
         let _ = args;
@@ -235,7 +225,6 @@ print(os.clock() - start)
     eprintln!("┌──────────────────────────────────────────┐");
     eprintln!("│          ER BENCHMARK RESULTS            │");
     eprintln!("├──────────────────────────────────────────┤");
-    eprintln!("│  Legacy (tree-walk)  │  avg {:>12?}  │", legacy_avg);
     eprintln!("│  VM (bytecode)       │  avg {:>12?}  │", vm_avg);
     eprintln!("│  Compile only        │  avg {:>12?}  │", compile_avg);
     if lua_pure_avg.as_nanos() > 0 {
@@ -263,14 +252,6 @@ print(os.clock() - start)
         );
     }
     eprintln!("├──────────────────────────────────────────┤");
-
-    if vm_avg < legacy_avg {
-        let speedup = legacy_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-        eprintln!("│  ✅ VM is {:.2}x FASTER than legacy       │", speedup);
-    } else {
-        let slowdown = vm_avg.as_nanos() as f64 / legacy_avg.as_nanos() as f64;
-        eprintln!("│  ⚠️  VM is {:.2}x SLOWER than legacy       │", slowdown);
-    }
 
     if lua_pure_avg.as_nanos() > 0 {
         if vm_avg < lua_pure_avg {

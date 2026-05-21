@@ -4,7 +4,6 @@ use eronom::compiler;
 use tiny_http::{Server, Response, Header};
 use std::fs;
 use std::collections::HashMap;
-use serde_json;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -199,7 +198,7 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         });
     }
 
-    for mut request in server.incoming_requests() {
+    for request in server.incoming_requests() {
         let base_path = base_path.clone();
         let watcher = Arc::clone(&watcher);
         
@@ -229,51 +228,7 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                 return;
             }
 
-            // API Routing
-            let mut api_file = None;
-            let mut api_base_path = "/".to_string();
 
-            if target.starts_with("/api") {
-                let rel_path = target.trim_start_matches('/');
-                
-                // 1. Try [path]/route.er
-                let route_er = base_path.join(rel_path).join("route.er");
-                if route_er.exists() {
-                    api_file = Some(route_er);
-                    api_base_path = target.to_string();
-                } else {
-                    // 2. Try [path].er
-                    let direct_er = base_path.join(format!("{}.er", rel_path));
-                    if direct_er.exists() {
-                        api_file = Some(direct_er);
-                        api_base_path = target.to_string();
-                    }
-                }
-            }
-
-            if api_file.is_none() {
-                let server_er = base_path.join("server.er");
-                if server_er.exists() {
-                    api_file = Some(server_er);
-                    api_base_path = "/".to_string();
-                }
-            }
-
-            if let Some(file) = api_file {
-                match er::handle_api_request(&mut request, file.to_str().unwrap(), &api_base_path) {
-                    Ok(Some(response)) => {
-                        request.respond(response).ok();
-                        return;
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        eprintln!("API Error: {}", e);
-                        let response = Response::from_string(format!("API Error: {}", e)).with_status_code(500);
-                        request.respond(response).ok();
-                        return;
-                    }
-                }
-            }
 
             if target.ends_with(".erm") {
                 let response = Response::from_string("Not Found").with_status_code(404);
