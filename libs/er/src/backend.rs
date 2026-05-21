@@ -3,13 +3,28 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GcColor {
+    White,
+    Gray,
+    Black,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GcPhase {
+    Pause,
+    Mark,
+    Atomic,
+    Sweep,
+}
+
 pub enum GcData {
     Array(Vec<Value>),
-    Object(HashMap<String, Value>),
+    Object(HashMap<Rc<str>, Value>),
 }
 
 pub struct GcObject {
-    pub marked: bool,
+    pub color: GcColor,
     pub next: *mut GcObject,
     pub data: GcData,
 }
@@ -18,17 +33,30 @@ thread_local! {
     pub static GC_HEAD: std::cell::Cell<*mut GcObject> = std::cell::Cell::new(std::ptr::null_mut());
     pub static ALLOC_COUNT: std::cell::Cell<usize> = std::cell::Cell::new(0);
     pub static GC_ROOTS: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
+    pub static GC_PHASE: std::cell::Cell<GcPhase> = std::cell::Cell::new(GcPhase::Pause);
+    pub static GRAY_STACK: std::cell::RefCell<Vec<*mut GcObject>> = std::cell::RefCell::new(Vec::new());
+    pub static SWEEP_PTR: std::cell::Cell<*mut GcObject> = std::cell::Cell::new(std::ptr::null_mut());
+    pub static PREV_SWEEP_PTR: std::cell::Cell<*mut GcObject> = std::cell::Cell::new(std::ptr::null_mut());
 }
 
 pub fn gc_allocate(data: GcData) -> *mut GcObject {
     GC_HEAD.with(|head| {
         let obj = Box::new(GcObject {
-            marked: false,
+            color: GcColor::White,
             next: head.get(),
             data,
         });
         let ptr = Box::into_raw(obj);
         head.set(ptr);
+
+        if GC_PHASE.with(|phase| phase.get()) == GcPhase::Sweep {
+            PREV_SWEEP_PTR.with(|prev| {
+                if prev.get().is_null() {
+                    prev.set(ptr);
+                }
+            });
+        }
+
         ALLOC_COUNT.with(|c| c.set(c.get() + 1));
         ptr
     })
@@ -47,60 +75,132 @@ pub fn gc_free_all() {
         });
     }
     ALLOC_COUNT.with(|c| c.set(0));
+    GC_PHASE.with(|p| p.set(GcPhase::Pause));
+    GRAY_STACK.with(|gs| gs.borrow_mut().clear());
+    SWEEP_PTR.with(|s| s.set(std::ptr::null_mut()));
+    PREV_SWEEP_PTR.with(|p| p.set(std::ptr::null_mut()));
 }
 
-pub fn mark_value(val: &Value) {
+pub fn gc_mark_value(val: &Value) {
     match val {
-        Value::Array(ptr) | Value::ArrayMethod(ptr, _) => {
-            mark_object(*ptr);
-        }
-        Value::Object(ptr) => {
-            mark_object(*ptr);
+        Value::Array(ptr) | Value::ArrayMethod(ptr, _) | Value::Object(ptr) => unsafe {
+            if !ptr.is_null() && (*(*ptr)).color == GcColor::White {
+                (*(*ptr)).color = GcColor::Gray;
+                GRAY_STACK.with(|gs| gs.borrow_mut().push(*ptr));
+            }
         }
         Value::Function(func) => {
             for constant in &func.chunk.constants {
-                mark_value(constant);
+                gc_mark_value(constant);
             }
         }
         _ => {}
     }
 }
 
-pub fn mark_object(ptr: *mut GcObject) {
+pub fn gc_mark_object(ptr: *mut GcObject) {
     if ptr.is_null() {
         return;
     }
     unsafe {
-        if (*ptr).marked {
+        if (*ptr).color == GcColor::White {
+            (*ptr).color = GcColor::Gray;
+            GRAY_STACK.with(|gs| gs.borrow_mut().push(ptr));
+        }
+    }
+}
+
+pub fn gc_blacken_object(ptr: *mut GcObject) {
+    unsafe {
+        if ptr.is_null() {
             return;
         }
-        (*ptr).marked = true;
+        (*ptr).color = GcColor::Black;
         match &(*ptr).data {
             GcData::Array(arr) => {
                 for val in arr {
-                    mark_value(val);
+                    gc_mark_value(val);
                 }
             }
             GcData::Object(obj) => {
                 for val in obj.values() {
-                    mark_value(val);
+                    gc_mark_value(val);
                 }
             }
         }
     }
 }
 
-#[derive(Clone)]
+pub fn mark_value(val: &Value) {
+    gc_mark_value(val);
+}
+
+pub fn mark_object(ptr: *mut GcObject) {
+    gc_mark_object(ptr);
+}
+
+pub fn gc_write_barrier(parent: *mut GcObject, child: &Value) {
+    unsafe {
+        if parent.is_null() {
+            return;
+        }
+        if (*parent).color == GcColor::Black {
+            match child {
+                Value::Array(child_ptr) | Value::Object(child_ptr) => {
+                    if !child_ptr.is_null() && (*(*child_ptr)).color == GcColor::White {
+                        (*(*child_ptr)).color = GcColor::Gray;
+                        GRAY_STACK.with(|stack| {
+                            stack.borrow_mut().push(*child_ptr);
+                        });
+                    }
+                }
+                Value::ArrayMethod(child_ptr, _) => {
+                    if !child_ptr.is_null() && (*(*child_ptr)).color == GcColor::White {
+                        (*(*child_ptr)).color = GcColor::Gray;
+                        GRAY_STACK.with(|stack| {
+                            stack.borrow_mut().push(*child_ptr);
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ArrayMethodType {
+    Push,
+    Pop,
+}
+
 pub enum Value {
     Null,
     Boolean(bool),
     Number(f64),
-    String(String),
+    String(Rc<str>),
     Array(*mut GcObject),
     Object(*mut GcObject),
     Function(Rc<Function>),
     NativeFunction(fn(Vec<Value>) -> Value),
-    ArrayMethod(*mut GcObject, String),
+    ArrayMethod(*mut GcObject, ArrayMethodType),
+}
+
+impl Clone for Value {
+    #[inline]
+    fn clone(&self) -> Self {
+        match self {
+            Value::Null => Value::Null,
+            Value::Boolean(b) => Value::Boolean(*b),
+            Value::Number(n) => Value::Number(*n),
+            Value::String(s) => Value::String(Rc::clone(s)),
+            Value::Array(ptr) => Value::Array(*ptr),
+            Value::Object(ptr) => Value::Object(*ptr),
+            Value::Function(func) => Value::Function(Rc::clone(func)),
+            Value::NativeFunction(func) => Value::NativeFunction(*func),
+            Value::ArrayMethod(ptr, method) => Value::ArrayMethod(*ptr, *method),
+        }
+    }
 }
 
 impl fmt::Display for Value {
@@ -133,7 +233,13 @@ impl fmt::Display for Value {
             },
             Value::Function(_) => write!(f, "[Function]"),
             Value::NativeFunction(_) => write!(f, "[NativeFunction]"),
-            Value::ArrayMethod(_, name) => write!(f, "[ArrayMethod {}]", name),
+            Value::ArrayMethod(_, method) => {
+                let name = match method {
+                    ArrayMethodType::Push => "push",
+                    ArrayMethodType::Pop => "pop",
+                };
+                write!(f, "[ArrayMethod {}]", name)
+            }
         }
     }
 }
@@ -162,7 +268,7 @@ pub struct Function {
     pub arity: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum OpCode {
     Constant(usize),
     Return,
@@ -187,8 +293,8 @@ pub enum OpCode {
     Call(usize),       // arity
     MakeArray(usize),  // initial elements
     MakeObject(usize), // key-value pairs (so 2x elements on stack)
-    GetProperty(String),
-    SetProperty(String),
+    GetProperty(usize),
+    SetProperty(usize),
     GetIndex,
     SetIndex,
 }
@@ -253,7 +359,7 @@ impl Compiler {
                 self.current_chunk().write(OpCode::Pop);
             }
             Stmt::Print(expr) => {
-                let name_idx = self.current_chunk().add_constant(Value::String("print".to_string()));
+                let name_idx = self.current_chunk().add_constant(Value::String(Rc::from("print")));
                 self.current_chunk().write(OpCode::GetGlobal(name_idx));
                 self.compile_expr(expr)?;
                 self.current_chunk().write(OpCode::Call(1));
@@ -269,7 +375,7 @@ impl Compiler {
                 } else {
                     let name_idx = self
                         .current_chunk()
-                        .add_constant(Value::String(name.clone()));
+                        .add_constant(Value::String(Rc::from(name.as_str())));
                     self.current_chunk().write(OpCode::DefineGlobal(name_idx));
                 }
             }
@@ -352,7 +458,7 @@ impl Compiler {
                     LiteralValue::Null => Value::Null,
                     LiteralValue::Boolean(b) => Value::Boolean(*b),
                     LiteralValue::Number(n) => Value::Number(*n),
-                    LiteralValue::String(s) => Value::String(s.clone()),
+                    LiteralValue::String(s) => Value::String(Rc::from(s.as_str())),
                 };
                 let idx = self.current_chunk().add_constant(v);
                 self.current_chunk().write(OpCode::Constant(idx));
@@ -363,7 +469,7 @@ impl Compiler {
                 } else {
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::String(name.clone()));
+                        .add_constant(Value::String(Rc::from(name.as_str())));
                     self.current_chunk().write(OpCode::GetGlobal(idx));
                 }
             }
@@ -374,7 +480,7 @@ impl Compiler {
                 } else {
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::String(name.clone()));
+                        .add_constant(Value::String(Rc::from(name.as_str())));
                     self.current_chunk().write(OpCode::SetGlobal(idx));
                 }
             }
@@ -418,14 +524,14 @@ impl Compiler {
             }
             Expr::Get(obj, name) => {
                 self.compile_expr(obj)?;
-                self.current_chunk()
-                    .write(OpCode::GetProperty(name.clone()));
+                let name_idx = self.current_chunk().add_constant(Value::String(Rc::from(name.as_str())));
+                self.current_chunk().write(OpCode::GetProperty(name_idx));
             }
             Expr::Set(obj, name, val) => {
                 self.compile_expr(obj)?;
                 self.compile_expr(val)?;
-                self.current_chunk()
-                    .write(OpCode::SetProperty(name.clone()));
+                let name_idx = self.current_chunk().add_constant(Value::String(Rc::from(name.as_str())));
+                self.current_chunk().write(OpCode::SetProperty(name_idx));
             }
             Expr::Array(items) => {
                 for item in items {
@@ -437,7 +543,7 @@ impl Compiler {
                 for (key, val) in pairs {
                     let k_idx = self
                         .current_chunk()
-                        .add_constant(Value::String(key.clone()));
+                        .add_constant(Value::String(Rc::from(key.as_str())));
                     self.current_chunk().write(OpCode::Constant(k_idx));
                     self.compile_expr(val)?;
                 }
@@ -523,7 +629,7 @@ impl Compiler {
 pub struct VM {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
-    globals: HashMap<String, Value>,
+    globals: HashMap<Rc<str>, Value>,
 }
 
 struct CallFrame {
@@ -542,7 +648,7 @@ impl VM {
     }
 
     pub fn register_global(&mut self, name: &str, value: Value) {
-        self.globals.insert(name.to_string(), value);
+        self.globals.insert(Rc::from(name), value);
     }
 
     pub fn get_global(&self, name: &str) -> Option<&Value> {
@@ -559,122 +665,240 @@ impl VM {
         self.execute()
     }
 
-    pub fn collect_garbage(&mut self) {
-        // 1. Mark roots
-        for val in &self.stack {
-            mark_value(val);
-        }
-        for val in self.globals.values() {
-            mark_value(val);
-        }
-        for frame in &self.frames {
-            for constant in &frame.function.chunk.constants {
-                mark_value(constant);
-            }
-        }
-        GC_ROOTS.with(|roots| {
-            if let Ok(borrowed) = roots.try_borrow() {
-                for root_fn in borrowed.iter() {
-                    root_fn();
+    pub fn gc_step(&mut self) {
+        let phase = GC_PHASE.with(|p| p.get());
+        match phase {
+            GcPhase::Pause => {
+                if ALLOC_COUNT.with(|c| c.get()) >= 10 {
+                    GC_PHASE.with(|p| p.set(GcPhase::Mark));
+                    GRAY_STACK.with(|gs| gs.borrow_mut().clear());
+                    
+                    for val in &self.stack {
+                        mark_value(val);
+                    }
+                    for val in self.globals.values() {
+                        mark_value(val);
+                    }
+                    for frame in &self.frames {
+                        for constant in &frame.function.chunk.constants {
+                            mark_value(constant);
+                        }
+                    }
+                    GC_ROOTS.with(|roots| {
+                        if let Ok(borrowed) = roots.try_borrow() {
+                            for root_fn in borrowed.iter() {
+                                root_fn();
+                            }
+                        }
+                    });
                 }
             }
-        });
-
-        // 2. Sweep
-        unsafe {
-            GC_HEAD.with(|head| {
-                let mut prev: *mut GcObject = std::ptr::null_mut();
-                let mut curr = head.get();
-                while !curr.is_null() {
-                    if (*curr).marked {
-                        (*curr).marked = false;
-                        prev = curr;
-                        curr = (*curr).next;
-                    } else {
-                        let unreached = curr;
-                        curr = (*curr).next;
-                        if prev.is_null() {
-                            head.set(curr);
-                        } else {
-                            (*prev).next = curr;
-                        }
-                        let _ = Box::from_raw(unreached);
+            GcPhase::Mark => {
+                let gray_opt = GRAY_STACK.with(|gs| gs.borrow_mut().pop());
+                if let Some(ptr) = gray_opt {
+                    gc_blacken_object(ptr);
+                } else {
+                    GC_PHASE.with(|p| p.set(GcPhase::Atomic));
+                }
+            }
+            GcPhase::Atomic => {
+                for val in &self.stack {
+                    mark_value(val);
+                }
+                for val in self.globals.values() {
+                    mark_value(val);
+                }
+                for frame in &self.frames {
+                    for constant in &frame.function.chunk.constants {
+                        mark_value(constant);
                     }
                 }
-            });
+                GC_ROOTS.with(|roots| {
+                    if let Ok(borrowed) = roots.try_borrow() {
+                        for root_fn in borrowed.iter() {
+                            root_fn();
+                        }
+                    }
+                });
+
+                loop {
+                    let gray_opt = GRAY_STACK.with(|gs| gs.borrow_mut().pop());
+                    if let Some(ptr) = gray_opt {
+                        gc_blacken_object(ptr);
+                    } else {
+                        break;
+                    }
+                }
+
+                GC_PHASE.with(|p| p.set(GcPhase::Sweep));
+                SWEEP_PTR.with(|s| s.set(GC_HEAD.with(|h| h.get())));
+                PREV_SWEEP_PTR.with(|p| p.set(std::ptr::null_mut()));
+            }
+            GcPhase::Sweep => {
+                for _ in 0..5 {
+                    let curr = SWEEP_PTR.with(|s| s.get());
+                    if curr.is_null() {
+                        GC_PHASE.with(|p| p.set(GcPhase::Pause));
+                        ALLOC_COUNT.with(|c| c.set(0));
+                        break;
+                    }
+
+                    unsafe {
+                        let next = (*curr).next;
+                        if (*curr).color == GcColor::White {
+                            let prev = PREV_SWEEP_PTR.with(|p| p.get());
+                            if prev.is_null() {
+                                GC_HEAD.with(|h| h.set(next));
+                            } else {
+                                (*prev).next = next;
+                            }
+                            let _ = Box::from_raw(curr);
+                            SWEEP_PTR.with(|s| s.set(next));
+                        } else {
+                            (*curr).color = GcColor::White;
+                            PREV_SWEEP_PTR.with(|p| p.set(curr));
+                            SWEEP_PTR.with(|s| s.set(next));
+                        }
+                    }
+                }
+            }
         }
-        ALLOC_COUNT.with(|c| c.set(0));
+    }
+
+    pub fn collect_garbage(&mut self) {
+        if GC_PHASE.with(|p| p.get()) == GcPhase::Pause {
+            ALLOC_COUNT.with(|c| c.set(999999));
+            self.gc_step();
+        }
+        while GC_PHASE.with(|p| p.get()) != GcPhase::Pause {
+            self.gc_step();
+        }
+    }
+
+    fn gc_trigger(&mut self) {
+        self.gc_step();
+        self.gc_step();
     }
 
     fn execute(&mut self) -> Result<Value, String> {
-        loop {
-            if ALLOC_COUNT.with(|c| c.get()) >= 100 {
-                self.collect_garbage();
-            }
+        self.stack.reserve(2048);
 
-            let frame = self.frames.last_mut().unwrap();
-            if frame.ip >= frame.function.chunk.code.len() {
-                break;
-            }
+        let mut frame_ptr = unsafe {
+            let len = self.frames.len();
+            self.frames.as_mut_ptr().add(len - 1)
+        };
 
-            let instruction = frame.function.chunk.code[frame.ip].clone();
-            frame.ip += 1;
+        // Cache active frame's instruction pointer and end pointer
+        let mut ip = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).ip) };
+        let mut ip_end = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).function.chunk.code.len()) };
+
+        while ip < ip_end {
+            let instruction = unsafe { *ip };
+            ip = unsafe { ip.add(1) };
 
             match instruction {
                 OpCode::Constant(idx) => {
-                    let val = frame.function.chunk.constants[idx].clone();
-                    self.stack.push(val);
+                    let val = unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) };
+                    self.stack.push(val.clone());
                 }
                 OpCode::Return => {
                     let result = self.stack.pop().unwrap_or(Value::Null);
-                    let frame = self.frames.pop().unwrap();
-                    self.stack.truncate(frame.slots_offset);
+                    let slots_offset = unsafe { (*frame_ptr).slots_offset };
+                    self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(result);
-                    } else {
-                        self.stack.push(result);
                     }
+                    frame_ptr = unsafe {
+                        let len = self.frames.len();
+                        self.frames.as_mut_ptr().add(len - 1)
+                    };
+                    self.stack.truncate(slots_offset);
+                    self.stack.push(result);
+
+                    ip = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).ip) };
+                    ip_end = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).function.chunk.code.len()) };
                 }
                 OpCode::Negate => {
-                    if let Value::Number(n) = self.stack.pop().unwrap() {
-                        self.stack.push(Value::Number(-n));
+                    if let Value::Number(n) = unsafe { self.stack.last_mut().unwrap_unchecked() } {
+                        *n = -*n;
                     }
                 }
                 OpCode::Add => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    match (a, b) {
-                        (Value::Number(a), Value::Number(b)) => {
-                            self.stack.push(Value::Number(a + b))
+                    let len = self.stack.len();
+                    unsafe {
+                        let ptr = self.stack.as_mut_ptr();
+                        let b_ptr = ptr.add(len - 1);
+                        let a_ptr = ptr.add(len - 2);
+                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
+                            *a_ptr = Value::Number(*na + *nb);
+                            self.stack.set_len(len - 1);
+                        } else {
+                            let b = self.stack.pop().unwrap_unchecked();
+                            let a = self.stack.pop().unwrap_unchecked();
+                            match (a, b) {
+                                (Value::String(sa), sb) => {
+                                    self.stack.push(Value::String(Rc::from(format!("{}{}", sa, sb))));
+                                }
+                                (sa, Value::String(sb)) => {
+                                    self.stack.push(Value::String(Rc::from(format!("{}{}", sa, sb))));
+                                }
+                                _ => return Err("Operands must be numbers or strings".into()),
+                            }
                         }
-                        (Value::String(a), b) => {
-                            self.stack.push(Value::String(a + &b.to_string()))
-                        }
-                        (a, Value::String(b)) => {
-                            self.stack.push(Value::String(a.to_string() + &b))
-                        }
-                        _ => return Err("Operands must be numbers or strings".into()),
                     }
                 }
                 OpCode::Sub => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a), Value::Number(b)) = (a, b) {
-                        self.stack.push(Value::Number(a - b));
+                    let len = self.stack.len();
+                    unsafe {
+                        let ptr = self.stack.as_mut_ptr();
+                        let b_ptr = ptr.add(len - 1);
+                        let a_ptr = ptr.add(len - 2);
+                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
+                            *a_ptr = Value::Number(*na - *nb);
+                            self.stack.set_len(len - 1);
+                        } else {
+                            let b = self.stack.pop().unwrap_unchecked();
+                            let a = self.stack.pop().unwrap_unchecked();
+                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
+                                self.stack.push(Value::Number(na - nb));
+                            }
+                        }
                     }
                 }
                 OpCode::Mul => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a), Value::Number(b)) = (a, b) {
-                        self.stack.push(Value::Number(a * b));
+                    let len = self.stack.len();
+                    unsafe {
+                        let ptr = self.stack.as_mut_ptr();
+                        let b_ptr = ptr.add(len - 1);
+                        let a_ptr = ptr.add(len - 2);
+                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
+                            *a_ptr = Value::Number(*na * *nb);
+                            self.stack.set_len(len - 1);
+                        } else {
+                            let b = self.stack.pop().unwrap_unchecked();
+                            let a = self.stack.pop().unwrap_unchecked();
+                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
+                                self.stack.push(Value::Number(na * nb));
+                            }
+                        }
                     }
                 }
                 OpCode::Div => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a), Value::Number(b)) = (a, b) {
-                        self.stack.push(Value::Number(a / b));
+                    let len = self.stack.len();
+                    unsafe {
+                        let ptr = self.stack.as_mut_ptr();
+                        let b_ptr = ptr.add(len - 1);
+                        let a_ptr = ptr.add(len - 2);
+                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
+                            *a_ptr = Value::Number(*na / *nb);
+                            self.stack.set_len(len - 1);
+                        } else {
+                            let b = self.stack.pop().unwrap_unchecked();
+                            let a = self.stack.pop().unwrap_unchecked();
+                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
+                                self.stack.push(Value::Number(na / nb));
+                            }
+                        }
                     }
                 }
                 OpCode::Equal => {
@@ -683,24 +907,46 @@ impl VM {
                     self.stack.push(Value::Boolean(a == b));
                 }
                 OpCode::Greater => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a), Value::Number(b)) = (a, b) {
-                        self.stack.push(Value::Boolean(a > b));
+                    let len = self.stack.len();
+                    unsafe {
+                        let ptr = self.stack.as_mut_ptr();
+                        let b_ptr = ptr.add(len - 1);
+                        let a_ptr = ptr.add(len - 2);
+                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
+                            *a_ptr = Value::Boolean(*na > *nb);
+                            self.stack.set_len(len - 1);
+                        } else {
+                            let b = self.stack.pop().unwrap_unchecked();
+                            let a = self.stack.pop().unwrap_unchecked();
+                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
+                                self.stack.push(Value::Boolean(na > nb));
+                            }
+                        }
                     }
                 }
                 OpCode::Less => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a), Value::Number(b)) = (a, b) {
-                        self.stack.push(Value::Boolean(a < b));
+                    let len = self.stack.len();
+                    unsafe {
+                        let ptr = self.stack.as_mut_ptr();
+                        let b_ptr = ptr.add(len - 1);
+                        let a_ptr = ptr.add(len - 2);
+                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
+                            *a_ptr = Value::Boolean(*na < *nb);
+                            self.stack.set_len(len - 1);
+                        } else {
+                            let b = self.stack.pop().unwrap_unchecked();
+                            let a = self.stack.pop().unwrap_unchecked();
+                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
+                                self.stack.push(Value::Boolean(na < nb));
+                            }
+                        }
                     }
                 }
                 OpCode::Pop => {
                     self.stack.pop();
                 }
                 OpCode::DefineGlobal(idx) => {
-                    let name = match &frame.function.chunk.constants[idx] {
+                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
@@ -708,7 +954,7 @@ impl VM {
                     self.globals.insert(name, val);
                 }
                 OpCode::GetGlobal(idx) => {
-                    let name = match &frame.function.chunk.constants[idx] {
+                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
@@ -719,11 +965,11 @@ impl VM {
                     }
                 }
                 OpCode::SetGlobal(idx) => {
-                    let name = match &frame.function.chunk.constants[idx] {
+                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
-                    let val = self.stack.last().unwrap().clone();
+                    let val = unsafe { self.stack.last().unwrap_unchecked() }.clone();
                     if self.globals.contains_key(&name) {
                         self.globals.insert(name, val);
                     } else {
@@ -731,30 +977,36 @@ impl VM {
                     }
                 }
                 OpCode::GetLocal(idx) => {
-                    self.stack
-                        .push(self.stack[frame.slots_offset + idx].clone());
+                    let slots_offset = unsafe { (*frame_ptr).slots_offset };
+                    let val = unsafe { self.stack.get_unchecked(slots_offset + idx) };
+                    self.stack.push(val.clone());
                 }
                 OpCode::SetLocal(idx) => {
-                    self.stack[frame.slots_offset + idx] = self.stack.last().unwrap().clone();
+                    let slots_offset = unsafe { (*frame_ptr).slots_offset };
+                    let val = unsafe { self.stack.last().unwrap_unchecked() }.clone();
+                    unsafe {
+                        *self.stack.get_unchecked_mut(slots_offset + idx) = val;
+                    }
                 }
                 OpCode::JumpIfFalse(offset) => {
-                    let val = self.stack.last().unwrap();
+                    let val = unsafe { self.stack.last().unwrap_unchecked() };
                     let is_false = match val {
                         Value::Boolean(b) => !b,
                         Value::Null => true,
                         _ => false,
                     };
                     if is_false {
-                        frame.ip += offset;
+                        ip = unsafe { ip.add(offset) };
                     }
                 }
                 OpCode::Jump(offset) => {
-                    frame.ip += offset;
+                    ip = unsafe { ip.add(offset) };
                 }
                 OpCode::Loop(offset) => {
-                    frame.ip -= offset;
+                    ip = unsafe { ip.sub(offset) };
                 }
                 OpCode::MakeArray(count) => {
+                    self.gc_trigger();
                     let mut elements = Vec::with_capacity(count);
                     for _ in 0..count {
                         elements.push(self.stack.pop().unwrap());
@@ -764,6 +1016,7 @@ impl VM {
                     self.stack.push(Value::Array(ptr));
                 }
                 OpCode::MakeObject(count) => {
+                    self.gc_trigger();
                     let mut obj = HashMap::new();
                     for _ in 0..count {
                         let val = self.stack.pop().unwrap();
@@ -776,8 +1029,12 @@ impl VM {
                     let ptr = gc_allocate(GcData::Object(obj));
                     self.stack.push(Value::Object(ptr));
                 }
-                OpCode::GetProperty(name) => {
+                OpCode::GetProperty(idx) => {
                     let obj = self.stack.pop().unwrap();
+                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
+                        Value::String(s) => s.clone(),
+                        _ => unreachable!(),
+                    };
                     match obj {
                         Value::Object(ptr) => unsafe {
                             match &(*ptr).data {
@@ -791,9 +1048,11 @@ impl VM {
                         Value::Array(ptr) => unsafe {
                             match &(*ptr).data {
                                 GcData::Array(arr) => {
-                                    if name == "push" || name == "pop" {
-                                        self.stack.push(Value::ArrayMethod(ptr, name.clone()));
-                                    } else if name == "length" {
+                                    if &*name == "push" {
+                                        self.stack.push(Value::ArrayMethod(ptr, ArrayMethodType::Push));
+                                    } else if &*name == "pop" {
+                                        self.stack.push(Value::ArrayMethod(ptr, ArrayMethodType::Pop));
+                                    } else if &*name == "length" {
                                         self.stack.push(Value::Number(arr.len() as f64));
                                     } else if let Ok(idx) = name.parse::<usize>() {
                                         let val = arr.get(idx).cloned().unwrap_or(Value::Null);
@@ -808,14 +1067,19 @@ impl VM {
                         _ => return Err("Only objects have properties".into()),
                     }
                 }
-                OpCode::SetProperty(name) => {
+                OpCode::SetProperty(idx) => {
                     let val = self.stack.pop().unwrap();
                     let obj = self.stack.pop().unwrap();
+                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
+                        Value::String(s) => s.clone(),
+                        _ => unreachable!(),
+                    };
                     match obj {
                         Value::Object(ptr) => unsafe {
                             match &mut (*ptr).data {
                                 GcData::Object(map) => {
                                     map.insert(name, val.clone());
+                                    gc_write_barrier(ptr, &val);
                                     self.stack.push(val);
                                 }
                                 _ => unreachable!(),
@@ -832,6 +1096,7 @@ impl VM {
                                         } else {
                                             return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
                                         }
+                                        gc_write_barrier(ptr, &val);
                                         self.stack.push(val);
                                     } else {
                                         return Err("Cannot set non-numeric property on array".into());
@@ -853,11 +1118,20 @@ impl VM {
                                     func.arity, arg_count
                                 ));
                             }
+                            unsafe {
+                                (*frame_ptr).ip = ip.offset_from((*frame_ptr).function.chunk.code.as_ptr()) as usize;
+                            }
                             self.frames.push(CallFrame {
                                 function: func,
                                 ip: 0,
                                 slots_offset: self.stack.len() - arg_count,
                             });
+                            frame_ptr = unsafe {
+                                let len = self.frames.len();
+                                self.frames.as_mut_ptr().add(len - 1)
+                            };
+                            ip = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).ip) };
+                            ip_end = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).function.chunk.code.len()) };
                         }
                         Value::NativeFunction(native) => {
                             let mut args = Vec::with_capacity(arg_count);
@@ -880,15 +1154,17 @@ impl VM {
                             let result = unsafe {
                                 match &mut (*ptr).data {
                                     GcData::Array(arr) => {
-                                        if method == "push" {
-                                            for arg in args {
-                                                arr.push(arg);
+                                        match method {
+                                            ArrayMethodType::Push => {
+                                                for arg in args {
+                                                    gc_write_barrier(ptr, &arg);
+                                                    arr.push(arg);
+                                                }
+                                                Value::Number(arr.len() as f64)
                                             }
-                                            Value::Number(arr.len() as f64)
-                                        } else if method == "pop" {
-                                            arr.pop().unwrap_or(Value::Null)
-                                        } else {
-                                            Value::Null
+                                            ArrayMethodType::Pop => {
+                                                arr.pop().unwrap_or(Value::Null)
+                                            }
                                         }
                                     }
                                     _ => unreachable!(),
@@ -963,6 +1239,7 @@ impl VM {
                                     } else {
                                         return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
                                     }
+                                    gc_write_barrier(*ptr, &val);
                                     self.stack.push(val);
                                 }
                                 _ => unreachable!(),
@@ -979,6 +1256,7 @@ impl VM {
                                         } else {
                                             return Err(format!("Index {} out of bounds for array of length {}", idx, arr.len()).into());
                                         }
+                                        gc_write_barrier(*ptr, &val);
                                         self.stack.push(val);
                                     }
                                     _ => unreachable!(),
@@ -991,6 +1269,7 @@ impl VM {
                             match &mut (**ptr).data {
                                 GcData::Object(map) => {
                                     map.insert(s.clone(), val.clone());
+                                    gc_write_barrier(*ptr, &val);
                                     self.stack.push(val);
                                 }
                                 _ => unreachable!(),
@@ -1002,5 +1281,74 @@ impl VM {
             }
         }
         Ok(Value::Null)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_incremental_garbage_collector() {
+        // Clear everything first
+        gc_free_all();
+
+        // 1. Allocate a reachable array
+        let parent_ptr = gc_allocate(GcData::Array(vec![]));
+        let parent = Value::Array(parent_ptr);
+
+        // 2. Allocate an unreachable array (garbage)
+        let garbage_ptr = gc_allocate(GcData::Array(vec![]));
+        let _garbage = Value::Array(garbage_ptr);
+
+        // 3. Create a VM with parent on the stack (so it is a root)
+        let mut vm = VM::new();
+        vm.stack.push(parent.clone());
+
+        // Verify GC is in Pause phase initially
+        assert_eq!(GC_PHASE.with(|p| p.get()), GcPhase::Pause);
+
+        // Allocate more objects to increase ALLOC_COUNT
+        for _ in 0..10 {
+            gc_allocate(GcData::Array(vec![]));
+        }
+
+        // Trigger a step, which should start the Mark phase since ALLOC_COUNT >= 10
+        vm.gc_step();
+        assert_eq!(GC_PHASE.with(|p| p.get()), GcPhase::Mark);
+
+        // Run incremental steps until we reach Sweep phase
+        while GC_PHASE.with(|p| p.get()) != GcPhase::Sweep {
+            vm.gc_step();
+        }
+
+        // Let's sweep step-by-step
+        while GC_PHASE.with(|p| p.get()) == GcPhase::Sweep {
+            vm.gc_step();
+        }
+
+        // Check that GC is back to Pause
+        assert_eq!(GC_PHASE.with(|p| p.get()), GcPhase::Pause);
+
+        // Check that parent_ptr is still alive, but garbage_ptr is freed!
+        let mut found_parent = false;
+        let mut found_garbage = false;
+        unsafe {
+            let mut curr = GC_HEAD.with(|h| h.get());
+            while !curr.is_null() {
+                if curr == parent_ptr {
+                    found_parent = true;
+                }
+                if curr == garbage_ptr {
+                    found_garbage = true;
+                }
+                curr = (*curr).next;
+            }
+        }
+        assert!(found_parent, "Parent should be alive");
+        assert!(!found_garbage, "Garbage should be collected");
+
+        // Clean up
+        gc_free_all();
     }
 }

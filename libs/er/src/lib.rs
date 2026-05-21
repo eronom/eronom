@@ -21,8 +21,8 @@ thread_local! {
 
 fn route_fn(_args: Vec<Value>) -> Value {
     let mut obj = HashMap::new();
-    obj.insert("get".to_string(), Value::NativeFunction(app_get));
-    obj.insert("post".to_string(), Value::NativeFunction(app_post));
+    obj.insert(std::rc::Rc::from("get"), Value::NativeFunction(app_get));
+    obj.insert(std::rc::Rc::from("post"), Value::NativeFunction(app_post));
     let ptr = backend::gc_allocate(backend::GcData::Object(obj));
     Value::Object(ptr)
 }
@@ -30,7 +30,7 @@ fn route_fn(_args: Vec<Value>) -> Value {
 fn app_get(args: Vec<Value>) -> Value {
     if args.len() >= 2 {
         if let (Value::String(path), handler) = (&args[0], &args[1]) {
-            ROUTES.with(|r| r.borrow_mut().push(("GET".to_string(), path.clone(), handler.clone())));
+            ROUTES.with(|r| r.borrow_mut().push(("GET".to_string(), path.to_string(), handler.clone())));
         }
     }
     Value::Null
@@ -39,7 +39,7 @@ fn app_get(args: Vec<Value>) -> Value {
 fn app_post(args: Vec<Value>) -> Value {
     if args.len() >= 2 {
         if let (Value::String(path), handler) = (&args[0], &args[1]) {
-            ROUTES.with(|r| r.borrow_mut().push(("POST".to_string(), path.clone(), handler.clone())));
+            ROUTES.with(|r| r.borrow_mut().push(("POST".to_string(), path.to_string(), handler.clone())));
         }
     }
     Value::Null
@@ -135,7 +135,7 @@ pub fn handle_api_request(
         request.as_reader().read_to_string(&mut body).ok();
         // In a real implementation we'd parse JSON and register it as a global 'body' variable.
         // For simplicity, we just inject it as a string for now.
-        vm.register_global("body_raw", Value::String(body));
+        vm.register_global("body_raw", Value::String(std::rc::Rc::from(body)));
     }
 
     if let Err(e) = vm.run(std::rc::Rc::new(function)) {
@@ -193,7 +193,7 @@ pub fn handle_api_request(
 
     if let Some(handler) = matched_handler {
         let mut c_obj = HashMap::new();
-        c_obj.insert("json".to_string(), Value::NativeFunction(c_json));
+        c_obj.insert(std::rc::Rc::from("json"), Value::NativeFunction(c_json));
         let c_val = Value::Object(backend::gc_allocate(backend::GcData::Object(c_obj)));
 
         // We need to call the handler in the VM.

@@ -79,6 +79,67 @@ for i in 1..10000 {
     let compile_elapsed = start.elapsed();
     let compile_avg = compile_elapsed / iterations;
 
+    // --- Lua benchmark ---
+    let lua_source = r#"
+local x = 0
+for i = 1, 9999 do
+    local val = i + i
+    if val > 5000 then
+        local dummy = val + 1
+    else
+        local dummy = val + 2
+    end
+end
+"#;
+
+    let lua_pure_source = format!(r#"
+local start = os.clock()
+for _ = 1, {} do
+    local x = 0
+    for i = 1, 9999 do
+        local val = i + i
+        if val > 5000 then
+            local dummy = val + 1
+        else
+            local dummy = val + 2
+        end
+    end
+end
+print(os.clock() - start)
+"#, iterations);
+
+    let mut lua_pure_avg = std::time::Duration::from_secs(0);
+    if let Ok(output) = std::process::Command::new("lua")
+        .arg("-e")
+        .arg(lua_pure_source)
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(secs) = stdout.trim().parse::<f64>() {
+            lua_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
+        }
+    }
+
+    let mut lua_cli_avg = std::time::Duration::from_secs(0);
+    if let Ok(_) = std::process::Command::new("lua").arg("-v").output() {
+        let start = Instant::now();
+        let mut success = true;
+        for _ in 0..iterations {
+            if std::process::Command::new("lua")
+                .arg("-e")
+                .arg(lua_source)
+                .output()
+                .is_err()
+            {
+                success = false;
+                break;
+            }
+        }
+        if success {
+            lua_cli_avg = start.elapsed() / iterations;
+        }
+    }
+
     // --- Results ---
     eprintln!("┌──────────────────────────────────────────┐");
     eprintln!("│          ER BENCHMARK RESULTS            │");
@@ -86,6 +147,12 @@ for i in 1..10000 {
     eprintln!("│  Legacy (tree-walk)  │  avg {:>12?}  │", legacy_avg);
     eprintln!("│  VM (bytecode)       │  avg {:>12?}  │", vm_avg);
     eprintln!("│  Compile only        │  avg {:>12?}  │", compile_avg);
+    if lua_pure_avg.as_nanos() > 0 {
+        eprintln!("│  Lua (pure run)      │  avg {:>12?}  │", lua_pure_avg);
+    }
+    if lua_cli_avg.as_nanos() > 0 {
+        eprintln!("│  Lua (external CLI)  │  avg {:>12?}  │", lua_cli_avg);
+    }
     eprintln!("├──────────────────────────────────────────┤");
 
     if vm_avg < legacy_avg {
@@ -95,5 +162,26 @@ for i in 1..10000 {
         let slowdown = vm_avg.as_nanos() as f64 / legacy_avg.as_nanos() as f64;
         eprintln!("│  ⚠️  VM is {:.2}x SLOWER than legacy       │", slowdown);
     }
+
+    if lua_pure_avg.as_nanos() > 0 {
+        if vm_avg < lua_pure_avg {
+            let speedup = lua_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            eprintln!("│  ✅ VM is {:.2}x FASTER than Lua (pure)   │", speedup);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / lua_pure_avg.as_nanos() as f64;
+            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Lua (pure)   │", slowdown);
+        }
+    }
+
+    if lua_cli_avg.as_nanos() > 0 {
+        if vm_avg < lua_cli_avg {
+            let speedup = lua_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            eprintln!("│  ✅ VM is {:.2}x FASTER than Lua (CLI)    │", speedup);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / lua_cli_avg.as_nanos() as f64;
+            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Lua (CLI)    │", slowdown);
+        }
+    }
+
     eprintln!("└──────────────────────────────────────────┘");
 }
