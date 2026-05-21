@@ -346,80 +346,96 @@ console.log((performance.now() - start) / 1000);
     if lua_pure_avg.as_nanos() > 0 {
         if vm_avg < lua_pure_avg {
             let speedup = lua_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Lua (pure)   │", speedup);
+            let text = format!("VM is {:.2}x FASTER than Lua (pure)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / lua_pure_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Lua (pure)   │", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Lua (pure)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
     if lua_cli_avg.as_nanos() > 0 {
         if vm_avg < lua_cli_avg {
             let speedup = lua_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Lua (CLI)    │", speedup);
+            let text = format!("VM is {:.2}x FASTER than Lua (CLI)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / lua_cli_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Lua (CLI)    │", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Lua (CLI)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
     if luau_pure_avg.as_nanos() > 0 {
         if vm_avg < luau_pure_avg {
             let speedup = luau_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Luau (pure)  │", speedup);
+            let text = format!("VM is {:.2}x FASTER than Luau (pure)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / luau_pure_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Luau (pure)  │", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Luau (pure)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
     if luau_codegen_pure_avg.as_nanos() > 0 {
         if vm_avg < luau_codegen_pure_avg {
             let speedup = luau_codegen_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Luau (native)│", speedup);
+            let text = format!("VM is {:.2}x FASTER than Luau (native)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / luau_codegen_pure_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Luau (native)│", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Luau (native)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
     if luau_cli_avg.as_nanos() > 0 {
         if vm_avg < luau_cli_avg {
             let speedup = luau_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Luau (CLI)   │", speedup);
+            let text = format!("VM is {:.2}x FASTER than Luau (CLI)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / luau_cli_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Luau (CLI)   │", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Luau (CLI)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
     if luau_codegen_cli_avg.as_nanos() > 0 {
         if vm_avg < luau_codegen_cli_avg {
             let speedup = luau_codegen_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Luau (cg CLI)│", speedup);
+            let text = format!("VM is {:.2}x FASTER than Luau (cg CLI)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / luau_codegen_cli_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Luau (cg CLI)│", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Luau (cg CLI)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
     if node_pure_avg.as_nanos() > 0 {
         if vm_avg < node_pure_avg {
             let speedup = node_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Node (pure)  │", speedup);
+            let text = format!("VM is {:.2}x FASTER than Node (pure)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Node (pure)  │", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Node (pure)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
     if node_cli_avg.as_nanos() > 0 {
         if vm_avg < node_cli_avg {
             let speedup = node_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            eprintln!("│  ✅ VM is {:.2}x FASTER than Node (CLI)   │", speedup);
+            let text = format!("VM is {:.2}x FASTER than Node (CLI)", speedup);
+            eprintln!("│  ✅ {:<37}│", text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
-            eprintln!("│  ⚠️  VM is {:.2}x SLOWER than Node (CLI)   │", slowdown);
+            let text = format!("VM is {:.2}x SLOWER than Node (CLI)", slowdown);
+            eprintln!("│  ⚠️  {:<36}│", text);
         }
     }
 
