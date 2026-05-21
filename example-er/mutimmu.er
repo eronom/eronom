@@ -8,4 +8,4 @@ newnumsss = 3
 
 print(num)
 
-print(newnum)
+print(newnumsss)

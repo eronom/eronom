@@ -1,4 +1,4 @@
-user = {
+let user = {
   name: "Vishnu",
   meta: {
     tags: ["coder", "zig"],

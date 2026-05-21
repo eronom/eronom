@@ -1,4 +1,4 @@
-todos = [
+let todos = [
   { text: "Old" }
 ]
 todos[0].text = "New"
