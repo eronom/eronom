@@ -788,22 +788,26 @@ impl VM {
             self.frames.as_mut_ptr().add(len - 1)
         };
 
+        let mut frame = unsafe { &mut *frame_ptr };
+
         // Cache active frame's instruction pointer and end pointer
-        let mut ip = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).ip) };
-        let mut ip_end = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).function.chunk.code.len()) };
+        let mut ip = unsafe { frame.function.chunk.code.as_ptr().add(frame.ip) };
+        let mut ip_end = unsafe { frame.function.chunk.code.as_ptr().add(frame.function.chunk.code.len()) };
 
         while ip < ip_end {
             let instruction = unsafe { *ip };
             ip = unsafe { ip.add(1) };
 
+            frame = unsafe { &mut *frame_ptr };
+
             match instruction {
                 OpCode::Constant(idx) => {
-                    let val = unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) };
+                    let val = unsafe { frame.function.chunk.constants.get_unchecked(idx) };
                     self.stack.push(val.clone());
                 }
                 OpCode::Return => {
                     let result = self.stack.pop().unwrap_or(Value::Null);
-                    let slots_offset = unsafe { (*frame_ptr).slots_offset };
+                    let slots_offset = frame.slots_offset;
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(result);
@@ -815,8 +819,9 @@ impl VM {
                     self.stack.truncate(slots_offset);
                     self.stack.push(result);
 
-                    ip = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).ip) };
-                    ip_end = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).function.chunk.code.len()) };
+                    frame = unsafe { &mut *frame_ptr };
+                    ip = unsafe { frame.function.chunk.code.as_ptr().add(frame.ip) };
+                    ip_end = unsafe { frame.function.chunk.code.as_ptr().add(frame.function.chunk.code.len()) };
                 }
                 OpCode::Negate => {
                     if let Value::Number(n) = unsafe { self.stack.last_mut().unwrap_unchecked() } {
@@ -946,7 +951,7 @@ impl VM {
                     self.stack.pop();
                 }
                 OpCode::DefineGlobal(idx) => {
-                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
+                    let name = match unsafe { frame.function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
@@ -954,7 +959,7 @@ impl VM {
                     self.globals.insert(name, val);
                 }
                 OpCode::GetGlobal(idx) => {
-                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
+                    let name = match unsafe { frame.function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
@@ -965,7 +970,7 @@ impl VM {
                     }
                 }
                 OpCode::SetGlobal(idx) => {
-                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
+                    let name = match unsafe { frame.function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
@@ -977,12 +982,12 @@ impl VM {
                     }
                 }
                 OpCode::GetLocal(idx) => {
-                    let slots_offset = unsafe { (*frame_ptr).slots_offset };
+                    let slots_offset = frame.slots_offset;
                     let val = unsafe { self.stack.get_unchecked(slots_offset + idx) };
                     self.stack.push(val.clone());
                 }
                 OpCode::SetLocal(idx) => {
-                    let slots_offset = unsafe { (*frame_ptr).slots_offset };
+                    let slots_offset = frame.slots_offset;
                     let val = unsafe { self.stack.last().unwrap_unchecked() }.clone();
                     unsafe {
                         *self.stack.get_unchecked_mut(slots_offset + idx) = val;
@@ -1031,7 +1036,7 @@ impl VM {
                 }
                 OpCode::GetProperty(idx) => {
                     let obj = self.stack.pop().unwrap();
-                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
+                    let name = match unsafe { frame.function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
@@ -1070,7 +1075,7 @@ impl VM {
                 OpCode::SetProperty(idx) => {
                     let val = self.stack.pop().unwrap();
                     let obj = self.stack.pop().unwrap();
-                    let name = match unsafe { (*frame_ptr).function.chunk.constants.get_unchecked(idx) } {
+                    let name = match unsafe { frame.function.chunk.constants.get_unchecked(idx) } {
                         Value::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
@@ -1119,7 +1124,7 @@ impl VM {
                                 ));
                             }
                             unsafe {
-                                (*frame_ptr).ip = ip.offset_from((*frame_ptr).function.chunk.code.as_ptr()) as usize;
+                                frame.ip = ip.offset_from(frame.function.chunk.code.as_ptr()) as usize;
                             }
                             self.frames.push(CallFrame {
                                 function: func,
@@ -1130,8 +1135,9 @@ impl VM {
                                 let len = self.frames.len();
                                 self.frames.as_mut_ptr().add(len - 1)
                             };
-                            ip = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).ip) };
-                            ip_end = unsafe { (*frame_ptr).function.chunk.code.as_ptr().add((*frame_ptr).function.chunk.code.len()) };
+                            frame = unsafe { &mut *frame_ptr };
+                            ip = unsafe { frame.function.chunk.code.as_ptr().add(frame.ip) };
+                            ip_end = unsafe { frame.function.chunk.code.as_ptr().add(frame.function.chunk.code.len()) };
                         }
                         Value::NativeFunction(native) => {
                             let mut args = Vec::with_capacity(arg_count);
