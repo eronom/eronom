@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use super::value::Value;
-use super::bytecode::{Function, OpCode, ArrayMethodType};
+use super::bytecode::{Function, OpCode};
 use super::gc::{
     gc_allocate, gc_write_barrier, gc_blacken_object, mark_value,
     GC_HEAD, GC_PHASE, GC_ROOTS, GRAY_STACK, ALLOC_COUNT, SWEEP_PTR, PREV_SWEEP_PTR,
@@ -63,7 +63,7 @@ impl VM {
                         mark_value(val);
                     }
                     for frame in &self.frames {
-                        mark_value(&Value::Function(frame.function));
+                        mark_value(&Value::function(frame.function));
                     }
                     GC_ROOTS.with(|roots| {
                         if let Ok(borrowed) = roots.try_borrow() {
@@ -90,7 +90,7 @@ impl VM {
                     mark_value(val);
                 }
                 for frame in &self.frames {
-                    mark_value(&Value::Function(frame.function));
+                    mark_value(&Value::function(frame.function));
                 }
                 GC_ROOTS.with(|roots| {
                     if let Ok(borrowed) = roots.try_borrow() {
@@ -161,7 +161,7 @@ impl VM {
 
     fn execute(&mut self) -> Result<Value, String> {
         let original_len = self.stack.len();
-        self.stack.resize(4096, Value::Null);
+        self.stack.resize(4096, Value::null());
         
         let res = self.execute_loop(original_len);
         
@@ -253,141 +253,87 @@ impl VM {
                         ip = code_ptr.add(frame.ip);
                     }
                     OpCode::Negate => {
-                        if let Value::Number(n) = &mut *stack_top.sub(1) {
-                            *n = -*n;
+                        let val_ptr = stack_top.sub(1);
+                        if (*val_ptr).is_number() {
+                            *val_ptr = Value::number(-(*val_ptr).as_number());
                         }
                     }
                     OpCode::Add => {
-                        let b = *stack_top.sub(1);
-                        let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
-                            *a_ptr = Value::Number(na + nb);
-                            stack_top = stack_top.sub(1);
+                        stack_top = stack_top.sub(1);
+                        let b = *stack_top;
+                        let a_ptr = stack_top.sub(1);
+                        if (*a_ptr).is_number() && b.is_number() {
+                            *a_ptr = Value::number((*a_ptr).as_number() + b.as_number());
                         } else {
-                            sync_stack!();
-                            let b = self.stack.pop().unwrap_unchecked();
-                            let a = self.stack.pop().unwrap_unchecked();
-                            reload_stack!();
-                            match (a, b) {
-                                (Value::String(sa), sb) => {
-                                    let sa_str = match &(*sa).data {
-                                        GcData::String(s) => s,
-                                        _ => unreachable!(),
-                                    };
-                                    let sb_str = sb.to_string();
-                                    let new_str = format!("{}{}", sa_str, sb_str);
-                                    let new_ptr = gc_allocate(GcData::String(new_str));
-                                    *stack_top = Value::String(new_ptr);
-                                    stack_top = stack_top.add(1);
-                                }
-                                (sa, Value::String(sb)) => {
-                                    let sa_str = sa.to_string();
-                                    let sb_str = match &(*sb).data {
-                                        GcData::String(s) => s,
-                                        _ => unreachable!(),
-                                    };
-                                    let new_str = format!("{}{}", sa_str, sb_str);
-                                    let new_ptr = gc_allocate(GcData::String(new_str));
-                                    *stack_top = Value::String(new_ptr);
-                                    stack_top = stack_top.add(1);
-                                }
-                                _ => {
-                                    sync_stack!();
-                                    return Err("Operands must be numbers or strings".into());
-                                }
+                            let a = *a_ptr;
+                            if a.is_string() {
+                                let sa_str = match &(*a.as_gc_ptr()).data {
+                                    GcData::String(s) => s,
+                                    _ => unreachable!(),
+                                };
+                                let sb_str = b.to_string();
+                                let new_str = format!("{}{}", sa_str, sb_str);
+                                let new_ptr = gc_allocate(GcData::String(new_str));
+                                *a_ptr = Value::string(new_ptr);
+                            } else if b.is_string() {
+                                let sa_str = a.to_string();
+                                let sb_str = match &(*b.as_gc_ptr()).data {
+                                    GcData::String(s) => s,
+                                    _ => unreachable!(),
+                                };
+                                let new_str = format!("{}{}", sa_str, sb_str);
+                                let new_ptr = gc_allocate(GcData::String(new_str));
+                                *a_ptr = Value::string(new_ptr);
+                            } else {
+                                sync_stack!();
+                                return Err("Operands must be numbers or strings".into());
                             }
                         }
                     }
                     OpCode::Sub => {
-                        let b = *stack_top.sub(1);
-                        let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
-                            *a_ptr = Value::Number(na - nb);
-                            stack_top = stack_top.sub(1);
-                        } else {
-                            sync_stack!();
-                            let b = self.stack.pop().unwrap_unchecked();
-                            let a = self.stack.pop().unwrap_unchecked();
-                            reload_stack!();
-                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
-                                *stack_top = Value::Number(na - nb);
-                                stack_top = stack_top.add(1);
-                            }
+                        stack_top = stack_top.sub(1);
+                        let b = *stack_top;
+                        let a_ptr = stack_top.sub(1);
+                        if (*a_ptr).is_number() && b.is_number() {
+                            *a_ptr = Value::number((*a_ptr).as_number() - b.as_number());
                         }
                     }
                     OpCode::Mul => {
-                        let b = *stack_top.sub(1);
-                        let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
-                            *a_ptr = Value::Number(na * nb);
-                            stack_top = stack_top.sub(1);
-                        } else {
-                            sync_stack!();
-                            let b = self.stack.pop().unwrap_unchecked();
-                            let a = self.stack.pop().unwrap_unchecked();
-                            reload_stack!();
-                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
-                                *stack_top = Value::Number(na * nb);
-                                stack_top = stack_top.add(1);
-                            }
+                        stack_top = stack_top.sub(1);
+                        let b = *stack_top;
+                        let a_ptr = stack_top.sub(1);
+                        if (*a_ptr).is_number() && b.is_number() {
+                            *a_ptr = Value::number((*a_ptr).as_number() * b.as_number());
                         }
                     }
                     OpCode::Div => {
-                        let b = *stack_top.sub(1);
-                        let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
-                            *a_ptr = Value::Number(na / nb);
-                            stack_top = stack_top.sub(1);
-                        } else {
-                            sync_stack!();
-                            let b = self.stack.pop().unwrap_unchecked();
-                            let a = self.stack.pop().unwrap_unchecked();
-                            reload_stack!();
-                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
-                                *stack_top = Value::Number(na / nb);
-                                stack_top = stack_top.add(1);
-                            }
+                        stack_top = stack_top.sub(1);
+                        let b = *stack_top;
+                        let a_ptr = stack_top.sub(1);
+                        if (*a_ptr).is_number() && b.is_number() {
+                            *a_ptr = Value::number((*a_ptr).as_number() / b.as_number());
                         }
                     }
                     OpCode::Equal => {
-                        stack_top = stack_top.sub(2);
-                        let a = *stack_top;
-                        let b = *stack_top.add(1);
-                        *stack_top = Value::Boolean(a == b);
-                        stack_top = stack_top.add(1);
+                        stack_top = stack_top.sub(1);
+                        let b = *stack_top;
+                        let a_ptr = stack_top.sub(1);
+                        *a_ptr = Value::boolean(*a_ptr == b);
                     }
                     OpCode::Greater => {
-                        let b = *stack_top.sub(1);
-                        let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
-                            *a_ptr = Value::Boolean(na > nb);
-                            stack_top = stack_top.sub(1);
-                        } else {
-                            sync_stack!();
-                            let b = self.stack.pop().unwrap_unchecked();
-                            let a = self.stack.pop().unwrap_unchecked();
-                            reload_stack!();
-                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
-                                *stack_top = Value::Boolean(na > nb);
-                                stack_top = stack_top.add(1);
-                            }
+                        stack_top = stack_top.sub(1);
+                        let b = *stack_top;
+                        let a_ptr = stack_top.sub(1);
+                        if (*a_ptr).is_number() && b.is_number() {
+                            *a_ptr = Value::boolean((*a_ptr).as_number() > b.as_number());
                         }
                     }
                     OpCode::Less => {
-                        let b = *stack_top.sub(1);
-                        let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
-                            *a_ptr = Value::Boolean(na < nb);
-                            stack_top = stack_top.sub(1);
-                        } else {
-                            sync_stack!();
-                            let b = self.stack.pop().unwrap_unchecked();
-                            let a = self.stack.pop().unwrap_unchecked();
-                            reload_stack!();
-                            if let (Value::Number(na), Value::Number(nb)) = (a, b) {
-                                *stack_top = Value::Boolean(na < nb);
-                                stack_top = stack_top.add(1);
-                            }
+                        stack_top = stack_top.sub(1);
+                        let b = *stack_top;
+                        let a_ptr = stack_top.sub(1);
+                        if (*a_ptr).is_number() && b.is_number() {
+                            *a_ptr = Value::boolean((*a_ptr).as_number() < b.as_number());
                         }
                     }
                     OpCode::Pop => {
@@ -395,11 +341,8 @@ impl VM {
                     }
                     OpCode::DefineGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match name_val {
-                            Value::String(ptr) => match &(*ptr).data {
-                                GcData::String(s) => Rc::from(s.as_str()),
-                                _ => unreachable!(),
-                            },
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => Rc::from(s.as_str()),
                             _ => unreachable!(),
                         };
                         stack_top = stack_top.sub(1);
@@ -408,11 +351,8 @@ impl VM {
                     }
                     OpCode::GetGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match name_val {
-                            Value::String(ptr) => match &(*ptr).data {
-                                GcData::String(s) => s.as_str(),
-                                _ => unreachable!(),
-                            },
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => s.as_str(),
                             _ => unreachable!(),
                         };
                         if let Some(val) = self.globals.get(name) {
@@ -425,11 +365,8 @@ impl VM {
                     }
                     OpCode::SetGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match name_val {
-                            Value::String(ptr) => match &(*ptr).data {
-                                GcData::String(s) => Rc::from(s.as_str()),
-                                _ => unreachable!(),
-                            },
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => Rc::from(s.as_str()),
                             _ => unreachable!(),
                         };
                         let val = *stack_top.sub(1);
@@ -454,10 +391,12 @@ impl VM {
                     }
                     OpCode::JumpIfFalse => {
                         let val = *stack_top.sub(1);
-                        let is_false = match val {
-                            Value::Boolean(b) => !b,
-                            Value::Null => true,
-                            _ => false,
+                        let is_false = if val.is_boolean() {
+                            !val.as_boolean()
+                        } else if val.is_null() {
+                            true
+                        } else {
+                            false
                         };
                         if is_false {
                             ip = ip.add(instruction.operand as usize);
@@ -481,7 +420,7 @@ impl VM {
                             elements.push(*stack_top.add(i));
                         }
                         let ptr = gc_allocate(GcData::Array(elements));
-                        *stack_top = Value::Array(ptr);
+                        *stack_top = Value::array(ptr);
                         stack_top = stack_top.add(1);
                     }
                     OpCode::MakeObject => {
@@ -495,272 +434,262 @@ impl VM {
                         for i in 0..count {
                             let key_val = *stack_top.add(i * 2);
                             let val = *stack_top.add(i * 2 + 1);
-                            let key = match key_val {
-                                Value::String(s_ptr) => match &(*s_ptr).data {
-                                    GcData::String(s) => Rc::from(s.as_str()),
-                                    _ => {
-                                        sync_stack!();
-                                        return Err("Object key must be string".into());
-                                    }
-                                },
-                                _ => {
-                                    sync_stack!();
-                                    return Err("Object key must be string".into());
-                                }
+                            if !key_val.is_string() {
+                                sync_stack!();
+                                return Err("Object key must be string".into());
+                            }
+                            let key = match &(*key_val.as_gc_ptr()).data {
+                                GcData::String(s) => Rc::from(s.as_str()),
+                                _ => unreachable!(),
                             };
                             obj.insert(key, val);
                         }
                         let ptr = gc_allocate(GcData::Object(obj));
-                        *stack_top = Value::Object(ptr);
+                        *stack_top = Value::object(ptr);
                         stack_top = stack_top.add(1);
                     }
                     OpCode::GetProperty => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match name_val {
-                            Value::String(ptr) => match &(*ptr).data {
-                                GcData::String(s) => s.as_str(),
-                                _ => unreachable!(),
-                            },
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => s.as_str(),
                             _ => unreachable!(),
                         };
                         let obj_ptr = stack_top.sub(1);
                         let obj = *obj_ptr;
-                        match obj {
-                            Value::Object(ptr) => {
-                                match &(*ptr).data {
-                                    GcData::Object(map) => {
-                                        let val = map.get(name).cloned().unwrap_or(Value::Null);
+                        if obj.is_object() {
+                            let ptr = obj.as_gc_ptr();
+                            match &(*ptr).data {
+                                GcData::Object(map) => {
+                                    let val = map.get(name).cloned().unwrap_or(Value::null());
+                                    *obj_ptr = val;
+                                }
+                                _ => unreachable!(),
+                            }
+                        } else if obj.is_array() {
+                            let ptr = obj.as_gc_ptr();
+                            match &(*ptr).data {
+                                GcData::Array(arr) => {
+                                    if name == "push" {
+                                        *obj_ptr = Value::array_method_push(ptr);
+                                    } else if name == "pop" {
+                                        *obj_ptr = Value::array_method_pop(ptr);
+                                    } else if name == "length" {
+                                        *obj_ptr = Value::number(arr.len() as f64);
+                                    } else if let Ok(idx) = name.parse::<usize>() {
+                                        let val = arr.get(idx).cloned().unwrap_or(Value::null());
                                         *obj_ptr = val;
+                                    } else {
+                                        *obj_ptr = Value::null();
                                     }
-                                    _ => unreachable!(),
                                 }
+                                _ => unreachable!(),
                             }
-                            Value::Array(ptr) => {
-                                match &(*ptr).data {
-                                    GcData::Array(arr) => {
-                                        if name == "push" {
-                                            *obj_ptr = Value::ArrayMethod(ptr, ArrayMethodType::Push);
-                                        } else if name == "pop" {
-                                            *obj_ptr = Value::ArrayMethod(ptr, ArrayMethodType::Pop);
-                                        } else if name == "length" {
-                                            *obj_ptr = Value::Number(arr.len() as f64);
-                                        } else if let Ok(idx) = name.parse::<usize>() {
-                                            let val = arr.get(idx).cloned().unwrap_or(Value::Null);
-                                            *obj_ptr = val;
-                                        } else {
-                                            *obj_ptr = Value::Null;
-                                        }
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                            _ => {
-                                sync_stack!();
-                                return Err("Only objects have properties".into());
-                            }
+                        } else {
+                            sync_stack!();
+                            return Err("Only objects have properties".into());
                         }
                     }
                     OpCode::SetProperty => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match name_val {
-                            Value::String(ptr) => match &(*ptr).data {
-                                GcData::String(s) => s.as_str(),
-                                _ => unreachable!(),
-                            },
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => s.as_str(),
                             _ => unreachable!(),
                         };
                         stack_top = stack_top.sub(2);
                         let obj = *stack_top;
                         let val = *stack_top.add(1);
-                        match obj {
-                            Value::Object(ptr) => {
-                                match &mut (*ptr).data {
-                                    GcData::Object(map) => {
-                                        map.insert(Rc::from(name), val);
+                        if obj.is_object() {
+                            let ptr = obj.as_gc_ptr();
+                            match &mut (*ptr).data {
+                                GcData::Object(map) => {
+                                    map.insert(Rc::from(name), val);
+                                    gc_write_barrier(ptr, &val);
+                                    *stack_top = val;
+                                    stack_top = stack_top.add(1);
+                                }
+                                _ => unreachable!(),
+                            }
+                        } else if obj.is_array() {
+                            let ptr = obj.as_gc_ptr();
+                            match &mut (*ptr).data {
+                                GcData::Array(arr) => {
+                                    if let Ok(idx) = name.parse::<usize>() {
+                                        if idx < arr.len() {
+                                            arr[idx] = val;
+                                        } else if idx == arr.len() {
+                                            arr.push(val);
+                                        } else {
+                                            sync_stack!();
+                                            return Err(format!(
+                                                "Index {} out of bounds for array of length {}",
+                                                idx,
+                                                arr.len()
+                                            ));
+                                        }
                                         gc_write_barrier(ptr, &val);
                                         *stack_top = val;
                                         stack_top = stack_top.add(1);
+                                    } else {
+                                        sync_stack!();
+                                        return Err("Cannot set non-numeric property on array".into());
                                     }
-                                    _ => unreachable!(),
                                 }
+                                _ => unreachable!(),
                             }
-                            Value::Array(ptr) => {
-                                match &mut (*ptr).data {
-                                    GcData::Array(arr) => {
-                                        if let Ok(idx) = name.parse::<usize>() {
-                                            if idx < arr.len() {
-                                                arr[idx] = val;
-                                            } else if idx == arr.len() {
-                                                arr.push(val);
-                                            } else {
-                                                sync_stack!();
-                                                return Err(format!(
-                                                    "Index {} out of bounds for array of length {}",
-                                                    idx,
-                                                    arr.len()
-                                                ));
-                                            }
-                                            gc_write_barrier(ptr, &val);
-                                            *stack_top = val;
-                                            stack_top = stack_top.add(1);
-                                        } else {
-                                            sync_stack!();
-                                            return Err("Cannot set non-numeric property on array".into());
-                                        }
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                            _ => {
-                                sync_stack!();
-                                return Err("Only objects have properties".into());
-                            }
+                        } else {
+                            sync_stack!();
+                            return Err("Only objects have properties".into());
                         }
                     }
                     OpCode::Call => {
                         let arg_count = instruction.operand as usize;
                         let callee = *stack_top.sub(arg_count + 1);
-                        match callee {
-                            Value::Function(func_ptr) => {
-                                let func_val = get_func!(func_ptr);
-                                if arg_count != func_val.arity {
-                                    sync_stack!();
-                                    return Err(format!(
-                                        "Expected {} args but got {}",
-                                        func_val.arity, arg_count
-                                    ));
-                                }
-                                frame.ip = ip.offset_from(code_ptr) as usize;
-                                let current_stack_len = stack_top.offset_from(stack_start) as usize;
-                                self.frames.push(CallFrame {
-                                    function: func_ptr,
-                                    ip: 0,
-                                    slots_offset: current_stack_len - arg_count,
-                                });
-                                frame_ptr = {
-                                    let len = self.frames.len();
-                                    self.frames.as_mut_ptr().add(len - 1)
-                                };
-                                frame = &mut *frame_ptr;
-                                func = get_func!(frame.function);
-                                code_ptr = func.chunk.code.as_ptr();
-                                constants_ptr = func.chunk.constants.as_ptr();
-                                slots_offset = frame.slots_offset;
-                                frame_slots = stack_start.add(slots_offset);
-                                ip = code_ptr.add(frame.ip);
-                            }
-                            Value::NativeFunction(native) => {
-                                let mut args = Vec::with_capacity(arg_count);
-                                stack_top = stack_top.sub(arg_count);
-                                for i in 0..arg_count {
-                                    args.push(*stack_top.add(i));
-                                }
-                                stack_top = stack_top.sub(1); // pop function
+                        if callee.is_function() {
+                            let func_ptr = callee.as_gc_ptr();
+                            let func_val = get_func!(func_ptr);
+                            if arg_count != func_val.arity {
                                 sync_stack!();
-                                let result = native(args);
-                                reload_stack!();
-                                *stack_top = result;
-                                stack_top = stack_top.add(1);
+                                return Err(format!(
+                                    "Expected {} args but got {}",
+                                    func_val.arity, arg_count
+                                ));
                             }
-                            Value::ArrayMethod(ptr, method) => {
-                                let mut args = Vec::with_capacity(arg_count);
-                                stack_top = stack_top.sub(arg_count);
-                                for i in 0..arg_count {
-                                    args.push(*stack_top.add(i));
-                                }
-                                stack_top = stack_top.sub(1); // pop callee
+                            frame.ip = ip.offset_from(code_ptr) as usize;
+                            let current_stack_len = stack_top.offset_from(stack_start) as usize;
+                            self.frames.push(CallFrame {
+                                function: func_ptr,
+                                ip: 0,
+                                slots_offset: current_stack_len - arg_count,
+                            });
+                            frame_ptr = {
+                                let len = self.frames.len();
+                                self.frames.as_mut_ptr().add(len - 1)
+                            };
+                            frame = &mut *frame_ptr;
+                            func = get_func!(frame.function);
+                            code_ptr = func.chunk.code.as_ptr();
+                            constants_ptr = func.chunk.constants.as_ptr();
+                            slots_offset = frame.slots_offset;
+                            frame_slots = stack_start.add(slots_offset);
+                            ip = code_ptr.add(frame.ip);
+                        } else if callee.is_native_function() {
+                            let native = callee.as_native_fn();
+                            let mut args = Vec::with_capacity(arg_count);
+                            stack_top = stack_top.sub(arg_count);
+                            for i in 0..arg_count {
+                                args.push(*stack_top.add(i));
+                            }
+                            stack_top = stack_top.sub(1); // pop function
+                            sync_stack!();
+                            let result = native(args);
+                            reload_stack!();
+                            *stack_top = result;
+                            stack_top = stack_top.add(1);
+                        } else if callee.is_array_method_push() || callee.is_array_method_pop() {
+                            let ptr = callee.as_gc_ptr();
+                            let mut args = Vec::with_capacity(arg_count);
+                            stack_top = stack_top.sub(arg_count);
+                            for i in 0..arg_count {
+                                args.push(*stack_top.add(i));
+                            }
+                            stack_top = stack_top.sub(1); // pop callee
 
-                                sync_stack!();
-                                let result = match &mut (*ptr).data {
-                                    GcData::Array(arr) => match method {
-                                        ArrayMethodType::Push => {
-                                            for arg in args {
-                                                gc_write_barrier(ptr, &arg);
-                                                arr.push(arg);
-                                            }
-                                            Value::Number(arr.len() as f64)
+                            sync_stack!();
+                            let result = match &mut (*ptr).data {
+                                GcData::Array(arr) => {
+                                    if callee.is_array_method_push() {
+                                        for arg in args {
+                                            gc_write_barrier(ptr, &arg);
+                                            arr.push(arg);
                                         }
-                                        ArrayMethodType::Pop => arr.pop().unwrap_or(Value::Null),
-                                    },
-                                    _ => unreachable!(),
-                                };
-                                reload_stack!();
-                                *stack_top = result;
-                                stack_top = stack_top.add(1);
-                            }
-                            _ => {
-                                sync_stack!();
-                                return Err("Can only call functions".into());
-                            }
+                                        Value::number(arr.len() as f64)
+                                    } else {
+                                        arr.pop().unwrap_or(Value::null())
+                                    }
+                                }
+                                _ => unreachable!(),
+                            };
+                            reload_stack!();
+                            *stack_top = result;
+                            stack_top = stack_top.add(1);
+                        } else {
+                            sync_stack!();
+                            return Err("Can only call functions".into());
                         }
                     }
                     OpCode::Not => {
                         stack_top = stack_top.sub(1);
                         let val = *stack_top;
-                        let res = match val {
-                            Value::Boolean(b) => !b,
-                            Value::Null => true,
-                            _ => false,
+                        let res = if val.is_boolean() {
+                            !val.as_boolean()
+                        } else if val.is_null() {
+                            true
+                        } else {
+                            false
                         };
-                        *stack_top = Value::Boolean(res);
+                        *stack_top = Value::boolean(res);
                         stack_top = stack_top.add(1);
                     }
                     OpCode::GetIndex => {
                         stack_top = stack_top.sub(2);
                         let obj = *stack_top;
                         let index = *stack_top.add(1);
-                        match (obj, index) {
-                            (Value::Array(ptr), Value::Number(n)) => {
-                                let idx = n as usize;
+                        if obj.is_array() {
+                            let ptr = obj.as_gc_ptr();
+                            if index.is_number() {
+                                let idx = index.as_number() as usize;
                                 match &(*ptr).data {
                                     GcData::Array(arr) => {
-                                        let val = arr.get(idx).cloned().unwrap_or(Value::Null);
+                                        let val = arr.get(idx).cloned().unwrap_or(Value::null());
                                         *stack_top = val;
                                         stack_top = stack_top.add(1);
                                     }
                                     _ => unreachable!(),
                                 }
-                            }
-                            (Value::Array(ptr), Value::String(s_ptr)) => {
-                                let s = match &(*s_ptr).data {
+                            } else if index.is_string() {
+                                let s = match &(*index.as_gc_ptr()).data {
                                     GcData::String(st) => st.as_str(),
                                     _ => unreachable!(),
                                 };
                                 if let Ok(idx) = s.parse::<usize>() {
                                     match &(*ptr).data {
                                         GcData::Array(arr) => {
-                                            let val = arr.get(idx).cloned().unwrap_or(Value::Null);
+                                            let val = arr.get(idx).cloned().unwrap_or(Value::null());
                                             *stack_top = val;
                                             stack_top = stack_top.add(1);
                                         }
                                         _ => unreachable!(),
                                     }
                                 } else {
-                                    *stack_top = Value::Null;
+                                    *stack_top = Value::null();
                                     stack_top = stack_top.add(1);
                                 }
+                            } else {
+                                sync_stack!();
+                                return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
-                            (Value::Object(ptr), Value::String(s_ptr)) => {
-                                let s = match &(*s_ptr).data {
+                        } else if obj.is_object() {
+                            let ptr = obj.as_gc_ptr();
+                            if index.is_string() {
+                                let s = match &(*index.as_gc_ptr()).data {
                                     GcData::String(st) => st.as_str(),
                                     _ => unreachable!(),
                                 };
                                 match &(*ptr).data {
                                     GcData::Object(map) => {
-                                        let val = map.get(s).cloned().unwrap_or(Value::Null);
+                                        let val = map.get(s).cloned().unwrap_or(Value::null());
                                         *stack_top = val;
                                         stack_top = stack_top.add(1);
                                     }
                                     _ => unreachable!(),
                                 }
-                            }
-                            _ => {
+                            } else {
                                 sync_stack!();
-                                return Err(
-                                    "Only arrays can be indexed by numbers, and objects by strings"
-                                        .into(),
-                                );
+                                return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
+                        } else {
+                            sync_stack!();
+                            return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                         }
                     }
                     OpCode::SetIndex => {
@@ -768,9 +697,10 @@ impl VM {
                         let obj = *stack_top;
                         let index = *stack_top.add(1);
                         let val = *stack_top.add(2);
-                        match (obj, index) {
-                            (Value::Array(ptr), Value::Number(n)) => {
-                                let idx = n as usize;
+                        if obj.is_array() {
+                            let ptr = obj.as_gc_ptr();
+                            if index.is_number() {
+                                let idx = index.as_number() as usize;
                                 match &mut (*ptr).data {
                                     GcData::Array(arr) => {
                                         if idx < arr.len() {
@@ -791,9 +721,8 @@ impl VM {
                                     }
                                     _ => unreachable!(),
                                 }
-                            }
-                            (Value::Array(ptr), Value::String(s_ptr)) => {
-                                let s = match &(*s_ptr).data {
+                            } else if index.is_string() {
+                                let s = match &(*index.as_gc_ptr()).data {
                                     GcData::String(st) => st.as_str(),
                                     _ => unreachable!(),
                                 };
@@ -822,9 +751,14 @@ impl VM {
                                     sync_stack!();
                                     return Err("Cannot set non-numeric property on array".into());
                                 }
+                            } else {
+                                sync_stack!();
+                                return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
-                            (Value::Object(ptr), Value::String(s_ptr)) => {
-                                let s = match &(*s_ptr).data {
+                        } else if obj.is_object() {
+                            let ptr = obj.as_gc_ptr();
+                            if index.is_string() {
+                                let s = match &(*index.as_gc_ptr()).data {
                                     GcData::String(st) => Rc::from(st.as_str()),
                                     _ => unreachable!(),
                                 };
@@ -837,14 +771,13 @@ impl VM {
                                     }
                                     _ => unreachable!(),
                                 }
-                            }
-                            _ => {
+                            } else {
                                 sync_stack!();
-                                return Err(
-                                    "Only arrays can be indexed by numbers, and objects by strings"
-                                        .into(),
-                                );
+                                return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                             }
+                        } else {
+                            sync_stack!();
+                            return Err("Only arrays can be indexed by numbers, and objects by strings".into());
                         }
                     }
                 }
@@ -863,10 +796,10 @@ mod tests {
         gc_free_all();
 
         let parent_ptr = gc_allocate(GcData::Array(vec![]));
-        let parent = Value::Array(parent_ptr);
+        let parent = Value::array(parent_ptr);
 
         let garbage_ptr = gc_allocate(GcData::Array(vec![]));
-        let _garbage = Value::Array(garbage_ptr);
+        let _garbage = Value::array(garbage_ptr);
 
         let mut vm = VM::new();
         vm.stack.push(parent);

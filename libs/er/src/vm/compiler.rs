@@ -48,7 +48,7 @@ impl Compiler {
             Stmt::Print(expr) => {
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::String(gc_allocate(GcData::String("print".to_string()))));
+                    .add_constant(Value::string(gc_allocate(GcData::String("print".to_string()))));
                 self.current_chunk().write_operand(OpCode::GetGlobal, name_idx);
                 self.compile_expr(expr)?;
                 self.current_chunk().write_operand(OpCode::Call, 1);
@@ -64,7 +64,7 @@ impl Compiler {
                 } else {
                     let name_idx = self
                         .current_chunk()
-                        .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
                     self.current_chunk().write_operand(OpCode::DefineGlobal, name_idx);
                 }
             }
@@ -97,13 +97,22 @@ impl Compiler {
                     name: var_name.clone(),
                     depth: self.scope_depth,
                 });
+                let local_idx = self.resolve_local(var_name).unwrap();
+
+                // Evaluate the loop limit once and store it in a hidden compiler-generated local
+                self.compile_expr(end)?;
+                let temp_name = format!("*loop_limit_{}", self.locals.len());
+                self.locals.push(Local {
+                    name: temp_name.clone(),
+                    depth: self.scope_depth,
+                });
+                let limit_idx = self.resolve_local(&temp_name).unwrap();
 
                 let loop_start = self.current_chunk().code.len();
 
-                // Condition: i < end
-                let local_idx = self.resolve_local(var_name).unwrap();
+                // Condition: i < limit
                 self.current_chunk().write_operand(OpCode::GetLocal, local_idx);
-                self.compile_expr(end)?;
+                self.current_chunk().write_operand(OpCode::GetLocal, limit_idx);
                 self.current_chunk().write(OpCode::Less);
 
                 let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
@@ -113,7 +122,7 @@ impl Compiler {
 
                 // Increment
                 self.current_chunk().write_operand(OpCode::GetLocal, local_idx);
-                let one_idx = self.current_chunk().add_constant(Value::Number(1.0));
+                let one_idx = self.current_chunk().add_constant(Value::number(1.0));
                 self.current_chunk().write_operand(OpCode::Constant, one_idx);
                 self.current_chunk().write(OpCode::Add);
                 self.current_chunk().write_operand(OpCode::SetLocal, local_idx);
@@ -128,7 +137,7 @@ impl Compiler {
                 if let Some(e) = expr {
                     self.compile_expr(e)?;
                 } else {
-                    let null_idx = self.current_chunk().add_constant(Value::Null);
+                    let null_idx = self.current_chunk().add_constant(Value::null());
                     self.current_chunk().write_operand(OpCode::Constant, null_idx);
                 }
                 self.current_chunk().write(OpCode::Return);
@@ -141,10 +150,10 @@ impl Compiler {
         match expr {
             Expr::Literal(val) => {
                 let v = match val {
-                    LiteralValue::Null => Value::Null,
-                    LiteralValue::Boolean(b) => Value::Boolean(*b),
-                    LiteralValue::Number(n) => Value::Number(*n),
-                    LiteralValue::String(s) => Value::String(gc_allocate(GcData::String(s.clone()))),
+                    LiteralValue::Null => Value::null(),
+                    LiteralValue::Boolean(b) => Value::boolean(*b),
+                    LiteralValue::Number(n) => Value::number(*n),
+                    LiteralValue::String(s) => Value::string(gc_allocate(GcData::String(s.clone()))),
                 };
                 let idx = self.current_chunk().add_constant(v);
                 self.current_chunk().write_operand(OpCode::Constant, idx);
@@ -155,7 +164,7 @@ impl Compiler {
                 } else {
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
                     self.current_chunk().write_operand(OpCode::GetGlobal, idx);
                 }
             }
@@ -166,7 +175,7 @@ impl Compiler {
                 } else {
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
                     self.current_chunk().write_operand(OpCode::SetGlobal, idx);
                 }
             }
@@ -211,7 +220,7 @@ impl Compiler {
                 self.compile_expr(obj)?;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
+                    .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
                 self.current_chunk().write_operand(OpCode::GetProperty, name_idx);
             }
             Expr::Set(obj, name, val) => {
@@ -219,7 +228,7 @@ impl Compiler {
                 self.compile_expr(val)?;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
+                    .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
                 self.current_chunk().write_operand(OpCode::SetProperty, name_idx);
             }
             Expr::Array(items) => {
@@ -232,7 +241,7 @@ impl Compiler {
                 for (key, val) in pairs {
                     let k_idx = self
                         .current_chunk()
-                        .add_constant(Value::String(gc_allocate(GcData::String(key.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(key.clone()))));
                     self.current_chunk().write_operand(OpCode::Constant, k_idx);
                     self.compile_expr(val)?;
                 }
@@ -254,7 +263,7 @@ impl Compiler {
                 let func_ptr = gc_allocate(GcData::Function(func));
                 let idx = self
                     .current_chunk()
-                    .add_constant(Value::Function(func_ptr));
+                    .add_constant(Value::function(func_ptr));
                 self.current_chunk().write_operand(OpCode::Constant, idx);
             }
             Expr::GetIndex(obj, index) => {

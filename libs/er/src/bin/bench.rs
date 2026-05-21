@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 fn main() {
+    println!("Size of Value: {}", std::mem::size_of::<er::backend::Value>());
     // Pure compute — NO print calls (I/O dominates timing and floods the terminal)
     let source = r#"
 let x = 0
@@ -36,7 +37,7 @@ for i in 1..10000 {
     // --- VM-based benchmark ---
     fn noop_print(args: Vec<er::backend::Value>) -> er::backend::Value {
         let _ = args;
-        er::backend::Value::Null
+        er::backend::Value::null()
     }
 
     // Warmup
@@ -47,7 +48,7 @@ for i in 1..10000 {
         let compiler = er::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
-        vm.register_global("print", er::backend::Value::NativeFunction(noop_print));
+        vm.register_global("print", er::backend::Value::native_function(noop_print));
         vm.run(function).ok();
     }
 
@@ -59,7 +60,7 @@ for i in 1..10000 {
         let compiler = er::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
-        vm.register_global("print", er::backend::Value::NativeFunction(noop_print));
+        vm.register_global("print", er::backend::Value::native_function(noop_print));
         vm.run(function).ok();
     }
     let vm_elapsed = start.elapsed();

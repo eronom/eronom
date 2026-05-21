@@ -22,10 +22,10 @@ thread_local! {
 
 fn route_fn(_args: Vec<Value>) -> Value {
     let mut obj = HashMap::new();
-    obj.insert(std::rc::Rc::from("get"), Value::NativeFunction(app_get));
-    obj.insert(std::rc::Rc::from("post"), Value::NativeFunction(app_post));
+    obj.insert(std::rc::Rc::from("get"), Value::native_function(app_get));
+    obj.insert(std::rc::Rc::from("post"), Value::native_function(app_post));
     let ptr = backend::gc_allocate(backend::GcData::Object(obj));
-    Value::Object(ptr)
+    Value::object(ptr)
 }
 
 fn app_get(args: Vec<Value>) -> Value {
@@ -37,7 +37,7 @@ fn app_get(args: Vec<Value>) -> Value {
             });
         }
     }
-    Value::Null
+    Value::null()
 }
 
 fn app_post(args: Vec<Value>) -> Value {
@@ -49,7 +49,7 @@ fn app_post(args: Vec<Value>) -> Value {
             });
         }
     }
-    Value::Null
+    Value::null()
 }
 
 fn c_json(args: Vec<Value>) -> Value {
@@ -57,31 +57,36 @@ fn c_json(args: Vec<Value>) -> Value {
         let json_str = value_to_json(val);
         RESPONSE.with(|r| *r.borrow_mut() = Some(json_str));
     }
-    Value::Null
+    Value::null()
 }
 
 fn value_to_json(val: &Value) -> String {
-    match val {
-        Value::Null => "null".to_string(),
-        Value::Boolean(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(ptr) => unsafe {
-            match &(**ptr).data {
+    if val.is_null() {
+        "null".to_string()
+    } else if val.is_boolean() {
+        val.as_boolean().to_string()
+    } else if val.is_number() {
+        val.as_number().to_string()
+    } else if val.is_string() {
+        unsafe {
+            match &(*val.as_gc_ptr()).data {
                 backend::GcData::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                 _ => unreachable!(),
             }
-        },
-        Value::Array(ptr) => unsafe {
-            match &(**ptr).data {
+        }
+    } else if val.is_array() {
+        unsafe {
+            match &(*val.as_gc_ptr()).data {
                 backend::GcData::Array(arr) => {
                     let items: Vec<String> = arr.iter().map(value_to_json).collect();
                     format!("[{}]", items.join(","))
                 }
                 _ => unreachable!(),
             }
-        },
-        Value::Object(ptr) => unsafe {
-            match &(**ptr).data {
+        }
+    } else if val.is_object() {
+        unsafe {
+            match &(*val.as_gc_ptr()).data {
                 backend::GcData::Object(obj) => {
                     let items: Vec<String> = obj
                         .iter()
@@ -91,8 +96,9 @@ fn value_to_json(val: &Value) -> String {
                 }
                 _ => unreachable!(),
             }
-        },
-        _ => "\"<function>\"".to_string(),
+        }
+    } else {
+        "\"<function>\"".to_string()
     }
 }
 
@@ -139,14 +145,14 @@ pub fn handle_api_request(
     };
 
     let mut vm = VM::new();
-    vm.register_global("route", Value::NativeFunction(route_fn));
+    vm.register_global("route", Value::native_function(route_fn));
 
     // Handle POST body parsing (basic support for VM variables)
     if request.method() == &tiny_http::Method::Post {
         let mut body = String::new();
         request.as_reader().read_to_string(&mut body).ok();
         let body_ptr = backend::gc_allocate(backend::GcData::String(body));
-        vm.register_global("body_raw", Value::String(body_ptr));
+        vm.register_global("body_raw", Value::string(body_ptr));
     }
 
     if let Err(e) = vm.run(function) {
@@ -204,31 +210,31 @@ pub fn handle_api_request(
 
     if let Some(handler) = matched_handler {
         let mut c_obj = HashMap::new();
-        c_obj.insert(std::rc::Rc::from("json"), Value::NativeFunction(c_json));
-        let c_val = Value::Object(backend::gc_allocate(backend::GcData::Object(c_obj)));
+        c_obj.insert(std::rc::Rc::from("json"), Value::native_function(c_json));
+        let c_val = Value::object(backend::gc_allocate(backend::GcData::Object(c_obj)));
 
-        match handler {
-            Value::Function(func_ptr) => {
-                let mut call_vm = VM::new();
-                call_vm.register_global("route", Value::NativeFunction(route_fn));
+        if handler.is_function() {
+            let func_ptr = handler.as_gc_ptr();
+            let mut call_vm = VM::new();
+            call_vm.register_global("route", Value::native_function(route_fn));
 
-                let mut call_chunk = backend::Chunk::default();
-                let f_idx = call_chunk.add_constant(Value::Function(func_ptr));
-                call_chunk.write_operand(backend::OpCode::Constant, f_idx);
-                let arg_idx = call_chunk.add_constant(c_val);
-                call_chunk.write_operand(backend::OpCode::Constant, arg_idx);
-                call_chunk.write_operand(backend::OpCode::Call, 1);
-                call_chunk.write(backend::OpCode::Return);
+            let mut call_chunk = backend::Chunk::default();
+            let f_idx = call_chunk.add_constant(Value::function(func_ptr));
+            call_chunk.write_operand(backend::OpCode::Constant, f_idx);
+            let arg_idx = call_chunk.add_constant(c_val);
+            call_chunk.write_operand(backend::OpCode::Constant, arg_idx);
+            call_chunk.write_operand(backend::OpCode::Call, 1);
+            call_chunk.write(backend::OpCode::Return);
 
-                let wrapper = backend::Function {
-                    name: None,
-                    chunk: call_chunk,
-                    arity: 0,
-                };
+            let wrapper = backend::Function {
+                name: None,
+                chunk: call_chunk,
+                arity: 0,
+            };
 
-                if let Err(e) = call_vm.run(wrapper) {
-                    anyhow::bail!("VM Runtime error in handler: {}", e);
-                }
+            if let Err(e) = call_vm.run(wrapper) {
+                anyhow::bail!("VM Runtime error in handler: {}", e);
+            }
 
                 let response_str = RESPONSE.with(|r| r.borrow().clone());
                 if let Some(json_data) = response_str {
@@ -249,10 +255,10 @@ pub fn handle_api_request(
                         );
                     return Ok(Some(response));
                 }
+            } else {
+                anyhow::bail!("Handler is not a function");
             }
-            _ => anyhow::bail!("Handler is not a function"),
         }
-    }
 
     Ok(None)
 }
@@ -287,7 +293,7 @@ fn native_print(args: Vec<Value>) -> Value {
         outputs.push(arg.to_string());
     }
     println!("{}", outputs.join(" "));
-    Value::Null
+    Value::null()
 }
 
 pub fn run_file(path: &str) -> anyhow::Result<()> {
@@ -312,7 +318,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     };
 
     let mut vm = VM::new();
-    vm.register_global("print", Value::NativeFunction(native_print));
+    vm.register_global("print", Value::native_function(native_print));
 
     if let Err(e) = vm.run(function) {
         anyhow::bail!("VM Runtime error: {}", e);

@@ -1,4 +1,6 @@
-use super::value::Value;
+use super::value::{
+    Value, TAG_NUMBER_MASK, TAG_STRING, TAG_FUNCTION, TAG_METHOD_PUSH, TAG_METHOD_POP
+};
 use super::bytecode::Function;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -84,14 +86,17 @@ pub fn gc_free_all() {
 }
 
 pub fn gc_mark_value(val: &Value) {
-    match val {
-        Value::String(ptr) | Value::Array(ptr) | Value::Object(ptr) | Value::Function(ptr) | Value::ArrayMethod(ptr, _) => unsafe {
-            if !ptr.is_null() && (*(*ptr)).color == GcColor::White {
-                (*(*ptr)).color = GcColor::Gray;
-                GRAY_STACK.with(|gs| gs.borrow_mut().push(*ptr));
+    if (val.0 & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
+        let tag = val.0 & 0xffff_0000_0000_0000;
+        if (tag >= TAG_STRING && tag <= TAG_FUNCTION) || tag == TAG_METHOD_PUSH || tag == TAG_METHOD_POP {
+            let ptr = val.as_gc_ptr();
+            unsafe {
+                if !ptr.is_null() && (*ptr).color == GcColor::White {
+                    (*ptr).color = GcColor::Gray;
+                    GRAY_STACK.with(|gs| gs.borrow_mut().push(ptr));
+                }
             }
-        },
-        _ => {}
+        }
     }
 }
 
@@ -148,24 +153,17 @@ pub fn gc_write_barrier(parent: *mut GcObject, child: &Value) {
             return;
         }
         if (*parent).color == GcColor::Black {
-            match child {
-                Value::String(child_ptr) | Value::Array(child_ptr) | Value::Object(child_ptr) | Value::Function(child_ptr) => {
-                    if !child_ptr.is_null() && (*(*child_ptr)).color == GcColor::White {
-                        (*(*child_ptr)).color = GcColor::Gray;
+            if (child.0 & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
+                let tag = child.0 & 0xffff_0000_0000_0000;
+                if (tag >= TAG_STRING && tag <= TAG_FUNCTION) || tag == TAG_METHOD_PUSH || tag == TAG_METHOD_POP {
+                    let child_ptr = child.as_gc_ptr();
+                    if !child_ptr.is_null() && (*child_ptr).color == GcColor::White {
+                        (*child_ptr).color = GcColor::Gray;
                         GRAY_STACK.with(|stack| {
-                            stack.borrow_mut().push(*child_ptr);
+                            stack.borrow_mut().push(child_ptr);
                         });
                     }
                 }
-                Value::ArrayMethod(child_ptr, _) => {
-                    if !child_ptr.is_null() && (*(*child_ptr)).color == GcColor::White {
-                        (*(*child_ptr)).color = GcColor::Gray;
-                        GRAY_STACK.with(|stack| {
-                            stack.borrow_mut().push(*child_ptr);
-                        });
-                    }
-                }
-                _ => {}
             }
         }
     }
