@@ -49,9 +49,9 @@ impl Compiler {
                 let name_idx = self
                     .current_chunk()
                     .add_constant(Value::String(gc_allocate(GcData::String("print".to_string()))));
-                self.current_chunk().write(OpCode::GetGlobal(name_idx));
+                self.current_chunk().write_operand(OpCode::GetGlobal, name_idx);
                 self.compile_expr(expr)?;
-                self.current_chunk().write(OpCode::Call(1));
+                self.current_chunk().write_operand(OpCode::Call, 1);
                 self.current_chunk().write(OpCode::Pop);
             }
             Stmt::VarDecl(name, _, expr) => {
@@ -65,7 +65,7 @@ impl Compiler {
                     let name_idx = self
                         .current_chunk()
                         .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
-                    self.current_chunk().write(OpCode::DefineGlobal(name_idx));
+                    self.current_chunk().write_operand(OpCode::DefineGlobal, name_idx);
                 }
             }
             Stmt::Block(stmts) => {
@@ -77,11 +77,11 @@ impl Compiler {
             }
             Stmt::If(cond, then_b, else_b) => {
                 self.compile_expr(cond)?;
-                let then_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+                let then_jump = self.emit_jump(OpCode::JumpIfFalse);
                 self.current_chunk().write(OpCode::Pop); // pop condition
                 self.compile_stmt(then_b)?;
 
-                let else_jump = self.emit_jump(OpCode::Jump(0));
+                let else_jump = self.emit_jump(OpCode::Jump);
                 self.patch_jump(then_jump);
                 self.current_chunk().write(OpCode::Pop);
 
@@ -102,21 +102,21 @@ impl Compiler {
 
                 // Condition: i < end
                 let local_idx = self.resolve_local(var_name).unwrap();
-                self.current_chunk().write(OpCode::GetLocal(local_idx));
+                self.current_chunk().write_operand(OpCode::GetLocal, local_idx);
                 self.compile_expr(end)?;
                 self.current_chunk().write(OpCode::Less);
 
-                let exit_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+                let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
                 self.current_chunk().write(OpCode::Pop);
 
                 self.compile_stmt(body)?;
 
                 // Increment
-                self.current_chunk().write(OpCode::GetLocal(local_idx));
+                self.current_chunk().write_operand(OpCode::GetLocal, local_idx);
                 let one_idx = self.current_chunk().add_constant(Value::Number(1.0));
-                self.current_chunk().write(OpCode::Constant(one_idx));
+                self.current_chunk().write_operand(OpCode::Constant, one_idx);
                 self.current_chunk().write(OpCode::Add);
-                self.current_chunk().write(OpCode::SetLocal(local_idx));
+                self.current_chunk().write_operand(OpCode::SetLocal, local_idx);
                 self.current_chunk().write(OpCode::Pop);
 
                 self.emit_loop(loop_start);
@@ -129,7 +129,7 @@ impl Compiler {
                     self.compile_expr(e)?;
                 } else {
                     let null_idx = self.current_chunk().add_constant(Value::Null);
-                    self.current_chunk().write(OpCode::Constant(null_idx));
+                    self.current_chunk().write_operand(OpCode::Constant, null_idx);
                 }
                 self.current_chunk().write(OpCode::Return);
             }
@@ -147,27 +147,27 @@ impl Compiler {
                     LiteralValue::String(s) => Value::String(gc_allocate(GcData::String(s.clone()))),
                 };
                 let idx = self.current_chunk().add_constant(v);
-                self.current_chunk().write(OpCode::Constant(idx));
+                self.current_chunk().write_operand(OpCode::Constant, idx);
             }
             Expr::Variable(name) => {
                 if let Some(idx) = self.resolve_local(name) {
-                    self.current_chunk().write(OpCode::GetLocal(idx));
+                    self.current_chunk().write_operand(OpCode::GetLocal, idx);
                 } else {
                     let idx = self
                         .current_chunk()
                         .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
-                    self.current_chunk().write(OpCode::GetGlobal(idx));
+                    self.current_chunk().write_operand(OpCode::GetGlobal, idx);
                 }
             }
             Expr::Assign(name, val) => {
                 self.compile_expr(val)?;
                 if let Some(idx) = self.resolve_local(name) {
-                    self.current_chunk().write(OpCode::SetLocal(idx));
+                    self.current_chunk().write_operand(OpCode::SetLocal, idx);
                 } else {
                     let idx = self
                         .current_chunk()
                         .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
-                    self.current_chunk().write(OpCode::SetGlobal(idx));
+                    self.current_chunk().write_operand(OpCode::SetGlobal, idx);
                 }
             }
             Expr::Binary(left, op, right) => {
@@ -187,14 +187,14 @@ impl Compiler {
             Expr::Logical(left, op, right) => {
                 self.compile_expr(left)?;
                 if op == &TokenType::Or {
-                    let else_jump = self.emit_jump(OpCode::JumpIfFalse(0));
-                    let end_jump = self.emit_jump(OpCode::Jump(0));
+                    let else_jump = self.emit_jump(OpCode::JumpIfFalse);
+                    let end_jump = self.emit_jump(OpCode::Jump);
                     self.patch_jump(else_jump);
                     self.current_chunk().write(OpCode::Pop);
                     self.compile_expr(right)?;
                     self.patch_jump(end_jump);
                 } else if op == &TokenType::And {
-                    let end_jump = self.emit_jump(OpCode::JumpIfFalse(0));
+                    let end_jump = self.emit_jump(OpCode::JumpIfFalse);
                     self.current_chunk().write(OpCode::Pop);
                     self.compile_expr(right)?;
                     self.patch_jump(end_jump);
@@ -205,14 +205,14 @@ impl Compiler {
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
-                self.current_chunk().write(OpCode::Call(args.len()));
+                self.current_chunk().write_operand(OpCode::Call, args.len());
             }
             Expr::Get(obj, name) => {
                 self.compile_expr(obj)?;
                 let name_idx = self
                     .current_chunk()
                     .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
-                self.current_chunk().write(OpCode::GetProperty(name_idx));
+                self.current_chunk().write_operand(OpCode::GetProperty, name_idx);
             }
             Expr::Set(obj, name, val) => {
                 self.compile_expr(obj)?;
@@ -220,23 +220,23 @@ impl Compiler {
                 let name_idx = self
                     .current_chunk()
                     .add_constant(Value::String(gc_allocate(GcData::String(name.clone()))));
-                self.current_chunk().write(OpCode::SetProperty(name_idx));
+                self.current_chunk().write_operand(OpCode::SetProperty, name_idx);
             }
             Expr::Array(items) => {
                 for item in items {
                     self.compile_expr(item)?;
                 }
-                self.current_chunk().write(OpCode::MakeArray(items.len()));
+                self.current_chunk().write_operand(OpCode::MakeArray, items.len());
             }
             Expr::Object(pairs) => {
                 for (key, val) in pairs {
                     let k_idx = self
                         .current_chunk()
                         .add_constant(Value::String(gc_allocate(GcData::String(key.clone()))));
-                    self.current_chunk().write(OpCode::Constant(k_idx));
+                    self.current_chunk().write_operand(OpCode::Constant, k_idx);
                     self.compile_expr(val)?;
                 }
-                self.current_chunk().write(OpCode::MakeObject(pairs.len()));
+                self.current_chunk().write_operand(OpCode::MakeObject, pairs.len());
             }
             Expr::Function(params, body) => {
                 let mut compiler = Compiler::new();
@@ -255,7 +255,7 @@ impl Compiler {
                 let idx = self
                     .current_chunk()
                     .add_constant(Value::Function(func_ptr));
-                self.current_chunk().write(OpCode::Constant(idx));
+                self.current_chunk().write_operand(OpCode::Constant, idx);
             }
             Expr::GetIndex(obj, index) => {
                 self.compile_expr(obj)?;
@@ -296,22 +296,22 @@ impl Compiler {
             .find_map(|(i, local)| if local.name == name { Some(i) } else { None })
     }
 
-    fn emit_jump(&mut self, instruction: OpCode) -> usize {
-        self.current_chunk().write(instruction);
+    fn emit_jump(&mut self, op: OpCode) -> usize {
+        self.current_chunk().write_operand(op, 0);
         self.current_chunk().code.len() - 1
     }
 
     fn patch_jump(&mut self, offset: usize) {
         let jump = self.current_chunk().code.len() - 1 - offset;
-        match &mut self.current_chunk().code[offset] {
-            OpCode::JumpIfFalse(j) => *j = jump,
-            OpCode::Jump(j) => *j = jump,
+        let inst = &mut self.current_chunk().code[offset];
+        match inst.op {
+            OpCode::JumpIfFalse | OpCode::Jump => inst.operand = jump as u32,
             _ => unreachable!(),
         }
     }
 
     fn emit_loop(&mut self, loop_start: usize) {
         let offset = self.current_chunk().code.len() - loop_start + 1;
-        self.current_chunk().write(OpCode::Loop(offset));
+        self.current_chunk().write_operand(OpCode::Loop, offset);
     }
 }

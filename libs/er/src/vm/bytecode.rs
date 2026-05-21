@@ -13,9 +13,10 @@ pub struct Function {
     pub arity: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpCode {
-    Constant(usize),
+    Constant,
     Return,
     Negate,
     Add,
@@ -27,26 +28,32 @@ pub enum OpCode {
     Greater,
     Less,
     Pop,
-    DefineGlobal(usize),
-    GetGlobal(usize),
-    SetGlobal(usize),
-    GetLocal(usize),
-    SetLocal(usize),
-    JumpIfFalse(usize),
-    Jump(usize),
-    Loop(usize),
-    Call(usize),       // arity
-    MakeArray(usize),  // initial elements
-    MakeObject(usize), // key-value pairs (so 2x elements on stack)
-    GetProperty(usize),
-    SetProperty(usize),
+    DefineGlobal,
+    GetGlobal,
+    SetGlobal,
+    GetLocal,
+    SetLocal,
+    JumpIfFalse,
+    Jump,
+    Loop,
+    Call,
+    MakeArray,
+    MakeObject,
+    GetProperty,
+    SetProperty,
     GetIndex,
     SetIndex,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Instruction {
+    pub op: OpCode,
+    pub operand: u32,
+}
+
 #[derive(Clone, Default)]
 pub struct Chunk {
-    pub code: Vec<OpCode>,
+    pub code: Vec<Instruction>,
     pub constants: Vec<Value>,
 }
 
@@ -57,6 +64,14 @@ impl Chunk {
     }
 
     pub fn write(&mut self, op: OpCode) {
-        self.code.push(op);
+        self.code.push(Instruction { op, operand: 0 });
+    }
+
+    pub fn write_operand(&mut self, op: OpCode, operand: usize) {
+        self.code.push(Instruction {
+            op,
+            operand: operand as u32,
+        });
     }
 }
+

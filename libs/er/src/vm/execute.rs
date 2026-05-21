@@ -191,7 +191,6 @@ impl VM {
             let mut constants_ptr = func.chunk.constants.as_ptr();
             let mut slots_offset = frame.slots_offset;
             let mut ip = code_ptr.add(frame.ip);
-            let mut ip_end = code_ptr.add(func.chunk.code.len());
 
             let mut stack_start = self.stack.as_mut_ptr();
             let mut stack_top = stack_start.add(original_len);
@@ -212,13 +211,13 @@ impl VM {
                 };
             }
 
-            while ip < ip_end {
+            loop {
                 let instruction = *ip;
                 ip = ip.add(1);
 
-                match instruction {
-                    OpCode::Constant(idx) => {
-                        let val = *constants_ptr.add(idx);
+                match instruction.op {
+                    OpCode::Constant => {
+                        let val = *constants_ptr.add(instruction.operand as usize);
                         *stack_top = val;
                         stack_top = stack_top.add(1);
                     }
@@ -252,7 +251,6 @@ impl VM {
                         slots_offset = frame.slots_offset;
                         frame_slots = stack_start.add(slots_offset);
                         ip = code_ptr.add(frame.ip);
-                        ip_end = code_ptr.add(func.chunk.code.len());
                     }
                     OpCode::Negate => {
                         if let Value::Number(n) = &mut *stack_top.sub(1) {
@@ -260,10 +258,10 @@ impl VM {
                         }
                     }
                     OpCode::Add => {
-                        let b_ptr = stack_top.sub(1);
+                        let b = *stack_top.sub(1);
                         let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
-                            *a_ptr = Value::Number(*na + *nb);
+                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
+                            *a_ptr = Value::Number(na + nb);
                             stack_top = stack_top.sub(1);
                         } else {
                             sync_stack!();
@@ -301,10 +299,10 @@ impl VM {
                         }
                     }
                     OpCode::Sub => {
-                        let b_ptr = stack_top.sub(1);
+                        let b = *stack_top.sub(1);
                         let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
-                            *a_ptr = Value::Number(*na - *nb);
+                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
+                            *a_ptr = Value::Number(na - nb);
                             stack_top = stack_top.sub(1);
                         } else {
                             sync_stack!();
@@ -318,10 +316,10 @@ impl VM {
                         }
                     }
                     OpCode::Mul => {
-                        let b_ptr = stack_top.sub(1);
+                        let b = *stack_top.sub(1);
                         let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
-                            *a_ptr = Value::Number(*na * *nb);
+                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
+                            *a_ptr = Value::Number(na * nb);
                             stack_top = stack_top.sub(1);
                         } else {
                             sync_stack!();
@@ -335,10 +333,10 @@ impl VM {
                         }
                     }
                     OpCode::Div => {
-                        let b_ptr = stack_top.sub(1);
+                        let b = *stack_top.sub(1);
                         let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
-                            *a_ptr = Value::Number(*na / *nb);
+                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
+                            *a_ptr = Value::Number(na / nb);
                             stack_top = stack_top.sub(1);
                         } else {
                             sync_stack!();
@@ -359,10 +357,10 @@ impl VM {
                         stack_top = stack_top.add(1);
                     }
                     OpCode::Greater => {
-                        let b_ptr = stack_top.sub(1);
+                        let b = *stack_top.sub(1);
                         let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
-                            *a_ptr = Value::Boolean(*na > *nb);
+                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
+                            *a_ptr = Value::Boolean(na > nb);
                             stack_top = stack_top.sub(1);
                         } else {
                             sync_stack!();
@@ -376,10 +374,10 @@ impl VM {
                         }
                     }
                     OpCode::Less => {
-                        let b_ptr = stack_top.sub(1);
+                        let b = *stack_top.sub(1);
                         let a_ptr = stack_top.sub(2);
-                        if let (Value::Number(na), Value::Number(nb)) = (&*a_ptr, &*b_ptr) {
-                            *a_ptr = Value::Boolean(*na < *nb);
+                        if let (Value::Number(na), Value::Number(nb)) = (*a_ptr, b) {
+                            *a_ptr = Value::Boolean(na < nb);
                             stack_top = stack_top.sub(1);
                         } else {
                             sync_stack!();
@@ -395,8 +393,8 @@ impl VM {
                     OpCode::Pop => {
                         stack_top = stack_top.sub(1);
                     }
-                    OpCode::DefineGlobal(idx) => {
-                        let name_val = *constants_ptr.add(idx);
+                    OpCode::DefineGlobal => {
+                        let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name = match name_val {
                             Value::String(ptr) => match &(*ptr).data {
                                 GcData::String(s) => Rc::from(s.as_str()),
@@ -408,8 +406,8 @@ impl VM {
                         let val = *stack_top;
                         self.globals.insert(name, val);
                     }
-                    OpCode::GetGlobal(idx) => {
-                        let name_val = *constants_ptr.add(idx);
+                    OpCode::GetGlobal => {
+                        let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name = match name_val {
                             Value::String(ptr) => match &(*ptr).data {
                                 GcData::String(s) => s.as_str(),
@@ -425,8 +423,8 @@ impl VM {
                             return Err(format!("Undefined variable '{}'", name));
                         }
                     }
-                    OpCode::SetGlobal(idx) => {
-                        let name_val = *constants_ptr.add(idx);
+                    OpCode::SetGlobal => {
+                        let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name = match name_val {
                             Value::String(ptr) => match &(*ptr).data {
                                 GcData::String(s) => Rc::from(s.as_str()),
@@ -445,16 +443,16 @@ impl VM {
                             ));
                         }
                     }
-                    OpCode::GetLocal(idx) => {
-                        let val = *frame_slots.add(idx);
+                    OpCode::GetLocal => {
+                        let val = *frame_slots.add(instruction.operand as usize);
                         *stack_top = val;
                         stack_top = stack_top.add(1);
                     }
-                    OpCode::SetLocal(idx) => {
+                    OpCode::SetLocal => {
                         let val = *stack_top.sub(1);
-                        *frame_slots.add(idx) = val;
+                        *frame_slots.add(instruction.operand as usize) = val;
                     }
-                    OpCode::JumpIfFalse(offset) => {
+                    OpCode::JumpIfFalse => {
                         let val = *stack_top.sub(1);
                         let is_false = match val {
                             Value::Boolean(b) => !b,
@@ -462,16 +460,17 @@ impl VM {
                             _ => false,
                         };
                         if is_false {
-                            ip = ip.add(offset);
+                            ip = ip.add(instruction.operand as usize);
                         }
                     }
-                    OpCode::Jump(offset) => {
-                        ip = ip.add(offset);
+                    OpCode::Jump => {
+                        ip = ip.add(instruction.operand as usize);
                     }
-                    OpCode::Loop(offset) => {
-                        ip = ip.sub(offset);
+                    OpCode::Loop => {
+                        ip = ip.sub(instruction.operand as usize);
                     }
-                    OpCode::MakeArray(count) => {
+                    OpCode::MakeArray => {
+                        let count = instruction.operand as usize;
                         sync_stack!();
                         self.gc_trigger();
                         reload_stack!();
@@ -485,7 +484,8 @@ impl VM {
                         *stack_top = Value::Array(ptr);
                         stack_top = stack_top.add(1);
                     }
-                    OpCode::MakeObject(count) => {
+                    OpCode::MakeObject => {
+                        let count = instruction.operand as usize;
                         sync_stack!();
                         self.gc_trigger();
                         reload_stack!();
@@ -514,8 +514,8 @@ impl VM {
                         *stack_top = Value::Object(ptr);
                         stack_top = stack_top.add(1);
                     }
-                    OpCode::GetProperty(idx) => {
-                        let name_val = *constants_ptr.add(idx);
+                    OpCode::GetProperty => {
+                        let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name = match name_val {
                             Value::String(ptr) => match &(*ptr).data {
                                 GcData::String(s) => s.as_str(),
@@ -560,8 +560,8 @@ impl VM {
                             }
                         }
                     }
-                    OpCode::SetProperty(idx) => {
-                        let name_val = *constants_ptr.add(idx);
+                    OpCode::SetProperty => {
+                        let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name = match name_val {
                             Value::String(ptr) => match &(*ptr).data {
                                 GcData::String(s) => s.as_str(),
@@ -617,7 +617,8 @@ impl VM {
                             }
                         }
                     }
-                    OpCode::Call(arg_count) => {
+                    OpCode::Call => {
+                        let arg_count = instruction.operand as usize;
                         let callee = *stack_top.sub(arg_count + 1);
                         match callee {
                             Value::Function(func_ptr) => {
@@ -647,7 +648,6 @@ impl VM {
                                 slots_offset = frame.slots_offset;
                                 frame_slots = stack_start.add(slots_offset);
                                 ip = code_ptr.add(frame.ip);
-                                ip_end = code_ptr.add(func.chunk.code.len());
                             }
                             Value::NativeFunction(native) => {
                                 let mut args = Vec::with_capacity(arg_count);
@@ -849,8 +849,6 @@ impl VM {
                     }
                 }
             }
-            sync_stack!();
-            Ok(Value::Null)
         }
     }
 }

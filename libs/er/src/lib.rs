@@ -214,10 +214,10 @@ pub fn handle_api_request(
 
                 let mut call_chunk = backend::Chunk::default();
                 let f_idx = call_chunk.add_constant(Value::Function(func_ptr));
-                call_chunk.write(backend::OpCode::Constant(f_idx));
+                call_chunk.write_operand(backend::OpCode::Constant, f_idx);
                 let arg_idx = call_chunk.add_constant(c_val);
-                call_chunk.write(backend::OpCode::Constant(arg_idx));
-                call_chunk.write(backend::OpCode::Call(1));
+                call_chunk.write_operand(backend::OpCode::Constant, arg_idx);
+                call_chunk.write_operand(backend::OpCode::Call, 1);
                 call_chunk.write(backend::OpCode::Return);
 
                 let wrapper = backend::Function {
