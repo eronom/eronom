@@ -982,6 +982,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("          endfunc\n");
     mir.push_str("          endmodule\n");
 
+    let _ = std::fs::write("/home/vishnus/Downloads/eronom/temp_compiled.mir", &mir);
     let c_mir = CString::new(mir).unwrap();
     unsafe {
         MIR_scan_string(ctx, c_mir.as_ptr());
