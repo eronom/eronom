@@ -11,10 +11,11 @@ pub struct Function {
     pub name: Option<String>,
     pub chunk: Chunk,
     pub arity: usize,
+    pub jit_ptr: std::cell::Cell<Option<*const std::ffi::c_void>>,
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpCode {
     LoadConst,
     LoadNull,
@@ -45,7 +46,7 @@ pub enum OpCode {
     Return,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Instruction {
     pub op: OpCode,
     pub ra: u8,

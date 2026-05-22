@@ -28,6 +28,7 @@ impl Compiler {
                 name: None,
                 chunk: Chunk::default(),
                 arity: 0,
+                jit_ptr: std::cell::Cell::new(None),
             },
             locals: Vec::new(),
             scope_depth: 0,
