@@ -324,7 +324,10 @@ inst_3:
 inst_4:
           dmov d2, d:32(constants_ptr)
 inst_5:
-          dbge inst_23, d0, d1
+          dbge take_branch_5, d0, d1
+          jmp inst_7
+take_branch_5:
+          jmp inst_23
 inst_6:
 inst_7:
           dmov d3, d0
@@ -337,11 +340,14 @@ inst_10:
 inst_11:
           dmov d5, d:40(constants_ptr)
 inst_12:
+          dble take_branch_12, d4, d5
           dmov d:32(cast_ptr), d4
           mov r4, i64:32(cast_ptr)
+          jmp inst_14
+take_branch_12:
           dmov d:32(cast_ptr), d4
           mov r4, i64:32(cast_ptr)
-          dble inst_18, d4, d5
+          jmp inst_18
 inst_13:
 inst_14:
           dmov d4, d3

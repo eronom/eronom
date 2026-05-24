@@ -732,11 +732,11 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     let next_inst = &func.chunk.code[idx + 1];
                     let target = (idx + 2 + next_inst.operand as usize) as usize;
 
-                    sync_edge(&mut mir, idx, target);
-                    sync_edge(&mut mir, idx, idx + 2);
-
                     if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dbne inst_{}, d{}, d{}\n", target, rb, rc));
+                        mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
                         if !rb_is_double {
                             mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rb));
@@ -752,8 +752,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
                             mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
                         }
-                        mir.push_str(&format!("          dbne inst_{}, d{}, d{}\n", target, rb, rc));
-                        mir.push_str(&format!("          jmp done_eq_{}\n", idx));
+                        mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
 
                         mir.push_str(&format!("fallback_eq_{}:\n", idx));
                         if rb_is_double {
@@ -772,10 +774,16 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str("          call p_equal, er_jit_equal, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
                         mir.push_str("          blt err_label, status, 0\n");
                         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_NULL));
-                        mir.push_str(&format!("done_eq_{}:\n", idx));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     }
+                    // Common Trampoline Block
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
                 } else {
                     if rb_is_double && rc_is_double {
                         mir.push_str(&format!("          deq res_bool, d{}, d{}\n", rb, rc));
@@ -841,11 +849,11 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     let next_inst = &func.chunk.code[idx + 1];
                     let target = (idx + 2 + next_inst.operand as usize) as usize;
 
-                    sync_edge(&mut mir, idx, target);
-                    sync_edge(&mut mir, idx, idx + 2);
-
                     if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dble inst_{}, d{}, d{}\n", target, rb, rc));
+                        mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
                         if !rb_is_double {
                             mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rb));
@@ -861,8 +869,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
                             mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
                         }
-                        mir.push_str(&format!("          dble inst_{}, d{}, d{}\n", target, rb, rc));
-                        mir.push_str(&format!("          jmp done_gt_{}\n", idx));
+                        mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
 
                         mir.push_str(&format!("fallback_gt_{}:\n", idx));
                         if rb_is_double {
@@ -881,10 +891,16 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str("          call p_greater, er_jit_greater, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
                         mir.push_str("          blt err_label, status, 0\n");
                         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_NULL));
-                        mir.push_str(&format!("done_gt_{}:\n", idx));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     }
+                    // Common Trampoline Block
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
                 } else {
                     if rb_is_double && rc_is_double {
                         mir.push_str(&format!("          dgt res_bool, d{}, d{}\n", rb, rc));
@@ -950,11 +966,11 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     let next_inst = &func.chunk.code[idx + 1];
                     let target = (idx + 2 + next_inst.operand as usize) as usize;
 
-                    sync_edge(&mut mir, idx, target);
-                    sync_edge(&mut mir, idx, idx + 2);
-
                     if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dbge inst_{}, d{}, d{}\n", target, rb, rc));
+                        mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
                         if !rb_is_double {
                             mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rb));
@@ -970,8 +986,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
                             mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
                         }
-                        mir.push_str(&format!("          dbge inst_{}, d{}, d{}\n", target, rb, rc));
-                        mir.push_str(&format!("          jmp done_lt_{}\n", idx));
+                        mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
 
                         mir.push_str(&format!("fallback_lt_{}:\n", idx));
                         if rb_is_double {
@@ -990,10 +1008,16 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str("          call p_less, er_jit_less, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
                         mir.push_str("          blt err_label, status, 0\n");
                         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_NULL));
-                        mir.push_str(&format!("done_lt_{}:\n", idx));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     }
+                    // Common Trampoline Block
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
                 } else {
                     if rb_is_double && rc_is_double {
                         mir.push_str(&format!("          dlt res_bool, d{}, d{}\n", rb, rc));
@@ -1095,10 +1119,19 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 if !prev_was_optimized_cmp {
                     let target = (idx as i32 + 1 + instruction.operand as i32) as usize;
                     if types_at_inst[idx][ra] != RegType::Double {
-                        sync_edge(&mut mir, idx, target);
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 1);
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq inst_{}, r{}, {}\n", target, ra, TAG_NULL));
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 1));
+                        // Branch taken path
+                        mir.push_str(&format!("take_branch_{}:\n", idx));
+                        sync_edge(&mut mir, idx, target);
+                        mir.push_str(&format!("          jmp inst_{}\n", target));
+                    } else {
+                        // Always fall through, but we still need to sync registers for the fall-through path!
+                        sync_edge(&mut mir, idx, idx + 1);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 1));
                     }
                 }
             }
