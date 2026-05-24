@@ -43,6 +43,11 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     };
 
     let mut vm = VM::new();
+    if vm.use_jit {
+        eprintln!("[VM] Running with JIT compiler enabled");
+    } else {
+        eprintln!("[VM] Running with bytecode interpreter (no JIT)");
+    }
     vm.register_global("print", Value::native_function(native_print));
 
     if let Err(e) = vm.run(function) {
