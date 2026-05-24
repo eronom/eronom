@@ -201,6 +201,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         }
     }
 
+    let live_in = compute_liveness(func, num_regs);
+
     let mut worklist = vec![0];
     let mut in_worklist = vec![false; func.chunk.code.len()];
     let mut visited = vec![false; func.chunk.code.len()];
@@ -322,10 +324,12 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let sync_edge = |mir: &mut String, pc: usize, target: usize| {
         if target < types_at_inst.len() {
             for r in 0..num_regs {
-                if types_at_inst[pc][r] == RegType::Double && types_at_inst[target][r] == RegType::Unknown {
-                    let offset = (r % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, r));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", r, offset));
+                if live_in[target][r] {
+                    if types_at_inst[pc][r] == RegType::Double && types_at_inst[target][r] == RegType::Unknown {
+                        let offset = (r % 24) * 8;
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, r));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", r, offset));
+                    }
                 }
             }
         }
@@ -335,7 +339,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     for ip_target in 0..func.chunk.code.len() {
         mir.push_str(&format!("entry_{}:\n", ip_target));
         for r in 0..num_regs {
-            if types_at_inst[ip_target][r] == RegType::Double {
+            if live_in[ip_target][r] && types_at_inst[ip_target][r] == RegType::Double {
                 let offset = (r % 24) * 8;
                 mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, r));
                 mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", r, offset));
@@ -343,6 +347,249 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         }
         mir.push_str(&format!("          jmp inst_{}\n", ip_target));
     }
+
+fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Vec<Vec<bool>> {
+    let code = &func.chunk.code;
+    let n = code.len();
+    let mut live_in = vec![vec![false; num_regs]; n];
+    let mut live_out = vec![vec![false; num_regs]; n];
+
+    let mut gen_set = vec![vec![false; num_regs]; n];
+    let mut kill = vec![vec![false; num_regs]; n];
+
+    for pc in 0..n {
+        let inst = &code[pc];
+        let ra = inst.ra as usize;
+        let rb = inst.rb as usize;
+        let rc = inst.rc as usize;
+
+        match inst.op {
+            OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadBool | OpCode::GetGlobal => {
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::Move | OpCode::Negate | OpCode::Not => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Equal | OpCode::Greater | OpCode::Less | OpCode::GetIndex => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if rc < num_regs {
+                    gen_set[pc][rc] = true;
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::DefineGlobal | OpCode::SetGlobal | OpCode::JumpIfFalse => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+            }
+            OpCode::Return => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+            }
+            OpCode::Loop | OpCode::Jump => {}
+            OpCode::Call => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                for i in 0..inst.operand as usize {
+                    let r = rb + 1 + i;
+                    if r < num_regs {
+                        gen_set[pc][r] = true;
+                    }
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::MakeArray => {
+                for i in 0..inst.operand as usize {
+                    let r = rb + i;
+                    if r < num_regs {
+                        gen_set[pc][r] = true;
+                    }
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::MakeObject => {
+                for i in 0..(inst.operand as usize * 2) {
+                    let r = rb + i;
+                    if r < num_regs {
+                        gen_set[pc][r] = true;
+                    }
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::GetProperty => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::SetProperty => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+            }
+            OpCode::SetIndex => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if rc < num_regs {
+                    gen_set[pc][rc] = true;
+                }
+            }
+        }
+    }
+
+    let mut worklist: Vec<usize> = (0..n).collect();
+    let mut in_worklist = vec![true; n];
+
+    while let Some(pc) = worklist.pop() {
+        in_worklist[pc] = false;
+
+        let mut successors = Vec::new();
+        let inst = &code[pc];
+        match inst.op {
+            OpCode::Return => {}
+            OpCode::Jump => {
+                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                successors.push(target);
+            }
+            OpCode::Loop => {
+                let target = (pc as i32 + 1 - inst.operand as i32) as usize;
+                successors.push(target);
+            }
+            OpCode::JumpIfFalse => {
+                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                successors.push(target);
+                successors.push(pc + 1);
+            }
+            OpCode::Equal | OpCode::Greater | OpCode::Less => {
+                let next_is_jmp_if_false = if pc + 1 < n {
+                    let next_inst = &code[pc + 1];
+                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == inst.ra
+                } else {
+                    false
+                };
+                if next_is_jmp_if_false {
+                    let next_inst = &code[pc + 1];
+                    let target = (pc + 2 + next_inst.operand as usize) as usize;
+                    successors.push(target);
+                    successors.push(pc + 2);
+                } else {
+                    successors.push(pc + 1);
+                }
+            }
+            _ => {
+                successors.push(pc + 1);
+            }
+        }
+
+        let mut new_live_out = vec![false; num_regs];
+        for succ in successors {
+            if succ < n {
+                for r in 0..num_regs {
+                    if live_in[succ][r] {
+                        new_live_out[r] = true;
+                    }
+                }
+            }
+        }
+        live_out[pc] = new_live_out;
+
+        let mut changed = false;
+        for r in 0..num_regs {
+            let val = gen_set[pc][r] || (live_out[pc][r] && !kill[pc][r]);
+            if val != live_in[pc][r] {
+                live_in[pc][r] = val;
+                changed = true;
+            }
+        }
+
+        if changed {
+            for pred in 0..n {
+                let p_inst = &code[pred];
+                let mut is_pred = false;
+                match p_inst.op {
+                    OpCode::Return => {}
+                    OpCode::Jump => {
+                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
+                        if target == pc {
+                            is_pred = true;
+                        }
+                    }
+                    OpCode::Loop => {
+                        let target = (pred as i32 + 1 - p_inst.operand as i32) as usize;
+                        if target == pc {
+                            is_pred = true;
+                        }
+                    }
+                    OpCode::JumpIfFalse => {
+                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
+                        if target == pc || pred + 1 == pc {
+                            is_pred = true;
+                        }
+                    }
+                    OpCode::Equal | OpCode::Greater | OpCode::Less => {
+                        let next_is_jmp_if_false = if pred + 1 < n {
+                            let next_inst = &code[pred + 1];
+                            next_inst.op == OpCode::JumpIfFalse && next_inst.ra == p_inst.ra
+                        } else {
+                            false
+                        };
+                        if next_is_jmp_if_false {
+                            let next_inst = &code[pred + 1];
+                            let target = (pred + 2 + next_inst.operand as usize) as usize;
+                            if target == pc || pred + 2 == pc {
+                                is_pred = true;
+                            }
+                        } else {
+                            if pred + 1 == pc {
+                                is_pred = true;
+                            }
+                        }
+                    }
+                    _ => {
+                        if pred + 1 == pc {
+                            is_pred = true;
+                        }
+                    }
+                }
+
+                if is_pred && !in_worklist[pred] {
+                    worklist.push(pred);
+                    in_worklist[pred] = true;
+                }
+            }
+        }
+    }
+
+    live_in
+}
 
     for (idx, instruction) in func.chunk.code.iter().enumerate() {
         mir.push_str(&format!("inst_{}:\n", idx));

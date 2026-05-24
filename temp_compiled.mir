@@ -63,8 +63,6 @@ entry_1:
           dmov d0, d:0(cast_ptr)
           jmp inst_1
 entry_2:
-          mov i64:0(cast_ptr), r0
-          dmov d0, d:0(cast_ptr)
           jmp inst_2
 entry_3:
           mov i64:0(cast_ptr), r0
@@ -131,8 +129,6 @@ entry_10:
           dmov d2, d:16(cast_ptr)
           mov i64:24(cast_ptr), r3
           dmov d3, d:24(cast_ptr)
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
           jmp inst_10
 entry_11:
           mov i64:0(cast_ptr), r0
@@ -169,8 +165,6 @@ entry_13:
           dmov d2, d:16(cast_ptr)
           mov i64:24(cast_ptr), r3
           dmov d3, d:24(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_13
 entry_14:
           mov i64:0(cast_ptr), r0
@@ -181,8 +175,6 @@ entry_14:
           dmov d2, d:16(cast_ptr)
           mov i64:24(cast_ptr), r3
           dmov d3, d:24(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_14
 entry_15:
           mov i64:0(cast_ptr), r0
@@ -191,12 +183,8 @@ entry_15:
           dmov d1, d:8(cast_ptr)
           mov i64:16(cast_ptr), r2
           dmov d2, d:16(cast_ptr)
-          mov i64:24(cast_ptr), r3
-          dmov d3, d:24(cast_ptr)
           mov i64:32(cast_ptr), r4
           dmov d4, d:32(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_15
 entry_16:
           mov i64:0(cast_ptr), r0
@@ -205,8 +193,6 @@ entry_16:
           dmov d1, d:8(cast_ptr)
           mov i64:16(cast_ptr), r2
           dmov d2, d:16(cast_ptr)
-          mov i64:24(cast_ptr), r3
-          dmov d3, d:24(cast_ptr)
           mov i64:32(cast_ptr), r4
           dmov d4, d:32(cast_ptr)
           mov i64:40(cast_ptr), r5
@@ -219,12 +205,6 @@ entry_17:
           dmov d1, d:8(cast_ptr)
           mov i64:16(cast_ptr), r2
           dmov d2, d:16(cast_ptr)
-          mov i64:24(cast_ptr), r3
-          dmov d3, d:24(cast_ptr)
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_17
 entry_18:
           mov i64:0(cast_ptr), r0
@@ -235,8 +215,6 @@ entry_18:
           dmov d2, d:16(cast_ptr)
           mov i64:24(cast_ptr), r3
           dmov d3, d:24(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_18
 entry_19:
           mov i64:0(cast_ptr), r0
@@ -245,12 +223,8 @@ entry_19:
           dmov d1, d:8(cast_ptr)
           mov i64:16(cast_ptr), r2
           dmov d2, d:16(cast_ptr)
-          mov i64:24(cast_ptr), r3
-          dmov d3, d:24(cast_ptr)
           mov i64:32(cast_ptr), r4
           dmov d4, d:32(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_19
 entry_20:
           mov i64:0(cast_ptr), r0
@@ -259,8 +233,6 @@ entry_20:
           dmov d1, d:8(cast_ptr)
           mov i64:16(cast_ptr), r2
           dmov d2, d:16(cast_ptr)
-          mov i64:24(cast_ptr), r3
-          dmov d3, d:24(cast_ptr)
           mov i64:32(cast_ptr), r4
           dmov d4, d:32(cast_ptr)
           mov i64:40(cast_ptr), r5
@@ -273,12 +245,6 @@ entry_21:
           dmov d1, d:8(cast_ptr)
           mov i64:16(cast_ptr), r2
           dmov d2, d:16(cast_ptr)
-          mov i64:24(cast_ptr), r3
-          dmov d3, d:24(cast_ptr)
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_21
 entry_22:
           mov i64:0(cast_ptr), r0
@@ -287,26 +253,10 @@ entry_22:
           dmov d1, d:8(cast_ptr)
           mov i64:16(cast_ptr), r2
           dmov d2, d:16(cast_ptr)
-          mov i64:24(cast_ptr), r3
-          dmov d3, d:24(cast_ptr)
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
           jmp inst_22
 entry_23:
-          mov i64:0(cast_ptr), r0
-          dmov d0, d:0(cast_ptr)
-          mov i64:8(cast_ptr), r1
-          dmov d1, d:8(cast_ptr)
-          mov i64:16(cast_ptr), r2
-          dmov d2, d:16(cast_ptr)
           jmp inst_23
 entry_24:
-          mov i64:8(cast_ptr), r1
-          dmov d1, d:8(cast_ptr)
-          mov i64:16(cast_ptr), r2
-          dmov d2, d:16(cast_ptr)
           jmp inst_24
 inst_0:
           dmov d0, d:0(constants_ptr)
@@ -341,12 +291,8 @@ inst_11:
           dmov d5, d:40(constants_ptr)
 inst_12:
           dble take_branch_12, d4, d5
-          dmov d:32(cast_ptr), d4
-          mov r4, i64:32(cast_ptr)
           jmp inst_14
 take_branch_12:
-          dmov d:32(cast_ptr), d4
-          mov r4, i64:32(cast_ptr)
           jmp inst_18
 inst_13:
 inst_14:
@@ -366,12 +312,6 @@ inst_20:
 inst_21:
           dadd d0, d0, d2
 inst_22:
-          dmov d:24(cast_ptr), d3
-          mov r3, i64:24(cast_ptr)
-          dmov d:32(cast_ptr), d4
-          mov r4, i64:32(cast_ptr)
-          dmov d:40(cast_ptr), d5
-          mov r5, i64:40(cast_ptr)
           jmp inst_5
 inst_23:
           mov r0, 18442521949058891776
