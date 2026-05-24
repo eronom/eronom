@@ -30,7 +30,7 @@ for i in 1..10000 {
         er::backend::Value::null()
     }
 
-    // Warmup
+    // Warmup (JIT)
     {
         let tokens = er::frontend::lex(source);
         let mut parser = er::frontend::Parser::new(tokens);
@@ -38,10 +38,25 @@ for i in 1..10000 {
         let compiler = er::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
+        vm.use_jit = true;
         vm.register_global("print", er::backend::Value::native_function(noop_print));
         vm.run(function).ok();
     }
 
+    // Warmup (Interpreter)
+    {
+        let tokens = er::frontend::lex(source);
+        let mut parser = er::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = er::backend::Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        let mut vm = er::backend::VM::new();
+        vm.use_jit = false;
+        vm.register_global("print", er::backend::Value::native_function(noop_print));
+        vm.run(function).ok();
+    }
+
+    // Benchmark VM (Interpreter)
     let start = Instant::now();
     for _ in 0..iterations {
         let tokens = er::frontend::lex(source);
@@ -50,11 +65,28 @@ for i in 1..10000 {
         let compiler = er::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
         let mut vm = er::backend::VM::new();
+        vm.use_jit = false;
         vm.register_global("print", er::backend::Value::native_function(noop_print));
         vm.run(function).ok();
     }
-    let vm_elapsed = start.elapsed();
-    let vm_avg = vm_elapsed / iterations;
+    let vm_interpreter_elapsed = start.elapsed();
+    let vm_interpreter_avg = vm_interpreter_elapsed / iterations;
+
+    // Benchmark VM (JIT)
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let tokens = er::frontend::lex(source);
+        let mut parser = er::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = er::backend::Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        let mut vm = er::backend::VM::new();
+        vm.use_jit = true;
+        vm.register_global("print", er::backend::Value::native_function(noop_print));
+        vm.run(function).ok();
+    }
+    let vm_jit_elapsed = start.elapsed();
+    let vm_jit_avg = vm_jit_elapsed / iterations;
 
     // --- Compile-only benchmark ---
     let start = Instant::now();
@@ -309,7 +341,8 @@ console.log((performance.now() - start) / 1000);
     eprintln!("┌──────────────────────────────────────────┐");
     eprintln!("│          ER BENCHMARK RESULTS            │");
     eprintln!("├──────────────────────────────────────────┤");
-    eprintln!("│  VM (bytecode)       │  avg {:>12?}  │", vm_avg);
+    eprintln!("│  VM (Interpreter)    │  avg {:>12?}  │", vm_interpreter_avg);
+    eprintln!("│  VM (JIT)            │  avg {:>12?}  │", vm_jit_avg);
     eprintln!("│  Compile only        │  avg {:>12?}  │", compile_avg);
     if lua_pure_avg.as_nanos() > 0 {
         eprintln!("│  Lua (pure run)      │  avg {:>12?}  │", lua_pure_avg);
@@ -342,6 +375,13 @@ console.log((performance.now() - start) / 1000);
         eprintln!("│  Node (external CLI) │  avg {:>12?}  │", node_cli_avg);
     }
     eprintln!("├──────────────────────────────────────────┤");
+
+    let jit_speedup = vm_interpreter_avg.as_nanos() as f64 / vm_jit_avg.as_nanos() as f64;
+    let jit_text = format!("JIT is {:.2}x FASTER than Interpreter", jit_speedup);
+    eprintln!("│  🚀 {:<37}│", jit_text);
+    eprintln!("├──────────────────────────────────────────┤");
+
+    let vm_avg = vm_jit_avg; // compare JIT VM against others
 
     if lua_pure_avg.as_nanos() > 0 {
         if vm_avg < lua_pure_avg {

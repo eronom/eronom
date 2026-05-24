@@ -1,0 +1,154 @@
+m_0: module
+          export jit_fn_0
+          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index
+jit_fn_0: func i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out
+p_negate: proto i64, p:vm, p:dest, p:src
+p_not: proto i64, p:dest, p:src
+p_add: proto i64, p:vm, p:dest, p:b, p:c
+p_sub: proto i64, p:vm, p:dest, p:b, p:c
+p_mul: proto i64, p:vm, p:dest, p:b, p:c
+p_div: proto i64, p:vm, p:dest, p:b, p:c
+p_equal: proto i64, p:vm, p:dest, p:b, p:c
+p_greater: proto i64, p:vm, p:dest, p:b, p:c
+p_less: proto i64, p:vm, p:dest, p:b, p:c
+p_def_global: proto i64, p:vm, p:name, p:val
+p_get_global: proto i64, p:vm, p:dest, p:name
+p_set_global: proto i64, p:vm, p:val, p:name
+p_make_array: proto i64, p:vm, p:dest, p:start, i64:count
+p_make_object: proto i64, p:vm, p:dest, p:start, i64:count
+p_get_property: proto i64, p:vm, p:dest, p:obj, p:name
+p_set_property: proto i64, p:vm, p:obj, p:val, p:name
+p_get_index: proto i64, p:vm, p:dest, p:obj, p:idx
+p_set_index: proto i64, p:vm, p:obj, p:idx, p:val
+          local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr
+          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr
+          local d:da, d:db, d:dres
+          local i64:r0, i64:r1, i64:r2, i64:r3, i64:r4, i64:r5
+          alloca cast_ptr, 192
+          mov r0, i64:0(frame_slots)
+          mov r1, i64:8(frame_slots)
+          mov r2, i64:16(frame_slots)
+          mov r3, i64:24(frame_slots)
+          mov r4, i64:32(frame_slots)
+          mov r5, i64:40(frame_slots)
+          beq inst_0, start_ip, 0
+          beq inst_1, start_ip, 1
+          beq inst_2, start_ip, 2
+          beq inst_3, start_ip, 3
+          beq inst_4, start_ip, 4
+          beq inst_5, start_ip, 5
+          beq inst_6, start_ip, 6
+          beq inst_7, start_ip, 7
+          beq inst_8, start_ip, 8
+          beq inst_9, start_ip, 9
+          beq inst_10, start_ip, 10
+          beq inst_11, start_ip, 11
+          beq inst_12, start_ip, 12
+          beq inst_13, start_ip, 13
+          beq inst_14, start_ip, 14
+          beq inst_15, start_ip, 15
+          beq inst_16, start_ip, 16
+          beq inst_17, start_ip, 17
+          beq inst_18, start_ip, 18
+          beq inst_19, start_ip, 19
+          beq inst_20, start_ip, 20
+          beq inst_21, start_ip, 21
+          beq inst_22, start_ip, 22
+          beq inst_23, start_ip, 23
+          beq inst_24, start_ip, 24
+inst_0:
+          mov tmp, i64:0(constants_ptr)
+          mov r0, tmp
+inst_1:
+          mov i64:0(frame_slots), r0
+          add name_ptr, constants_ptr, 8
+          add val_ptr, frame_slots, 0
+          call p_def_global, er_jit_define_global, status, vm, name_ptr, val_ptr
+inst_2:
+          mov tmp, i64:16(constants_ptr)
+          mov r0, tmp
+inst_3:
+          mov tmp, i64:24(constants_ptr)
+          mov r1, tmp
+inst_4:
+          mov tmp, i64:32(constants_ptr)
+          mov r2, tmp
+inst_5:
+          mov i64:120(cast_ptr), r0
+          dmov da, d:120(cast_ptr)
+          mov i64:128(cast_ptr), r1
+          dmov db, d:128(cast_ptr)
+          dbge inst_23, da, db
+inst_6:
+inst_7:
+          mov r3, r0
+inst_8:
+          mov r4, r0
+inst_9:
+          mov i64:24(cast_ptr), r3
+          mov i64:32(cast_ptr), r4
+          dmov da, d:24(cast_ptr)
+          dmov db, d:32(cast_ptr)
+          dadd dres, da, db
+          dmov d:40(cast_ptr), dres
+          mov r3, i64:40(cast_ptr)
+inst_10:
+          mov r4, r3
+inst_11:
+          mov tmp, i64:40(constants_ptr)
+          mov r5, tmp
+inst_12:
+          mov i64:96(cast_ptr), r4
+          dmov da, d:96(cast_ptr)
+          mov i64:104(cast_ptr), r5
+          dmov db, d:104(cast_ptr)
+          dble inst_18, da, db
+inst_13:
+inst_14:
+          mov r4, r3
+inst_15:
+          mov tmp, i64:48(constants_ptr)
+          mov r5, tmp
+inst_16:
+          mov i64:0(cast_ptr), r4
+          mov i64:8(cast_ptr), r5
+          dmov da, d:0(cast_ptr)
+          dmov db, d:8(cast_ptr)
+          dadd dres, da, db
+          dmov d:16(cast_ptr), dres
+          mov r4, i64:16(cast_ptr)
+inst_17:
+          jmp inst_21
+inst_18:
+          mov r4, r3
+inst_19:
+          mov tmp, i64:56(constants_ptr)
+          mov r5, tmp
+inst_20:
+          mov i64:96(cast_ptr), r4
+          mov i64:104(cast_ptr), r5
+          dmov da, d:96(cast_ptr)
+          dmov db, d:104(cast_ptr)
+          dadd dres, da, db
+          dmov d:112(cast_ptr), dres
+          mov r4, i64:112(cast_ptr)
+inst_21:
+          mov i64:120(cast_ptr), r0
+          mov i64:128(cast_ptr), r2
+          dmov da, d:120(cast_ptr)
+          dmov db, d:128(cast_ptr)
+          dadd dres, da, db
+          dmov d:136(cast_ptr), dres
+          mov r0, i64:136(cast_ptr)
+inst_22:
+          jmp inst_5
+inst_23:
+          mov r0, 18442521949058891776
+inst_24:
+          mov i64:(ret_val_out), r0
+          ret 1
+          ret 1
+err_label:
+          ret -1
+          endfunc
+          endmodule
