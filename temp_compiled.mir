@@ -23,7 +23,7 @@ p_set_index: proto i64, p:vm, p:obj, p:idx, p:val
           local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr
           local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr
           local d:da, d:db, d:dres
-          local i64:r0, i64:r1, i64:r2, i64:r3, i64:r4, i64:r5
+          local i64:r0, d:d0, i64:r1, d:d1, i64:r2, d:d2, i64:r3, d:d3, i64:r4, d:d4, i64:r5, d:d5
           alloca cast_ptr, 192
           mov r0, i64:0(frame_slots)
           mov r1, i64:8(frame_slots)
@@ -31,116 +31,341 @@ p_set_index: proto i64, p:vm, p:obj, p:idx, p:val
           mov r3, i64:24(frame_slots)
           mov r4, i64:32(frame_slots)
           mov r5, i64:40(frame_slots)
-          beq inst_0, start_ip, 0
-          beq inst_1, start_ip, 1
-          beq inst_2, start_ip, 2
-          beq inst_3, start_ip, 3
-          beq inst_4, start_ip, 4
-          beq inst_5, start_ip, 5
-          beq inst_6, start_ip, 6
-          beq inst_7, start_ip, 7
-          beq inst_8, start_ip, 8
-          beq inst_9, start_ip, 9
-          beq inst_10, start_ip, 10
-          beq inst_11, start_ip, 11
-          beq inst_12, start_ip, 12
-          beq inst_13, start_ip, 13
-          beq inst_14, start_ip, 14
-          beq inst_15, start_ip, 15
-          beq inst_16, start_ip, 16
-          beq inst_17, start_ip, 17
-          beq inst_18, start_ip, 18
-          beq inst_19, start_ip, 19
-          beq inst_20, start_ip, 20
-          beq inst_21, start_ip, 21
-          beq inst_22, start_ip, 22
-          beq inst_23, start_ip, 23
-          beq inst_24, start_ip, 24
+          beq entry_0, start_ip, 0
+          beq entry_1, start_ip, 1
+          beq entry_2, start_ip, 2
+          beq entry_3, start_ip, 3
+          beq entry_4, start_ip, 4
+          beq entry_5, start_ip, 5
+          beq entry_6, start_ip, 6
+          beq entry_7, start_ip, 7
+          beq entry_8, start_ip, 8
+          beq entry_9, start_ip, 9
+          beq entry_10, start_ip, 10
+          beq entry_11, start_ip, 11
+          beq entry_12, start_ip, 12
+          beq entry_13, start_ip, 13
+          beq entry_14, start_ip, 14
+          beq entry_15, start_ip, 15
+          beq entry_16, start_ip, 16
+          beq entry_17, start_ip, 17
+          beq entry_18, start_ip, 18
+          beq entry_19, start_ip, 19
+          beq entry_20, start_ip, 20
+          beq entry_21, start_ip, 21
+          beq entry_22, start_ip, 22
+          beq entry_23, start_ip, 23
+          beq entry_24, start_ip, 24
+entry_0:
+          jmp inst_0
+entry_1:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          jmp inst_1
+entry_2:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          jmp inst_2
+entry_3:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          jmp inst_3
+entry_4:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          jmp inst_4
+entry_5:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          jmp inst_5
+entry_6:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          jmp inst_6
+entry_7:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          jmp inst_7
+entry_8:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          jmp inst_8
+entry_9:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          jmp inst_9
+entry_10:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          jmp inst_10
+entry_11:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          jmp inst_11
+entry_12:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_12
+entry_13:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_13
+entry_14:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_14
+entry_15:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_15
+entry_16:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_16
+entry_17:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_17
+entry_18:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_18
+entry_19:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_19
+entry_20:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_20
+entry_21:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_21
+entry_22:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          mov i64:24(cast_ptr), r3
+          dmov d3, d:24(cast_ptr)
+          mov i64:32(cast_ptr), r4
+          dmov d4, d:32(cast_ptr)
+          mov i64:40(cast_ptr), r5
+          dmov d5, d:40(cast_ptr)
+          jmp inst_22
+entry_23:
+          mov i64:0(cast_ptr), r0
+          dmov d0, d:0(cast_ptr)
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          jmp inst_23
+entry_24:
+          mov i64:8(cast_ptr), r1
+          dmov d1, d:8(cast_ptr)
+          mov i64:16(cast_ptr), r2
+          dmov d2, d:16(cast_ptr)
+          jmp inst_24
 inst_0:
-          mov tmp, i64:0(constants_ptr)
-          mov r0, tmp
+          dmov d0, d:0(constants_ptr)
 inst_1:
+          dmov d:0(cast_ptr), d0
+          mov r0, i64:0(cast_ptr)
           mov i64:0(frame_slots), r0
           add name_ptr, constants_ptr, 8
           add val_ptr, frame_slots, 0
           call p_def_global, er_jit_define_global, status, vm, name_ptr, val_ptr
 inst_2:
-          mov tmp, i64:16(constants_ptr)
-          mov r0, tmp
+          dmov d0, d:16(constants_ptr)
 inst_3:
-          mov tmp, i64:24(constants_ptr)
-          mov r1, tmp
+          dmov d1, d:24(constants_ptr)
 inst_4:
-          mov tmp, i64:32(constants_ptr)
-          mov r2, tmp
+          dmov d2, d:32(constants_ptr)
 inst_5:
-          mov i64:120(cast_ptr), r0
-          dmov da, d:120(cast_ptr)
-          mov i64:128(cast_ptr), r1
-          dmov db, d:128(cast_ptr)
-          dbge inst_23, da, db
+          dbge inst_23, d0, d1
 inst_6:
 inst_7:
-          mov r3, r0
+          dmov d3, d0
 inst_8:
-          mov r4, r0
+          dmov d4, d0
 inst_9:
-          mov i64:24(cast_ptr), r3
-          mov i64:32(cast_ptr), r4
-          dmov da, d:24(cast_ptr)
-          dmov db, d:32(cast_ptr)
-          dadd dres, da, db
-          dmov d:40(cast_ptr), dres
-          mov r3, i64:40(cast_ptr)
+          dadd d3, d3, d4
 inst_10:
-          mov r4, r3
+          dmov d4, d3
 inst_11:
-          mov tmp, i64:40(constants_ptr)
-          mov r5, tmp
+          dmov d5, d:40(constants_ptr)
 inst_12:
-          mov i64:96(cast_ptr), r4
-          dmov da, d:96(cast_ptr)
-          mov i64:104(cast_ptr), r5
-          dmov db, d:104(cast_ptr)
-          dble inst_18, da, db
+          dmov d:32(cast_ptr), d4
+          mov r4, i64:32(cast_ptr)
+          dmov d:32(cast_ptr), d4
+          mov r4, i64:32(cast_ptr)
+          dble inst_18, d4, d5
 inst_13:
 inst_14:
-          mov r4, r3
+          dmov d4, d3
 inst_15:
-          mov tmp, i64:48(constants_ptr)
-          mov r5, tmp
+          dmov d5, d:48(constants_ptr)
 inst_16:
-          mov i64:0(cast_ptr), r4
-          mov i64:8(cast_ptr), r5
-          dmov da, d:0(cast_ptr)
-          dmov db, d:8(cast_ptr)
-          dadd dres, da, db
-          dmov d:16(cast_ptr), dres
-          mov r4, i64:16(cast_ptr)
+          dadd d4, d4, d5
 inst_17:
           jmp inst_21
 inst_18:
-          mov r4, r3
+          dmov d4, d3
 inst_19:
-          mov tmp, i64:56(constants_ptr)
-          mov r5, tmp
+          dmov d5, d:56(constants_ptr)
 inst_20:
-          mov i64:96(cast_ptr), r4
-          mov i64:104(cast_ptr), r5
-          dmov da, d:96(cast_ptr)
-          dmov db, d:104(cast_ptr)
-          dadd dres, da, db
-          dmov d:112(cast_ptr), dres
-          mov r4, i64:112(cast_ptr)
+          dadd d4, d4, d5
 inst_21:
-          mov i64:120(cast_ptr), r0
-          mov i64:128(cast_ptr), r2
-          dmov da, d:120(cast_ptr)
-          dmov db, d:128(cast_ptr)
-          dadd dres, da, db
-          dmov d:136(cast_ptr), dres
-          mov r0, i64:136(cast_ptr)
+          dadd d0, d0, d2
 inst_22:
+          dmov d:24(cast_ptr), d3
+          mov r3, i64:24(cast_ptr)
+          dmov d:32(cast_ptr), d4
+          mov r4, i64:32(cast_ptr)
+          dmov d:40(cast_ptr), d5
+          mov r5, i64:40(cast_ptr)
           jmp inst_5
 inst_23:
           mov r0, 18442521949058891776
