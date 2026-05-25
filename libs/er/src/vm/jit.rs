@@ -1,8 +1,8 @@
 use std::ffi::{c_void, CString, c_char};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::HashMap;
+use fnv::FnvHashMap;
 use std::rc::Rc;
-use super::value::{Value, TAG_FALSE, TAG_NULL, TAG_TRUE};
+use super::value::{Value, TAG_FALSE, TAG_NULL, TAG_TRUE, push_positive_integer};
 use super::bytecode::{OpCode, Instruction};
 use super::execute::VM;
 use super::gc::{gc_allocate, GcData, GcObject, gc_write_barrier};
@@ -48,7 +48,7 @@ unsafe extern "C" {
 
 struct ThreadJitState {
     ctx: *mut c_void,
-    cache: HashMap<Vec<Instruction>, *const c_void>,
+    cache: FnvHashMap<Vec<Instruction>, *const c_void>,
 }
 
 impl Drop for ThreadJitState {
@@ -76,7 +76,7 @@ pub fn get_or_init_jit_ctx(_vm: &mut VM) -> *mut c_void {
                 register_helpers(ctx);
                 *borrow = Some(ThreadJitState {
                     ctx,
-                    cache: HashMap::new(),
+                    cache: FnvHashMap::default(),
                 });
             }
         }
@@ -1672,38 +1672,48 @@ pub extern "C" fn er_jit_add(vm: *mut VM, dest: *mut Value, b: *const Value, c: 
             use std::fmt::Write;
             if val_b.is_string() {
                 let sa_str = match &(*val_b.as_gc_ptr()).data {
-                    GcData::String(s) => s.as_str(),
+                    GcData::String(s) => s,
                     _ => unreachable!(),
                 };
                 let mut new_str = String::with_capacity(sa_str.len() + 16);
                 new_str.push_str(sa_str);
                 if val_c.is_string() {
                     let sb_str = match &(*val_c.as_gc_ptr()).data {
-                        GcData::String(s) => s.as_str(),
+                        GcData::String(s) => s,
                         _ => unreachable!(),
                     };
                     new_str.push_str(sb_str);
                 } else if val_c.is_number() {
-                    let _ = write!(&mut new_str, "{}", val_c.as_number());
+                    let val = val_c.as_number();
+                    if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
+                        push_positive_integer(&mut new_str, val as u64);
+                    } else {
+                        let _ = write!(&mut new_str, "{}", val);
+                    }
                 } else {
                     let _ = write!(&mut new_str, "{}", val_c);
                 }
-                let new_ptr = gc_allocate(GcData::String(new_str));
+                let new_ptr = gc_allocate(GcData::String(Rc::from(new_str)));
                 *dest = Value::string(new_ptr);
                 0
             } else if val_c.is_string() {
                 let sb_str = match &(*val_c.as_gc_ptr()).data {
-                    GcData::String(s) => s.as_str(),
+                    GcData::String(s) => s,
                     _ => unreachable!(),
                 };
                 let mut new_str = String::with_capacity(sb_str.len() + 16);
                 if val_b.is_number() {
-                    let _ = write!(&mut new_str, "{}", val_b.as_number());
+                    let val = val_b.as_number();
+                    if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
+                        push_positive_integer(&mut new_str, val as u64);
+                    } else {
+                        let _ = write!(&mut new_str, "{}", val);
+                    }
                 } else {
                     let _ = write!(&mut new_str, "{}", val_b);
                 }
                 new_str.push_str(sb_str);
-                let new_ptr = gc_allocate(GcData::String(new_str));
+                let new_ptr = gc_allocate(GcData::String(Rc::from(new_str)));
                 *dest = Value::string(new_ptr);
                 0
             } else {
@@ -1802,7 +1812,7 @@ pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: *const Value, val:
     unsafe {
         let name_v = *name_val;
         let name = match &(*name_v.as_gc_ptr()).data {
-            GcData::String(s) => Rc::from(s.as_str()),
+            GcData::String(s) => s.clone(),
             _ => unreachable!(),
         };
         (*vm).globals.insert(name, *val);
@@ -1815,7 +1825,7 @@ pub extern "C" fn er_jit_get_global(vm: *mut VM, dest: *mut Value, name_val: *co
     unsafe {
         let name_v = *name_val;
         let name = match &(*name_v.as_gc_ptr()).data {
-            GcData::String(s) => s.as_str(),
+            GcData::String(s) => s,
             _ => unreachable!(),
         };
         if let Some(val) = (*vm).globals.get(name) {
@@ -1832,8 +1842,8 @@ pub extern "C" fn er_jit_get_global(vm: *mut VM, dest: *mut Value, name_val: *co
 pub extern "C" fn er_jit_set_global(vm: *mut VM, val: *const Value, name_val: *const Value) -> i64 {
     unsafe {
         let name_v = *name_val;
-        let name: Rc<str> = match &(*name_v.as_gc_ptr()).data {
-            GcData::String(s) => Rc::from(s.as_str()),
+        let name = match &(*name_v.as_gc_ptr()).data {
+            GcData::String(s) => s.clone(),
             _ => unreachable!(),
         };
         match (*vm).globals.entry(name.clone()) {
@@ -1855,8 +1865,7 @@ pub extern "C" fn er_jit_set_global(vm: *mut VM, val: *const Value, name_val: *c
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_make_array(vm: *mut VM, dest: *mut Value, start_reg: *const Value, count: i64) -> i64 {
     unsafe {
-        (*vm).gc_step();
-        (*vm).gc_step();
+        (*vm).gc_trigger();
         let mut elements = Vec::with_capacity(count as usize);
         for i in 0..count {
             elements.push(*start_reg.offset(i as isize));
@@ -1866,13 +1875,12 @@ pub extern "C" fn er_jit_make_array(vm: *mut VM, dest: *mut Value, start_reg: *c
         0
     }
 }
-
+ 
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_make_object(vm: *mut VM, dest: *mut Value, start_reg: *const Value, count: i64) -> i64 {
     unsafe {
-        (*vm).gc_step();
-        (*vm).gc_step();
-        let mut obj = HashMap::new();
+        (*vm).gc_trigger();
+        let mut obj = FnvHashMap::default();
         for i in 0..count {
             let key_val = *start_reg.offset((i * 2) as isize);
             let val = *start_reg.offset((i * 2 + 1) as isize);
@@ -1881,7 +1889,7 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, dest: *mut Value, start_reg: *
                 return -1;
             }
             let key = match &(*key_val.as_gc_ptr()).data {
-                GcData::String(s) => Rc::from(s.as_str()),
+                GcData::String(s) => s.clone(),
                 _ => unreachable!(),
             };
             obj.insert(key, val);
@@ -1897,7 +1905,7 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, dest: *mut Value, obj_val: *c
     unsafe {
         let obj = *obj_val;
         let name = match &(*(*name_val).as_gc_ptr()).data {
-            GcData::String(s) => s.as_str(),
+            GcData::String(s) => s.as_ref(),
             _ => unreachable!(),
         };
         if obj.is_object() {
@@ -1943,14 +1951,14 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj_val: *const Value, val_va
         let obj = *obj_val;
         let val = *val_val;
         let name = match &(*(*name_val).as_gc_ptr()).data {
-            GcData::String(s) => s.as_str(),
+            GcData::String(s) => s.as_ref(),
             _ => unreachable!(),
         };
         if obj.is_object() {
             let ptr = obj.as_gc_ptr();
             match &mut (*ptr).data {
                 GcData::Object(map) => {
-                    map.insert(Rc::from(name), val);
+                    map.insert(match &(*(*name_val).as_gc_ptr()).data { GcData::String(s) => s.clone(), _ => unreachable!() }, val);
                     gc_write_barrier(ptr, &val);
                     0
                 }
@@ -2008,7 +2016,7 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, dest: *mut Value, obj_val: *cons
                 }
             } else if index.is_string() {
                 let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st.as_str(),
+                    GcData::String(st) => st,
                     _ => unreachable!(),
                 };
                 if let Ok(idx) = s.parse::<usize>() {
@@ -2032,7 +2040,7 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, dest: *mut Value, obj_val: *cons
             let ptr = obj.as_gc_ptr();
             if index.is_string() {
                 let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st.as_str(),
+                    GcData::String(st) => st,
                     _ => unreachable!(),
                 };
                 match &(*ptr).data {
@@ -2085,7 +2093,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj_val: *const Value, idx_val: 
                 }
             } else if index.is_string() {
                 let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st.as_str(),
+                    GcData::String(st) => st,
                     _ => unreachable!(),
                 };
                 if let Ok(idx) = s.parse::<usize>() {
@@ -2120,7 +2128,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj_val: *const Value, idx_val: 
             let ptr = obj.as_gc_ptr();
             if index.is_string() {
                 let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => Rc::from(st.as_str()),
+                    GcData::String(st) => st.clone(),
                     _ => unreachable!(),
                 };
                 match &mut (*ptr).data {

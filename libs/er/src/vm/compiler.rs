@@ -59,7 +59,7 @@ impl Compiler {
                 let callee_reg = self.next_reg;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::string(gc_allocate(GcData::String("print".to_string()))));
+                    .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from("print")))));
                 self.current_chunk().write_instruction(
                     OpCode::GetGlobal,
                     callee_reg as u8,
@@ -89,7 +89,7 @@ impl Compiler {
                     self.compile_expr(expr, temp_reg)?;
                     let name_idx = self
                         .current_chunk()
-                        .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from(name.as_str())))));
                     self.current_chunk().write_instruction(
                         OpCode::DefineGlobal,
                         temp_reg as u8,
@@ -222,7 +222,7 @@ impl Compiler {
                     LiteralValue::String(s) => {
                         let idx = self
                             .current_chunk()
-                            .add_constant(Value::string(gc_allocate(GcData::String(s.clone()))));
+                            .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from(s.as_str())))));
                         self.current_chunk().write_instruction(
                             OpCode::LoadConst,
                             dest as u8,
@@ -247,7 +247,7 @@ impl Compiler {
                 } else {
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from(name.as_str())))));
                     self.current_chunk().write_instruction(
                         OpCode::GetGlobal,
                         dest as u8,
@@ -272,7 +272,7 @@ impl Compiler {
                 } else {
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from(name.as_str())))));
                     self.current_chunk().write_instruction(
                         OpCode::SetGlobal,
                         dest as u8,
@@ -337,7 +337,7 @@ impl Compiler {
                 self.compile_expr(obj, dest)?;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
+                    .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from(name.as_str())))));
                 self.current_chunk().write_instruction(
                     OpCode::GetProperty,
                     dest as u8,
@@ -352,7 +352,7 @@ impl Compiler {
                 self.compile_expr(val, temp)?;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::string(gc_allocate(GcData::String(name.clone()))));
+                    .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from(name.as_str())))));
                 self.current_chunk().write_instruction(
                     OpCode::SetProperty,
                     dest as u8,
@@ -388,7 +388,7 @@ impl Compiler {
                 for (i, (key, val)) in pairs.iter().enumerate() {
                     let k_idx = self
                         .current_chunk()
-                        .add_constant(Value::string(gc_allocate(GcData::String(key.clone()))));
+                        .add_constant(Value::string(gc_allocate(GcData::String(std::rc::Rc::from(key.as_str())))));
                     self.current_chunk().write_instruction(
                         OpCode::LoadConst,
                         (start_reg + i * 2) as u8,

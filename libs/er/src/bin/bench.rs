@@ -41,11 +41,10 @@ impl Counter {
 static COUNTER: Counter = Counter::new();
 
 struct TrackingAllocator;
-const MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { MIMALLOC.alloc(layout) };
+        let ptr = unsafe { std::alloc::System.alloc(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -53,12 +52,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { MIMALLOC.dealloc(ptr, layout) };
+        unsafe { std::alloc::System.dealloc(ptr, layout) };
         COUNTER.sub(layout.size());
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { MIMALLOC.alloc_zeroed(layout) };
+        let ptr = unsafe { std::alloc::System.alloc_zeroed(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -66,7 +65,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let new_ptr = unsafe { MIMALLOC.realloc(ptr, layout, new_size) };
+        let new_ptr = unsafe { std::alloc::System.realloc(ptr, layout, new_size) };
         if !new_ptr.is_null() {
             COUNTER.sub(layout.size());
             COUNTER.add(new_size);
@@ -348,167 +347,7 @@ for i in 1..50000 {
     };
     let compile_rss = run_self_subprocess("--run-compiler");
 
-    // --- Lua benchmark ---
-    let lua_source = r#"
-for i = 1, 49999 do
-    local arr = {i, i + 1, i + 2}
-    table.insert(arr, i + 3)
-    local pop_val = table.remove(arr)
-    local obj = { a = arr, b = i }
-    local s = "num: " .. i
-    local dummy = obj.a
-end
-"#;
 
-    let lua_pure_source = format!(
-        r#"
-local start = os.clock()
-for _ = 1, {} do
-    for i = 1, 49999 do
-        local arr = {{i, i + 1, i + 2}}
-        table.insert(arr, i + 3)
-        local pop_val = table.remove(arr)
-        local obj = {{ a = arr, b = i }}
-        local s = "num: " .. i
-        local dummy = obj.a
-    end
-end
-print(os.clock() - start)
-"#,
-        iterations
-    );
-
-    let mut lua_pure_avg = std::time::Duration::from_secs(0);
-    let mut lua_pure_rss = None;
-    if let (Some(stdout), rss) = run_command_with_metrics("lua", &["-e", &lua_pure_source]) {
-        if let Ok(secs) = stdout.trim().parse::<f64>() {
-            lua_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
-            lua_pure_rss = rss;
-        }
-    }
-
-    let mut lua_cli_avg = std::time::Duration::from_secs(0);
-    let mut lua_cli_rss = None;
-    if std::process::Command::new("lua").arg("-v").output().is_ok() {
-        let start = Instant::now();
-        let mut success = true;
-        for _ in 0..iterations {
-            if std::process::Command::new("lua")
-                .arg("-e")
-                .arg(lua_source)
-                .output()
-                .is_err()
-            {
-                success = false;
-                break;
-            }
-        }
-        if success {
-            lua_cli_avg = start.elapsed() / iterations;
-            let (_, rss) = run_command_with_metrics("lua", &["-e", lua_source]);
-            lua_cli_rss = rss;
-        }
-    }
-
-    // --- Luau benchmark ---
-    let run_luau_file =
-        |args: &[&str], source: &str| -> Result<(String, Option<usize>), Box<dyn std::error::Error>> {
-            let temp_filename = "temp_bench_luau.lua";
-            std::fs::write(temp_filename, source)?;
-            
-            let mut full_args = args.to_vec();
-            full_args.push(temp_filename);
-            
-            let result = run_command_with_metrics("luau", &full_args);
-            let _ = std::fs::remove_file(temp_filename);
-            
-            if let (Some(stdout), rss) = result {
-                Ok((stdout, rss))
-            } else {
-                Err("Command failed".into())
-            }
-        };
-
-    let mut luau_pure_avg = std::time::Duration::from_secs(0);
-    let mut luau_pure_rss = None;
-    if let Ok((output, rss)) = run_luau_file(&[], &lua_pure_source) {
-        if let Ok(secs) = output.trim().parse::<f64>() {
-            luau_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
-            luau_pure_rss = rss;
-        }
-    }
-
-    let mut luau_codegen_pure_avg = std::time::Duration::from_secs(0);
-    let mut luau_codegen_pure_rss = None;
-    if let Ok((output, rss)) = run_luau_file(&["--codegen"], &lua_pure_source) {
-        if let Ok(secs) = output.trim().parse::<f64>() {
-            luau_codegen_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
-            luau_codegen_pure_rss = rss;
-        }
-    }
-
-    let mut luau_cli_avg = std::time::Duration::from_secs(0);
-    let mut luau_cli_rss = None;
-    if std::process::Command::new("luau")
-        .arg("-h")
-        .output()
-        .is_ok()
-    {
-        let temp_filename = "temp_bench_luau_cli.lua";
-        if std::fs::write(temp_filename, lua_source).is_ok() {
-            let start = Instant::now();
-            let mut success = true;
-            for _ in 0..iterations {
-                if !std::process::Command::new("luau")
-                    .arg(temp_filename)
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-                {
-                    success = false;
-                    break;
-                }
-            }
-            if success {
-                luau_cli_avg = start.elapsed() / iterations;
-                let (_, rss) = run_command_with_metrics("luau", &[temp_filename]);
-                luau_cli_rss = rss;
-            }
-            let _ = std::fs::remove_file(temp_filename);
-        }
-    }
-
-    let mut luau_codegen_cli_avg = std::time::Duration::from_secs(0);
-    let mut luau_codegen_cli_rss = None;
-    if std::process::Command::new("luau")
-        .arg("-h")
-        .output()
-        .is_ok()
-    {
-        let temp_filename = "temp_bench_luau_cg_cli.lua";
-        if std::fs::write(temp_filename, lua_source).is_ok() {
-            let start = Instant::now();
-            let mut success = true;
-            for _ in 0..iterations {
-                if !std::process::Command::new("luau")
-                    .arg("--codegen")
-                    .arg(temp_filename)
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-                {
-                    success = false;
-                    break;
-                }
-            }
-            if success {
-                luau_codegen_cli_avg = start.elapsed() / iterations;
-                let (_, rss) = run_command_with_metrics("luau", &["--codegen", temp_filename]);
-                luau_codegen_cli_rss = rss;
-            }
-            let _ = std::fs::remove_file(temp_filename);
-        }
-    }
 
     // --- Node benchmark ---
     let run_node_file =
@@ -621,24 +460,7 @@ console.log((performance.now() - start) / 1000);
         print_row("VM (JIT)", vm_jit_avg, vm_jit_rss, Some(vm_jit_peak_heap));
     }
     print_row("Compile only", compile_avg, compile_rss, Some(compile_peak_heap));
-    if lua_pure_avg.as_nanos() > 0 {
-        print_row("Lua (pure run)", lua_pure_avg, lua_pure_rss, None);
-    }
-    if lua_cli_avg.as_nanos() > 0 {
-        print_row("Lua (external CLI)", lua_cli_avg, lua_cli_rss, None);
-    }
-    if luau_pure_avg.as_nanos() > 0 {
-        print_row("Luau (pure run)", luau_pure_avg, luau_pure_rss, None);
-    }
-    if luau_codegen_pure_avg.as_nanos() > 0 {
-        print_row("Luau+Codegen (pure)", luau_codegen_pure_avg, luau_codegen_pure_rss, None);
-    }
-    if luau_cli_avg.as_nanos() > 0 {
-        print_row("Luau (external CLI)", luau_cli_avg, luau_cli_rss, None);
-    }
-    if luau_codegen_cli_avg.as_nanos() > 0 {
-        print_row("Luau+Codegen (CLI)", luau_codegen_cli_avg, luau_codegen_cli_rss, None);
-    }
+
     if node_pure_avg.as_nanos() > 0 {
         print_row("Node (pure run)", node_pure_avg, node_pure_rss, None);
     }
@@ -668,77 +490,7 @@ console.log((performance.now() - start) / 1000);
 
     let vm_avg = if vm_jit_avg.as_nanos() > 0 { vm_jit_avg } else { vm_interpreter_avg };
 
-    if lua_pure_avg.as_nanos() > 0 {
-        if vm_avg < lua_pure_avg {
-            let speedup = lua_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Lua (pure)", speedup);
-            print_footer("✅", &text);
-        } else {
-            let slowdown = vm_avg.as_nanos() as f64 / lua_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Lua (pure)", slowdown);
-            print_footer("⚠️", &text);
-        }
-    }
 
-    if lua_cli_avg.as_nanos() > 0 {
-        if vm_avg < lua_cli_avg {
-            let speedup = lua_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Lua (CLI)", speedup);
-            print_footer("✅", &text);
-        } else {
-            let slowdown = vm_avg.as_nanos() as f64 / lua_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Lua (CLI)", slowdown);
-            print_footer("⚠️", &text);
-        }
-    }
-
-    if luau_pure_avg.as_nanos() > 0 {
-        if vm_avg < luau_pure_avg {
-            let speedup = luau_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Luau (pure)", speedup);
-            print_footer("✅", &text);
-        } else {
-            let slowdown = vm_avg.as_nanos() as f64 / luau_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Luau (pure)", slowdown);
-            print_footer("⚠️", &text);
-        }
-    }
-
-    if luau_codegen_pure_avg.as_nanos() > 0 {
-        if vm_avg < luau_codegen_pure_avg {
-            let speedup = luau_codegen_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Luau (native)", speedup);
-            print_footer("✅", &text);
-        } else {
-            let slowdown = vm_avg.as_nanos() as f64 / luau_codegen_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Luau (native)", slowdown);
-            print_footer("⚠️", &text);
-        }
-    }
-
-    if luau_cli_avg.as_nanos() > 0 {
-        if vm_avg < luau_cli_avg {
-            let speedup = luau_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Luau (CLI)", speedup);
-            print_footer("✅", &text);
-        } else {
-            let slowdown = vm_avg.as_nanos() as f64 / luau_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Luau (CLI)", slowdown);
-            print_footer("⚠️", &text);
-        }
-    }
-
-    if luau_codegen_cli_avg.as_nanos() > 0 {
-        if vm_avg < luau_codegen_cli_avg {
-            let speedup = luau_codegen_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Luau (cg CLI)", speedup);
-            print_footer("✅", &text);
-        } else {
-            let slowdown = vm_avg.as_nanos() as f64 / luau_codegen_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Luau (cg CLI)", slowdown);
-            print_footer("⚠️", &text);
-        }
-    }
 
     if node_pure_avg.as_nanos() > 0 {
         if vm_avg < node_pure_avg {

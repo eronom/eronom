@@ -153,7 +153,7 @@ impl Value {
         if self.is_string() {
             unsafe {
                 match &(*self.as_gc_ptr()).data {
-                    GcData::String(s) => Some(s.as_str()),
+                    GcData::String(s) => Some(s),
                     _ => None,
                 }
             }
@@ -268,4 +268,20 @@ impl fmt::Display for Value {
             write!(f, "[Unknown]")
         }
     }
+}
+
+#[inline(always)]
+pub fn push_positive_integer(s: &mut String, mut n: u64) {
+    if n == 0 {
+        s.push('0');
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut idx = 20;
+    while n > 0 {
+        idx -= 1;
+        buf[idx] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    s.push_str(unsafe { std::str::from_utf8_unchecked(&buf[idx..]) });
 }
