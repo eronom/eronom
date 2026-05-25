@@ -1,10 +1,10 @@
 m_0: module
           export jit_fn_0
-          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm
+          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop
 jit_fn_0: func i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out
 p_negate: proto i64, p:vm, p:dest, p:src
 p_not: proto i64, p:dest, p:src
-p_add: proto i64, p:vm, p:dest, p:b, p:c
+p_add: proto i64, p:vm, i64:b, i64:c
 p_sub: proto i64, p:vm, p:dest, p:b, p:c
 p_mul: proto i64, p:vm, p:dest, p:b, p:c
 p_div: proto i64, p:vm, p:dest, p:b, p:c
@@ -14,13 +14,15 @@ p_less: proto i64, p:vm, p:dest, p:b, p:c
 p_def_global: proto i64, p:vm, p:name, p:val
 p_get_global: proto i64, p:vm, p:dest, p:name
 p_set_global: proto i64, p:vm, p:val, p:name
-p_make_array: proto i64, p:vm, p:dest, p:start, i64:count
-p_make_object: proto i64, p:vm, p:dest, p:start, i64:count
-p_get_property: proto i64, p:vm, p:dest, p:obj, p:name
-p_set_property: proto i64, p:vm, p:obj, p:val, p:name
-p_get_index: proto i64, p:vm, p:dest, p:obj, p:idx
-p_set_index: proto i64, p:vm, p:obj, p:idx, p:val
+p_make_array: proto i64, p:vm, p:start, i64:count
+p_make_object: proto i64, p:vm, p:start, i64:count
+p_get_property: proto i64, p:vm, i64:obj, i64:name
+p_set_property: proto i64, p:vm, i64:obj, i64:val, i64:name
+p_get_index: proto i64, p:vm, i64:obj, i64:idx
+p_set_index: proto i64, p:vm, i64:obj, i64:idx, i64:val
 p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots
+p_array_push: proto i64, i64:arr, i64:arg
+p_array_pop: proto i64, i64:arr
           local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr
           local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr
           local d:da, d:db, d:dres
@@ -410,43 +412,36 @@ inst_10:
 inst_11:
           dadd d5, d5, d6
 inst_12:
-          dmov d:0(cast_ptr), d0
-          mov tmp, i64:0(cast_ptr)
-          mov i64:0(frame_slots), tmp
-          dmov d:8(cast_ptr), d1
-          mov tmp, i64:8(cast_ptr)
-          mov i64:8(frame_slots), tmp
-          dmov d:16(cast_ptr), d2
-          mov tmp, i64:16(cast_ptr)
-          mov i64:16(frame_slots), tmp
-          dmov d:24(cast_ptr), d3
-          mov tmp, i64:24(cast_ptr)
-          mov i64:24(frame_slots), tmp
-          dmov d:32(cast_ptr), d4
-          mov tmp, i64:32(cast_ptr)
-          mov i64:32(frame_slots), tmp
-          dmov d:40(cast_ptr), d5
-          mov tmp, i64:40(cast_ptr)
-          mov i64:40(frame_slots), tmp
-          dmov d:48(cast_ptr), d6
-          mov tmp, i64:48(cast_ptr)
-          mov i64:48(frame_slots), tmp
-          mov i64:56(frame_slots), r7
-          mov i64:64(frame_slots), r8
-          add dest_ptr, frame_slots, 24
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
+          dmov d:24(frame_slots), d3
+          dmov d:32(frame_slots), d4
+          dmov d:40(frame_slots), d5
           add start_ptr, frame_slots, 24
-          call p_make_array, er_jit_make_array, status, vm, dest_ptr, start_ptr, 3
-          mov r3, i64:24(frame_slots)
+          call p_make_array, er_jit_make_array, r3, vm, start_ptr, 3
+          mov i64:24(frame_slots), r3
 inst_13:
           mov r4, r3
 inst_14:
+          mov tmp, r4
+          and tmp, tmp, 0xffff000000000000
+          bne fallback_get_prop_14, tmp, 0xfff5000000000000
+          mov tmp, r4
+          and tmp, tmp, 0x0000ffffffffffff
+          or r4, tmp, 0xfff9000000000000
           mov i64:32(frame_slots), r4
-          add dest_ptr, frame_slots, 32
-          add obj_ptr, frame_slots, 32
-          add name_ptr, constants_ptr, 40
-          call p_get_property, er_jit_get_property, status, vm, dest_ptr, obj_ptr, name_ptr
-          blt err_label, status, 0
-          mov r4, i64:32(frame_slots)
+          jmp done_get_prop_14
+fallback_get_prop_14:
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
+          mov i64:24(frame_slots), r3
+          mov i64:32(frame_slots), r4
+          mov tmp, i64:40(constants_ptr)
+          call p_get_property, er_jit_get_property, r4, vm, r4, tmp
+          mov i64:32(frame_slots), r4
+done_get_prop_14:
 inst_15:
           dmov d5, d0
 inst_16:
@@ -454,25 +449,24 @@ inst_16:
 inst_17:
           dadd d5, d5, d6
 inst_18:
-          dmov d:0(cast_ptr), d0
-          mov tmp, i64:0(cast_ptr)
-          mov i64:0(frame_slots), tmp
-          dmov d:8(cast_ptr), d1
-          mov tmp, i64:8(cast_ptr)
-          mov i64:8(frame_slots), tmp
-          dmov d:16(cast_ptr), d2
-          mov tmp, i64:16(cast_ptr)
-          mov i64:16(frame_slots), tmp
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
           mov i64:24(frame_slots), r3
           mov i64:32(frame_slots), r4
-          dmov d:40(cast_ptr), d5
-          mov tmp, i64:40(cast_ptr)
-          mov i64:40(frame_slots), tmp
-          dmov d:48(cast_ptr), d6
-          mov tmp, i64:48(cast_ptr)
-          mov i64:48(frame_slots), tmp
-          mov i64:56(frame_slots), r7
-          mov i64:64(frame_slots), r8
+          dmov d:40(frame_slots), d5
+          mov tmp, r4
+          and tmp, tmp, 0xffff000000000000
+          bne normal_call_18, tmp, 0xfff9000000000000
+          mov tmp, r4
+          and tmp, tmp, 0x0000ffffffffffff
+          or tmp, tmp, 0xfff5000000000000
+          dmov d:0(cast_ptr), d5
+          mov r5, i64:0(cast_ptr)
+          call p_array_push, er_jit_array_push, r4, tmp, r5
+          mov i64:32(frame_slots), r4
+          jmp done_call_18
+normal_call_18:
           add dest_ptr, frame_slots, 32
           call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r4, 4, 1, frame_slots
           beq call_vm_label_18, status, -1
@@ -489,33 +483,40 @@ done_call_18:
 inst_19:
           mov r4, r3
 inst_20:
+          mov tmp, r4
+          and tmp, tmp, 0xffff000000000000
+          bne fallback_get_prop_20, tmp, 0xfff5000000000000
+          mov tmp, r4
+          and tmp, tmp, 0x0000ffffffffffff
+          or r4, tmp, 0xfffa000000000000
           mov i64:32(frame_slots), r4
-          add dest_ptr, frame_slots, 32
-          add obj_ptr, frame_slots, 32
-          add name_ptr, constants_ptr, 56
-          call p_get_property, er_jit_get_property, status, vm, dest_ptr, obj_ptr, name_ptr
-          blt err_label, status, 0
-          mov r4, i64:32(frame_slots)
-inst_21:
-          dmov d:0(cast_ptr), d0
-          mov tmp, i64:0(cast_ptr)
-          mov i64:0(frame_slots), tmp
-          dmov d:8(cast_ptr), d1
-          mov tmp, i64:8(cast_ptr)
-          mov i64:8(frame_slots), tmp
-          dmov d:16(cast_ptr), d2
-          mov tmp, i64:16(cast_ptr)
-          mov i64:16(frame_slots), tmp
+          jmp done_get_prop_20
+fallback_get_prop_20:
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
           mov i64:24(frame_slots), r3
           mov i64:32(frame_slots), r4
-          dmov d:40(cast_ptr), d5
-          mov tmp, i64:40(cast_ptr)
-          mov i64:40(frame_slots), tmp
-          dmov d:48(cast_ptr), d6
-          mov tmp, i64:48(cast_ptr)
-          mov i64:48(frame_slots), tmp
-          mov i64:56(frame_slots), r7
-          mov i64:64(frame_slots), r8
+          mov tmp, i64:56(constants_ptr)
+          call p_get_property, er_jit_get_property, r4, vm, r4, tmp
+          mov i64:32(frame_slots), r4
+done_get_prop_20:
+inst_21:
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
+          mov i64:24(frame_slots), r3
+          mov i64:32(frame_slots), r4
+          mov tmp, r4
+          and tmp, tmp, 0xffff000000000000
+          bne normal_call_21, tmp, 0xfffa000000000000
+          mov tmp, r4
+          and tmp, tmp, 0x0000ffffffffffff
+          or tmp, tmp, 0xfff5000000000000
+          call p_array_pop, er_jit_array_pop, r4, tmp
+          mov i64:32(frame_slots), r4
+          jmp done_call_21
+normal_call_21:
           add dest_ptr, frame_slots, 32
           call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r4, 4, 0, frame_slots
           beq call_vm_label_21, status, -1
@@ -540,28 +541,16 @@ inst_24:
 inst_25:
           dmov d8, d0
 inst_26:
-          dmov d:0(cast_ptr), d0
-          mov tmp, i64:0(cast_ptr)
-          mov i64:0(frame_slots), tmp
-          dmov d:8(cast_ptr), d1
-          mov tmp, i64:8(cast_ptr)
-          mov i64:8(frame_slots), tmp
-          dmov d:16(cast_ptr), d2
-          mov tmp, i64:16(cast_ptr)
-          mov i64:16(frame_slots), tmp
-          mov i64:24(frame_slots), r3
-          mov i64:32(frame_slots), r4
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
           mov i64:40(frame_slots), r5
           mov i64:48(frame_slots), r6
           mov i64:56(frame_slots), r7
-          dmov d:64(cast_ptr), d8
-          mov tmp, i64:64(cast_ptr)
-          mov i64:64(frame_slots), tmp
-          add dest_ptr, frame_slots, 40
+          dmov d:64(frame_slots), d8
           add start_ptr, frame_slots, 40
-          call p_make_object, er_jit_make_object, status, vm, dest_ptr, start_ptr, 2
-          blt err_label, status, 0
-          mov r5, i64:40(frame_slots)
+          call p_make_object, er_jit_make_object, r5, vm, start_ptr, 2
+          mov i64:40(frame_slots), r5
 inst_27:
           mov tmp, i64:80(constants_ptr)
           mov r6, tmp
@@ -576,27 +565,27 @@ inst_29:
           mov r6, i64:136(cast_ptr)
           jmp done_add_29
 fallback_add_29:
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
+          mov i64:40(frame_slots), r5
+          mov i64:48(frame_slots), r6
+          dmov d:56(frame_slots), d7
           dmov d:128(cast_ptr), d7
           mov r7, i64:128(cast_ptr)
+          call p_add, er_jit_add, r6, vm, r6, r7
           mov i64:48(frame_slots), r6
-          mov i64:56(frame_slots), r7
-          add ra_ptr, frame_slots, 48
-          add rb_ptr, frame_slots, 48
-          add rc_ptr, frame_slots, 56
-          call p_add, er_jit_add, status, vm, ra_ptr, rb_ptr, rc_ptr
-          blt err_label, status, 0
-          mov r6, i64:48(frame_slots)
 done_add_29:
 inst_30:
           mov r7, r5
 inst_31:
+          dmov d:0(frame_slots), d0
+          dmov d:8(frame_slots), d1
+          dmov d:16(frame_slots), d2
           mov i64:56(frame_slots), r7
-          add dest_ptr, frame_slots, 56
-          add obj_ptr, frame_slots, 56
-          add name_ptr, constants_ptr, 88
-          call p_get_property, er_jit_get_property, status, vm, dest_ptr, obj_ptr, name_ptr
-          blt err_label, status, 0
-          mov r7, i64:56(frame_slots)
+          mov tmp, i64:88(constants_ptr)
+          call p_get_property, er_jit_get_property, r7, vm, r7, tmp
+          mov i64:56(frame_slots), r7
 inst_32:
           dadd d0, d0, d2
 inst_33:

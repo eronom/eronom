@@ -249,7 +249,13 @@ impl fmt::Display for Value {
                     GcData::Object(obj) => {
                         let items: Vec<String> = obj
                             .iter()
-                            .map(|(k, v)| format!("\"{}\": {}", k, v))
+                            .map(|(k, v)| {
+                                let s = match &(*k.0.as_gc_ptr()).data {
+                                    GcData::String(s) => s.as_ref(),
+                                    _ => unreachable!(),
+                                };
+                                format!("\"{}\": {}", s, v)
+                            })
                             .collect();
                         write!(f, "{{{}}}", items.join(", "))
                     }
@@ -284,4 +290,54 @@ pub fn push_positive_integer(s: &mut String, mut n: u64) {
         n /= 10;
     }
     s.push_str(unsafe { std::str::from_utf8_unchecked(&buf[idx..]) });
+}
+
+use std::cell::RefCell;
+thread_local! {
+    pub static ADD_SCRATCH: RefCell<String> = RefCell::new(String::with_capacity(128));
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MapKey(pub Value);
+
+impl PartialEq for MapKey {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        if self.0.0 == other.0.0 {
+            return true;
+        }
+        if self.0.is_string() && other.0.is_string() {
+            unsafe {
+                let s1 = match &(*self.0.as_gc_ptr()).data {
+                    GcData::String(s) => s.as_ref(),
+                    _ => unreachable!(),
+                };
+                let s2 = match &(*other.0.as_gc_ptr()).data {
+                    GcData::String(s) => s.as_ref(),
+                    _ => unreachable!(),
+                };
+                s1 == s2
+            }
+        } else {
+            false
+        }
+    }
+}
+
+impl Eq for MapKey {}
+
+impl std::hash::Hash for MapKey {
+    #[inline(always)]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if self.0.is_string() {
+            unsafe {
+                match &(*self.0.as_gc_ptr()).data {
+                    GcData::String(s) => s.as_ref().hash(state),
+                    _ => unreachable!(),
+                }
+            }
+        } else {
+            self.0.0.hash(state);
+        }
+    }
 }

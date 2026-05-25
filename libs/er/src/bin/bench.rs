@@ -265,6 +265,11 @@ for i in 1..50000 {
     // Benchmark VM (Interpreter)
     let baseline = COUNTER.allocated.load(Ordering::SeqCst);
     COUNTER.reset_peak();
+    unsafe extern "C" {
+        fn er_gc_reset_stats();
+        fn er_gc_print_stats();
+    }
+    unsafe { er_gc_reset_stats(); }
     let start = Instant::now();
     for _ in 0..iterations {
         let tokens = er::frontend::lex(source);
@@ -278,6 +283,8 @@ for i in 1..50000 {
         vm.run(function).ok();
     }
     let vm_interpreter_elapsed = start.elapsed();
+    println!("--- Interpreter GC stats ---");
+    unsafe { er_gc_print_stats(); }
     let vm_interpreter_avg = vm_interpreter_elapsed / iterations;
     let vm_interpreter_peak_heap = COUNTER.peak.load(Ordering::SeqCst).saturating_sub(baseline);
 
@@ -286,6 +293,16 @@ for i in 1..50000 {
     COUNTER.reset_peak();
     let mut vm_jit_peak_heap = 0;
     let vm_jit_avg = if run_jit {
+        unsafe extern "C" {
+            fn er_jit_reset_profiler();
+            fn er_jit_print_profiler();
+            fn er_gc_reset_stats();
+            fn er_gc_print_stats();
+        }
+        unsafe {
+            er_jit_reset_profiler();
+            er_gc_reset_stats();
+        }
         let start = Instant::now();
         for _ in 0..iterations {
             let tokens = er::frontend::lex(source);
@@ -299,6 +316,11 @@ for i in 1..50000 {
             vm.run(function).ok();
         }
         let vm_jit_elapsed = start.elapsed();
+        println!("--- JIT GC stats ---");
+        unsafe {
+            er_jit_print_profiler();
+            er_gc_print_stats();
+        }
         vm_jit_peak_heap = COUNTER.peak.load(Ordering::SeqCst).saturating_sub(baseline);
         vm_jit_elapsed / iterations
     } else {

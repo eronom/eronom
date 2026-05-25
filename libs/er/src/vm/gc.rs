@@ -1,5 +1,6 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 use super::value::{
-    Value, TAG_NUMBER_MASK, TAG_STRING, TAG_FUNCTION, TAG_METHOD_PUSH, TAG_METHOD_POP
+    Value, TAG_NUMBER_MASK, TAG_STRING, TAG_FUNCTION, TAG_METHOD_PUSH, TAG_METHOD_POP, MapKey
 };
 use super::bytecode::Function;
 use fnv::FnvHashMap;
@@ -24,7 +25,7 @@ pub enum GcPhase {
 pub enum GcData {
     String(Rc<str>),
     Array(Vec<Value>),
-    Object(FnvHashMap<Rc<str>, Value>),
+    Object(FnvHashMap<MapKey, Value>),
     Function(Function),
 }
 
@@ -41,6 +42,9 @@ pub struct GcState {
     pub gray_stack: Vec<*mut GcObject>,
     pub sweep_ptr: *mut GcObject,
     pub prev_sweep_ptr: *mut GcObject,
+    pub free_list: Vec<*mut GcObject>,
+    pub vector_pool: Vec<Vec<Value>>,
+    pub map_pool: Vec<FnvHashMap<MapKey, Value>>,
 }
 
 thread_local! {
@@ -51,56 +55,148 @@ thread_local! {
         gray_stack: Vec::new(),
         sweep_ptr: std::ptr::null_mut(),
         prev_sweep_ptr: std::ptr::null_mut(),
+        free_list: Vec::new(),
+        vector_pool: Vec::new(),
+        map_pool: Vec::new(),
     });
     pub static GC_ROOTS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
-    pub static GC_NEEDS_STEP: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
+pub static mut GC_NEEDS_STEP: bool = false;
+
+#[inline(always)]
+pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
+    GC_STATE.with(|state| {
+        let mut s = state.borrow_mut();
+        if let Some(mut vec) = s.vector_pool.pop() {
+            if vec.capacity() < capacity {
+                vec.reserve(capacity - vec.capacity());
+            }
+            vec
+        } else {
+            Vec::with_capacity(capacity)
+        }
+    })
+}
+
+#[inline(always)]
+pub fn get_pooled_map(capacity: usize) -> FnvHashMap<MapKey, Value> {
+    GC_STATE.with(|state| {
+        let mut s = state.borrow_mut();
+        if let Some(mut map) = s.map_pool.pop() {
+            map.reserve(capacity);
+            map
+        } else {
+            FnvHashMap::with_capacity_and_hasher(capacity, Default::default())
+        }
+    })
+}
+
+#[inline(always)]
+pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
+    unsafe {
+        match data {
+            GcData::Array(arr) => {
+                let mut vec = std::ptr::read(arr);
+                vec.clear();
+                state.vector_pool.push(vec);
+            }
+            GcData::Object(obj) => {
+                let mut map = std::ptr::read(obj);
+                map.clear();
+                state.map_pool.push(map);
+            }
+            _ => {
+                std::ptr::drop_in_place(data);
+            }
+        }
+    }
+}
+
+#[inline(always)]
+pub fn gc_alloc_object(state: &mut GcState, data: GcData) -> *mut GcObject {
+    if let Some(ptr) = state.free_list.pop() {
+        unsafe {
+            std::ptr::write(ptr, GcObject {
+                color: GcColor::White,
+                next: std::ptr::null_mut(),
+                data,
+            });
+        }
+        ptr
+    } else {
+        let obj = Box::new(GcObject {
+            color: GcColor::White,
+            next: std::ptr::null_mut(),
+            data,
+        });
+        Box::into_raw(obj)
+    }
+}
+
+#[inline(always)]
+pub fn gc_dealloc_object(state: &mut GcState, ptr: *mut GcObject) {
+    unsafe {
+        gc_recycle_data(state, &mut (*ptr).data);
+    }
+    state.free_list.push(ptr);
+}
+
+#[inline(always)]
 pub fn gc_allocate(data: GcData) -> *mut GcObject {
     GC_STATE.with(|state| {
         let mut state = state.borrow_mut();
-        let obj = Box::new(GcObject {
-            color: GcColor::White,
-            next: state.head,
-            data,
-        });
-        let ptr = Box::into_raw(obj);
-        state.head = ptr;
+        let s_ref = &mut *state;
+        let ptr = gc_alloc_object(s_ref, data);
+        unsafe {
+            (*ptr).next = s_ref.head;
+        }
+        s_ref.head = ptr;
 
-        if let GcPhase::Sweep = state.phase {
-            if state.prev_sweep_ptr.is_null() {
-                state.prev_sweep_ptr = ptr;
+        if let GcPhase::Sweep = s_ref.phase {
+            if s_ref.prev_sweep_ptr.is_null() {
+                s_ref.prev_sweep_ptr = ptr;
             }
         }
 
-        state.alloc_count += 1;
-        if state.alloc_count >= 10000 {
-            GC_NEEDS_STEP.with(|n| n.set(true));
+        s_ref.alloc_count += 1;
+        if s_ref.alloc_count >= 10000 {
+            unsafe { GC_NEEDS_STEP = true; }
         }
         ptr
     })
 }
 
+#[inline(always)]
 pub fn gc_free_all() {
     unsafe {
         GC_STATE.with(|state| {
             let mut state = state.borrow_mut();
-            let mut curr = state.head;
-            state.head = std::ptr::null_mut();
+            let s_ref = &mut *state;
+            let mut curr = s_ref.head;
+            s_ref.head = std::ptr::null_mut();
             while !curr.is_null() {
                 let next = (*curr).next;
+                gc_recycle_data(s_ref, &mut (*curr).data);
                 let _ = Box::from_raw(curr);
                 curr = next;
             }
-            state.alloc_count = 0;
-            state.phase = GcPhase::Pause;
-            state.gray_stack.clear();
-            state.sweep_ptr = std::ptr::null_mut();
-            state.prev_sweep_ptr = std::ptr::null_mut();
-            GC_NEEDS_STEP.with(|n| n.set(false));
+            let free_list = std::mem::take(&mut s_ref.free_list);
+            for ptr in free_list {
+                let _ = Box::from_raw(ptr);
+            }
+            s_ref.vector_pool.clear();
+            s_ref.map_pool.clear();
+            s_ref.alloc_count = 0;
+            s_ref.phase = GcPhase::Pause;
+            s_ref.gray_stack.clear();
+            s_ref.sweep_ptr = std::ptr::null_mut();
+            s_ref.prev_sweep_ptr = std::ptr::null_mut();
+            GC_NEEDS_STEP = false;
         });
     }
 }
+
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn gc_mark_value(val: &Value) {
@@ -146,7 +242,8 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
                 }
             }
             GcData::Object(obj) => {
-                for val in obj.values() {
+                for (key, val) in obj {
+                    gc_mark_value(&key.0);
                     gc_mark_value(val);
                 }
             }
