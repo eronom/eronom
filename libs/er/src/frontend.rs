@@ -228,10 +228,14 @@ impl<'a> Lexer<'a> {
                 if tokens.is_empty() {
                     TokenType::String(string)
                 } else {
-                    tokens.push(Token {
-                        ty: TokenType::String(string),
-                        line: self.line,
-                    });
+                    if string.is_empty() {
+                        tokens.pop();
+                    } else {
+                        tokens.push(Token {
+                            ty: TokenType::String(string),
+                            line: self.line,
+                        });
+                    }
                     // To output multiple tokens, we can store them in the lexer's buffer.
                     // Let's add a buffer to the Lexer struct! Wait, I can't easily change the Lexer struct here without also changing its definition.
                     // Instead, let's just make the parent loop handle this, or return a special InterpolatedString token?

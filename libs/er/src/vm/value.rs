@@ -14,6 +14,7 @@ pub const TAG_METHOD_PUSH: u64 = 0xfff9_0000_0000_0000;
 pub const TAG_METHOD_POP: u64  = 0xfffa_0000_0000_0000;
 pub const PTR_MASK: u64        = 0x0000_ffff_ffff_ffff;
 
+#[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct Value(pub u64);
 

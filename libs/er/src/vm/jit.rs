@@ -117,7 +117,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -143,6 +143,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_set_property: proto i64, p:vm, p:obj, p:val, p:name\n");
     mir.push_str("p_get_index: proto i64, p:vm, p:dest, p:obj, p:idx\n");
     mir.push_str("p_set_index: proto i64, p:vm, p:obj, p:idx, p:val\n");
+    mir.push_str("p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots\n");
 
     mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr\n");
     mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr\n");
@@ -1390,15 +1391,31 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                         mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, i));
                         mir.push_str(&format!("          mov tmp, i64:{}(cast_ptr)\n", offset));
                         mir.push_str(&format!("          mov i64:{}(frame_slots), tmp\n", i * 8));
+                        if i == rb {
+                            mir.push_str(&format!("          mov r{}, tmp\n", rb));
+                        }
                     } else {
                         mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", i * 8, i));
                     }
                 }
+                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
+                mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots\n", rb, rb, arg_count));
+                mir.push_str(&format!("          beq call_vm_label_{}, status, -1\n", idx));
+                mir.push_str(&format!("          blt err_label, status, 0\n"));
+                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
+                if next_types[ra] == RegType::Double {
+                    let offset = (ra % 24) * 8;
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
+                }
+                mir.push_str(&format!("          jmp done_call_{}\n", idx));
+                mir.push_str(&format!("call_vm_label_{}:\n", idx));
                 mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx + 1));
                 mir.push_str(&format!("          mov i64:(dest_reg_out), {}\n", ra));
                 mir.push_str(&format!("          mov i64:(func_reg_out), {}\n", rb));
                 mir.push_str(&format!("          mov i64:(arg_count_out), {}\n", arg_count));
                 mir.push_str("          ret 0\n");
+                mir.push_str(&format!("done_call_{}:\n", idx));
             }
             OpCode::MakeArray => {
                 let count = instruction.operand;
@@ -1600,6 +1617,7 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         ("er_jit_set_property", er_jit_set_property as *mut c_void),
         ("er_jit_get_index", er_jit_get_index as *mut c_void),
         ("er_jit_set_index", er_jit_set_index as *mut c_void),
+        ("er_jit_call_non_vm", er_jit_call_non_vm as *mut c_void),
     ];
 
     for &(name, ptr) in helpers {
@@ -1651,23 +1669,40 @@ pub extern "C" fn er_jit_add(vm: *mut VM, dest: *mut Value, b: *const Value, c: 
             *dest = Value::number_unchecked(val_b.as_number() + val_c.as_number());
             0
         } else {
+            use std::fmt::Write;
             if val_b.is_string() {
                 let sa_str = match &(*val_b.as_gc_ptr()).data {
-                    GcData::String(s) => s,
+                    GcData::String(s) => s.as_str(),
                     _ => unreachable!(),
                 };
-                let sb_str = val_c.to_string();
-                let new_str = format!("{}{}", sa_str, sb_str);
+                let mut new_str = String::with_capacity(sa_str.len() + 16);
+                new_str.push_str(sa_str);
+                if val_c.is_string() {
+                    let sb_str = match &(*val_c.as_gc_ptr()).data {
+                        GcData::String(s) => s.as_str(),
+                        _ => unreachable!(),
+                    };
+                    new_str.push_str(sb_str);
+                } else if val_c.is_number() {
+                    let _ = write!(&mut new_str, "{}", val_c.as_number());
+                } else {
+                    let _ = write!(&mut new_str, "{}", val_c);
+                }
                 let new_ptr = gc_allocate(GcData::String(new_str));
                 *dest = Value::string(new_ptr);
                 0
             } else if val_c.is_string() {
-                let sa_str = val_b.to_string();
                 let sb_str = match &(*val_c.as_gc_ptr()).data {
-                    GcData::String(s) => s,
+                    GcData::String(s) => s.as_str(),
                     _ => unreachable!(),
                 };
-                let new_str = format!("{}{}", sa_str, sb_str);
+                let mut new_str = String::with_capacity(sb_str.len() + 16);
+                if val_b.is_number() {
+                    let _ = write!(&mut new_str, "{}", val_b.as_number());
+                } else {
+                    let _ = write!(&mut new_str, "{}", val_b);
+                }
+                new_str.push_str(sb_str);
                 let new_ptr = gc_allocate(GcData::String(new_str));
                 *dest = Value::string(new_ptr);
                 0
@@ -2103,6 +2138,50 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj_val: *const Value, idx_val: 
         } else {
             (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
             -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_call_non_vm(
+    _vm: *mut VM,
+    dest: *mut Value,
+    callee: Value,
+    func_reg: i64,
+    arg_count: i64,
+    frame_slots: *mut Value,
+) -> i64 {
+    unsafe {
+        if callee.is_native_function() {
+            let native = callee.as_native_fn();
+            let mut args = Vec::with_capacity(arg_count as usize);
+            for i in 0..arg_count {
+                args.push(*frame_slots.offset((func_reg + 1 + i) as isize));
+            }
+            let result = native(args);
+            *dest = result;
+            0
+        } else if callee.is_array_method_push() || callee.is_array_method_pop() {
+            let ptr = callee.as_gc_ptr();
+            let result = match &mut (*ptr).data {
+                GcData::Array(arr) => {
+                    if callee.is_array_method_push() {
+                        for i in 0..arg_count {
+                            let arg = *frame_slots.offset((func_reg + 1 + i) as isize);
+                            gc_write_barrier(ptr, &arg);
+                            arr.push(arg);
+                        }
+                        Value::number(arr.len() as f64)
+                    } else {
+                        arr.pop().unwrap_or(Value::null())
+                    }
+                }
+                _ => unreachable!(),
+            };
+            *dest = result;
+            0
+        } else {
+            -1 // Not a native function or method, needs fallback
         }
     }
 }

@@ -75,7 +75,7 @@ impl VM {
         let phase = GC_PHASE.with(|p| p.get());
         match phase {
             GcPhase::Pause => {
-                if ALLOC_COUNT.with(|c| c.get()) >= 10 {
+                if ALLOC_COUNT.with(|c| c.get()) >= 10000 {
                     GC_PHASE.with(|p| p.set(GcPhase::Mark));
                     GRAY_STACK.with(|gs| gs.borrow_mut().clear());
 
@@ -307,14 +307,11 @@ impl VM {
                         ip_val = ip_out;
                     } else if callee.is_array_method_push() || callee.is_array_method_pop() {
                         let ptr = callee.as_gc_ptr();
-                        let mut args = Vec::with_capacity(arg_count_out);
-                        for i in 0..arg_count_out {
-                            args.push(*frame_slots.add(func_reg_out + 1 + i));
-                        }
                         let result = match &mut (*ptr).data {
                             GcData::Array(arr) => {
                                 if callee.is_array_method_push() {
-                                    for arg in args {
+                                    for i in 0..arg_count_out {
+                                        let arg = *frame_slots.add(func_reg_out + 1 + i);
                                         gc_write_barrier(ptr, &arg);
                                         arr.push(arg);
                                     }
@@ -450,22 +447,39 @@ impl VM {
                         if a.is_number() && b.is_number() {
                             *frame_slots.add(dest) = Value::number_unchecked(a.as_number() + b.as_number());
                         } else {
+                            use std::fmt::Write;
                             if a.is_string() {
                                 let sa_str = match &(*a.as_gc_ptr()).data {
-                                    GcData::String(s) => s,
+                                    GcData::String(s) => s.as_str(),
                                     _ => unreachable!(),
                                 };
-                                let sb_str = b.to_string();
-                                let new_str = format!("{}{}", sa_str, sb_str);
+                                let mut new_str = String::with_capacity(sa_str.len() + 16);
+                                new_str.push_str(sa_str);
+                                if b.is_string() {
+                                    let sb_str = match &(*b.as_gc_ptr()).data {
+                                        GcData::String(s) => s.as_str(),
+                                        _ => unreachable!(),
+                                    };
+                                    new_str.push_str(sb_str);
+                                } else if b.is_number() {
+                                    let _ = write!(&mut new_str, "{}", b.as_number());
+                                } else {
+                                    let _ = write!(&mut new_str, "{}", b);
+                                }
                                 let new_ptr = gc_allocate(GcData::String(new_str));
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else if b.is_string() {
-                                let sa_str = a.to_string();
                                 let sb_str = match &(*b.as_gc_ptr()).data {
-                                    GcData::String(s) => s,
+                                    GcData::String(s) => s.as_str(),
                                     _ => unreachable!(),
                                 };
-                                let new_str = format!("{}{}", sa_str, sb_str);
+                                let mut new_str = String::with_capacity(sb_str.len() + 16);
+                                if a.is_number() {
+                                    let _ = write!(&mut new_str, "{}", a.as_number());
+                                } else {
+                                    let _ = write!(&mut new_str, "{}", a);
+                                }
+                                new_str.push_str(sb_str);
                                 let new_ptr = gc_allocate(GcData::String(new_str));
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else {
@@ -883,15 +897,12 @@ impl VM {
                             *frame_slots.add(dest) = result;
                         } else if callee.is_array_method_push() || callee.is_array_method_pop() {
                             let ptr = callee.as_gc_ptr();
-                            let mut args = Vec::with_capacity(arg_count);
-                            for i in 0..arg_count {
-                                args.push(*frame_slots.add(func_reg + 1 + i));
-                            }
                             sync_stack!();
                             let result = match &mut (*ptr).data {
                                 GcData::Array(arr) => {
                                     if callee.is_array_method_push() {
-                                        for arg in args {
+                                        for i in 0..arg_count {
+                                            let arg = *frame_slots.add(func_reg + 1 + i);
                                             gc_write_barrier(ptr, &arg);
                                             arr.push(arg);
                                         }
@@ -1083,7 +1094,7 @@ mod tests {
 
         assert_eq!(GC_PHASE.with(|p| p.get()), GcPhase::Pause);
 
-        for _ in 0..10 {
+        for _ in 0..10000 {
             gc_allocate(GcData::Array(vec![]));
         }
 

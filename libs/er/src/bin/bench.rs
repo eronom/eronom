@@ -1,7 +1,7 @@
 /// Benchmark: VM-based vs Legacy tree-walking interpreter
 /// Run with: cargo run --release --bin bench -p er
 use std::time::Instant;
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Counter {
@@ -41,10 +41,11 @@ impl Counter {
 static COUNTER: Counter = Counter::new();
 
 struct TrackingAllocator;
+const MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { System.alloc(layout) };
+        let ptr = unsafe { MIMALLOC.alloc(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -52,12 +53,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) };
+        unsafe { MIMALLOC.dealloc(ptr, layout) };
         COUNTER.sub(layout.size());
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { System.alloc_zeroed(layout) };
+        let ptr = unsafe { MIMALLOC.alloc_zeroed(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -65,7 +66,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
+        let new_ptr = unsafe { MIMALLOC.realloc(ptr, layout, new_size) };
         if !new_ptr.is_null() {
             COUNTER.sub(layout.size());
             COUNTER.add(new_size);
@@ -135,15 +136,13 @@ fn run_command_with_metrics(
 
 fn main() {
     let source = r#"
-let x = 0
-
-for i in 1..10000 {
-    let val = i + i
-    if (val > 5000) {
-        let dummy = val + 1
-    } else {
-        let dummy = val + 2
-    }
+for i in 1..50000 {
+    let arr = [i, i + 1, i + 2]
+    arr.push(i + 3)
+    let pop_val = arr.pop()
+    let obj = { a: arr, b: i }
+    let s = "num: {i}"
+    let dummy = obj.a
 }
 "#;
 
@@ -229,7 +228,7 @@ for i in 1..10000 {
     println!("Size of Value: {}", std::mem::size_of::<er::backend::Value>());
 
     eprintln!("=== ER Language Benchmark ===");
-    eprintln!("  Script: 10,000 loop iterations with arithmetic + conditionals");
+    eprintln!("  Script: 50,000 loop iterations with array/object allocation + resize + string interpolation");
     eprintln!("  Runs:   {} iterations each", iterations);
     if let Ok(cwd) = std::env::current_dir() {
         eprintln!("CWD: {}", cwd.display());
@@ -351,14 +350,13 @@ for i in 1..10000 {
 
     // --- Lua benchmark ---
     let lua_source = r#"
-local x = 0
-for i = 1, 9999 do
-    local val = i + i
-    if val > 5000 then
-        local dummy = val + 1
-    else
-        local dummy = val + 2
-    end
+for i = 1, 49999 do
+    local arr = {i, i + 1, i + 2}
+    table.insert(arr, i + 3)
+    local pop_val = table.remove(arr)
+    local obj = { a = arr, b = i }
+    local s = "num: " .. i
+    local dummy = obj.a
 end
 "#;
 
@@ -366,14 +364,13 @@ end
         r#"
 local start = os.clock()
 for _ = 1, {} do
-    local x = 0
-    for i = 1, 9999 do
-        local val = i + i
-        if val > 5000 then
-            local dummy = val + 1
-        else
-            local dummy = val + 2
-        end
+    for i = 1, 49999 do
+        local arr = {{i, i + 1, i + 2}}
+        table.insert(arr, i + 3)
+        local pop_val = table.remove(arr)
+        local obj = {{ a = arr, b = i }}
+        local s = "num: " .. i
+        local dummy = obj.a
     end
 end
 print(os.clock() - start)
@@ -533,14 +530,13 @@ print(os.clock() - start)
         };
 
     let node_source = r#"
-let x = 0
-for (let i = 1; i < 10000; i++) {
-    let val = i + i
-    if (val > 5000) {
-        let dummy = val + 1
-    } else {
-        let dummy = val + 2
-    }
+for (let i = 1; i < 50000; i++) {
+    let arr = [i, i + 1, i + 2];
+    arr.push(i + 3);
+    let pop_val = arr.pop();
+    let obj = { a: arr, b: i };
+    let s = `num: ${i}`;
+    let dummy = obj.a;
 }
 "#;
 
@@ -548,14 +544,13 @@ for (let i = 1; i < 10000; i++) {
         r#"
 const start = performance.now();
 for (let r = 0; r < {}; r++) {{
-    let x = 0;
-    for (let i = 1; i < 10000; i++) {{
-        let val = i + i;
-        if (val > 5000) {{
-            let dummy = val + 1;
-        }} else {{
-            let dummy = val + 2;
-        }}
+    for (let i = 1; i < 50000; i++) {{
+        let arr = [i, i + 1, i + 2];
+        arr.push(i + 3);
+        let pop_val = arr.pop();
+        let obj = {{ a: arr, b: i }};
+        let s = `num: ${{i}}`;
+        let dummy = obj.a;
     }}
 }}
 console.log((performance.now() - start) / 1000);
