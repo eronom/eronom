@@ -194,6 +194,7 @@ pub fn gc_free_all() {
             s_ref.prev_sweep_ptr = std::ptr::null_mut();
             GC_NEEDS_STEP = false;
         });
+        gc_clear_string_cache();
     }
 }
 
@@ -285,4 +286,26 @@ pub fn gc_write_barrier(parent: *mut GcObject, child: &Value) {
             }
         }
     }
+}
+
+thread_local! {
+    pub static STRING_CACHE: RefCell<FnvHashMap<Rc<str>, *mut GcObject>> = RefCell::new(FnvHashMap::default());
+}
+
+pub fn gc_clear_string_cache() {
+    STRING_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+pub fn get_or_create_string(s: &str) -> *mut GcObject {
+    STRING_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(&ptr) = cache.get(s) {
+            ptr
+        } else {
+            let rc_str: Rc<str> = Rc::from(s);
+            let ptr = gc_allocate(GcData::String(rc_str.clone()));
+            cache.insert(rc_str, ptr);
+            ptr
+        }
+    })
 }

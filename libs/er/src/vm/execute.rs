@@ -105,6 +105,7 @@ impl VM {
             match phase {
                 GcPhase::Pause => {
                     if state.alloc_count >= 10000 {
+                        super::gc::gc_clear_string_cache();
                         state.phase = GcPhase::Mark;
                         state.gray_stack.clear();
 
@@ -217,7 +218,7 @@ impl VM {
 
     pub fn collect_garbage(&mut self) {
         let start_time = Instant::now();
-        
+        super::gc::gc_clear_string_cache();
         GC_STATE.with(|state| {
             let mut state = state.borrow_mut();
             state.gray_stack.clear();
@@ -359,6 +360,9 @@ impl VM {
             let mut ip_val = frame.ip;
 
             loop {
+                self.gc_trigger();
+                reload_stack!();
+
                 // Ensure the current function is JIT compiled
                 let native_ptr = super::jit::compile_function(self, frame.function);
                 let jit_fn: JitFn = std::mem::transmute(native_ptr);
@@ -465,6 +469,10 @@ impl VM {
 
                     *frame_slots.add(caller_dest_reg) = ret_val_out;
                     ip_val = frame.ip;
+                } else if status == 2 {
+                    // YieldGc / YieldLoop
+                    frame.ip = ip_out;
+                    ip_val = ip_out;
                 } else {
                     // RuntimeError or JIT compilation/execution error.
                     let err_msg = self.error.take().unwrap_or_else(|| "JIT execution error".into());
@@ -590,7 +598,7 @@ impl VM {
                                     } else {
                                         let _ = write!(&mut s_ref, "{}", b);
                                     }
-                                    gc_allocate(GcData::String(Rc::from(s_ref.as_str())))
+                                    super::gc::get_or_create_string(s_ref.as_str())
                                 });
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else if b.is_string() {
@@ -612,7 +620,7 @@ impl VM {
                                         let _ = write!(&mut s_ref, "{}", a);
                                     }
                                     s_ref.push_str(sb_str);
-                                    gc_allocate(GcData::String(Rc::from(s_ref.as_str())))
+                                    super::gc::get_or_create_string(s_ref.as_str())
                                 });
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else {
