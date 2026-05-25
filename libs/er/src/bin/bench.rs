@@ -1,8 +1,9 @@
 /// Benchmark: VM-based vs Legacy tree-walking interpreter
 /// Run with: cargo run --release --bin bench -p er
 use std::time::Instant;
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use mimalloc::MiMalloc;
 
 struct Counter {
     allocated: AtomicUsize,
@@ -44,7 +45,7 @@ struct TrackingAllocator;
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { System.alloc(layout) };
+        let ptr = unsafe { MiMalloc.alloc(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -52,12 +53,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) };
+        unsafe { MiMalloc.dealloc(ptr, layout) };
         COUNTER.sub(layout.size());
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { System.alloc_zeroed(layout) };
+        let ptr = unsafe { MiMalloc.alloc_zeroed(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -65,7 +66,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
+        let new_ptr = unsafe { MiMalloc.realloc(ptr, layout, new_size) };
         if !new_ptr.is_null() {
             COUNTER.sub(layout.size());
             COUNTER.add(new_size);
