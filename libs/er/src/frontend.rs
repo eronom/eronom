@@ -184,38 +184,54 @@ impl<'a> Lexer<'a> {
                 let quote = c;
                 let mut string = String::new();
                 let mut tokens = Vec::new();
-                
+
                 while let Some(nc) = self.advance() {
                     if nc == quote {
                         break;
                     }
                     if nc == '{' {
-                        tokens.push(Token { ty: TokenType::String(string.clone()), line: self.line });
-                        tokens.push(Token { ty: TokenType::Plus, line: self.line });
+                        tokens.push(Token {
+                            ty: TokenType::String(string.clone()),
+                            line: self.line,
+                        });
+                        tokens.push(Token {
+                            ty: TokenType::Plus,
+                            line: self.line,
+                        });
                         string.clear();
-                        
+
                         let mut expr_str = String::new();
                         while let Some(ec) = self.advance() {
-                            if ec == '}' { break; }
+                            if ec == '}' {
+                                break;
+                            }
                             expr_str.push(ec);
                         }
-                        
+
                         let mut sub_lexer = Lexer::new(&expr_str);
                         loop {
                             let tok = sub_lexer.next_token();
-                            if tok.ty == TokenType::Eof { break; }
+                            if tok.ty == TokenType::Eof {
+                                break;
+                            }
                             tokens.push(tok);
                         }
-                        tokens.push(Token { ty: TokenType::Plus, line: self.line });
+                        tokens.push(Token {
+                            ty: TokenType::Plus,
+                            line: self.line,
+                        });
                     } else {
                         string.push(nc);
                     }
                 }
-                
+
                 if tokens.is_empty() {
                     TokenType::String(string)
                 } else {
-                    tokens.push(Token { ty: TokenType::String(string), line: self.line });
+                    tokens.push(Token {
+                        ty: TokenType::String(string),
+                        line: self.line,
+                    });
                     // To output multiple tokens, we can store them in the lexer's buffer.
                     // Let's add a buffer to the Lexer struct! Wait, I can't easily change the Lexer struct here without also changing its definition.
                     // Instead, let's just make the parent loop handle this, or return a special InterpolatedString token?
@@ -410,12 +426,12 @@ impl Parser {
         if self.match_token(&[TokenType::Let, TokenType::Const]) {
             let is_const = self.previous().ty == TokenType::Const;
             let name = self.consume_ident("Expected variable name.")?;
-            
+
             // Skip optional type annotation like `: string`
             if self.match_token(&[TokenType::Colon]) {
                 self.consume_ident("Expected type name after ':'.")?;
             }
-            
+
             let mut initializer = Expr::Literal(LiteralValue::Null);
             if self.match_token(&[TokenType::Equal]) {
                 initializer = self.expression()?;
@@ -595,7 +611,10 @@ impl Parser {
                     self.advance();
                     n.to_string()
                 } else {
-                    return Err(format!("Error at line {}: Expected property name or number after '.'.", self.peek().line));
+                    return Err(format!(
+                        "Error at line {}: Expected property name or number after '.'.",
+                        self.peek().line
+                    ));
                 };
                 expr = Expr::Get(Box::new(expr), name);
             } else if self.match_token(&[TokenType::LeftBracket]) {
