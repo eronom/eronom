@@ -6,6 +6,9 @@ use super::bytecode::Function;
 use fnv::FnvHashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use indexmap::IndexMap;
+
+pub type ObjectMap = IndexMap<MapKey, Value, fnv::FnvBuildHasher>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GcColor {
@@ -25,7 +28,7 @@ pub enum GcPhase {
 pub enum GcData {
     String(Rc<str>),
     Array(Vec<Value>),
-    Object(FnvHashMap<MapKey, Value>),
+    Object(ObjectMap),
     Function(Function),
 }
 
@@ -44,7 +47,7 @@ pub struct GcState {
     pub prev_sweep_ptr: *mut GcObject,
     pub free_list: Vec<*mut GcObject>,
     pub vector_pool: Vec<Vec<Value>>,
-    pub map_pool: Vec<FnvHashMap<MapKey, Value>>,
+    pub map_pool: Vec<ObjectMap>,
 }
 
 thread_local! {
@@ -80,14 +83,14 @@ pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
 }
 
 #[inline(always)]
-pub fn get_pooled_map(capacity: usize) -> FnvHashMap<MapKey, Value> {
+pub fn get_pooled_map(capacity: usize) -> ObjectMap {
     GC_STATE.with(|state| {
         let mut s = state.borrow_mut();
         if let Some(mut map) = s.map_pool.pop() {
             map.reserve(capacity);
             map
         } else {
-            FnvHashMap::with_capacity_and_hasher(capacity, Default::default())
+            ObjectMap::with_capacity_and_hasher(capacity, Default::default())
         }
     })
 }
