@@ -1,50 +1,21 @@
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
-use std::ffi::{c_void, CString, c_char};
+use std::ffi::{c_void, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use fnv::FnvHashMap;
-use std::rc::Rc;
-use super::value::{Value, TAG_FALSE, TAG_NULL, TAG_TRUE, push_positive_integer};
-use super::bytecode::{OpCode, Instruction};
-use super::execute::VM;
-use super::gc::{gc_allocate, GcData, GcObject, gc_write_barrier};
+use crate::vm::value::{Value, TAG_FALSE, TAG_NULL, TAG_TRUE};
+use crate::vm::bytecode::{OpCode, Instruction};
+use crate::vm::execute::VM;
+use crate::vm::gc::{GcData, GcObject};
+use super::bindings::{
+    _MIR_init, MIR_finish, MIR_scan_string, MIR_load_module, MIR_load_external,
+    MIR_link, MIR_gen_init, MIR_gen, MIR_gen_finish, MIR_get_module_list,
+    MIR_set_gen_interface, MIR_gen_set_optimize_level, MirDlist, MirModule,
+};
+use super::helpers;
 
 static JIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn next_id() -> usize {
     JIT_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-#[repr(C)]
-pub struct MirDlist {
-    pub head: *mut c_void,
-    pub tail: *mut c_void,
-}
-
-#[repr(C)]
-pub struct MirModule {
-    pub data: *mut c_void,
-    pub name: *const c_char,
-    pub head_item: *mut c_void,
-    pub tail_item: *mut c_void,
-}
-
-unsafe extern "C" {
-    fn _MIR_init(alloc: *mut c_void, code_alloc: *mut c_void) -> *mut c_void;
-    fn MIR_finish(ctx: *mut c_void);
-    fn MIR_scan_string(ctx: *mut c_void, str: *const c_char);
-    fn MIR_load_module(ctx: *mut c_void, module: *mut c_void);
-    fn MIR_load_external(ctx: *mut c_void, name: *const c_char, addr: *mut c_void);
-    fn MIR_link(
-        ctx: *mut c_void,
-        set_interface: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
-        import_resolver: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
-    );
-    fn MIR_gen_init(ctx: *mut c_void);
-    fn MIR_gen(ctx: *mut c_void, func_item: *mut c_void) -> *mut c_void;
-    fn MIR_gen_finish(ctx: *mut c_void);
-    fn MIR_get_module_list(ctx: *mut c_void) -> *mut c_void;
-    fn MIR_set_gen_interface(ctx: *mut c_void, func_item: *mut c_void);
-    fn MIR_gen_set_optimize_level(ctx: *mut c_void, level: u32);
 }
 
 struct ThreadJitState {
@@ -355,249 +326,6 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         }
         mir.push_str(&format!("          jmp inst_{}\n", ip_target));
     }
-
-fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Vec<Vec<bool>> {
-    let code = &func.chunk.code;
-    let n = code.len();
-    let mut live_in = vec![vec![false; num_regs]; n];
-    let mut live_out = vec![vec![false; num_regs]; n];
-
-    let mut gen_set = vec![vec![false; num_regs]; n];
-    let mut kill = vec![vec![false; num_regs]; n];
-
-    for pc in 0..n {
-        let inst = &code[pc];
-        let ra = inst.ra as usize;
-        let rb = inst.rb as usize;
-        let rc = inst.rc as usize;
-
-        match inst.op {
-            OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadBool | OpCode::GetGlobal => {
-                if ra < num_regs {
-                    kill[pc][ra] = true;
-                }
-            }
-            OpCode::Move | OpCode::Negate | OpCode::Not => {
-                if rb < num_regs {
-                    gen_set[pc][rb] = true;
-                }
-                if ra < num_regs {
-                    kill[pc][ra] = true;
-                }
-            }
-            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Equal | OpCode::Greater | OpCode::Less | OpCode::GetIndex => {
-                if rb < num_regs {
-                    gen_set[pc][rb] = true;
-                }
-                if rc < num_regs {
-                    gen_set[pc][rc] = true;
-                }
-                if ra < num_regs {
-                    kill[pc][ra] = true;
-                }
-            }
-            OpCode::DefineGlobal | OpCode::SetGlobal | OpCode::JumpIfFalse => {
-                if ra < num_regs {
-                    gen_set[pc][ra] = true;
-                }
-            }
-            OpCode::Return => {
-                if ra < num_regs {
-                    gen_set[pc][ra] = true;
-                }
-            }
-            OpCode::Loop | OpCode::Jump => {}
-            OpCode::Call => {
-                if rb < num_regs {
-                    gen_set[pc][rb] = true;
-                }
-                for i in 0..inst.operand as usize {
-                    let r = rb + 1 + i;
-                    if r < num_regs {
-                        gen_set[pc][r] = true;
-                    }
-                }
-                if ra < num_regs {
-                    kill[pc][ra] = true;
-                }
-            }
-            OpCode::MakeArray => {
-                for i in 0..inst.operand as usize {
-                    let r = rb + i;
-                    if r < num_regs {
-                        gen_set[pc][r] = true;
-                    }
-                }
-                if ra < num_regs {
-                    kill[pc][ra] = true;
-                }
-            }
-            OpCode::MakeObject => {
-                for i in 0..(inst.operand as usize * 2) {
-                    let r = rb + i;
-                    if r < num_regs {
-                        gen_set[pc][r] = true;
-                    }
-                }
-                if ra < num_regs {
-                    kill[pc][ra] = true;
-                }
-            }
-            OpCode::GetProperty => {
-                if rb < num_regs {
-                    gen_set[pc][rb] = true;
-                }
-                if ra < num_regs {
-                    kill[pc][ra] = true;
-                }
-            }
-            OpCode::SetProperty => {
-                if ra < num_regs {
-                    gen_set[pc][ra] = true;
-                }
-                if rb < num_regs {
-                    gen_set[pc][rb] = true;
-                }
-            }
-            OpCode::SetIndex => {
-                if ra < num_regs {
-                    gen_set[pc][ra] = true;
-                }
-                if rb < num_regs {
-                    gen_set[pc][rb] = true;
-                }
-                if rc < num_regs {
-                    gen_set[pc][rc] = true;
-                }
-            }
-        }
-    }
-
-    let mut worklist: Vec<usize> = (0..n).collect();
-    let mut in_worklist = vec![true; n];
-
-    while let Some(pc) = worklist.pop() {
-        in_worklist[pc] = false;
-
-        let mut successors = Vec::new();
-        let inst = &code[pc];
-        match inst.op {
-            OpCode::Return => {}
-            OpCode::Jump => {
-                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
-                successors.push(target);
-            }
-            OpCode::Loop => {
-                let target = (pc as i32 + 1 - inst.operand as i32) as usize;
-                successors.push(target);
-            }
-            OpCode::JumpIfFalse => {
-                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
-                successors.push(target);
-                successors.push(pc + 1);
-            }
-            OpCode::Equal | OpCode::Greater | OpCode::Less => {
-                let next_is_jmp_if_false = if pc + 1 < n {
-                    let next_inst = &code[pc + 1];
-                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == inst.ra
-                } else {
-                    false
-                };
-                if next_is_jmp_if_false {
-                    let next_inst = &code[pc + 1];
-                    let target = (pc + 2 + next_inst.operand as usize) as usize;
-                    successors.push(target);
-                    successors.push(pc + 2);
-                } else {
-                    successors.push(pc + 1);
-                }
-            }
-            _ => {
-                successors.push(pc + 1);
-            }
-        }
-
-        let mut new_live_out = vec![false; num_regs];
-        for succ in successors {
-            if succ < n {
-                for r in 0..num_regs {
-                    if live_in[succ][r] {
-                        new_live_out[r] = true;
-                    }
-                }
-            }
-        }
-        live_out[pc] = new_live_out;
-
-        let mut changed = false;
-        for r in 0..num_regs {
-            let val = gen_set[pc][r] || (live_out[pc][r] && !kill[pc][r]);
-            if val != live_in[pc][r] {
-                live_in[pc][r] = val;
-                changed = true;
-            }
-        }
-
-        if changed {
-            for pred in 0..n {
-                let p_inst = &code[pred];
-                let mut is_pred = false;
-                match p_inst.op {
-                    OpCode::Return => {}
-                    OpCode::Jump => {
-                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
-                        if target == pc {
-                            is_pred = true;
-                        }
-                    }
-                    OpCode::Loop => {
-                        let target = (pred as i32 + 1 - p_inst.operand as i32) as usize;
-                        if target == pc {
-                            is_pred = true;
-                        }
-                    }
-                    OpCode::JumpIfFalse => {
-                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
-                        if target == pc || pred + 1 == pc {
-                            is_pred = true;
-                        }
-                    }
-                    OpCode::Equal | OpCode::Greater | OpCode::Less => {
-                        let next_is_jmp_if_false = if pred + 1 < n {
-                            let next_inst = &code[pred + 1];
-                            next_inst.op == OpCode::JumpIfFalse && next_inst.ra == p_inst.ra
-                        } else {
-                            false
-                        };
-                        if next_is_jmp_if_false {
-                            let next_inst = &code[pred + 1];
-                            let target = (pred + 2 + next_inst.operand as usize) as usize;
-                            if target == pc || pred + 2 == pc {
-                                is_pred = true;
-                            }
-                        } else {
-                            if pred + 1 == pc {
-                                is_pred = true;
-                            }
-                        }
-                    }
-                    _ => {
-                        if pred + 1 == pc {
-                            is_pred = true;
-                        }
-                    }
-                }
-
-                if is_pred && !in_worklist[pred] {
-                    worklist.push(pred);
-                    in_worklist[pred] = true;
-                }
-            }
-        }
-    }
-
-    live_in
-}
 
     let save_registers = |mir: &mut String, idx: usize, extra_regs: &[usize]| {
         let mut saved = vec![false; num_regs];
@@ -1598,6 +1326,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
 
     let _ = std::fs::write("/home/vishnus/Downloads/eronom/temp_compiled.mir", &mir);
     let c_mir = CString::new(mir).unwrap();
+
     unsafe {
         MIR_scan_string(ctx, c_mir.as_ptr());
         let list_ptr = MIR_get_module_list(ctx) as *mut MirDlist;
@@ -1632,40 +1361,275 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
     }
 }
 
-// Clean up MIR context when VM is dropped
-pub fn cleanup_jit(mir_ctx: *mut c_void) {
-    unsafe {
-        MIR_gen_finish(mir_ctx);
-        MIR_finish(mir_ctx);
+fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Vec<Vec<bool>> {
+    let code = &func.chunk.code;
+    let n = code.len();
+    let mut live_in = vec![vec![false; num_regs]; n];
+    let mut live_out = vec![vec![false; num_regs]; n];
+
+    let mut gen_set = vec![vec![false; num_regs]; n];
+    let mut kill = vec![vec![false; num_regs]; n];
+
+    for pc in 0..n {
+        let inst = &code[pc];
+        let ra = inst.ra as usize;
+        let rb = inst.rb as usize;
+        let rc = inst.rc as usize;
+
+        match inst.op {
+            OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadBool | OpCode::GetGlobal => {
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::Move | OpCode::Negate | OpCode::Not => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Equal | OpCode::Greater | OpCode::Less | OpCode::GetIndex => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if rc < num_regs {
+                    gen_set[pc][rc] = true;
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::DefineGlobal | OpCode::SetGlobal | OpCode::JumpIfFalse => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+            }
+            OpCode::Return => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+            }
+            OpCode::Loop | OpCode::Jump => {}
+            OpCode::Call => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                for i in 0..inst.operand as usize {
+                    let r = rb + 1 + i;
+                    if r < num_regs {
+                        gen_set[pc][r] = true;
+                    }
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::MakeArray => {
+                for i in 0..inst.operand as usize {
+                    let r = rb + i;
+                    if r < num_regs {
+                        gen_set[pc][r] = true;
+                    }
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::MakeObject => {
+                for i in 0..(inst.operand as usize * 2) {
+                    let r = rb + i;
+                    if r < num_regs {
+                        gen_set[pc][r] = true;
+                    }
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::GetProperty => {
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if ra < num_regs {
+                    kill[pc][ra] = true;
+                }
+            }
+            OpCode::SetProperty => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+            }
+            OpCode::SetIndex => {
+                if ra < num_regs {
+                    gen_set[pc][ra] = true;
+                }
+                if rb < num_regs {
+                    gen_set[pc][rb] = true;
+                }
+                if rc < num_regs {
+                    gen_set[pc][rc] = true;
+                }
+            }
+        }
     }
+
+    let mut worklist: Vec<usize> = (0..n).collect();
+    let mut in_worklist = vec![true; n];
+
+    while let Some(pc) = worklist.pop() {
+        in_worklist[pc] = false;
+
+        let mut successors = Vec::new();
+        let inst = &code[pc];
+        match inst.op {
+            OpCode::Return => {}
+            OpCode::Jump => {
+                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                successors.push(target);
+            }
+            OpCode::Loop => {
+                let target = (pc as i32 + 1 - inst.operand as i32) as usize;
+                successors.push(target);
+            }
+            OpCode::JumpIfFalse => {
+                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                successors.push(target);
+                successors.push(pc + 1);
+            }
+            OpCode::Equal | OpCode::Greater | OpCode::Less => {
+                let next_is_jmp_if_false = if pc + 1 < n {
+                    let next_inst = &code[pc + 1];
+                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == inst.ra
+                } else {
+                    false
+                };
+                if next_is_jmp_if_false {
+                    let next_inst = &code[pc + 1];
+                    let target = (pc + 2 + next_inst.operand as usize) as usize;
+                    successors.push(target);
+                    successors.push(pc + 2);
+                } else {
+                    successors.push(pc + 1);
+                }
+            }
+            _ => {
+                successors.push(pc + 1);
+            }
+        }
+
+        let mut new_live_out = vec![false; num_regs];
+        for succ in successors {
+            if succ < n {
+                for r in 0..num_regs {
+                    if live_in[succ][r] {
+                        new_live_out[r] = true;
+                    }
+                }
+            }
+        }
+        live_out[pc] = new_live_out;
+
+        let mut changed = false;
+        for r in 0..num_regs {
+            let val = gen_set[pc][r] || (live_out[pc][r] && !kill[pc][r]);
+            if val != live_in[pc][r] {
+                live_in[pc][r] = val;
+                changed = true;
+            }
+        }
+
+        if changed {
+            for pred in 0..n {
+                let p_inst = &code[pred];
+                let mut is_pred = false;
+                match p_inst.op {
+                    OpCode::Return => {}
+                    OpCode::Jump => {
+                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
+                        if target == pc {
+                            is_pred = true;
+                        }
+                    }
+                    OpCode::Loop => {
+                        let target = (pred as i32 + 1 - p_inst.operand as i32) as usize;
+                        if target == pc {
+                            is_pred = true;
+                        }
+                    }
+                    OpCode::JumpIfFalse => {
+                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
+                        if target == pc || pred + 1 == pc {
+                            is_pred = true;
+                        }
+                    }
+                    OpCode::Equal | OpCode::Greater | OpCode::Less => {
+                        let next_is_jmp_if_false = if pred + 1 < n {
+                            let next_inst = &code[pred + 1];
+                            next_inst.op == OpCode::JumpIfFalse && next_inst.ra == p_inst.ra
+                        } else {
+                            false
+                        };
+                        if next_is_jmp_if_false {
+                            let next_inst = &code[pred + 1];
+                            let target = (pred + 2 + next_inst.operand as usize) as usize;
+                            if target == pc || pred + 2 == pc {
+                                is_pred = true;
+                            }
+                        } else {
+                            if pred + 1 == pc {
+                                is_pred = true;
+                            }
+                        }
+                    }
+                    _ => {
+                        if pred + 1 == pc {
+                            is_pred = true;
+                        }
+                    }
+                }
+
+                if is_pred && !in_worklist[pred] {
+                    worklist.push(pred);
+                    in_worklist[pred] = true;
+                }
+            }
+        }
+    }
+
+    live_in
 }
 
 // Register FFI Helper Functions in the MIR JIT compiler
 unsafe fn register_helpers(ctx: *mut c_void) {
     let helpers: &[(&str, *mut c_void)] = &[
-        ("er_jit_negate", er_jit_negate as *mut c_void),
-        ("er_jit_not", er_jit_not as *mut c_void),
-        ("er_jit_add", er_jit_add as *mut c_void),
-        ("er_jit_sub", er_jit_sub as *mut c_void),
-        ("er_jit_mul", er_jit_mul as *mut c_void),
-        ("er_jit_div", er_jit_div as *mut c_void),
-        ("er_jit_equal", er_jit_equal as *mut c_void),
-        ("er_jit_greater", er_jit_greater as *mut c_void),
-        ("er_jit_less", er_jit_less as *mut c_void),
-        ("er_jit_define_global", er_jit_define_global as *mut c_void),
-        ("er_jit_get_global", er_jit_get_global as *mut c_void),
-        ("er_jit_set_global", er_jit_set_global as *mut c_void),
-        ("er_jit_make_array", er_jit_make_array as *mut c_void),
-        ("er_jit_make_object", er_jit_make_object as *mut c_void),
-        ("er_jit_get_property", er_jit_get_property as *mut c_void),
-        ("er_jit_set_property", er_jit_set_property as *mut c_void),
-        ("er_jit_get_index", er_jit_get_index as *mut c_void),
-        ("er_jit_set_index", er_jit_set_index as *mut c_void),
-        ("er_jit_call_non_vm", er_jit_call_non_vm as *mut c_void),
-        ("er_jit_array_push", er_jit_array_push as *mut c_void),
-        ("er_jit_array_pop", er_jit_array_pop as *mut c_void),
-        ("er_jit_has_error", er_jit_has_error as *mut c_void),
-        ("er_jit_needs_gc", er_jit_needs_gc as *mut c_void),
+        ("er_jit_negate", helpers::er_jit_negate as *mut c_void),
+        ("er_jit_not", helpers::er_jit_not as *mut c_void),
+        ("er_jit_add", helpers::er_jit_add as *mut c_void),
+        ("er_jit_sub", helpers::er_jit_sub as *mut c_void),
+        ("er_jit_mul", helpers::er_jit_mul as *mut c_void),
+        ("er_jit_div", helpers::er_jit_div as *mut c_void),
+        ("er_jit_equal", helpers::er_jit_equal as *mut c_void),
+        ("er_jit_greater", helpers::er_jit_greater as *mut c_void),
+        ("er_jit_less", helpers::er_jit_less as *mut c_void),
+        ("er_jit_define_global", helpers::er_jit_define_global as *mut c_void),
+        ("er_jit_get_global", helpers::er_jit_get_global as *mut c_void),
+        ("er_jit_set_global", helpers::er_jit_set_global as *mut c_void),
+        ("er_jit_make_array", helpers::er_jit_make_array as *mut c_void),
+        ("er_jit_make_object", helpers::er_jit_make_object as *mut c_void),
+        ("er_jit_get_property", helpers::er_jit_get_property as *mut c_void),
+        ("er_jit_set_property", helpers::er_jit_set_property as *mut c_void),
+        ("er_jit_get_index", helpers::er_jit_get_index as *mut c_void),
+        ("er_jit_set_index", helpers::er_jit_set_index as *mut c_void),
+        ("er_jit_call_non_vm", helpers::er_jit_call_non_vm as *mut c_void),
+        ("er_jit_array_push", helpers::er_jit_array_push as *mut c_void),
+        ("er_jit_array_pop", helpers::er_jit_array_pop as *mut c_void),
+        ("er_jit_has_error", helpers::er_jit_has_error as *mut c_void),
+        ("er_jit_needs_gc", helpers::er_jit_needs_gc as *mut c_void),
     ];
 
     for &(name, ptr) in helpers {
@@ -1675,656 +1639,3 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         }
     }
 }
-
-// FFI Helpers implementation
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_negate(vm: *mut VM, val: Value) -> Value {
-    unsafe {
-        if val.is_number() {
-            Value::number_unchecked(-val.as_number())
-        } else {
-            (*vm).error = Some("Operand must be a number".into());
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_not(_vm: *mut VM, val: Value) -> Value {
-    let res = if val.is_boolean() {
-        !val.as_boolean()
-    } else if val.is_null() {
-        true
-    } else {
-        false
-    };
-    Value::boolean(res)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_add(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
-    let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
-    unsafe {
-        let res = if val_b.is_number() && val_c.is_number() {
-            Value::number_unchecked(val_b.as_number() + val_c.as_number())
-        } else {
-            use std::fmt::Write;
-            if val_b.is_string() {
-                let sa_str = match &(*val_b.as_gc_ptr()).data {
-                    GcData::String(s) => s,
-                    _ => unreachable!(),
-                };
-                let new_ptr = super::value::ADD_SCRATCH.with(|scratch| {
-                    let mut s_ref = scratch.borrow_mut();
-                    s_ref.clear();
-                    s_ref.push_str(sa_str);
-                    if val_c.is_string() {
-                        let sb_str = match &(*val_c.as_gc_ptr()).data {
-                            GcData::String(s) => s,
-                            _ => unreachable!(),
-                        };
-                        s_ref.push_str(sb_str);
-                    } else if val_c.is_number() {
-                        let val = val_c.as_number();
-                        if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
-                            push_positive_integer(&mut s_ref, val as u64);
-                        } else {
-                            let _ = write!(&mut s_ref, "{}", val);
-                        }
-                    } else {
-                        let _ = write!(&mut s_ref, "{}", val_c);
-                    }
-                    super::gc::get_or_create_string(s_ref.as_str())
-                });
-                Value::string(new_ptr)
-            } else if val_c.is_string() {
-                let sb_str = match &(*val_c.as_gc_ptr()).data {
-                    GcData::String(s) => s,
-                    _ => unreachable!(),
-                };
-                let new_ptr = super::value::ADD_SCRATCH.with(|scratch| {
-                    let mut s_ref = scratch.borrow_mut();
-                    s_ref.clear();
-                    if val_b.is_number() {
-                        let val = val_b.as_number();
-                        if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
-                            push_positive_integer(&mut s_ref, val as u64);
-                        } else {
-                            let _ = write!(&mut s_ref, "{}", val);
-                        }
-                    } else {
-                        let _ = write!(&mut s_ref, "{}", val_b);
-                    }
-                    s_ref.push_str(sb_str);
-                    super::gc::get_or_create_string(s_ref.as_str())
-                });
-                Value::string(new_ptr)
-            } else {
-                (*vm).error = Some("Operands must be numbers or strings".into());
-                Value::null()
-            }
-        };
-        if JIT_PROFILING {
-            JIT_PROFILER.with(|p| {
-                let mut s = p.borrow_mut();
-                s.add_count += 1;
-                s.add_time += start_time.unwrap().elapsed();
-            });
-        }
-        res
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_sub(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
-    unsafe {
-        if val_b.is_number() && val_c.is_number() {
-            Value::number_unchecked(val_b.as_number() - val_c.as_number())
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_mul(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
-    unsafe {
-        if val_b.is_number() && val_c.is_number() {
-            Value::number_unchecked(val_b.as_number() * val_c.as_number())
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_div(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
-    unsafe {
-        if val_b.is_number() && val_c.is_number() {
-            Value::number_unchecked(val_b.as_number() / val_c.as_number())
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_equal(_vm: *mut VM, val_b: Value, val_c: Value) -> Value {
-    Value::boolean(val_b == val_c)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_greater(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
-    unsafe {
-        if val_b.is_number() && val_c.is_number() {
-            Value::boolean(val_b.as_number() > val_c.as_number())
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_less(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
-    unsafe {
-        if val_b.is_number() && val_c.is_number() {
-            Value::boolean(val_b.as_number() < val_c.as_number())
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: Value, val: Value) -> i64 {
-    unsafe {
-        let name = match &(*name_val.as_gc_ptr()).data {
-            GcData::String(s) => s.clone(),
-            _ => unreachable!(),
-        };
-        (*vm).globals.insert(name, val);
-        0
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_get_global(vm: *mut VM, name_val: Value) -> Value {
-    unsafe {
-        let name = match &(*name_val.as_gc_ptr()).data {
-            GcData::String(s) => s,
-            _ => unreachable!(),
-        };
-        if let Some(val) = (*vm).globals.get(name) {
-            *val
-        } else {
-            (*vm).error = Some(format!("Undefined variable '{}'", name));
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_set_global(vm: *mut VM, val: Value, name_val: Value) -> i64 {
-    unsafe {
-        let name = match &(*name_val.as_gc_ptr()).data {
-            GcData::String(s) => s.clone(),
-            _ => unreachable!(),
-        };
-        match (*vm).globals.entry(name.clone()) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                entry.insert(val);
-                0
-            }
-            std::collections::hash_map::Entry::Vacant(_) => {
-                (*vm).error = Some(format!(
-                    "Variable '{}' not declared. It needs to be declared with 'let' or 'const'.",
-                    name
-                ));
-                -1
-            }
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_has_error(vm: *mut VM) -> i64 {
-    unsafe {
-        if (*vm).error.is_some() {
-            1
-        } else {
-            0
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_needs_gc() -> i64 {
-    unsafe { if super::gc::GC_NEEDS_STEP { 1 } else { 0 } }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_make_array(vm: *mut VM, start_reg: *const Value, count: i64) -> Value {
-    let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
-    unsafe {
-        let mut elements = super::gc::get_pooled_vec(count as usize);
-        let slice = std::slice::from_raw_parts(start_reg, count as usize);
-        elements.extend_from_slice(slice);
-        let ptr = gc_allocate(GcData::Array(elements));
-        let res = Value::array(ptr);
-        if JIT_PROFILING {
-            JIT_PROFILER.with(|p| {
-                let mut s = p.borrow_mut();
-                s.make_array_count += 1;
-                s.make_array_time += start_time.unwrap().elapsed();
-            });
-        }
-        res
-    }
-}
- 
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count: i64) -> Value {
-    let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
-    unsafe {
-        let mut obj = super::gc::get_pooled_map(count as usize);
-        for i in 0..count {
-            let key_val = *start_reg.offset((i * 2) as isize);
-            let val = *start_reg.offset((i * 2 + 1) as isize);
-            if !key_val.is_string() {
-                (*vm).error = Some("Object key must be string".into());
-                return Value::null();
-            }
-            obj.insert(super::value::MapKey(key_val), val);
-        }
-        let ptr = gc_allocate(GcData::Object(obj));
-        let res = Value::object(ptr);
-        if JIT_PROFILING {
-            JIT_PROFILER.with(|p| {
-                let mut s = p.borrow_mut();
-                s.make_object_count += 1;
-                s.make_object_time += start_time.unwrap().elapsed();
-            });
-        }
-        res
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) -> Value {
-    let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
-    unsafe {
-        let res = if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            match &(*ptr).data {
-                GcData::Object(map) => {
-                    map.get(&super::value::MapKey(name_val)).cloned().unwrap_or(Value::null())
-                }
-                _ => unreachable!(),
-            }
-        } else if obj.is_array() {
-            let name = match &(*name_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref(),
-                _ => unreachable!(),
-            };
-            let ptr = obj.as_gc_ptr();
-            match &(*ptr).data {
-                GcData::Array(arr) => {
-                    if name == "push" {
-                        Value::array_method_push(ptr)
-                    } else if name == "pop" {
-                        Value::array_method_pop(ptr)
-                    } else if name == "length" {
-                        Value::number(arr.len() as f64)
-                    } else if let Ok(idx) = name.parse::<usize>() {
-                        arr.get(idx).cloned().unwrap_or(Value::null())
-                    } else {
-                        Value::null()
-                    }
-                }
-                _ => unreachable!(),
-            }
-        } else {
-            (*vm).error = Some("Only objects and arrays have properties".into());
-            Value::null()
-        };
-        if JIT_PROFILING {
-            JIT_PROFILER.with(|p| {
-                let mut s = p.borrow_mut();
-                s.get_property_count += 1;
-                s.get_property_time += start_time.unwrap().elapsed();
-            });
-        }
-        res
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_val: Value) -> i64 {
-    unsafe {
-        if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            match &mut (*ptr).data {
-                GcData::Object(map) => {
-                    map.insert(super::value::MapKey(name_val), val);
-                    gc_write_barrier(ptr, &val);
-                    0
-                }
-                _ => unreachable!(),
-            }
-        } else if obj.is_array() {
-            let name = match &(*name_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref(),
-                _ => unreachable!(),
-            };
-            let ptr = obj.as_gc_ptr();
-            match &mut (*ptr).data {
-                GcData::Array(arr) => {
-                    if let Ok(idx) = name.parse::<usize>() {
-                        if idx < arr.len() {
-                            arr[idx] = val;
-                        } else if idx == arr.len() {
-                            arr.push(val);
-                        } else {
-                            (*vm).error = Some(format!(
-                                "Index {} out of bounds for array of length {}",
-                                idx,
-                                arr.len()
-                            ));
-                            return -1;
-                        }
-                        gc_write_barrier(ptr, &val);
-                        0
-                    } else {
-                        (*vm).error = Some("Cannot set non-numeric property on array".into());
-                        -1
-                    }
-                }
-                _ => unreachable!(),
-            }
-        } else {
-            (*vm).error = Some("Only objects and arrays have properties".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Value {
-    unsafe {
-        if obj.is_array() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_number() {
-                let idx = index.as_number() as usize;
-                match &(*ptr).data {
-                    GcData::Array(arr) => {
-                        arr.get(idx).cloned().unwrap_or(Value::null())
-                    }
-                    _ => unreachable!(),
-                }
-            } else if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st,
-                    _ => unreachable!(),
-                };
-                if let Ok(idx) = s.parse::<usize>() {
-                    match &(*ptr).data {
-                        GcData::Array(arr) => {
-                            arr.get(idx).cloned().unwrap_or(Value::null())
-                        }
-                        _ => unreachable!(),
-                    }
-                } else {
-                    Value::null()
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                Value::null()
-            }
-        } else if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_string() {
-                match &(*ptr).data {
-                    GcData::Object(map) => {
-                        map.get(&super::value::MapKey(index)).cloned().unwrap_or(Value::null())
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                Value::null()
-            }
-        } else {
-            (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-            Value::null()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: Value) -> i64 {
-    unsafe {
-        if obj.is_array() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_number() {
-                let idx = index.as_number() as usize;
-                match &mut (*ptr).data {
-                    GcData::Array(arr) => {
-                        if idx < arr.len() {
-                            arr[idx] = val;
-                        } else if idx == arr.len() {
-                            arr.push(val);
-                        } else {
-                            (*vm).error = Some(format!(
-                                "Index {} out of bounds for array of length {}",
-                                idx,
-                                arr.len()
-                            ));
-                            return -1;
-                        }
-                        gc_write_barrier(ptr, &val);
-                        0
-                    }
-                    _ => unreachable!(),
-                }
-            } else if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st,
-                    _ => unreachable!(),
-                };
-                if let Ok(idx) = s.parse::<usize>() {
-                    match &mut (*ptr).data {
-                        GcData::Array(arr) => {
-                            if idx < arr.len() {
-                                arr[idx] = val;
-                            } else if idx == arr.len() {
-                                arr.push(val);
-                            } else {
-                                (*vm).error = Some(format!(
-                                    "Index {} out of bounds for array of length {}",
-                                    idx,
-                                    arr.len()
-                                ));
-                                return -1;
-                            }
-                            gc_write_barrier(ptr, &val);
-                            0
-                        }
-                        _ => unreachable!(),
-                    }
-                } else {
-                    (*vm).error = Some("Cannot set non-numeric property on array".into());
-                    -1
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                -1
-            }
-        } else if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_string() {
-                match &mut (*ptr).data {
-                    GcData::Object(map) => {
-                        map.insert(super::value::MapKey(index), val);
-                        gc_write_barrier(ptr, &val);
-                        0
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                -1
-            }
-        } else {
-            (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_call_non_vm(
-    _vm: *mut VM,
-    dest: *mut Value,
-    callee: Value,
-    func_reg: i64,
-    arg_count: i64,
-    frame_slots: *mut Value,
-) -> i64 {
-    let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
-    unsafe {
-        let status = if callee.is_native_function() {
-            let native = callee.as_native_fn();
-            let mut args = Vec::with_capacity(arg_count as usize);
-            for i in 0..arg_count {
-                args.push(*frame_slots.offset((func_reg + 1 + i) as isize));
-            }
-            let result = native(args);
-            *dest = result;
-            0
-        } else if callee.is_array_method_push() || callee.is_array_method_pop() {
-            let ptr = callee.as_gc_ptr();
-            let result = match &mut (*ptr).data {
-                GcData::Array(arr) => {
-                    if callee.is_array_method_push() {
-                        for i in 0..arg_count {
-                            let arg = *frame_slots.offset((func_reg + 1 + i) as isize);
-                            gc_write_barrier(ptr, &arg);
-                            arr.push(arg);
-                        }
-                        Value::number(arr.len() as f64)
-                    } else {
-                        arr.pop().unwrap_or(Value::null())
-                    }
-                }
-                _ => unreachable!(),
-            };
-            *dest = result;
-            0
-        } else {
-            -1 // Not a native function or method, needs fallback
-        };
-        if JIT_PROFILING {
-            JIT_PROFILER.with(|p| {
-                let mut s = p.borrow_mut();
-                s.call_non_vm_count += 1;
-                s.call_non_vm_time += start_time.unwrap().elapsed();
-            });
-        }
-        status
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_array_push(arr_val: Value, arg: Value) -> Value {
-    let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
-    unsafe {
-        let ptr = arr_val.as_gc_ptr();
-        let res = match &mut (*ptr).data {
-            GcData::Array(arr) => {
-                gc_write_barrier(ptr, &arg);
-                arr.push(arg);
-                Value::number(arr.len() as f64)
-            }
-            _ => unreachable!(),
-        };
-        if JIT_PROFILING {
-            JIT_PROFILER.with(|p| {
-                let mut s = p.borrow_mut();
-                s.call_non_vm_count += 1;
-                s.call_non_vm_time += start_time.unwrap().elapsed();
-            });
-        }
-        res
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_array_pop(arr_val: Value) -> Value {
-    let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
-    unsafe {
-        let ptr = arr_val.as_gc_ptr();
-        let res = match &mut (*ptr).data {
-            GcData::Array(arr) => {
-                arr.pop().unwrap_or(Value::null())
-            }
-            _ => unreachable!(),
-        };
-        if JIT_PROFILING {
-            JIT_PROFILER.with(|p| {
-                let mut s = p.borrow_mut();
-                s.call_non_vm_count += 1;
-                s.call_non_vm_time += start_time.unwrap().elapsed();
-            });
-        }
-        res
-    }
-}
-
-use std::time::{Instant, Duration};
-use std::cell::RefCell;
-
-#[derive(Default, Clone, Copy)]
-pub struct JitProfileStats {
-    pub make_array_count: u64,
-    pub make_array_time: Duration,
-    pub make_object_count: u64,
-    pub make_object_time: Duration,
-    pub get_property_count: u64,
-    pub get_property_time: Duration,
-    pub call_non_vm_count: u64,
-    pub call_non_vm_time: Duration,
-    pub add_count: u64,
-    pub add_time: Duration,
-}
-
-pub const JIT_PROFILING: bool = false;
-
-thread_local! {
-    pub static JIT_PROFILER: RefCell<JitProfileStats> = RefCell::new(JitProfileStats::default());
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_reset_profiler() {
-    JIT_PROFILER.with(|p| *p.borrow_mut() = JitProfileStats::default());
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_print_profiler() {
-    JIT_PROFILER.with(|p| {
-        let stats = p.borrow();
-        println!("=== JIT FFI Helper Profiler Stats ===");
-        println!("  MakeArray:   count={:<8} time={:?}", stats.make_array_count, stats.make_array_time);
-        println!("  MakeObject:  count={:<8} time={:?}", stats.make_object_count, stats.make_object_time);
-        println!("  GetProperty: count={:<8} time={:?}", stats.get_property_count, stats.get_property_time);
-        println!("  CallNonVM:   count={:<8} time={:?}", stats.call_non_vm_count, stats.call_non_vm_time);
-        println!("  Add:         count={:<8} time={:?}", stats.add_count, stats.add_time);
-        println!("=====================================");
-    });
-}
-

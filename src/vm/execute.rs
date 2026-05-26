@@ -57,7 +57,7 @@ impl Default for VM {
 impl Drop for VM {
     fn drop(&mut self) {
         if let Some(ctx) = self.mir_ctx {
-            super::jit::cleanup_jit(ctx);
+            crate::jit::cleanup_jit(ctx);
         }
     }
 }
@@ -364,7 +364,7 @@ impl VM {
                 reload_stack!();
 
                 // Ensure the current function is JIT compiled
-                let native_ptr = super::jit::compile_function(self, frame.function);
+                let native_ptr = crate::jit::compile_function(self, frame.function);
                 let jit_fn: JitFn = std::mem::transmute(native_ptr);
 
                 let mut ip_out: usize = ip_val;

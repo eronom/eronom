@@ -1,6 +1,7 @@
 pub mod vm;
 pub use vm as backend;
 pub mod frontend;
+pub mod jit;
 
 use backend::{Compiler, VM, Value};
 use frontend::{Parser, lex};
