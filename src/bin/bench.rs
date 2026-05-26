@@ -147,9 +147,9 @@ for i in 1..50000 {
 
     let iterations = 50;
 
-    fn noop_print(args: Vec<er::backend::Value>) -> er::backend::Value {
+    fn noop_print(args: Vec<eronom::backend::Value>) -> eronom::backend::Value {
         let _ = args;
-        er::backend::Value::null()
+        eronom::backend::Value::null()
     }
 
     let args: Vec<String> = std::env::args().collect();
@@ -159,26 +159,26 @@ for i in 1..50000 {
             "--run-vm-interpreter" => {
                 // Warmup
                 {
-                    let tokens = er::frontend::lex(source);
-                    let mut parser = er::frontend::Parser::new(tokens);
+                    let tokens = eronom::frontend::lex(source);
+                    let mut parser = eronom::frontend::Parser::new(tokens);
                     let stmts = parser.parse().unwrap();
-                    let compiler = er::backend::Compiler::new();
+                    let compiler = eronom::backend::Compiler::new();
                     let function = compiler.compile(&stmts).unwrap();
-                    let mut vm = er::backend::VM::new();
+                    let mut vm = eronom::backend::VM::new();
                     vm.use_jit = false;
-                    vm.register_global("print", er::backend::Value::native_function(noop_print));
+                    vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
                 }
                 // Loop
                 for _ in 0..iterations {
-                    let tokens = er::frontend::lex(source);
-                    let mut parser = er::frontend::Parser::new(tokens);
+                    let tokens = eronom::frontend::lex(source);
+                    let mut parser = eronom::frontend::Parser::new(tokens);
                     let stmts = parser.parse().unwrap();
-                    let compiler = er::backend::Compiler::new();
+                    let compiler = eronom::backend::Compiler::new();
                     let function = compiler.compile(&stmts).unwrap();
-                    let mut vm = er::backend::VM::new();
+                    let mut vm = eronom::backend::VM::new();
                     vm.use_jit = false;
-                    vm.register_global("print", er::backend::Value::native_function(noop_print));
+                    vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
                 }
                 return;
@@ -186,36 +186,36 @@ for i in 1..50000 {
             "--run-vm-jit" => {
                 // Warmup
                 {
-                    let tokens = er::frontend::lex(source);
-                    let mut parser = er::frontend::Parser::new(tokens);
+                    let tokens = eronom::frontend::lex(source);
+                    let mut parser = eronom::frontend::Parser::new(tokens);
                     let stmts = parser.parse().unwrap();
-                    let compiler = er::backend::Compiler::new();
+                    let compiler = eronom::backend::Compiler::new();
                     let function = compiler.compile(&stmts).unwrap();
-                    let mut vm = er::backend::VM::new();
+                    let mut vm = eronom::backend::VM::new();
                     vm.use_jit = true;
-                    vm.register_global("print", er::backend::Value::native_function(noop_print));
+                    vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
                 }
                 // Loop
                 for _ in 0..iterations {
-                    let tokens = er::frontend::lex(source);
-                    let mut parser = er::frontend::Parser::new(tokens);
+                    let tokens = eronom::frontend::lex(source);
+                    let mut parser = eronom::frontend::Parser::new(tokens);
                     let stmts = parser.parse().unwrap();
-                    let compiler = er::backend::Compiler::new();
+                    let compiler = eronom::backend::Compiler::new();
                     let function = compiler.compile(&stmts).unwrap();
-                    let mut vm = er::backend::VM::new();
+                    let mut vm = eronom::backend::VM::new();
                     vm.use_jit = true;
-                    vm.register_global("print", er::backend::Value::native_function(noop_print));
+                    vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
                 }
                 return;
             }
             "--run-compiler" => {
                 for _ in 0..iterations {
-                    let tokens = er::frontend::lex(source);
-                    let mut parser = er::frontend::Parser::new(tokens);
+                    let tokens = eronom::frontend::lex(source);
+                    let mut parser = eronom::frontend::Parser::new(tokens);
                     let stmts = parser.parse().unwrap();
-                    let compiler = er::backend::Compiler::new();
+                    let compiler = eronom::backend::Compiler::new();
                     let _function = compiler.compile(&stmts).unwrap();
                 }
                 return;
@@ -224,7 +224,7 @@ for i in 1..50000 {
         }
     }
 
-    println!("Size of Value: {}", std::mem::size_of::<er::backend::Value>());
+    println!("Size of Value: {}", std::mem::size_of::<eronom::backend::Value>());
 
     eprintln!("=== ER Language Benchmark ===");
     eprintln!("  Script: 50,000 loop iterations with array/object allocation + resize + string interpolation");
@@ -238,27 +238,27 @@ for i in 1..50000 {
 
     // Warmup (JIT)
     if run_jit {
-        let tokens = er::frontend::lex(source);
-        let mut parser = er::frontend::Parser::new(tokens);
+        let tokens = eronom::frontend::lex(source);
+        let mut parser = eronom::frontend::Parser::new(tokens);
         let stmts = parser.parse().unwrap();
-        let compiler = er::backend::Compiler::new();
+        let compiler = eronom::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
-        let mut vm = er::backend::VM::new();
+        let mut vm = eronom::backend::VM::new();
         vm.use_jit = true;
-        vm.register_global("print", er::backend::Value::native_function(noop_print));
+        vm.register_global("print", eronom::backend::Value::native_function(noop_print));
         vm.run(function).ok();
     }
 
     // Warmup (Interpreter)
     {
-        let tokens = er::frontend::lex(source);
-        let mut parser = er::frontend::Parser::new(tokens);
+        let tokens = eronom::frontend::lex(source);
+        let mut parser = eronom::frontend::Parser::new(tokens);
         let stmts = parser.parse().unwrap();
-        let compiler = er::backend::Compiler::new();
+        let compiler = eronom::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
-        let mut vm = er::backend::VM::new();
+        let mut vm = eronom::backend::VM::new();
         vm.use_jit = false;
-        vm.register_global("print", er::backend::Value::native_function(noop_print));
+        vm.register_global("print", eronom::backend::Value::native_function(noop_print));
         vm.run(function).ok();
     }
 
@@ -272,14 +272,14 @@ for i in 1..50000 {
     unsafe { er_gc_reset_stats(); }
     let start = Instant::now();
     for _ in 0..iterations {
-        let tokens = er::frontend::lex(source);
-        let mut parser = er::frontend::Parser::new(tokens);
+        let tokens = eronom::frontend::lex(source);
+        let mut parser = eronom::frontend::Parser::new(tokens);
         let stmts = parser.parse().unwrap();
-        let compiler = er::backend::Compiler::new();
+        let compiler = eronom::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
-        let mut vm = er::backend::VM::new();
+        let mut vm = eronom::backend::VM::new();
         vm.use_jit = false;
-        vm.register_global("print", er::backend::Value::native_function(noop_print));
+        vm.register_global("print", eronom::backend::Value::native_function(noop_print));
         vm.run(function).ok();
     }
     let vm_interpreter_elapsed = start.elapsed();
@@ -305,14 +305,14 @@ for i in 1..50000 {
         }
         let start = Instant::now();
         for _ in 0..iterations {
-            let tokens = er::frontend::lex(source);
-            let mut parser = er::frontend::Parser::new(tokens);
+            let tokens = eronom::frontend::lex(source);
+            let mut parser = eronom::frontend::Parser::new(tokens);
             let stmts = parser.parse().unwrap();
-            let compiler = er::backend::Compiler::new();
+            let compiler = eronom::backend::Compiler::new();
             let function = compiler.compile(&stmts).unwrap();
-            let mut vm = er::backend::VM::new();
+            let mut vm = eronom::backend::VM::new();
             vm.use_jit = true;
-            vm.register_global("print", er::backend::Value::native_function(noop_print));
+            vm.register_global("print", eronom::backend::Value::native_function(noop_print));
             vm.run(function).ok();
         }
         let vm_jit_elapsed = start.elapsed();
@@ -332,10 +332,10 @@ for i in 1..50000 {
     COUNTER.reset_peak();
     let start = Instant::now();
     for _ in 0..iterations {
-        let tokens = er::frontend::lex(source);
-        let mut parser = er::frontend::Parser::new(tokens);
+        let tokens = eronom::frontend::lex(source);
+        let mut parser = eronom::frontend::Parser::new(tokens);
         let stmts = parser.parse().unwrap();
-        let compiler = er::backend::Compiler::new();
+        let compiler = eronom::backend::Compiler::new();
         let _function = compiler.compile(&stmts).unwrap();
     }
     let compile_elapsed = start.elapsed();
