@@ -3,7 +3,7 @@ use std::path::Path;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let mir_dir = Path::new(&manifest_dir).join("mir");
+    let mir_dir = Path::new(&manifest_dir).join("external").join("mir");
 
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir.c").display());
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir-gen.c").display());
