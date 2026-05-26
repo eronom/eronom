@@ -51,6 +51,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     }
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("route", Value::native_function(backend::er_http::native_route));
+    backend::er_http::set_target_script_path(path);
 
     let main_path = std::path::Path::new(path);
     if let Some(parent_dir) = main_path.parent() {

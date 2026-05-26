@@ -4,6 +4,9 @@ use crate::vm::value::Value;
 use crate::vm::execute::VM;
 use crate::vm::gc::{get_or_create_string, gc_allocate, GcData};
 use std::ffi::{c_char, c_void, CString};
+use std::time::SystemTime;
+use std::fs;
+use std::path::Path;
 
 pub struct Route {
     pub method: String,
@@ -15,6 +18,8 @@ thread_local! {
     pub static ROUTES: RefCell<Vec<Route>> = RefCell::new(Vec::new());
     pub static ACTIVE_VM: Cell<*mut VM> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
+    static TARGET_SCRIPT_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
+    static LAST_MTIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
 }
 
 unsafe extern "C" {
@@ -230,6 +235,113 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
     });
 }
 
+pub fn set_target_script_path(path: &str) {
+    TARGET_SCRIPT_PATH.with(|p| {
+        *p.borrow_mut() = Some(path.to_string());
+    });
+    let mtime = get_max_mtime_for_reload(path);
+    LAST_MTIME.with(|m| {
+        m.set(mtime);
+    });
+}
+
+fn get_max_mtime_for_reload(path: &str) -> Option<SystemTime> {
+    let mut max_mtime = fs::metadata(path).ok()?.modified().ok()?;
+    
+    let path_obj = Path::new(path);
+    if let Some(parent) = path_obj.parent() {
+        let config_path = parent.join("config.er");
+        if config_path.exists() {
+            if let Ok(meta) = fs::metadata(&config_path) {
+                if let Ok(mtime) = meta.modified() {
+                    if mtime > max_mtime {
+                        max_mtime = mtime;
+                    }
+                }
+            }
+        }
+    }
+    
+    Some(max_mtime)
+}
+
+fn check_and_reload_script_if_needed(vm: &mut VM) {
+    let script_path = TARGET_SCRIPT_PATH.with(|p| p.borrow().clone());
+    let Some(path) = script_path else {
+        return;
+    };
+    
+    let current_mtime = match get_max_mtime_for_reload(&path) {
+        Some(mtime) => mtime,
+        None => return,
+    };
+    
+    let last_mtime = LAST_MTIME.with(|m| m.get());
+    if Some(current_mtime) == last_mtime {
+        return;
+    }
+    
+    println!("[HTTP] File change detected, reloading script: {}...", path);
+    
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[HTTP] Reload error: Failed to read file: {}", e);
+            return;
+        }
+    };
+    
+    let old_routes = ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    
+    let tokens = crate::frontend::lex(&content);
+    let mut parser = crate::frontend::Parser::new(tokens);
+    let stmts = match parser.parse() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[HTTP] Reload error: Parsing failed: {}", e);
+            ROUTES.with(|r| *r.borrow_mut() = old_routes);
+            return;
+        }
+    };
+    
+    let compiler = crate::vm::compiler::Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[HTTP] Reload error: Compilation failed: {}", e);
+            ROUTES.with(|r| *r.borrow_mut() = old_routes);
+            return;
+        }
+    };
+    
+    // Reload config.er if it exists
+    let parent_dir = Path::new(&path).parent();
+    if let Some(parent) = parent_dir {
+        let config_path = parent.join("config.er");
+        if config_path.exists() {
+            if let Ok(config_content) = fs::read_to_string(&config_path) {
+                let config_tokens = crate::frontend::lex(&config_content);
+                let mut config_parser = crate::frontend::Parser::new(config_tokens);
+                if let Ok(config_stmts) = config_parser.parse() {
+                    let config_compiler = crate::vm::compiler::Compiler::new();
+                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
+                        let _ = vm.run(config_func);
+                    }
+                }
+            }
+        }
+    }
+    
+    if let Err(e) = vm.run(function) {
+        eprintln!("[HTTP] Reload error: Execution failed: {}", e);
+        ROUTES.with(|r| *r.borrow_mut() = old_routes);
+        return;
+    }
+    
+    LAST_MTIME.with(|m| m.set(Some(current_mtime)));
+    println!("[HTTP] Reload successful. VM state and routes updated.");
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn er_http_on_request(
     res: *mut c_void,
@@ -238,6 +350,12 @@ pub extern "C" fn er_http_on_request(
     path_ptr: *const c_char,
     path_len: usize,
 ) {
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if !vm_ptr.is_null() {
+        let vm = unsafe { &mut *vm_ptr };
+        check_and_reload_script_if_needed(vm);
+    }
+
     let method = unsafe {
         let slice = std::slice::from_raw_parts(method_ptr as *const u8, method_len);
         std::str::from_utf8(slice).unwrap_or("")

@@ -45,6 +45,20 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
 extern "C" void er_http_listen_and_run(int port) {
     if (!g_app) return;
     
+    g_app->get("/*", [](auto* res, auto* req) {
+        std::string_view method = "GET";
+        std::string_view path = req->getUrl();
+        res->onAborted([]() {});
+        er_http_on_request(res, method.data(), method.length(), path.data(), path.length());
+    });
+    
+    g_app->post("/*", [](auto* res, auto* req) {
+        std::string_view method = "POST";
+        std::string_view path = req->getUrl();
+        res->onAborted([]() {});
+        er_http_on_request(res, method.data(), method.length(), path.data(), path.length());
+    });
+    
     g_app->listen(port, [port](auto* listen_socket) {
         if (listen_socket) {
             std::cout << "[uWebSockets] Server listening on port " << port << std::endl;
