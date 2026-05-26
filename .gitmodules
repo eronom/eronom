@@ -1,0 +1,3 @@
+[submodule "external/mir"]
+	path = external/mir
+	url = https://github.com/eronom/mir.git
