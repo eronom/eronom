@@ -110,6 +110,7 @@ pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
                 std::ptr::drop_in_place(data);
             }
         }
+        std::ptr::write(data, GcData::String(std::rc::Rc::from("")));
     }
 }
 

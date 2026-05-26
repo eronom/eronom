@@ -50,10 +50,32 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         eprintln!("[VM] Running with bytecode interpreter (no JIT)");
     }
     vm.register_global("print", Value::native_function(native_print));
+    vm.register_global("route", Value::native_function(backend::er_http::native_route));
+
+    let main_path = std::path::Path::new(path);
+    if let Some(parent_dir) = main_path.parent() {
+        let config_path = parent_dir.join("config.er");
+        if config_path.exists() {
+            if let Ok(config_content) = std::fs::read_to_string(&config_path) {
+                let config_tokens = lex(&config_content);
+                let mut config_parser = Parser::new(config_tokens);
+                if let Ok(config_stmts) = config_parser.parse() {
+                    let config_compiler = Compiler::new();
+                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
+                        if let Err(e) = vm.run(config_func) {
+                            eprintln!("[Warning] Failed to run config.er: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if let Err(e) = vm.run(function) {
         anyhow::bail!("VM Runtime error: {}", e);
     }
+
+    backend::er_http::start_http_server_if_needed(&mut vm);
 
     Ok(())
 }

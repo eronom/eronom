@@ -1,5 +1,5 @@
-app = route()
-todos = [
+let app = route()
+let todos = [
   { id: 1, text: "Learn Eronomsssvvsaaa", done: false }
 ]
 

@@ -300,9 +300,47 @@ impl VM {
         }
     }
 
+    pub fn call_function_reentrant(&mut self, callee: Value, args: Vec<Value>) -> Result<Value, String> {
+        let func_ptr = callee.as_gc_ptr();
+        
+        let old_frames = std::mem::take(&mut self.frames);
+        let old_stack_len = self.stack.len();
+        
+        for arg in &args {
+            self.stack.push(*arg);
+        }
+        
+        self.frames.push(CallFrame {
+            function: func_ptr,
+            ip: 0,
+            slots_offset: old_stack_len,
+            dest_reg: 0,
+        });
+        
+        let old_fns: Vec<*mut GcObject> = old_frames.iter().map(|f| f.function).collect();
+        super::gc::GC_ROOTS.with(|roots| {
+            roots.borrow_mut().push(Box::new(move || {
+                for &func in &old_fns {
+                    super::gc::mark_value(&Value::function(func));
+                }
+            }));
+        });
+        
+        let res = self.execute();
+        
+        super::gc::GC_ROOTS.with(|roots| {
+            roots.borrow_mut().pop();
+        });
+        
+        self.frames = old_frames;
+        self.stack.truncate(old_stack_len);
+        
+        res
+    }
+
     fn execute(&mut self) -> Result<Value, String> {
         let original_len = self.stack.len();
-        self.stack.resize(4096, Value::null());
+        self.stack.resize(original_len + 4096, Value::null());
         
         let res = if self.use_jit {
             self.execute_loop(original_len)
@@ -310,7 +348,7 @@ impl VM {
             self.execute_loop_interpreter(original_len)
         };
         
-        self.stack.truncate(self.stack.len());
+        self.stack.truncate(original_len);
         res
     }
 
