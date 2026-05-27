@@ -5,7 +5,14 @@
 
 extern "C" {
     void er_http_on_request(void* res, const char* method, size_t method_len, const char* path, size_t path_len);
+    void er_ws_on_open(void* ws, const char* path, size_t path_len);
+    void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
+    void er_ws_on_close(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
 }
+
+struct PerSocketData {
+    // Fill with user data if needed
+};
 
 // Global app pointer (without SSL support)
 static uWS::App* g_app = nullptr;
@@ -15,6 +22,41 @@ extern "C" void er_http_init() {
         delete g_app;
     }
     g_app = new uWS::App();
+}
+
+extern "C" void er_ws_register_route(const char* path) {
+    if (!g_app) return;
+    
+    std::string path_str(path);
+    
+    g_app->ws<PerSocketData>(path_str, {
+        .compression = uWS::CompressOptions(uWS::SHARED_COMPRESSOR),
+        .maxPayloadLength = 16 * 1024 * 1024,
+        .idleTimeout = 120,
+        .maxBackpressure = 16 * 1024 * 1024,
+        .closeOnBackpressureLimit = false,
+        .resetIdleTimeoutOnSend = false,
+        .sendPingsAutomatically = true,
+        .open = [path_str](auto* ws) {
+            er_ws_on_open(ws, path_str.data(), path_str.length());
+        },
+        .message = [path_str](auto* ws, std::string_view message, uWS::OpCode opCode) {
+            er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length());
+        },
+        .close = [path_str](auto* ws, int code, std::string_view message) {
+            er_ws_on_close(ws, path_str.data(), path_str.length(), code, message.data(), message.length());
+        }
+    });
+}
+
+extern "C" void er_ws_send(void* ws, const char* message, size_t message_len) {
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    web_socket->send(std::string_view(message, message_len), uWS::OpCode::TEXT, false);
+}
+
+extern "C" void er_ws_close(void* ws) {
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    web_socket->close();
 }
 
 extern "C" void er_http_register_route(const char* method, const char* path) {

@@ -14,10 +14,19 @@ pub struct Route {
     pub callback: Value,
 }
 
+pub struct WsRoute {
+    pub path: String,
+    pub open: Option<Value>,
+    pub message: Option<Value>,
+    pub close: Option<Value>,
+}
+
 thread_local! {
     pub static ROUTES: RefCell<Vec<Route>> = RefCell::new(Vec::new());
+    pub static WS_ROUTES: RefCell<Vec<WsRoute>> = RefCell::new(Vec::new());
     pub static ACTIVE_VM: Cell<*mut VM> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
+    pub static ACTIVE_WEBSOCKET: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     static TARGET_SCRIPT_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
     static LAST_MTIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
 }
@@ -27,20 +36,136 @@ unsafe extern "C" {
     fn er_http_register_route(method: *const c_char, path: *const c_char);
     fn er_http_listen_and_run(port: i32);
     fn er_http_response_end_json(res: *mut c_void, json_str: *const c_char, json_len: usize);
+    
+    fn er_ws_register_route(path: *const c_char);
+    fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
+    fn er_ws_close(ws: *mut c_void);
 }
 
 pub fn native_route(_args: Vec<Value>) -> Value {
-    let router_obj = crate::vm::gc::get_pooled_map(2);
+    let router_obj = crate::vm::gc::get_pooled_map(3);
     
     let get_name = get_or_create_string("get");
     let post_name = get_or_create_string("post");
+    let ws_name = get_or_create_string("ws");
     
     let get_fn = Value::native_function(native_router_get);
     let post_fn = Value::native_function(native_router_post);
+    let ws_fn = Value::native_function(native_router_ws);
     
     let mut map = router_obj;
     map.insert(crate::vm::value::MapKey(Value::string(get_name)), get_fn);
     map.insert(crate::vm::value::MapKey(Value::string(post_name)), post_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(ws_name)), ws_fn);
+    
+    let ptr = gc_allocate(GcData::Object(map));
+    Value::object(ptr)
+}
+
+pub fn native_router_ws(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let path_val = args[0];
+    let callbacks_obj = args[1];
+    
+    if !path_val.is_string() {
+        eprintln!("[WS] Error: WebSocket path must be a string");
+        return Value::null();
+    }
+    if !callbacks_obj.is_object() {
+        eprintln!("[WS] Error: WebSocket callbacks must be an object");
+        return Value::null();
+    }
+    
+    let path_str = unsafe {
+        match &(*path_val.as_gc_ptr()).data {
+            GcData::String(s) => s.as_ref().to_string(),
+            _ => return Value::null(),
+        }
+    };
+    
+    let open_name = get_or_create_string("open");
+    let message_name = get_or_create_string("message");
+    let close_name = get_or_create_string("close");
+    
+    let open_val = get_property_helper(callbacks_obj, Value::string(open_name));
+    let message_val = get_property_helper(callbacks_obj, Value::string(message_name));
+    let close_val = get_property_helper(callbacks_obj, Value::string(close_name));
+    
+    let open_cb = if open_val.is_function() { Some(open_val) } else { None };
+    let message_cb = if message_val.is_function() { Some(message_val) } else { None };
+    let close_cb = if close_val.is_function() { Some(close_val) } else { None };
+    
+    WS_ROUTES.with(|routes| {
+        routes.borrow_mut().push(WsRoute {
+            path: path_str,
+            open: open_cb,
+            message: message_cb,
+            close: close_cb,
+        });
+    });
+    
+    Value::null()
+}
+
+pub fn native_ws_send(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let message_val = args[0];
+    let message_str = if message_val.is_string() {
+        unsafe {
+            match &(*message_val.as_gc_ptr()).data {
+                GcData::String(s) => s.as_ref().to_string(),
+                _ => return Value::null(),
+            }
+        }
+    } else {
+        message_val.to_string()
+    };
+    
+    ACTIVE_WEBSOCKET.with(|active| {
+        let ptr = active.get();
+        if !ptr.is_null() {
+            let c_str = CString::new(message_str).unwrap();
+            unsafe {
+                er_ws_send(ptr, c_str.as_ptr(), c_str.as_bytes().len());
+            }
+        } else {
+            eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling send()");
+        }
+    });
+    
+    Value::null()
+}
+
+pub fn native_ws_close(_args: Vec<Value>) -> Value {
+    ACTIVE_WEBSOCKET.with(|active| {
+        let ptr = active.get();
+        if !ptr.is_null() {
+            unsafe {
+                er_ws_close(ptr);
+            }
+        } else {
+            eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling close()");
+        }
+    });
+    Value::null()
+}
+
+fn create_ws_object(_ws: *mut c_void) -> Value {
+    let ws_map = crate::vm::gc::get_pooled_map(2);
+    
+    let send_name = get_or_create_string("send");
+    let send_fn = Value::native_function(native_ws_send);
+    
+    let close_name = get_or_create_string("close");
+    let close_fn = Value::native_function(native_ws_close);
+    
+    let mut map = ws_map;
+    map.insert(crate::vm::value::MapKey(Value::string(send_name)), send_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(close_name)), close_fn);
     
     let ptr = gc_allocate(GcData::Object(map));
     Value::object(ptr)
@@ -190,8 +315,9 @@ fn get_port_from_config(vm: &VM) -> i32 {
 }
 
 pub fn start_http_server_if_needed(vm: &mut VM) {
-    let has_routes = ROUTES.with(|r| !r.borrow().is_empty());
-    if !has_routes {
+    let has_http_routes = ROUTES.with(|r| !r.borrow().is_empty());
+    let has_ws_routes = WS_ROUTES.with(|r| !r.borrow().is_empty());
+    if !has_http_routes && !has_ws_routes {
         return;
     }
     
@@ -212,11 +338,33 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
         }
     });
     
+    WS_ROUTES.with(|routes| {
+        for route in routes.borrow().iter() {
+            let path_c = CString::new(route.path.as_str()).unwrap();
+            unsafe {
+                er_ws_register_route(path_c.as_ptr());
+            }
+        }
+    });
+    
     crate::vm::gc::GC_ROOTS.with(|roots| {
         roots.borrow_mut().push(Box::new(|| {
             ROUTES.with(|routes| {
                 for route in routes.borrow().iter() {
                     crate::vm::gc::mark_value(&route.callback);
+                }
+            });
+            WS_ROUTES.with(|routes| {
+                for route in routes.borrow().iter() {
+                    if let Some(open_cb) = &route.open {
+                        crate::vm::gc::mark_value(open_cb);
+                    }
+                    if let Some(msg_cb) = &route.message {
+                        crate::vm::gc::mark_value(msg_cb);
+                    }
+                    if let Some(close_cb) = &route.close {
+                        crate::vm::gc::mark_value(close_cb);
+                    }
                 }
             });
         }));
@@ -292,6 +440,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     };
     
     let old_routes = ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    let old_ws_routes = WS_ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     
     let tokens = crate::frontend::lex(&content);
     let mut parser = crate::frontend::Parser::new(tokens);
@@ -300,6 +449,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
         Err(e) => {
             eprintln!("[HTTP] Reload error: Parsing failed: {}", e);
             ROUTES.with(|r| *r.borrow_mut() = old_routes);
+            WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
             return;
         }
     };
@@ -310,6 +460,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
         Err(e) => {
             eprintln!("[HTTP] Reload error: Compilation failed: {}", e);
             ROUTES.with(|r| *r.borrow_mut() = old_routes);
+            WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
             return;
         }
     };
@@ -335,6 +486,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     if let Err(e) = vm.run(function) {
         eprintln!("[HTTP] Reload error: Execution failed: {}", e);
         ROUTES.with(|r| *r.borrow_mut() = old_routes);
+        WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
         return;
     }
     
@@ -407,5 +559,159 @@ pub extern "C" fn er_http_on_request(
             let c_str = CString::new("{\"error\": \"Not Found\"}").unwrap();
             er_http_response_end_json(res, c_str.as_ptr(), c_str.as_bytes().len());
         }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_ws_on_open(
+    ws: *mut c_void,
+    path_ptr: *const c_char,
+    path_len: usize,
+) {
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if !vm_ptr.is_null() {
+        let vm = unsafe { &mut *vm_ptr };
+        check_and_reload_script_if_needed(vm);
+    }
+
+    let path = unsafe {
+        let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    
+    let open_cb = WS_ROUTES.with(|routes| {
+        for route in routes.borrow().iter() {
+            if route.path == path {
+                return route.open;
+            }
+        }
+        None
+    });
+    
+    if let Some(callback) = open_cb {
+        ACTIVE_WEBSOCKET.with(|active| active.set(ws));
+        
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                let ws_obj = create_ws_object(ws);
+                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj]) {
+                    eprintln!("[WS] Error executing open callback: {}", e);
+                }
+            }
+        });
+        
+        ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_ws_on_message(
+    ws: *mut c_void,
+    path_ptr: *const c_char,
+    path_len: usize,
+    message_ptr: *const c_char,
+    message_len: usize,
+) {
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if !vm_ptr.is_null() {
+        let vm = unsafe { &mut *vm_ptr };
+        check_and_reload_script_if_needed(vm);
+    }
+
+    let path = unsafe {
+        let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    
+    let msg = unsafe {
+        let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    
+    let message_cb = WS_ROUTES.with(|routes| {
+        for route in routes.borrow().iter() {
+            if route.path == path {
+                return route.message;
+            }
+        }
+        None
+    });
+    
+    if let Some(callback) = message_cb {
+        ACTIVE_WEBSOCKET.with(|active| active.set(ws));
+        
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                let ws_obj = create_ws_object(ws);
+                let msg_str = get_or_create_string(msg);
+                let msg_val = Value::string(msg_str);
+                
+                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj, msg_val]) {
+                    eprintln!("[WS] Error executing message callback: {}", e);
+                }
+            }
+        });
+        
+        ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_ws_on_close(
+    ws: *mut c_void,
+    path_ptr: *const c_char,
+    path_len: usize,
+    code: i32,
+    message_ptr: *const c_char,
+    message_len: usize,
+) {
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if !vm_ptr.is_null() {
+        let vm = unsafe { &mut *vm_ptr };
+        check_and_reload_script_if_needed(vm);
+    }
+
+    let path = unsafe {
+        let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    
+    let msg = unsafe {
+        let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    
+    let close_cb = WS_ROUTES.with(|routes| {
+        for route in routes.borrow().iter() {
+            if route.path == path {
+                return route.close;
+            }
+        }
+        None
+    });
+    
+    if let Some(callback) = close_cb {
+        ACTIVE_WEBSOCKET.with(|active| active.set(ws));
+        
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                let ws_obj = create_ws_object(ws);
+                let code_val = Value::number(code as f64);
+                let msg_str = get_or_create_string(msg);
+                let msg_val = Value::string(msg_str);
+                
+                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj, code_val, msg_val]) {
+                    eprintln!("[WS] Error executing close callback: {}", e);
+                }
+            }
+        });
+        
+        ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
     }
 }
