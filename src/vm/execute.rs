@@ -1121,62 +1121,10 @@ mod tests {
     use super::super::gc::gc_free_all;
     use super::super::compiler::Compiler;
 
-    fn deep_equals(a: Value, b: Value) -> bool {
-        if a.is_number() && b.is_number() {
-            a.as_number() == b.as_number()
-        } else if a.is_boolean() && b.is_boolean() {
-            a.as_boolean() == b.as_boolean()
-        } else if a.is_null() && b.is_null() {
-            true
-        } else if a.is_string() && b.is_string() {
-            a.as_str() == b.as_str()
-        } else if a.is_array() && b.is_array() {
-            unsafe {
-                match (&(*a.as_gc_ptr()).data, &(*b.as_gc_ptr()).data) {
-                    (GcData::Array(arr_a), GcData::Array(arr_b)) => {
-                        if arr_a.len() != arr_b.len() {
-                            return false;
-                        }
-                        for i in 0..arr_a.len() {
-                            if !deep_equals(arr_a[i], arr_b[i]) {
-                                return false;
-                            }
-                        }
-                        true
-                    }
-                    _ => false,
-                }
-            }
-        } else if a.is_object() && b.is_object() {
-            unsafe {
-                match (&(*a.as_gc_ptr()).data, &(*b.as_gc_ptr()).data) {
-                    (GcData::Object(obj_a), GcData::Object(obj_b)) => {
-                        if obj_a.len() != obj_b.len() {
-                            println!("Length mismatch: {} vs {}", obj_a.len(), obj_b.len());
-                            return false;
-                        }
-                        for (k, v) in obj_a {
-                            if let Some(v_b) = obj_b.get(k) {
-                                if !deep_equals(*v, *v_b) {
-                                    println!("Value mismatch for key {:?}: {:?} vs {:?}", k.0, v, v_b);
-                                    return false;
-                                }
-                            } else {
-                                println!("Key {:?} not found in second object", k.0);
-                                return false;
-                            }
-                        }
-                        true
-                    }
-                    _ => false,
-                }
-            }
-        } else {
-            a.0 == b.0
-        }
-    }
+
 
     fn run_code(source: &str) -> Result<VM, String> {
+        gc_free_all();
         let tokens = crate::frontend::lex(source);
         let mut parser = crate::frontend::Parser::new(tokens);
         let stmts = parser.parse().map_err(|e| e.to_string())?;
@@ -1185,18 +1133,33 @@ mod tests {
         
         let mut vm = VM::new();
         vm.use_jit = true;
-        vm.run(function.clone())?;
+        vm.run(function)?;
+
+        let mut jit_globals = std::collections::HashMap::new();
+        for (k, v) in &vm.globals {
+            jit_globals.insert(k.clone(), v.to_string());
+        }
+
+        // Clean up JIT allocations before running Interpreter
+        gc_free_all();
+
+        // Recompile to get fresh constants for the Interpreter run
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().map_err(|e| e.to_string())?;
+        let compiler = Compiler::new();
+        let function_interp = compiler.compile(&stmts)?;
 
         let mut vm_interp = VM::new();
         vm_interp.use_jit = false;
-        vm_interp.run(function)?;
+        vm_interp.run(function_interp)?;
 
-        for (k, v) in &vm.globals {
-            let v_interp = vm_interp.globals.get(k).expect("Missing global in interpreter");
-            assert!(deep_equals(*v, *v_interp), "Global mismatch for '{}': JIT={:?}, Interpreter={:?}", k, v, v_interp);
+        for (k, v_interp) in &vm_interp.globals {
+            let v_jit_str = jit_globals.get(k).expect("Missing global in JIT");
+            assert_eq!(v_jit_str, &v_interp.to_string(), "Global mismatch for '{}': JIT={}, Interpreter={}", k, v_jit_str, v_interp);
         }
 
-        Ok(vm)
+        Ok(vm_interp)
     }
 
     #[test]

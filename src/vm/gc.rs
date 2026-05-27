@@ -26,6 +26,7 @@ pub enum GcPhase {
 }
 
 pub enum GcData {
+    Empty,
     String(Rc<str>),
     Array(Vec<Value>),
     Object(ObjectMap),
@@ -113,7 +114,7 @@ pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
                 std::ptr::drop_in_place(data);
             }
         }
-        std::ptr::write(data, GcData::String(std::rc::Rc::from("")));
+        std::ptr::write(data, GcData::Empty);
     }
 }
 
@@ -240,6 +241,7 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
         }
         (*ptr).color = GcColor::Black;
         match &(*ptr).data {
+            GcData::Empty => {}
             GcData::String(_) => {}
             GcData::Array(arr) => {
                 for val in arr {
