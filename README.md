@@ -22,27 +22,6 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
   * Range-based loops (`for i in 1..1000`).
 * **Automated GC**: Custom Garbage Collector managing allocations for VM values (Objects, Arrays, Strings).
 
----
-
-## 🏗️ Architecture
-
-The compilation and execution workflow of Eronom is structured as follows:
-
-```mermaid
-graph TD
-    A[Source File .er] -->|Lexer / Parser| B[Abstract Syntax Tree AST]
-    B -->|VM Compiler| C[Eronom Bytecode]
-    C --> D{JIT Enabled?}
-    D -->|Yes| E[MIR JIT Compiler]
-    D -->|No| F[Bytecode Interpreter]
-    E -->|Native Machine Code| G[CPU Execution]
-    F -->|VM Interpreter Loop| G
-    G --> H[Garbage Collector]
-    G --> I[uWebSockets HTTP Event Loop]
-```
-
----
-
 ## 📁 Repository Structure
 
 * **`src/frontend/`**: The language parsing frontend.
@@ -100,23 +79,6 @@ app.get('/todos', (c) => {
   return c.json(todos)
 })
 ```
-
----
-
-## ⚡ Performance Benchmarks
-
-An identical `/todos` endpoint returning a JSON array was benchmarked using `autocannon` (100 concurrent connections, 5 seconds duration) across multiple runtimes.
-
-| Server / Runtime | Port | Core HTTP Engine | Req/Sec (Avg) | Latency (Avg) | Total Requests (5s) | Avg Bytes/Sec |
-| :--- | :---: | :--- | :---: | :---: | :---: | :---: |
-| **Deno** | `3003` | Hyper (Rust) | **29,630.4** | **2.86 ms** | **148k** | **6.22 MB** |
-| **Eronom** | `3000` | uWebSockets (C++) | **28,324.8** | **3.06 ms** | **142k** | **5.95 MB** |
-| **Bun** | `3002` | Native (C++) | **27,390.4** | **3.18 ms** | **137k** | **5.50 MB** |
-| **Node.js** | `3001` | http parser (C++) | **20,372.0** | **4.44 ms** | **102k** | **5.15 MB** |
-
-*Eronom handles connections using uWebSockets, performing similarly to Deno and Bun, with the added advantage of instant VM route reloading on source files change without dropping active connection requests.*
-
----
 
 ## 🛠️ Getting Started
 

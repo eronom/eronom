@@ -1,0 +1,11 @@
+let app = route()
+
+app.ws('/ws', {
+  open: (ws) => {
+  },
+  message: (ws, msg) => {
+    ws.send("Echo: " + msg)
+  },
+  close: (ws, code, reason) => {
+  }
+})

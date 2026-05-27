@@ -1,7 +1,7 @@
-m_4: module
-          export jit_fn_4
+m_3: module
+          export jit_fn_3
           import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc
-jit_fn_4: func i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out
+jit_fn_3: func i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out
 p_needs_gc: proto i64
 p_negate: proto i64, p:vm, i64:src
 p_not: proto i64, i64:src
@@ -41,6 +41,9 @@ p_has_error: proto i64, p:vm
           beq entry_2, start_ip, 2
           beq entry_3, start_ip, 3
           beq entry_4, start_ip, 4
+          beq entry_5, start_ip, 5
+          beq entry_6, start_ip, 6
+          beq entry_7, start_ip, 7
 entry_0:
           jmp inst_0
 entry_1:
@@ -51,43 +54,69 @@ entry_3:
           jmp inst_3
 entry_4:
           jmp inst_4
+entry_5:
+          jmp inst_5
+entry_6:
+          jmp inst_6
+entry_7:
+          jmp inst_7
 inst_0:
+          mov r2, r0
+inst_1:
           mov tmp1, i64:0(constants_ptr)
-          call p_get_global, er_jit_get_global, r3, vm, tmp1
+          call p_get_property, er_jit_get_property, r2, vm, r2, tmp1
           call p_has_error, er_jit_has_error, status, vm
           bne err_label, status, 0
-inst_1:
-          mov tmp, i64:8(constants_ptr)
-          mov r4, tmp
 inst_2:
-          mov tmp, r3
+          mov tmp, i64:8(constants_ptr)
+          mov r3, tmp
+inst_3:
+          mov r4, r1
+inst_4:
+          ubge fallback_add_4, r3, 0xfff0000000000000
+          ubge fallback_add_4, r4, 0xfff0000000000000
+          mov i64:96(cast_ptr), r3
+          dmov d3, d:96(cast_ptr)
+          mov i64:104(cast_ptr), r4
+          dmov d4, d:104(cast_ptr)
+          dadd d3, d3, d4
+          dmov d:112(cast_ptr), d3
+          mov r3, i64:112(cast_ptr)
+          jmp done_add_4
+fallback_add_4:
+          call p_add, er_jit_add, r3, vm, r3, r4
+          call p_has_error, er_jit_has_error, status, vm
+          bne err_label, status, 0
+done_add_4:
+inst_5:
+          mov tmp, r2
           and tmp, tmp, 0xffff000000000000
-          bne normal_call_2, tmp, 0xfff9000000000000
-          mov tmp, r3
+          bne normal_call_5, tmp, 0xfff9000000000000
+          mov tmp, r2
           and tmp, tmp, 0x0000ffffffffffff
           or tmp, tmp, 0xfff5000000000000
-          call p_array_push, er_jit_array_push, tmp2, tmp, r4
-          mov r3, tmp2
-          jmp done_call_2
-normal_call_2:
+          call p_array_push, er_jit_array_push, tmp2, tmp, r3
+          mov r2, tmp2
+          jmp done_call_5
+normal_call_5:
+          mov i64:16(frame_slots), r2
           mov i64:24(frame_slots), r3
-          mov i64:32(frame_slots), r4
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 1, frame_slots
-          beq call_vm_label_2, status, -1
+          add dest_ptr, frame_slots, 16
+          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r2, 2, 1, frame_slots
+          beq call_vm_label_5, status, -1
           blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
-          jmp done_call_2
-call_vm_label_2:
-          mov i64:(ip_out), 3
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
+          mov r2, i64:16(frame_slots)
+          jmp done_call_5
+call_vm_label_5:
+          mov i64:(ip_out), 6
+          mov i64:(dest_reg_out), 2
+          mov i64:(func_reg_out), 2
           mov i64:(arg_count_out), 1
           ret 0
-done_call_2:
-inst_3:
+done_call_5:
+inst_6:
           mov r0, 18442521949058891776
-inst_4:
+inst_7:
           mov i64:(ret_val_out), r0
           ret 1
           ret 1
