@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use crate::vm::value::Value;
 use crate::vm::execute::VM;
 use crate::vm::gc::{get_or_create_string, gc_allocate, GcData};
@@ -27,6 +28,7 @@ thread_local! {
     pub static ACTIVE_VM: Cell<*mut VM> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_WEBSOCKET: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
+    pub static ACTIVE_CONNECTIONS: RefCell<HashMap<*mut c_void, Value>> = RefCell::new(HashMap::new());
     static TARGET_SCRIPT_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
     static LAST_MTIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
 }
@@ -367,6 +369,11 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
                     }
                 }
             });
+            ACTIVE_CONNECTIONS.with(|conns| {
+                for &ws_obj in conns.borrow().values() {
+                    crate::vm::gc::mark_value(&ws_obj);
+                }
+            });
         }));
     });
     
@@ -588,6 +595,17 @@ pub extern "C" fn er_ws_on_open(
         None
     });
     
+    let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
+        let mut cache = conns.borrow_mut();
+        if let Some(&cached) = cache.get(&ws) {
+            cached
+        } else {
+            let obj = create_ws_object(ws);
+            cache.insert(ws, obj);
+            obj
+        }
+    });
+
     if let Some(callback) = open_cb {
         ACTIVE_WEBSOCKET.with(|active| active.set(ws));
         
@@ -595,7 +613,6 @@ pub extern "C" fn er_ws_on_open(
             let vm_ptr = active.get();
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
-                let ws_obj = create_ws_object(ws);
                 if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj]) {
                     eprintln!("[WS] Error executing open callback: {}", e);
                 }
@@ -639,6 +656,17 @@ pub extern "C" fn er_ws_on_message(
         None
     });
     
+    let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
+        let mut cache = conns.borrow_mut();
+        if let Some(&cached) = cache.get(&ws) {
+            cached
+        } else {
+            let obj = create_ws_object(ws);
+            cache.insert(ws, obj);
+            obj
+        }
+    });
+
     if let Some(callback) = message_cb {
         ACTIVE_WEBSOCKET.with(|active| active.set(ws));
         
@@ -646,7 +674,6 @@ pub extern "C" fn er_ws_on_message(
             let vm_ptr = active.get();
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
-                let ws_obj = create_ws_object(ws);
                 let msg_str = get_or_create_string(msg);
                 let msg_val = Value::string(msg_str);
                 
@@ -694,6 +721,11 @@ pub extern "C" fn er_ws_on_close(
         None
     });
     
+    let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
+        let mut cache = conns.borrow_mut();
+        cache.remove(&ws).unwrap_or_else(|| create_ws_object(ws))
+    });
+
     if let Some(callback) = close_cb {
         ACTIVE_WEBSOCKET.with(|active| active.set(ws));
         
@@ -701,7 +733,6 @@ pub extern "C" fn er_ws_on_close(
             let vm_ptr = active.get();
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
-                let ws_obj = create_ws_object(ws);
                 let code_val = Value::number(code as f64);
                 let msg_str = get_or_create_string(msg);
                 let msg_val = Value::string(msg_str);
