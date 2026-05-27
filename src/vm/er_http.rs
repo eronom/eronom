@@ -438,23 +438,14 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     
     println!("[HTTP] File change detected, reloading script: {}...", path);
     
-    let content = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[HTTP] Reload error: Failed to read file: {}", e);
-            return;
-        }
-    };
-    
     let old_routes = ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_ws_routes = WS_ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     
-    let tokens = crate::frontend::lex(&content);
-    let mut parser = crate::frontend::Parser::new(tokens);
-    let stmts = match parser.parse() {
+    let path_buf = Path::new(&path);
+    let stmts = match crate::frontend::parse_and_resolve_imports(path_buf) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[HTTP] Reload error: Parsing failed: {}", e);
+            eprintln!("[HTTP] Reload error: Parsing/Import resolution failed: {}", e);
             ROUTES.with(|r| *r.borrow_mut() = old_routes);
             WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
             return;

@@ -1152,14 +1152,17 @@ mod tests {
                 match (&(*a.as_gc_ptr()).data, &(*b.as_gc_ptr()).data) {
                     (GcData::Object(obj_a), GcData::Object(obj_b)) => {
                         if obj_a.len() != obj_b.len() {
+                            println!("Length mismatch: {} vs {}", obj_a.len(), obj_b.len());
                             return false;
                         }
                         for (k, v) in obj_a {
                             if let Some(v_b) = obj_b.get(k) {
                                 if !deep_equals(*v, *v_b) {
+                                    println!("Value mismatch for key {:?}: {:?} vs {:?}", k.0, v, v_b);
                                     return false;
                                 }
                             } else {
+                                println!("Key {:?} not found in second object", k.0);
                                 return false;
                             }
                         }
@@ -1296,5 +1299,35 @@ mod tests {
         assert!(!found_garbage, "Garbage should be collected");
 
         gc_free_all();
+    }
+
+    #[test]
+    fn test_imports_exports() {
+        use std::fs;
+        let dir = std::env::current_dir().unwrap().join("target").join("test_imports_exports");
+        fs::create_dir_all(&dir).unwrap();
+        
+        let lib_path = dir.join("lib.er");
+        fs::write(&lib_path, "export const value = 42\nexport const other = 100").unwrap();
+        
+        let main_path = dir.join("main.er");
+        fs::write(&main_path, "import { value } from \"./lib.er\"\nlet res = value + 10").unwrap();
+
+        let stmts = crate::frontend::parse_and_resolve_imports(&main_path).unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        
+        let mut vm = VM::new();
+        vm.use_jit = true;
+        vm.run(function.clone()).unwrap();
+        assert_eq!(vm.get_global("res").unwrap().as_number(), 52.0);
+
+        // Test failing when name is not exported
+        let main_bad_path = dir.join("main_bad.er");
+        fs::write(&main_bad_path, "import { not_exist } from \"./lib.er\"\n").unwrap();
+        assert!(crate::frontend::parse_and_resolve_imports(&main_bad_path).is_err());
+        
+        // Clean up
+        let _ = fs::remove_dir_all(dir);
     }
 }

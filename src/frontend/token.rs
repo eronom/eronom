@@ -39,6 +39,9 @@ pub enum TokenType {
     Let,
     Const,
     In,
+    Import,
+    Export,
+    From,
     Eof,
 }
 

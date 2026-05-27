@@ -234,6 +234,9 @@ impl<'a> Lexer<'a> {
                     "let" => TokenType::Let,
                     "const" => TokenType::Const,
                     "in" => TokenType::In,
+                    "import" => TokenType::Import,
+                    "export" => TokenType::Export,
+                    "from" => TokenType::From,
                     _ => TokenType::Identifier(ident),
                 }
             }

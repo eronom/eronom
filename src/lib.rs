@@ -24,17 +24,14 @@ fn native_print(args: Vec<Value>) -> Value {
 
 pub fn run_file(path: &str) -> anyhow::Result<()> {
     let _guard = GcGuard;
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
-    };
+    let path_buf = std::path::PathBuf::from(path);
+    if !path_buf.exists() {
+        return Ok(());
+    }
 
-    let tokens = lex(&content);
-    let mut parser = Parser::new(tokens);
-    let stmts = match parser.parse() {
+    let stmts = match frontend::parse_and_resolve_imports(&path_buf) {
         Ok(s) => s,
-        Err(e) => anyhow::bail!("Parse error: {}", e),
+        Err(e) => anyhow::bail!("Compile/Import error: {}", e),
     };
 
     let compiler = Compiler::new();

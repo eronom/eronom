@@ -34,4 +34,6 @@ pub enum Stmt {
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
     For(String, Expr, Expr, Box<Stmt>), // var, start, end, body
     Return(Option<Expr>),
+    Import(Vec<String>, String), // imported names, source path
+    Export(Box<Stmt>), // exported declaration statement
 }

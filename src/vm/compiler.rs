@@ -189,6 +189,12 @@ impl Compiler {
                 }
                 self.current_chunk().write_instruction(OpCode::Return, reg as u8, 0, 0, 0);
             }
+            Stmt::Import(_, _) => {
+                return Err("Import statement should be resolved before compilation".to_string());
+            }
+            Stmt::Export(inner) => {
+                self.compile_stmt(inner)?;
+            }
         }
         Ok(())
     }
