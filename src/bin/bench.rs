@@ -1,8 +1,18 @@
-/// Benchmark: VM-based vs Legacy tree-walking interpreter
 /// Run with: cargo run --release --bin bench -p er
+#[path = "../vm/mod.rs"]
+pub mod vm;
+pub use vm as backend;
+#[path = "../frontend/mod.rs"]
+pub mod frontend;
+#[path = "../jit/mod.rs"]
+pub mod jit;
+
+use crate as eronom;
+
 use std::time::Instant;
 use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
 
 struct Counter {
     allocated: AtomicUsize,
