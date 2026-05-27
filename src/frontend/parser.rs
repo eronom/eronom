@@ -338,6 +338,15 @@ impl Parser {
         }
 
         if self.match_token(&[TokenType::LeftParen]) {
+            if self.check(&TokenType::RightParen) {
+                let temp = self.current;
+                if temp + 1 < self.tokens.len() && self.tokens[temp + 1].ty == TokenType::Arrow {
+                    self.advance(); // consume RightParen
+                    self.advance(); // consume Arrow
+                    let body = self.statement()?;
+                    return Ok(Expr::Function(Vec::new(), Box::new(body)));
+                }
+            }
             let mut params = Vec::new();
             if self.check_ident() {
                 let save_pos = self.current;
@@ -418,7 +427,7 @@ impl Parser {
             return Ok(Expr::Object(pairs));
         }
 
-        Err(format!("Unexpected token: {:?}", self.peek().ty))
+        Err(format!("Error at line {}: Unexpected token: {:?}", self.peek().line, self.peek().ty))
     }
 }
 
@@ -437,6 +446,46 @@ fn get_exported_names(stmts: &[Stmt]) -> std::collections::HashSet<String> {
         }
     }
     names
+}
+
+fn find_std_dir(start_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    // 1. Search upwards from the compiling file's directory
+    let mut current = Some(start_dir);
+    while let Some(dir) = current {
+        let std_dir = dir.join("std");
+        if std_dir.is_dir() {
+            return Some(std_dir);
+        }
+        current = dir.parent();
+    }
+
+    // 2. Search upwards from current working directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut current = Some(cwd.as_path());
+        while let Some(dir) = current {
+            let std_dir = dir.join("std");
+            if std_dir.is_dir() {
+                return Some(std_dir);
+            }
+            current = dir.parent();
+        }
+    }
+
+    // 3. Search relative to executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut current = Some(exe_dir);
+            while let Some(dir) = current {
+                let std_dir = dir.join("std");
+                if std_dir.is_dir() {
+                    return Some(std_dir);
+                }
+                current = dir.parent();
+            }
+        }
+    }
+
+    None
 }
 
 fn resolve_imports_recursive(
@@ -464,7 +513,17 @@ fn resolve_imports_recursive(
     for stmt in stmts {
         match stmt {
             Stmt::Import(names, import_path) => {
-                let mut resolved_path = parent_dir.join(&import_path);
+                let is_std_import = import_path.starts_with("std/") || import_path == "std" || import_path.starts_with("std\\");
+                let mut resolved_path = if is_std_import {
+                    if let Some(std_root) = find_std_dir(parent_dir) {
+                        let std_parent = std_root.parent().unwrap_or(&std_root);
+                        std_parent.join(&import_path)
+                    } else {
+                        parent_dir.join(&import_path)
+                    }
+                } else {
+                    parent_dir.join(&import_path)
+                };
                 
                 // Fallbacks:
                 if !resolved_path.exists() {

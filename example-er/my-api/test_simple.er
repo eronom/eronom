@@ -1,0 +1,3 @@
+import { route } from "std/http"
+let app = route()
+print("Success")

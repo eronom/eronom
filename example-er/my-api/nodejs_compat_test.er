@@ -1,0 +1,12 @@
+import { createServer } from "std/http"
+
+let todos = [
+  { id: 1, text: "NodeJS compat API works perfectly!", done: true }
+]
+
+let server = createServer((req, res) => {
+  if (req.url == "/todos" and req.method == "GET") {
+    res.writeHead(200, { contentType: "application/json" })
+    res.end(todos)
+  }
+})

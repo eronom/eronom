@@ -25,12 +25,14 @@ pub struct WsRoute {
 thread_local! {
     pub static ROUTES: RefCell<Vec<Route>> = RefCell::new(Vec::new());
     pub static WS_ROUTES: RefCell<Vec<WsRoute>> = RefCell::new(Vec::new());
+    pub static MIDDLEWARES: RefCell<Vec<Value>> = RefCell::new(Vec::new());
     pub static ACTIVE_VM: Cell<*mut VM> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_WEBSOCKET: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_CONNECTIONS: RefCell<HashMap<*mut c_void, Value>> = RefCell::new(HashMap::new());
     static TARGET_SCRIPT_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
     static LAST_MTIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
+    static LAST_CHECK_TIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
 }
 
 unsafe extern "C" {
@@ -45,23 +47,36 @@ unsafe extern "C" {
 }
 
 pub fn native_route(_args: Vec<Value>) -> Value {
-    let router_obj = crate::vm::gc::get_pooled_map(3);
+    let router_obj = crate::vm::gc::get_pooled_map(4);
     
     let get_name = get_or_create_string("get");
     let post_name = get_or_create_string("post");
     let ws_name = get_or_create_string("ws");
+    let use_name = get_or_create_string("use");
     
     let get_fn = Value::native_function(native_router_get);
     let post_fn = Value::native_function(native_router_post);
     let ws_fn = Value::native_function(native_router_ws);
+    let use_fn = Value::native_function(native_router_use);
     
     let mut map = router_obj;
     map.insert(crate::vm::value::MapKey(Value::string(get_name)), get_fn);
     map.insert(crate::vm::value::MapKey(Value::string(post_name)), post_fn);
     map.insert(crate::vm::value::MapKey(Value::string(ws_name)), ws_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(use_name)), use_fn);
     
     let ptr = gc_allocate(GcData::Object(map));
     Value::object(ptr)
+}
+
+pub fn native_router_use(args: Vec<Value>) -> Value {
+    if args.len() >= 1 {
+        let callback = args[0];
+        MIDDLEWARES.with(|mws| {
+            mws.borrow_mut().push(callback);
+        });
+    }
+    Value::null()
 }
 
 pub fn native_router_ws(args: Vec<Value>) -> Value {
@@ -356,6 +371,11 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
                     crate::vm::gc::mark_value(&route.callback);
                 }
             });
+            MIDDLEWARES.with(|mws| {
+                for mw in mws.borrow().iter() {
+                    crate::vm::gc::mark_value(mw);
+                }
+            });
             WS_ROUTES.with(|routes| {
                 for route in routes.borrow().iter() {
                     if let Some(open_cb) = &route.open {
@@ -421,6 +441,23 @@ fn get_max_mtime_for_reload(path: &str) -> Option<SystemTime> {
 }
 
 fn check_and_reload_script_if_needed(vm: &mut VM) {
+    let now = SystemTime::now();
+    let should_check = LAST_CHECK_TIME.with(|last_check| {
+        if let Some(last) = last_check.get() {
+            if let Ok(elapsed) = now.duration_since(last) {
+                if elapsed.as_millis() < 500 {
+                    return false;
+                }
+            }
+        }
+        last_check.set(Some(now));
+        true
+    });
+    
+    if !should_check {
+        return;
+    }
+
     let script_path = TARGET_SCRIPT_PATH.with(|p| p.borrow().clone());
     let Some(path) = script_path else {
         return;
@@ -440,6 +477,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     
     let old_routes = ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_ws_routes = WS_ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    let old_mws = MIDDLEWARES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     
     let path_buf = Path::new(&path);
     let stmts = match crate::frontend::parse_and_resolve_imports(path_buf) {
@@ -448,6 +486,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
             eprintln!("[HTTP] Reload error: Parsing/Import resolution failed: {}", e);
             ROUTES.with(|r| *r.borrow_mut() = old_routes);
             WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
+            MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
             return;
         }
     };
@@ -459,6 +498,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
             eprintln!("[HTTP] Reload error: Compilation failed: {}", e);
             ROUTES.with(|r| *r.borrow_mut() = old_routes);
             WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
+            MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
             return;
         }
     };
@@ -485,6 +525,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
         eprintln!("[HTTP] Reload error: Execution failed: {}", e);
         ROUTES.with(|r| *r.borrow_mut() = old_routes);
         WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
+        MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
         return;
     }
     
@@ -534,15 +575,42 @@ pub extern "C" fn er_http_on_request(
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
                 
-                let context_obj = crate::vm::gc::get_pooled_map(1);
+                let mut req_map = crate::vm::gc::get_pooled_map(2);
+                let url_name = get_or_create_string("url");
+                let method_name = get_or_create_string("method");
+                let path_str = get_or_create_string(path);
+                let method_str = get_or_create_string(method);
+                
+                req_map.insert(crate::vm::value::MapKey(Value::string(url_name)), Value::string(path_str));
+                req_map.insert(crate::vm::value::MapKey(Value::string(method_name)), Value::string(method_str));
+                
+                let req_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(req_map)));
+                
+                let context_obj = crate::vm::gc::get_pooled_map(2);
                 let json_name = get_or_create_string("json");
                 let json_fn = Value::native_function(native_context_json);
+                let req_key_name = get_or_create_string("req");
+                
                 let mut map = context_obj;
                 map.insert(crate::vm::value::MapKey(Value::string(json_name)), json_fn);
+                map.insert(crate::vm::value::MapKey(Value::string(req_key_name)), req_obj);
                 let c_val = Value::object(crate::vm::gc::gc_allocate(GcData::Object(map)));
                 
-                if let Err(e) = vm.call_function_reentrant(callback, vec![c_val]) {
-                    eprintln!("[HTTP] Error executing callback: {}", e);
+                
+                let mws = MIDDLEWARES.with(|m| m.borrow().clone());
+                let mut mw_err = false;
+                for mw in mws {
+                    if let Err(e) = vm.call_function_reentrant(mw, vec![c_val]) {
+                        eprintln!("[HTTP] Error executing middleware: {}", e);
+                        mw_err = true;
+                        break;
+                    }
+                }
+                
+                if !mw_err {
+                    if let Err(e) = vm.call_function_reentrant(callback, vec![c_val]) {
+                        eprintln!("[HTTP] Error executing callback: {}", e);
+                    }
                 }
             } else {
                 eprintln!("[HTTP] Error: ACTIVE_VM is null during request handler");
