@@ -1,11 +1,16 @@
-use std::ffi::{c_void, CString, c_char};
+use std::ffi::{c_void, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::HashMap;
-use std::rc::Rc;
-use super::value::{Value, TAG_FALSE, TAG_NULL, TAG_TRUE};
-use super::bytecode::{OpCode, Instruction};
-use super::execute::VM;
-use super::gc::{gc_allocate, GcData, GcObject, gc_write_barrier};
+use fnv::FnvHashMap;
+use crate::vm::value::{Value, TAG_FALSE, TAG_NULL, TAG_TRUE};
+use crate::vm::bytecode::{OpCode, Instruction};
+use crate::vm::execute::VM;
+use crate::vm::gc::{GcData, GcObject};
+use super::bindings::{
+    _MIR_init, MIR_finish, MIR_scan_string, MIR_load_module, MIR_load_external,
+    MIR_link, MIR_gen_init, MIR_gen, MIR_gen_finish, MIR_get_module_list,
+    MIR_set_gen_interface, MIR_gen_set_optimize_level, MirDlist, MirModule,
+};
+use super::helpers;
 
 static JIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -13,42 +18,9 @@ fn next_id() -> usize {
     JIT_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-#[repr(C)]
-pub struct MirDlist {
-    pub head: *mut c_void,
-    pub tail: *mut c_void,
-}
-
-#[repr(C)]
-pub struct MirModule {
-    pub data: *mut c_void,
-    pub name: *const c_char,
-    pub head_item: *mut c_void,
-    pub tail_item: *mut c_void,
-}
-
-unsafe extern "C" {
-    fn _MIR_init(alloc: *mut c_void, code_alloc: *mut c_void) -> *mut c_void;
-    fn MIR_finish(ctx: *mut c_void);
-    fn MIR_scan_string(ctx: *mut c_void, str: *const c_char);
-    fn MIR_load_module(ctx: *mut c_void, module: *mut c_void);
-    fn MIR_load_external(ctx: *mut c_void, name: *const c_char, addr: *mut c_void);
-    fn MIR_link(
-        ctx: *mut c_void,
-        set_interface: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
-        import_resolver: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
-    );
-    fn MIR_gen_init(ctx: *mut c_void);
-    fn MIR_gen(ctx: *mut c_void, func_item: *mut c_void) -> *mut c_void;
-    fn MIR_gen_finish(ctx: *mut c_void);
-    fn MIR_get_module_list(ctx: *mut c_void) -> *mut c_void;
-    fn MIR_set_gen_interface(ctx: *mut c_void, func_item: *mut c_void);
-    fn MIR_gen_set_optimize_level(ctx: *mut c_void, level: u32);
-}
-
 struct ThreadJitState {
     ctx: *mut c_void,
-    cache: HashMap<Vec<Instruction>, *const c_void>,
+    cache: FnvHashMap<Vec<Instruction>, *const c_void>,
 }
 
 impl Drop for ThreadJitState {
@@ -76,7 +48,7 @@ pub fn get_or_init_jit_ctx(_vm: &mut VM) -> *mut c_void {
                 register_helpers(ctx);
                 *borrow = Some(ThreadJitState {
                     ctx,
-                    cache: HashMap::new(),
+                    cache: FnvHashMap::default(),
                 });
             }
         }
@@ -117,7 +89,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -125,26 +97,31 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         func_name
     ));
 
-    mir.push_str("p_negate: proto i64, p:vm, p:dest, p:src\n");
-    mir.push_str("p_not: proto i64, p:dest, p:src\n");
-    mir.push_str("p_add: proto i64, p:vm, p:dest, p:b, p:c\n");
-    mir.push_str("p_sub: proto i64, p:vm, p:dest, p:b, p:c\n");
-    mir.push_str("p_mul: proto i64, p:vm, p:dest, p:b, p:c\n");
-    mir.push_str("p_div: proto i64, p:vm, p:dest, p:b, p:c\n");
-    mir.push_str("p_equal: proto i64, p:vm, p:dest, p:b, p:c\n");
-    mir.push_str("p_greater: proto i64, p:vm, p:dest, p:b, p:c\n");
-    mir.push_str("p_less: proto i64, p:vm, p:dest, p:b, p:c\n");
-    mir.push_str("p_def_global: proto i64, p:vm, p:name, p:val\n");
-    mir.push_str("p_get_global: proto i64, p:vm, p:dest, p:name\n");
-    mir.push_str("p_set_global: proto i64, p:vm, p:val, p:name\n");
-    mir.push_str("p_make_array: proto i64, p:vm, p:dest, p:start, i64:count\n");
-    mir.push_str("p_make_object: proto i64, p:vm, p:dest, p:start, i64:count\n");
-    mir.push_str("p_get_property: proto i64, p:vm, p:dest, p:obj, p:name\n");
-    mir.push_str("p_set_property: proto i64, p:vm, p:obj, p:val, p:name\n");
-    mir.push_str("p_get_index: proto i64, p:vm, p:dest, p:obj, p:idx\n");
-    mir.push_str("p_set_index: proto i64, p:vm, p:obj, p:idx, p:val\n");
+    mir.push_str("p_needs_gc: proto i64\n");
+    mir.push_str("p_negate: proto i64, p:vm, i64:src\n");
+    mir.push_str("p_not: proto i64, i64:src\n");
+    mir.push_str("p_add: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_sub: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_mul: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_div: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_equal: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_greater: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_less: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_def_global: proto i64, p:vm, i64:name, i64:val\n");
+    mir.push_str("p_get_global: proto i64, p:vm, i64:name\n");
+    mir.push_str("p_set_global: proto i64, p:vm, i64:val, i64:name\n");
+    mir.push_str("p_make_array: proto i64, p:vm, p:start, i64:count\n");
+    mir.push_str("p_make_object: proto i64, p:vm, p:start, i64:count\n");
+    mir.push_str("p_get_property: proto i64, p:vm, i64:obj, i64:name\n");
+    mir.push_str("p_set_property: proto i64, p:vm, i64:obj, i64:val, i64:name\n");
+    mir.push_str("p_get_index: proto i64, p:vm, i64:obj, i64:idx\n");
+    mir.push_str("p_set_index: proto i64, p:vm, i64:obj, i64:idx, i64:val\n");
+    mir.push_str("p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots\n");
+    mir.push_str("p_array_push: proto i64, i64:arr, i64:arg\n");
+    mir.push_str("p_array_pop: proto i64, i64:arr\n");
+    mir.push_str("p_has_error: proto i64, p:vm\n");
 
-    mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr\n");
+    mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter\n");
     mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr\n");
     mir.push_str("          local d:da, d:db, d:dres\n");
 
@@ -178,6 +155,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     }
 
     mir.push_str("          alloca cast_ptr, 192\n");
+    mir.push_str("          mov loop_counter, 0\n");
 
     for i in 0..num_regs {
         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
@@ -329,6 +307,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         let offset = (r % 24) * 8;
                         mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, r));
                         mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", r, offset));
+                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
                     }
                 }
             }
@@ -347,6 +326,1040 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         }
         mir.push_str(&format!("          jmp inst_{}\n", ip_target));
     }
+
+    let save_registers = |mir: &mut String, idx: usize, extra_regs: &[usize]| {
+        let mut saved = vec![false; num_regs];
+        for r in 0..num_regs {
+            if live_in[idx][r] {
+                saved[r] = true;
+                if types_at_inst[idx][r] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
+                } else {
+                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
+                }
+            }
+        }
+        for &r in extra_regs {
+            if r >= num_regs { continue; }
+            if saved[r] { continue; }
+            saved[r] = true;
+            if types_at_inst[idx][r] == RegType::Double {
+                mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
+            } else {
+                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
+            }
+        }
+    };
+
+
+    for (idx, instruction) in func.chunk.code.iter().enumerate() {
+        mir.push_str(&format!("inst_{}:\n", idx));
+
+        // Get types before this instruction and next instruction
+        let mut next_types = types_at_inst[idx].clone();
+        let ra = instruction.ra as usize;
+        let rb = instruction.rb as usize;
+        let rc = instruction.rc as usize;
+        match instruction.op {
+            OpCode::LoadConst => {
+                let val = func.chunk.constants[instruction.operand as usize];
+                if ra < num_regs {
+                    next_types[ra] = if val.is_number() { RegType::Double } else { RegType::Unknown };
+                }
+            }
+            OpCode::Move => {
+                if ra < num_regs && rb < num_regs {
+                    next_types[ra] = types_at_inst[idx][rb];
+                }
+            }
+            OpCode::Add => {
+                if ra < num_regs && rb < num_regs && rc < num_regs {
+                    next_types[ra] = if types_at_inst[idx][rb] == RegType::Double && types_at_inst[idx][rc] == RegType::Double {
+                        RegType::Double
+                    } else {
+                        RegType::Unknown
+                    };
+                }
+            }
+            OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Negate => {
+                if ra < num_regs {
+                    next_types[ra] = RegType::Double;
+                }
+            }
+            OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
+            OpCode::LoadNull | OpCode::LoadBool |
+            OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
+            OpCode::MakeArray | OpCode::MakeObject => {
+                if ra < num_regs {
+                    next_types[ra] = RegType::Unknown;
+                }
+            }
+            _ => {}
+        }
+
+        match instruction.op {
+            OpCode::LoadConst => {
+                let val = func.chunk.constants[instruction.operand as usize];
+                if val.is_number() {
+                    mir.push_str(&format!("          dmov d{}, d:{}(constants_ptr)\n", ra, instruction.operand * 8));
+                } else {
+                    mir.push_str(&format!("          mov tmp, i64:{}(constants_ptr)\n", instruction.operand * 8));
+                    mir.push_str(&format!("          mov r{}, tmp\n", ra));
+                }
+            }
+            OpCode::LoadNull => {
+                mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_NULL));
+            }
+            OpCode::LoadBool => {
+                let tag = if instruction.rb != 0 { Value::boolean(true).0 } else { Value::boolean(false).0 };
+                mir.push_str(&format!("          mov r{}, {}\n", ra, tag));
+            }
+            OpCode::Move => {
+                if types_at_inst[idx][rb] == RegType::Double {
+                    mir.push_str(&format!("          dmov d{}, d{}\n", ra, rb));
+                } else {
+                    mir.push_str(&format!("          mov r{}, r{}\n", ra, rb));
+                }
+            }
+            OpCode::Negate => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+
+                if rb_is_double {
+                    mir.push_str(&format!("          dneg d{}, d{}\n", ra, rb));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset1));
+                    }
+                } else {
+                    mir.push_str(&format!("          ubge fallback_neg_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                    mir.push_str(&format!("          dneg d{}, d{}\n", ra, rb));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset1));
+                    }
+                    mir.push_str(&format!("          jmp done_neg_{}\n", idx));
+
+                    // Fallback
+                    mir.push_str(&format!("fallback_neg_{}:\n", idx));
+                    mir.push_str(&format!("          call p_negate, er_jit_negate, r{}, vm, r{}\n", ra, rb));
+                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset2));
+                    }
+                    mir.push_str(&format!("done_neg_{}:\n", idx));
+                }
+            }
+            OpCode::Not => {
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
+                } else {
+                    mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
+                    mir.push_str(&format!("          beq done_not_{}, r{}, {}\n", idx, rb, TAG_TRUE));
+                    mir.push_str(&format!("          mov tmp1, {}\n", TAG_TRUE));
+                    mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_FALSE));
+                    mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_NULL));
+                    mir.push_str(&format!("          jmp done_not_{}\n", idx));
+                    mir.push_str(&format!("set_true_{}:\n", idx));
+                    mir.push_str(&format!("          mov r{}, tmp1\n", ra));
+                    mir.push_str(&format!("done_not_{}:\n", idx));
+                }
+            }
+            OpCode::Add => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          dadd d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if !rb_is_double {
+                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                    }
+                    if !rb_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          dadd d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("          jmp done_add_{}\n", idx));
+
+                    // Fallback
+                    mir.push_str(&format!("fallback_add_{}:\n", idx));
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_add, er_jit_add, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("done_add_{}:\n", idx));
+                }
+            }
+            OpCode::Sub => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          dsub d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if !rb_is_double {
+                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                    }
+                    if !rb_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          dsub d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("          jmp done_sub_{}\n", idx));
+
+                    // Fallback
+                    mir.push_str(&format!("fallback_sub_{}:\n", idx));
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_sub, er_jit_sub, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("done_sub_{}:\n", idx));
+                }
+            }
+            OpCode::Mul => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          dmul d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if !rb_is_double {
+                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                    }
+                    if !rb_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          dmul d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("          jmp done_mul_{}\n", idx));
+
+                    // Fallback
+                    mir.push_str(&format!("fallback_mul_{}:\n", idx));
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_mul, er_jit_mul, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("done_mul_{}:\n", idx));
+                }
+            }
+            OpCode::Div => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          ddiv d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if !rb_is_double {
+                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                    }
+                    if !rb_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if !rc_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          ddiv d{}, d{}, d{}\n", ra, rb, rc));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("          jmp done_div_{}\n", idx));
+
+                    // Fallback
+                    mir.push_str(&format!("fallback_div_{}:\n", idx));
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_div, er_jit_div, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
+                    mir.push_str(&format!("done_div_{}:\n", idx));
+                }
+            }
+            OpCode::Equal => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
+                } else {
+                    false
+                };
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+
+                if next_is_jmp_if_false {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    let target = (idx + 2 + next_inst.operand as usize) as usize;
+
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+
+                        mir.push_str(&format!("fallback_eq_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_equal, er_jit_equal, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+                    }
+                    // Common Trampoline Block
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
+                } else {
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          deq res_bool, d{}, d{}\n", rb, rc));
+                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
+                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
+                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          deq res_bool, d{}, d{}\n", rb, rc));
+                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
+                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
+                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
+                        mir.push_str(&format!("          jmp done_eq_{}\n", idx));
+
+                        mir.push_str(&format!("fallback_eq_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_equal, er_jit_equal, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("done_eq_{}:\n", idx));
+                    }
+                }
+            }
+            OpCode::Greater => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
+                } else {
+                    false
+                };
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+
+                if next_is_jmp_if_false {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    let target = (idx + 2 + next_inst.operand as usize) as usize;
+
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+
+                        mir.push_str(&format!("fallback_gt_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_greater, er_jit_greater, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+                    }
+                    // Common Trampoline Block
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
+                } else {
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dgt res_bool, d{}, d{}\n", rb, rc));
+                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
+                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
+                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dgt res_bool, d{}, d{}\n", rb, rc));
+                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
+                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
+                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
+                        mir.push_str(&format!("          jmp done_gt_{}\n", idx));
+
+                        mir.push_str(&format!("fallback_gt_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_greater, er_jit_greater, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("done_gt_{}:\n", idx));
+                    }
+                }
+            }
+            OpCode::Less => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
+                } else {
+                    false
+                };
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+
+                if next_is_jmp_if_false {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    let target = (idx + 2 + next_inst.operand as usize) as usize;
+
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+
+                        mir.push_str(&format!("fallback_lt_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_less, er_jit_less, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 2);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
+                    }
+                    // Common Trampoline Block
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
+                } else {
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dlt res_bool, d{}, d{}\n", rb, rc));
+                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
+                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
+                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dlt res_bool, d{}, d{}\n", rb, rc));
+                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
+                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
+                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
+                        mir.push_str(&format!("          jmp done_lt_{}\n", idx));
+
+                        mir.push_str(&format!("fallback_lt_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_less, er_jit_less, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("done_lt_{}:\n", idx));
+                    }
+                }
+            }
+            OpCode::DefineGlobal => {
+                let c_idx = instruction.operand;
+                if ra < num_regs && types_at_inst[idx][ra] == RegType::Double {
+                    let offset = (ra % 24) * 8;
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
+                }
+                mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
+                mir.push_str(&format!("          call p_def_global, er_jit_define_global, status, vm, tmp1, r{}\n", ra));
+            }
+            OpCode::GetGlobal => {
+                let c_idx = instruction.operand;
+                mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
+                mir.push_str(&format!("          call p_get_global, er_jit_get_global, r{}, vm, tmp1\n", ra));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_types[ra] == RegType::Double {
+                    let offset = (ra % 24) * 8;
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
+                }
+            }
+            OpCode::SetGlobal => {
+                let c_idx = instruction.operand;
+                if ra < num_regs && types_at_inst[idx][ra] == RegType::Double {
+                    let offset = (ra % 24) * 8;
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
+                }
+                mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
+                mir.push_str(&format!("          call p_set_global, er_jit_set_global, status, vm, r{}, tmp1\n", ra));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+            }
+            OpCode::Jump => {
+                let target = (idx as i32 + 1 + instruction.operand as i32) as usize;
+                sync_edge(&mut mir, idx, target);
+                mir.push_str(&format!("          jmp inst_{}\n", target));
+            }
+            OpCode::Loop => {
+                let target = (idx as i32 + 1 - instruction.operand as i32) as usize;
+                mir.push_str("          add loop_counter, loop_counter, 1\n");
+                mir.push_str("          and tmp, loop_counter, 255\n");
+                mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
+                mir.push_str("          call p_needs_gc, er_jit_needs_gc, status\n");
+                mir.push_str(&format!("          beq no_yield_gc_{}, status, 0\n", idx));
+                save_registers(&mut mir, idx, &[]);
+                mir.push_str(&format!("          mov i64:(ip_out), {}\n", target));
+                mir.push_str("          ret 2\n");
+                mir.push_str(&format!("no_yield_gc_{}:\n", idx));
+                sync_edge(&mut mir, idx, target);
+                mir.push_str(&format!("          jmp inst_{}\n", target));
+            }
+            OpCode::JumpIfFalse => {
+                let prev_was_optimized_cmp = if idx > 0 {
+                    let prev_inst = &func.chunk.code[idx - 1];
+                    matches!(prev_inst.op, OpCode::Less | OpCode::Greater | OpCode::Equal) && instruction.ra == prev_inst.ra
+                } else {
+                    false
+                };
+                if !prev_was_optimized_cmp {
+                    let target = (idx as i32 + 1 + instruction.operand as i32) as usize;
+                    if types_at_inst[idx][ra] != RegType::Double {
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        // Fall-through path
+                        sync_edge(&mut mir, idx, idx + 1);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 1));
+                        // Branch taken path
+                        mir.push_str(&format!("take_branch_{}:\n", idx));
+                        sync_edge(&mut mir, idx, target);
+                        mir.push_str(&format!("          jmp inst_{}\n", target));
+                    } else {
+                        // Always fall through, but we still need to sync registers for the fall-through path!
+                        sync_edge(&mut mir, idx, idx + 1);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 1));
+                    }
+                }
+            }
+            OpCode::Call => {
+                let arg_count = instruction.operand as usize;
+                let mut extra = vec![rb];
+                for i in 0..arg_count {
+                    extra.push(rb + 1 + i);
+                }
+
+                if arg_count == 1 {
+                    // Check if callee is array push method (TAG_METHOD_PUSH = 0xfff9000000000000)
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                    mir.push_str(&format!("          bne normal_call_{}, tmp, 0xfff9000000000000\n", idx));
+
+                    // Fast path
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
+                    mir.push_str("          or tmp, tmp, 0xfff5000000000000\n"); // Convert TAG_METHOD_PUSH to TAG_ARRAY
+
+                    let arg_reg = rb + 1;
+                    if arg_reg < num_regs && types_at_inst[idx][arg_reg] == RegType::Double {
+                        mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", arg_reg));
+                        mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", arg_reg));
+                    }
+
+                    mir.push_str(&format!("          call p_array_push, er_jit_array_push, tmp2, tmp, r{}\n", rb + 1));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str("          mov i64:0(cast_ptr), tmp2\n");
+                        mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                    } else {
+                        mir.push_str(&format!("          mov r{}, tmp2\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_call_{}\n", idx));
+
+                    mir.push_str(&format!("normal_call_{}:\n", idx));
+                    save_registers(&mut mir, idx, &extra);
+                } else if arg_count == 0 {
+                    // Check if callee is array pop method (TAG_METHOD_POP = 0xfffa000000000000)
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                    mir.push_str(&format!("          bne normal_call_{}, tmp, 0xfffa000000000000\n", idx));
+
+                    // Fast path
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
+                    mir.push_str("          or tmp, tmp, 0xfff5000000000000\n"); // Convert TAG_METHOD_POP to TAG_ARRAY
+
+                    mir.push_str(&format!("          call p_array_pop, er_jit_array_pop, tmp2, tmp\n"));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str("          mov i64:0(cast_ptr), tmp2\n");
+                        mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                    } else {
+                        mir.push_str(&format!("          mov r{}, tmp2\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_call_{}\n", idx));
+
+                    mir.push_str(&format!("normal_call_{}:\n", idx));
+                    save_registers(&mut mir, idx, &extra);
+                } else {
+                    save_registers(&mut mir, idx, &extra);
+                }
+
+                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
+                mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots\n", rb, rb, arg_count));
+                mir.push_str(&format!("          beq call_vm_label_{}, status, -1\n", idx));
+                mir.push_str(&format!("          blt err_label, status, 0\n"));
+                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
+                if next_types[ra] == RegType::Double {
+                    mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
+                }
+                mir.push_str(&format!("          jmp done_call_{}\n", idx));
+                mir.push_str(&format!("call_vm_label_{}:\n", idx));
+                mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx + 1));
+                mir.push_str(&format!("          mov i64:(dest_reg_out), {}\n", ra));
+                mir.push_str(&format!("          mov i64:(func_reg_out), {}\n", rb));
+                mir.push_str(&format!("          mov i64:(arg_count_out), {}\n", arg_count));
+                mir.push_str("          ret 0\n");
+                mir.push_str(&format!("done_call_{}:\n", idx));
+            }
+            OpCode::MakeArray => {
+                let count = instruction.operand as usize;
+                let mut extra = Vec::new();
+                for i in 0..count {
+                    extra.push(rb + i);
+                }
+                for &r in &extra {
+                    if r < num_regs {
+                        if types_at_inst[idx][r] == RegType::Double {
+                            mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
+                        } else {
+                            mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
+                        }
+                    }
+                }
+                mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", rb * 8));
+                mir.push_str(&format!("          call p_make_array, er_jit_make_array, r{}, vm, start_ptr, {}\n", ra, count));
+            }
+            OpCode::MakeObject => {
+                let count = instruction.operand as usize;
+                let mut extra = Vec::new();
+                for i in 0..(count * 2) {
+                    extra.push(rb + i);
+                }
+                for &r in &extra {
+                    if r < num_regs {
+                        if types_at_inst[idx][r] == RegType::Double {
+                            mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
+                        } else {
+                            mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
+                        }
+                    }
+                }
+                mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", rb * 8));
+                mir.push_str(&format!("          call p_make_object, er_jit_make_object, r{}, vm, start_ptr, {}\n", ra, count));
+            }
+            OpCode::GetProperty => {
+                let c_idx = instruction.operand;
+                let name_val = func.chunk.constants[c_idx as usize];
+                let mut is_push = false;
+                let mut is_pop = false;
+                if name_val.is_string() {
+                    let s = match unsafe { &(*name_val.as_gc_ptr()).data } {
+                        GcData::String(s) => s.as_ref(),
+                        _ => unreachable!(),
+                    };
+                    if s == "push" {
+                        is_push = true;
+                    } else if s == "pop" {
+                        is_pop = true;
+                    }
+                }
+
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", rb));
+                    mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", rb));
+                }
+
+                if is_push || is_pop {
+                    let method_tag = if is_push { "0xfff9000000000000" } else { "0xfffa000000000000" };
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                    mir.push_str(&format!("          bne fallback_get_prop_{}, tmp, 0xfff5000000000000\n", idx));
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
+                    mir.push_str(&format!("          or r{}, tmp, {}\n", ra, method_tag));
+                    mir.push_str(&format!("          jmp done_get_prop_{}\n", idx));
+                    mir.push_str(&format!("fallback_get_prop_{}:\n", idx));
+                    mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
+                    mir.push_str(&format!("          call p_get_property, er_jit_get_property, r{}, vm, r{}, tmp1\n", ra, rb));
+                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    mir.push_str(&format!("done_get_prop_{}:\n", idx));
+                } else {
+                    mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
+                    mir.push_str(&format!("          call p_get_property, er_jit_get_property, r{}, vm, r{}, tmp1\n", ra, rb));
+                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                }
+            }
+            OpCode::SetProperty => {
+                let c_idx = instruction.operand;
+                if ra < num_regs && types_at_inst[idx][ra] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", ra));
+                    mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", ra));
+                }
+                if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:8(cast_ptr), d{}\n", rb));
+                    mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rb));
+                }
+                mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
+                mir.push_str(&format!("          call p_set_property, er_jit_set_property, status, vm, r{}, r{}, tmp1\n", ra, rb));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+            }
+            OpCode::GetIndex => {
+                if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", rb));
+                    mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", rb));
+                }
+                if rc < num_regs && types_at_inst[idx][rc] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:8(cast_ptr), d{}\n", rc));
+                    mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rc));
+                }
+                mir.push_str(&format!("          call p_get_index, er_jit_get_index, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+            }
+            OpCode::SetIndex => {
+                if ra < num_regs && types_at_inst[idx][ra] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", ra));
+                    mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", ra));
+                }
+                if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:8(cast_ptr), d{}\n", rb));
+                    mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rb));
+                }
+                if rc < num_regs && types_at_inst[idx][rc] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:16(cast_ptr), d{}\n", rc));
+                    mir.push_str(&format!("          mov r{}, i64:16(cast_ptr)\n", rc));
+                }
+                mir.push_str(&format!("          call p_set_index, er_jit_set_index, status, vm, r{}, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+            }
+            OpCode::Return => {
+                if types_at_inst[idx][ra] == RegType::Double {
+                    let offset = (ra % 24) * 8;
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
+                    mir.push_str(&format!("          mov tmp, i64:{}(cast_ptr)\n", offset));
+                    mir.push_str("          mov i64:(ret_val_out), tmp\n");
+                } else {
+                    mir.push_str(&format!("          mov i64:(ret_val_out), r{}\n", ra));
+                }
+                mir.push_str("          ret 1\n");
+            }
+        }
+    }
+
+    mir.push_str("          ret 1\n");
+    mir.push_str("err_label:\n");
+    mir.push_str("          ret -1\n");
+    mir.push_str("          endfunc\n");
+    mir.push_str("          endmodule\n");
+
+    let _ = std::fs::write("/home/vishnus/Downloads/eronom/temp_compiled.mir", &mir);
+    let c_mir = CString::new(mir).unwrap();
+
+    unsafe {
+        MIR_scan_string(ctx, c_mir.as_ptr());
+        let list_ptr = MIR_get_module_list(ctx) as *mut MirDlist;
+        let module = (*list_ptr).tail as *mut MirModule;
+        MIR_load_module(ctx, module as *mut c_void);
+        MIR_link(ctx, Some(MIR_set_gen_interface), None);
+        
+        // Find the function item (type 0) dynamically
+        let mut func_item = std::ptr::null_mut();
+        let mut curr = (*module).head_item as *mut *mut c_void;
+        while !curr.is_null() {
+            let item_type = *(curr.offset(4) as *const u32);
+            if item_type == 0 {
+                func_item = curr as *mut c_void;
+                break;
+            }
+            let next = *(curr.offset(3) as *const *mut c_void);
+            curr = next as *mut *mut c_void;
+        }
+
+        assert!(!func_item.is_null(), "Could not find MIR_func_item in JIT module");
+        let native_ptr = MIR_gen(ctx, func_item);
+        
+        JIT_STATE.with(|state| {
+            if let Some(s) = &mut *state.borrow_mut() {
+                s.cache.insert(instructions.clone(), native_ptr);
+            }
+        });
+
+        func.jit_ptr.set(Some(native_ptr));
+        native_ptr
+    }
+}
 
 fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Vec<Vec<bool>> {
     let code = &func.chunk.code;
@@ -591,1518 +1604,38 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
     live_in
 }
 
-    for (idx, instruction) in func.chunk.code.iter().enumerate() {
-        mir.push_str(&format!("inst_{}:\n", idx));
-
-        // Get types before this instruction and next instruction
-        let mut next_types = types_at_inst[idx].clone();
-        let ra = instruction.ra as usize;
-        let rb = instruction.rb as usize;
-        let rc = instruction.rc as usize;
-        match instruction.op {
-            OpCode::LoadConst => {
-                let val = func.chunk.constants[instruction.operand as usize];
-                if ra < num_regs {
-                    next_types[ra] = if val.is_number() { RegType::Double } else { RegType::Unknown };
-                }
-            }
-            OpCode::Move => {
-                if ra < num_regs && rb < num_regs {
-                    next_types[ra] = types_at_inst[idx][rb];
-                }
-            }
-            OpCode::Add => {
-                if ra < num_regs && rb < num_regs && rc < num_regs {
-                    next_types[ra] = if types_at_inst[idx][rb] == RegType::Double && types_at_inst[idx][rc] == RegType::Double {
-                        RegType::Double
-                    } else {
-                        RegType::Unknown
-                    };
-                }
-            }
-            OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Negate => {
-                if ra < num_regs {
-                    next_types[ra] = RegType::Double;
-                }
-            }
-            OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
-            OpCode::LoadNull | OpCode::LoadBool |
-            OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
-            OpCode::MakeArray | OpCode::MakeObject => {
-                if ra < num_regs {
-                    next_types[ra] = RegType::Unknown;
-                }
-            }
-            _ => {}
-        }
-
-        match instruction.op {
-            OpCode::LoadConst => {
-                let val = func.chunk.constants[instruction.operand as usize];
-                if val.is_number() {
-                    mir.push_str(&format!("          dmov d{}, d:{}(constants_ptr)\n", ra, instruction.operand * 8));
-                } else {
-                    mir.push_str(&format!("          mov tmp, i64:{}(constants_ptr)\n", instruction.operand * 8));
-                    mir.push_str(&format!("          mov r{}, tmp\n", ra));
-                }
-            }
-            OpCode::LoadNull => {
-                mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_NULL));
-            }
-            OpCode::LoadBool => {
-                let tag = if instruction.rb != 0 { Value::boolean(true).0 } else { Value::boolean(false).0 };
-                mir.push_str(&format!("          mov r{}, {}\n", ra, tag));
-            }
-            OpCode::Move => {
-                if types_at_inst[idx][rb] == RegType::Double {
-                    mir.push_str(&format!("          dmov d{}, d{}\n", ra, rb));
-                } else {
-                    mir.push_str(&format!("          mov r{}, r{}\n", ra, rb));
-                }
-            }
-            OpCode::Negate => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let next_ra_is_double = next_types[ra] == RegType::Double;
-
-                if rb_is_double {
-                    mir.push_str(&format!("          dneg d{}, d{}\n", ra, rb));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset1));
-                    }
-                } else {
-                    mir.push_str(&format!("          ubge fallback_neg_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                    mir.push_str(&format!("          dneg d{}, d{}\n", ra, rb));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset1));
-                    }
-                    mir.push_str(&format!("          jmp done_neg_{}\n", idx));
-
-                    // Fallback
-                    mir.push_str(&format!("fallback_neg_{}:\n", idx));
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                    mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                    mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                    mir.push_str("          call p_negate, er_jit_negate, status, vm, ra_ptr, rb_ptr\n");
-                    mir.push_str("          blt err_label, status, 0\n");
-                    mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                    if next_ra_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset2));
-                    }
-                    mir.push_str(&format!("done_neg_{}:\n", idx));
-                }
-            }
-            OpCode::Not => {
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                if rb_is_double {
-                    mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
-                } else {
-                    mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
-                    mir.push_str(&format!("          beq done_not_{}, r{}, {}\n", idx, rb, TAG_TRUE));
-                    mir.push_str(&format!("          mov tmp1, {}\n", TAG_TRUE));
-                    mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_FALSE));
-                    mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_NULL));
-                    mir.push_str(&format!("          jmp done_not_{}\n", idx));
-                    mir.push_str(&format!("set_true_{}:\n", idx));
-                    mir.push_str(&format!("          mov r{}, tmp1\n", ra));
-                    mir.push_str(&format!("done_not_{}:\n", idx));
-                }
-            }
-            OpCode::Add => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let offset3 = ((idx * 3 + 2) % 24) * 8;
-
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
-                let next_ra_is_double = next_types[ra] == RegType::Double;
-
-                if rb_is_double && rc_is_double {
-                    mir.push_str(&format!("          dadd d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                } else {
-                    if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                    }
-                    if !rb_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          dadd d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("          jmp done_add_{}\n", idx));
-
-                    // Fallback
-                    mir.push_str(&format!("fallback_add_{}:\n", idx));
-                    if rb_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if rc_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                    mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                    mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                    mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                    mir.push_str("          call p_add, er_jit_add, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                    mir.push_str("          blt err_label, status, 0\n");
-                    mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                    if next_ra_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("done_add_{}:\n", idx));
-                }
-            }
-            OpCode::Sub => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let offset3 = ((idx * 3 + 2) % 24) * 8;
-
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
-                let next_ra_is_double = next_types[ra] == RegType::Double;
-
-                if rb_is_double && rc_is_double {
-                    mir.push_str(&format!("          dsub d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                } else {
-                    if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                    }
-                    if !rb_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          dsub d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("          jmp done_sub_{}\n", idx));
-
-                    // Fallback
-                    mir.push_str(&format!("fallback_sub_{}:\n", idx));
-                    if rb_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if rc_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                    mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                    mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                    mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                    mir.push_str("          call p_sub, er_jit_sub, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                    mir.push_str("          blt err_label, status, 0\n");
-                    mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                    if next_ra_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("done_sub_{}:\n", idx));
-                }
-            }
-            OpCode::Mul => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let offset3 = ((idx * 3 + 2) % 24) * 8;
-
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
-                let next_ra_is_double = next_types[ra] == RegType::Double;
-
-                if rb_is_double && rc_is_double {
-                    mir.push_str(&format!("          dmul d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                } else {
-                    if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                    }
-                    if !rb_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          dmul d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("          jmp done_mul_{}\n", idx));
-
-                    // Fallback
-                    mir.push_str(&format!("fallback_mul_{}:\n", idx));
-                    if rb_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if rc_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                    mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                    mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                    mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                    mir.push_str("          call p_mul, er_jit_mul, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                    mir.push_str("          blt err_label, status, 0\n");
-                    mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                    if next_ra_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("done_mul_{}:\n", idx));
-                }
-            }
-            OpCode::Div => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let offset3 = ((idx * 3 + 2) % 24) * 8;
-
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
-                let next_ra_is_double = next_types[ra] == RegType::Double;
-
-                if rb_is_double && rc_is_double {
-                    mir.push_str(&format!("          ddiv d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                } else {
-                    if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                    }
-                    if !rb_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if !rc_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          ddiv d{}, d{}, d{}\n", ra, rb, rc));
-                    if !next_ra_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("          jmp done_div_{}\n", idx));
-
-                    // Fallback
-                    mir.push_str(&format!("fallback_div_{}:\n", idx));
-                    if rb_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                    }
-                    if rc_is_double {
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                    }
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                    mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                    mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                    mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                    mir.push_str("          call p_div, er_jit_div, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                    mir.push_str("          blt err_label, status, 0\n");
-                    mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                    if next_ra_is_double {
-                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
-                    }
-                    mir.push_str(&format!("done_div_{}:\n", idx));
-                }
-            }
-            OpCode::Equal => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
-                    let next_inst = &func.chunk.code[idx + 1];
-                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
-                } else {
-                    false
-                };
-
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
-
-                if next_is_jmp_if_false {
-                    let next_inst = &func.chunk.code[idx + 1];
-                    let target = (idx + 2 + next_inst.operand as usize) as usize;
-
-                    if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-                    } else {
-                        if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                        }
-                        if !rb_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-
-                        mir.push_str(&format!("fallback_eq_{}:\n", idx));
-                        if rb_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if rc_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                        mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                        mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                        mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                        mir.push_str("          call p_equal, er_jit_equal, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                        mir.push_str("          blt err_label, status, 0\n");
-                        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-                    }
-                    // Common Trampoline Block
-                    mir.push_str(&format!("take_branch_{}:\n", idx));
-                    sync_edge(&mut mir, idx, target);
-                    mir.push_str(&format!("          jmp inst_{}\n", target));
-                } else {
-                    if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          deq res_bool, d{}, d{}\n", rb, rc));
-                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
-                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
-                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
-                    } else {
-                        if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                        }
-                        if !rb_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          deq res_bool, d{}, d{}\n", rb, rc));
-                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
-                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
-                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
-                        mir.push_str(&format!("          jmp done_eq_{}\n", idx));
-
-                        mir.push_str(&format!("fallback_eq_{}:\n", idx));
-                        if rb_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if rc_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                        mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                        mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                        mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                        mir.push_str("          call p_equal, er_jit_equal, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                        mir.push_str("          blt err_label, status, 0\n");
-                        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("done_eq_{}:\n", idx));
-                    }
-                }
-            }
-            OpCode::Greater => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
-                    let next_inst = &func.chunk.code[idx + 1];
-                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
-                } else {
-                    false
-                };
-
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
-
-                if next_is_jmp_if_false {
-                    let next_inst = &func.chunk.code[idx + 1];
-                    let target = (idx + 2 + next_inst.operand as usize) as usize;
-
-                    if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-                    } else {
-                        if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                        }
-                        if !rb_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-
-                        mir.push_str(&format!("fallback_gt_{}:\n", idx));
-                        if rb_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if rc_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                        mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                        mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                        mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                        mir.push_str("          call p_greater, er_jit_greater, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                        mir.push_str("          blt err_label, status, 0\n");
-                        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-                    }
-                    // Common Trampoline Block
-                    mir.push_str(&format!("take_branch_{}:\n", idx));
-                    sync_edge(&mut mir, idx, target);
-                    mir.push_str(&format!("          jmp inst_{}\n", target));
-                } else {
-                    if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dgt res_bool, d{}, d{}\n", rb, rc));
-                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
-                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
-                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
-                    } else {
-                        if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                        }
-                        if !rb_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          dgt res_bool, d{}, d{}\n", rb, rc));
-                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
-                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
-                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
-                        mir.push_str(&format!("          jmp done_gt_{}\n", idx));
-
-                        mir.push_str(&format!("fallback_gt_{}:\n", idx));
-                        if rb_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if rc_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                        mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                        mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                        mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                        mir.push_str("          call p_greater, er_jit_greater, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                        mir.push_str("          blt err_label, status, 0\n");
-                        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("done_gt_{}:\n", idx));
-                    }
-                }
-            }
-            OpCode::Less => {
-                let offset1 = ((idx * 3) % 24) * 8;
-                let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
-                    let next_inst = &func.chunk.code[idx + 1];
-                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
-                } else {
-                    false
-                };
-
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
-
-                if next_is_jmp_if_false {
-                    let next_inst = &func.chunk.code[idx + 1];
-                    let target = (idx + 2 + next_inst.operand as usize) as usize;
-
-                    if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-                    } else {
-                        if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                        }
-                        if !rb_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-
-                        mir.push_str(&format!("fallback_lt_{}:\n", idx));
-                        if rb_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if rc_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                        mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                        mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                        mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                        mir.push_str("          call p_less, er_jit_less, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                        mir.push_str("          blt err_label, status, 0\n");
-                        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 2);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
-                    }
-                    // Common Trampoline Block
-                    mir.push_str(&format!("take_branch_{}:\n", idx));
-                    sync_edge(&mut mir, idx, target);
-                    mir.push_str(&format!("          jmp inst_{}\n", target));
-                } else {
-                    if rb_is_double && rc_is_double {
-                        mir.push_str(&format!("          dlt res_bool, d{}, d{}\n", rb, rc));
-                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
-                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
-                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
-                    } else {
-                        if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rb));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rc));
-                        }
-                        if !rb_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if !rc_is_double {
-                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
-                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          dlt res_bool, d{}, d{}\n", rb, rc));
-                        mir.push_str("          mul res_val, res_bool, 0x0001000000000000\n");
-                        mir.push_str("          add res_val, res_val, 0xfff2000000000000\n");
-                        mir.push_str(&format!("          mov r{}, res_val\n", ra));
-                        mir.push_str(&format!("          jmp done_lt_{}\n", idx));
-
-                        mir.push_str(&format!("fallback_lt_{}:\n", idx));
-                        if rb_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                        }
-                        if rc_is_double {
-                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                        }
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                        mir.push_str(&format!("          add ra_ptr, frame_slots, {}\n", ra * 8));
-                        mir.push_str(&format!("          add rb_ptr, frame_slots, {}\n", rb * 8));
-                        mir.push_str(&format!("          add rc_ptr, frame_slots, {}\n", rc * 8));
-                        mir.push_str("          call p_less, er_jit_less, status, vm, ra_ptr, rb_ptr, rc_ptr\n");
-                        mir.push_str("          blt err_label, status, 0\n");
-                        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                        mir.push_str(&format!("done_lt_{}:\n", idx));
-                    }
-                }
-            }
-            OpCode::DefineGlobal => {
-                let c_idx = instruction.operand;
-                if types_at_inst[idx][ra] == RegType::Double {
-                    let offset = (ra % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
-                }
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", ra * 8, ra));
-                mir.push_str(&format!("          add name_ptr, constants_ptr, {}\n", c_idx * 8));
-                mir.push_str(&format!("          add val_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str("          call p_def_global, er_jit_define_global, status, vm, name_ptr, val_ptr\n");
-            }
-            OpCode::GetGlobal => {
-                let c_idx = instruction.operand;
-                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add name_ptr, constants_ptr, {}\n", c_idx * 8));
-                mir.push_str("          call p_get_global, er_jit_get_global, status, vm, dest_ptr, name_ptr\n");
-                mir.push_str("          blt err_label, status, 0\n");
-                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-            }
-            OpCode::SetGlobal => {
-                let c_idx = instruction.operand;
-                if types_at_inst[idx][ra] == RegType::Double {
-                    let offset = (ra % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
-                }
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", ra * 8, ra));
-                mir.push_str(&format!("          add val_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add name_ptr, constants_ptr, {}\n", c_idx * 8));
-                mir.push_str("          call p_set_global, er_jit_set_global, status, vm, val_ptr, name_ptr\n");
-                mir.push_str("          blt err_label, status, 0\n");
-            }
-            OpCode::Jump => {
-                let target = (idx as i32 + 1 + instruction.operand as i32) as usize;
-                sync_edge(&mut mir, idx, target);
-                mir.push_str(&format!("          jmp inst_{}\n", target));
-            }
-            OpCode::Loop => {
-                let target = (idx as i32 + 1 - instruction.operand as i32) as usize;
-                sync_edge(&mut mir, idx, target);
-                mir.push_str(&format!("          jmp inst_{}\n", target));
-            }
-            OpCode::JumpIfFalse => {
-                let prev_was_optimized_cmp = if idx > 0 {
-                    let prev_inst = &func.chunk.code[idx - 1];
-                    matches!(prev_inst.op, OpCode::Less | OpCode::Greater | OpCode::Equal) && instruction.ra == prev_inst.ra
-                } else {
-                    false
-                };
-                if !prev_was_optimized_cmp {
-                    let target = (idx as i32 + 1 + instruction.operand as i32) as usize;
-                    if types_at_inst[idx][ra] != RegType::Double {
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
-                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
-                        // Fall-through path
-                        sync_edge(&mut mir, idx, idx + 1);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 1));
-                        // Branch taken path
-                        mir.push_str(&format!("take_branch_{}:\n", idx));
-                        sync_edge(&mut mir, idx, target);
-                        mir.push_str(&format!("          jmp inst_{}\n", target));
-                    } else {
-                        // Always fall through, but we still need to sync registers for the fall-through path!
-                        sync_edge(&mut mir, idx, idx + 1);
-                        mir.push_str(&format!("          jmp inst_{}\n", idx + 1));
-                    }
-                }
-            }
-            OpCode::Call => {
-                let arg_count = instruction.operand;
-                for i in 0..num_regs {
-                    if types_at_inst[idx][i] == RegType::Double {
-                        let offset = (i % 24) * 8;
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, i));
-                        mir.push_str(&format!("          mov tmp, i64:{}(cast_ptr)\n", offset));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), tmp\n", i * 8));
-                    } else {
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", i * 8, i));
-                    }
-                }
-                mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx + 1));
-                mir.push_str(&format!("          mov i64:(dest_reg_out), {}\n", ra));
-                mir.push_str(&format!("          mov i64:(func_reg_out), {}\n", rb));
-                mir.push_str(&format!("          mov i64:(arg_count_out), {}\n", arg_count));
-                mir.push_str("          ret 0\n");
-            }
-            OpCode::MakeArray => {
-                let count = instruction.operand;
-                for i in 0..num_regs {
-                    if types_at_inst[idx][i] == RegType::Double {
-                        let offset = (i % 24) * 8;
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, i));
-                        mir.push_str(&format!("          mov tmp, i64:{}(cast_ptr)\n", offset));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), tmp\n", i * 8));
-                    } else {
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", i * 8, i));
-                    }
-                }
-                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", rb * 8));
-                mir.push_str(&format!("          call p_make_array, er_jit_make_array, status, vm, dest_ptr, start_ptr, {}\n", count));
-                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-            }
-            OpCode::MakeObject => {
-                let count = instruction.operand;
-                for i in 0..num_regs {
-                    if types_at_inst[idx][i] == RegType::Double {
-                        let offset = (i % 24) * 8;
-                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, i));
-                        mir.push_str(&format!("          mov tmp, i64:{}(cast_ptr)\n", offset));
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), tmp\n", i * 8));
-                    } else {
-                        mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", i * 8, i));
-                    }
-                }
-                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", rb * 8));
-                mir.push_str(&format!("          call p_make_object, er_jit_make_object, status, vm, dest_ptr, start_ptr, {}\n", count));
-                mir.push_str("          blt err_label, status, 0\n");
-                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-            }
-            OpCode::GetProperty => {
-                let c_idx = instruction.operand;
-                if types_at_inst[idx][rb] == RegType::Double {
-                    let offset = (rb % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset));
-                }
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add obj_ptr, frame_slots, {}\n", rb * 8));
-                mir.push_str(&format!("          add name_ptr, constants_ptr, {}\n", c_idx * 8));
-                mir.push_str("          call p_get_property, er_jit_get_property, status, vm, dest_ptr, obj_ptr, name_ptr\n");
-                mir.push_str("          blt err_label, status, 0\n");
-                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-            }
-            OpCode::SetProperty => {
-                let c_idx = instruction.operand;
-                if types_at_inst[idx][ra] == RegType::Double {
-                    let offset = (ra % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
-                }
-                if types_at_inst[idx][rb] == RegType::Double {
-                    let offset = (rb % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset));
-                }
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", ra * 8, ra));
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                mir.push_str(&format!("          add obj_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add val_ptr, frame_slots, {}\n", rb * 8));
-                mir.push_str(&format!("          add name_ptr, constants_ptr, {}\n", c_idx * 8));
-                mir.push_str("          call p_set_property, er_jit_set_property, status, vm, obj_ptr, val_ptr, name_ptr\n");
-                mir.push_str("          blt err_label, status, 0\n");
-            }
-            OpCode::GetIndex => {
-                if types_at_inst[idx][rb] == RegType::Double {
-                    let offset = (rb % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset));
-                }
-                if types_at_inst[idx][rc] == RegType::Double {
-                    let offset = (rc % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rc));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset));
-                }
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add obj_ptr, frame_slots, {}\n", rb * 8));
-                mir.push_str(&format!("          add idx_ptr, frame_slots, {}\n", rc * 8));
-                mir.push_str("          call p_get_index, er_jit_get_index, status, vm, dest_ptr, obj_ptr, idx_ptr\n");
-                mir.push_str("          blt err_label, status, 0\n");
-                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-            }
-            OpCode::SetIndex => {
-                if types_at_inst[idx][ra] == RegType::Double {
-                    let offset = (ra % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
-                }
-                if types_at_inst[idx][rb] == RegType::Double {
-                    let offset = (rb % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset));
-                }
-                if types_at_inst[idx][rc] == RegType::Double {
-                    let offset = (rc % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rc));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset));
-                }
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", ra * 8, ra));
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rb * 8, rb));
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", rc * 8, rc));
-                mir.push_str(&format!("          add obj_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          add idx_ptr, frame_slots, {}\n", rb * 8));
-                mir.push_str(&format!("          add val_ptr, frame_slots, {}\n", rc * 8));
-                mir.push_str("          call p_set_index, er_jit_set_index, status, vm, obj_ptr, idx_ptr, val_ptr\n");
-                mir.push_str("          blt err_label, status, 0\n");
-            }
-            OpCode::Return => {
-                if types_at_inst[idx][ra] == RegType::Double {
-                    let offset = (ra % 24) * 8;
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
-                    mir.push_str(&format!("          mov tmp, i64:{}(cast_ptr)\n", offset));
-                    mir.push_str("          mov i64:(ret_val_out), tmp\n");
-                } else {
-                    mir.push_str(&format!("          mov i64:(ret_val_out), r{}\n", ra));
-                }
-                mir.push_str("          ret 1\n");
-            }
-        }
-    }
-
-    mir.push_str("          ret 1\n");
-    mir.push_str("err_label:\n");
-    mir.push_str("          ret -1\n");
-    mir.push_str("          endfunc\n");
-    mir.push_str("          endmodule\n");
-
-    let _ = std::fs::write("/home/vishnus/Downloads/eronom/temp_compiled.mir", &mir);
-    let c_mir = CString::new(mir).unwrap();
-    unsafe {
-        MIR_scan_string(ctx, c_mir.as_ptr());
-        let list_ptr = MIR_get_module_list(ctx) as *mut MirDlist;
-        let module = (*list_ptr).tail as *mut MirModule;
-        MIR_load_module(ctx, module as *mut c_void);
-        MIR_link(ctx, Some(MIR_set_gen_interface), None);
-        
-        // Find the function item (type 0) dynamically
-        let mut func_item = std::ptr::null_mut();
-        let mut curr = (*module).head_item as *mut *mut c_void;
-        while !curr.is_null() {
-            let item_type = *(curr.offset(4) as *const u32);
-            if item_type == 0 {
-                func_item = curr as *mut c_void;
-                break;
-            }
-            let next = *(curr.offset(3) as *const *mut c_void);
-            curr = next as *mut *mut c_void;
-        }
-
-        assert!(!func_item.is_null(), "Could not find MIR_func_item in JIT module");
-        let native_ptr = MIR_gen(ctx, func_item);
-        
-        JIT_STATE.with(|state| {
-            if let Some(s) = &mut *state.borrow_mut() {
-                s.cache.insert(instructions.clone(), native_ptr);
-            }
-        });
-
-        func.jit_ptr.set(Some(native_ptr));
-        native_ptr
-    }
-}
-
-// Clean up MIR context when VM is dropped
-pub fn cleanup_jit(mir_ctx: *mut c_void) {
-    unsafe {
-        MIR_gen_finish(mir_ctx);
-        MIR_finish(mir_ctx);
-    }
-}
-
 // Register FFI Helper Functions in the MIR JIT compiler
 unsafe fn register_helpers(ctx: *mut c_void) {
     let helpers: &[(&str, *mut c_void)] = &[
-        ("er_jit_negate", er_jit_negate as *mut c_void),
-        ("er_jit_not", er_jit_not as *mut c_void),
-        ("er_jit_add", er_jit_add as *mut c_void),
-        ("er_jit_sub", er_jit_sub as *mut c_void),
-        ("er_jit_mul", er_jit_mul as *mut c_void),
-        ("er_jit_div", er_jit_div as *mut c_void),
-        ("er_jit_equal", er_jit_equal as *mut c_void),
-        ("er_jit_greater", er_jit_greater as *mut c_void),
-        ("er_jit_less", er_jit_less as *mut c_void),
-        ("er_jit_define_global", er_jit_define_global as *mut c_void),
-        ("er_jit_get_global", er_jit_get_global as *mut c_void),
-        ("er_jit_set_global", er_jit_set_global as *mut c_void),
-        ("er_jit_make_array", er_jit_make_array as *mut c_void),
-        ("er_jit_make_object", er_jit_make_object as *mut c_void),
-        ("er_jit_get_property", er_jit_get_property as *mut c_void),
-        ("er_jit_set_property", er_jit_set_property as *mut c_void),
-        ("er_jit_get_index", er_jit_get_index as *mut c_void),
-        ("er_jit_set_index", er_jit_set_index as *mut c_void),
+        ("er_jit_negate", helpers::er_jit_negate as *mut c_void),
+        ("er_jit_not", helpers::er_jit_not as *mut c_void),
+        ("er_jit_add", helpers::er_jit_add as *mut c_void),
+        ("er_jit_sub", helpers::er_jit_sub as *mut c_void),
+        ("er_jit_mul", helpers::er_jit_mul as *mut c_void),
+        ("er_jit_div", helpers::er_jit_div as *mut c_void),
+        ("er_jit_equal", helpers::er_jit_equal as *mut c_void),
+        ("er_jit_greater", helpers::er_jit_greater as *mut c_void),
+        ("er_jit_less", helpers::er_jit_less as *mut c_void),
+        ("er_jit_define_global", helpers::er_jit_define_global as *mut c_void),
+        ("er_jit_get_global", helpers::er_jit_get_global as *mut c_void),
+        ("er_jit_set_global", helpers::er_jit_set_global as *mut c_void),
+        ("er_jit_make_array", helpers::er_jit_make_array as *mut c_void),
+        ("er_jit_make_object", helpers::er_jit_make_object as *mut c_void),
+        ("er_jit_get_property", helpers::er_jit_get_property as *mut c_void),
+        ("er_jit_set_property", helpers::er_jit_set_property as *mut c_void),
+        ("er_jit_get_index", helpers::er_jit_get_index as *mut c_void),
+        ("er_jit_set_index", helpers::er_jit_set_index as *mut c_void),
+        ("er_jit_call_non_vm", helpers::er_jit_call_non_vm as *mut c_void),
+        ("er_jit_array_push", helpers::er_jit_array_push as *mut c_void),
+        ("er_jit_array_pop", helpers::er_jit_array_pop as *mut c_void),
+        ("er_jit_has_error", helpers::er_jit_has_error as *mut c_void),
+        ("er_jit_needs_gc", helpers::er_jit_needs_gc as *mut c_void),
     ];
 
     for &(name, ptr) in helpers {
         let cname = CString::new(name).unwrap();
         unsafe {
             MIR_load_external(ctx, cname.as_ptr(), ptr);
-        }
-    }
-}
-
-// FFI Helpers implementation
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_negate(vm: *mut VM, dest: *mut Value, src: *const Value) -> i64 {
-    unsafe {
-        let val = *src;
-        if val.is_number() {
-            *dest = Value::number_unchecked(-val.as_number());
-            0
-        } else {
-            (*vm).error = Some("Operand must be a number".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_not(_vm: *mut VM, dest: *mut Value, src: *const Value) -> i64 {
-    unsafe {
-        let val = *src;
-        let res = if val.is_boolean() {
-            !val.as_boolean()
-        } else if val.is_null() {
-            true
-        } else {
-            false
-        };
-        *dest = Value::boolean(res);
-        0
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_add(vm: *mut VM, dest: *mut Value, b: *const Value, c: *const Value) -> i64 {
-    unsafe {
-        let val_b = *b;
-        let val_c = *c;
-        if val_b.is_number() && val_c.is_number() {
-            *dest = Value::number_unchecked(val_b.as_number() + val_c.as_number());
-            0
-        } else {
-            if val_b.is_string() {
-                let sa_str = match &(*val_b.as_gc_ptr()).data {
-                    GcData::String(s) => s,
-                    _ => unreachable!(),
-                };
-                let sb_str = val_c.to_string();
-                let new_str = format!("{}{}", sa_str, sb_str);
-                let new_ptr = gc_allocate(GcData::String(new_str));
-                *dest = Value::string(new_ptr);
-                0
-            } else if val_c.is_string() {
-                let sa_str = val_b.to_string();
-                let sb_str = match &(*val_c.as_gc_ptr()).data {
-                    GcData::String(s) => s,
-                    _ => unreachable!(),
-                };
-                let new_str = format!("{}{}", sa_str, sb_str);
-                let new_ptr = gc_allocate(GcData::String(new_str));
-                *dest = Value::string(new_ptr);
-                0
-            } else {
-                (*vm).error = Some("Operands must be numbers or strings".into());
-                -1
-            }
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_sub(vm: *mut VM, dest: *mut Value, b: *const Value, c: *const Value) -> i64 {
-    unsafe {
-        let val_b = *b;
-        let val_c = *c;
-        if val_b.is_number() && val_c.is_number() {
-            *dest = Value::number_unchecked(val_b.as_number() - val_c.as_number());
-            0
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_mul(vm: *mut VM, dest: *mut Value, b: *const Value, c: *const Value) -> i64 {
-    unsafe {
-        let val_b = *b;
-        let val_c = *c;
-        if val_b.is_number() && val_c.is_number() {
-            *dest = Value::number_unchecked(val_b.as_number() * val_c.as_number());
-            0
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_div(vm: *mut VM, dest: *mut Value, b: *const Value, c: *const Value) -> i64 {
-    unsafe {
-        let val_b = *b;
-        let val_c = *c;
-        if val_b.is_number() && val_c.is_number() {
-            *dest = Value::number_unchecked(val_b.as_number() / val_c.as_number());
-            0
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_equal(_vm: *mut VM, dest: *mut Value, b: *const Value, c: *const Value) -> i64 {
-    unsafe {
-        *dest = Value::boolean(*b == *c);
-        0
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_greater(vm: *mut VM, dest: *mut Value, b: *const Value, c: *const Value) -> i64 {
-    unsafe {
-        let val_b = *b;
-        let val_c = *c;
-        if val_b.is_number() && val_c.is_number() {
-            *dest = Value::boolean(val_b.as_number() > val_c.as_number());
-            0
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_less(vm: *mut VM, dest: *mut Value, b: *const Value, c: *const Value) -> i64 {
-    unsafe {
-        let val_b = *b;
-        let val_c = *c;
-        if val_b.is_number() && val_c.is_number() {
-            *dest = Value::boolean(val_b.as_number() < val_c.as_number());
-            0
-        } else {
-            (*vm).error = Some("Operands must be numbers".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: *const Value, val: *const Value) -> i64 {
-    unsafe {
-        let name_v = *name_val;
-        let name = match &(*name_v.as_gc_ptr()).data {
-            GcData::String(s) => Rc::from(s.as_str()),
-            _ => unreachable!(),
-        };
-        (*vm).globals.insert(name, *val);
-        0
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_get_global(vm: *mut VM, dest: *mut Value, name_val: *const Value) -> i64 {
-    unsafe {
-        let name_v = *name_val;
-        let name = match &(*name_v.as_gc_ptr()).data {
-            GcData::String(s) => s.as_str(),
-            _ => unreachable!(),
-        };
-        if let Some(val) = (*vm).globals.get(name) {
-            *dest = *val;
-            0
-        } else {
-            (*vm).error = Some(format!("Undefined variable '{}'", name));
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_set_global(vm: *mut VM, val: *const Value, name_val: *const Value) -> i64 {
-    unsafe {
-        let name_v = *name_val;
-        let name: Rc<str> = match &(*name_v.as_gc_ptr()).data {
-            GcData::String(s) => Rc::from(s.as_str()),
-            _ => unreachable!(),
-        };
-        match (*vm).globals.entry(name.clone()) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                entry.insert(*val);
-                0
-            }
-            std::collections::hash_map::Entry::Vacant(_) => {
-                (*vm).error = Some(format!(
-                    "Variable '{}' not declared. It needs to be declared with 'let' or 'const'.",
-                    name
-                ));
-                -1
-            }
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_make_array(vm: *mut VM, dest: *mut Value, start_reg: *const Value, count: i64) -> i64 {
-    unsafe {
-        (*vm).gc_step();
-        (*vm).gc_step();
-        let mut elements = Vec::with_capacity(count as usize);
-        for i in 0..count {
-            elements.push(*start_reg.offset(i as isize));
-        }
-        let ptr = gc_allocate(GcData::Array(elements));
-        *dest = Value::array(ptr);
-        0
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_make_object(vm: *mut VM, dest: *mut Value, start_reg: *const Value, count: i64) -> i64 {
-    unsafe {
-        (*vm).gc_step();
-        (*vm).gc_step();
-        let mut obj = HashMap::new();
-        for i in 0..count {
-            let key_val = *start_reg.offset((i * 2) as isize);
-            let val = *start_reg.offset((i * 2 + 1) as isize);
-            if !key_val.is_string() {
-                (*vm).error = Some("Object key must be string".into());
-                return -1;
-            }
-            let key = match &(*key_val.as_gc_ptr()).data {
-                GcData::String(s) => Rc::from(s.as_str()),
-                _ => unreachable!(),
-            };
-            obj.insert(key, val);
-        }
-        let ptr = gc_allocate(GcData::Object(obj));
-        *dest = Value::object(ptr);
-        0
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_get_property(vm: *mut VM, dest: *mut Value, obj_val: *const Value, name_val: *const Value) -> i64 {
-    unsafe {
-        let obj = *obj_val;
-        let name = match &(*(*name_val).as_gc_ptr()).data {
-            GcData::String(s) => s.as_str(),
-            _ => unreachable!(),
-        };
-        if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            match &(*ptr).data {
-                GcData::Object(map) => {
-                    let val = map.get(name).cloned().unwrap_or(Value::null());
-                    *dest = val;
-                    0
-                }
-                _ => unreachable!(),
-            }
-        } else if obj.is_array() {
-            let ptr = obj.as_gc_ptr();
-            match &(*ptr).data {
-                GcData::Array(arr) => {
-                    if name == "push" {
-                        *dest = Value::array_method_push(ptr);
-                    } else if name == "pop" {
-                        *dest = Value::array_method_pop(ptr);
-                    } else if name == "length" {
-                        *dest = Value::number(arr.len() as f64);
-                    } else if let Ok(idx) = name.parse::<usize>() {
-                        let val = arr.get(idx).cloned().unwrap_or(Value::null());
-                        *dest = val;
-                    } else {
-                        *dest = Value::null();
-                    }
-                    0
-                }
-                _ => unreachable!(),
-            }
-        } else {
-            (*vm).error = Some("Only objects and arrays have properties".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_set_property(vm: *mut VM, obj_val: *const Value, val_val: *const Value, name_val: *const Value) -> i64 {
-    unsafe {
-        let obj = *obj_val;
-        let val = *val_val;
-        let name = match &(*(*name_val).as_gc_ptr()).data {
-            GcData::String(s) => s.as_str(),
-            _ => unreachable!(),
-        };
-        if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            match &mut (*ptr).data {
-                GcData::Object(map) => {
-                    map.insert(Rc::from(name), val);
-                    gc_write_barrier(ptr, &val);
-                    0
-                }
-                _ => unreachable!(),
-            }
-        } else if obj.is_array() {
-            let ptr = obj.as_gc_ptr();
-            match &mut (*ptr).data {
-                GcData::Array(arr) => {
-                    if let Ok(idx) = name.parse::<usize>() {
-                        if idx < arr.len() {
-                            arr[idx] = val;
-                        } else if idx == arr.len() {
-                            arr.push(val);
-                        } else {
-                            (*vm).error = Some(format!(
-                                "Index {} out of bounds for array of length {}",
-                                idx,
-                                arr.len()
-                            ));
-                            return -1;
-                        }
-                        gc_write_barrier(ptr, &val);
-                        0
-                    } else {
-                        (*vm).error = Some("Cannot set non-numeric property on array".into());
-                        -1
-                    }
-                }
-                _ => unreachable!(),
-            }
-        } else {
-            (*vm).error = Some("Only objects and arrays have properties".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_get_index(vm: *mut VM, dest: *mut Value, obj_val: *const Value, idx_val: *const Value) -> i64 {
-    unsafe {
-        let obj = *obj_val;
-        let index = *idx_val;
-        if obj.is_array() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_number() {
-                let idx = index.as_number() as usize;
-                match &(*ptr).data {
-                    GcData::Array(arr) => {
-                        let val = arr.get(idx).cloned().unwrap_or(Value::null());
-                        *dest = val;
-                        0
-                    }
-                    _ => unreachable!(),
-                }
-            } else if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st.as_str(),
-                    _ => unreachable!(),
-                };
-                if let Ok(idx) = s.parse::<usize>() {
-                    match &(*ptr).data {
-                        GcData::Array(arr) => {
-                            let val = arr.get(idx).cloned().unwrap_or(Value::null());
-                            *dest = val;
-                            0
-                        }
-                        _ => unreachable!(),
-                    }
-                } else {
-                    *dest = Value::null();
-                    0
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                -1
-            }
-        } else if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st.as_str(),
-                    _ => unreachable!(),
-                };
-                match &(*ptr).data {
-                    GcData::Object(map) => {
-                        let val = map.get(s).cloned().unwrap_or(Value::null());
-                        *dest = val;
-                        0
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                -1
-            }
-        } else {
-            (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn er_jit_set_index(vm: *mut VM, obj_val: *const Value, idx_val: *const Value, val_val: *const Value) -> i64 {
-    unsafe {
-        let obj = *obj_val;
-        let index = *idx_val;
-        let val = *val_val;
-        if obj.is_array() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_number() {
-                let idx = index.as_number() as usize;
-                match &mut (*ptr).data {
-                    GcData::Array(arr) => {
-                        if idx < arr.len() {
-                            arr[idx] = val;
-                        } else if idx == arr.len() {
-                            arr.push(val);
-                        } else {
-                            (*vm).error = Some(format!(
-                                "Index {} out of bounds for array of length {}",
-                                idx,
-                                arr.len()
-                            ));
-                            return -1;
-                        }
-                        gc_write_barrier(ptr, &val);
-                        0
-                    }
-                    _ => unreachable!(),
-                }
-            } else if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st.as_str(),
-                    _ => unreachable!(),
-                };
-                if let Ok(idx) = s.parse::<usize>() {
-                    match &mut (*ptr).data {
-                        GcData::Array(arr) => {
-                            if idx < arr.len() {
-                                arr[idx] = val;
-                            } else if idx == arr.len() {
-                                arr.push(val);
-                            } else {
-                                (*vm).error = Some(format!(
-                                    "Index {} out of bounds for array of length {}",
-                                    idx,
-                                    arr.len()
-                                ));
-                                return -1;
-                            }
-                            gc_write_barrier(ptr, &val);
-                            0
-                        }
-                        _ => unreachable!(),
-                    }
-                } else {
-                    (*vm).error = Some("Cannot set non-numeric property on array".into());
-                    -1
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                -1
-            }
-        } else if obj.is_object() {
-            let ptr = obj.as_gc_ptr();
-            if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => Rc::from(st.as_str()),
-                    _ => unreachable!(),
-                };
-                match &mut (*ptr).data {
-                    GcData::Object(map) => {
-                        map.insert(s, val);
-                        gc_write_barrier(ptr, &val);
-                        0
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-                -1
-            }
-        } else {
-            (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
-            -1
         }
     }
 }

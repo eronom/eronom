@@ -4,7 +4,7 @@ fn main() {
         eprintln!("Usage: {} <file.er>", args[0]);
         std::process::exit(1);
     }
-    if let Err(e) = er::run_file(&args[1]) {
+    if let Err(e) = eronom::run_file(&args[1]) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }

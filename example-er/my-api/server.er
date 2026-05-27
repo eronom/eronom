@@ -1,6 +1,6 @@
-app = route()
-todos = [
-  { id: 1, text: "Learn Eronomsssvvsaaa", done: false }
+let app = route()
+let todos = [
+  { id: 1, text: "Learn Eronom - dynamic reload worked!ss for itzzzz", done: false }
 ]
 
 // GET all todos
