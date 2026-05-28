@@ -1,7 +1,7 @@
-m_4: module
-          export jit_fn_4
+m_1: module
+          export jit_fn_1
           import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc
-jit_fn_4: func i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out
+jit_fn_1: func i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out
 p_needs_gc: proto i64
 p_negate: proto i64, p:vm, i64:src
 p_not: proto i64, i64:src
@@ -28,19 +28,13 @@ p_has_error: proto i64, p:vm
           local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter
           local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr
           local d:da, d:db, d:dres
-          local i64:r0, d:d0, i64:r1, d:d1, i64:r2, d:d2, i64:r3, d:d3, i64:r4, d:d4, i64:r5, d:d5, i64:r6, d:d6, i64:r7, d:d7, i64:r8, d:d8, i64:r9, d:d9
+          local i64:r0, d:d0, i64:r1, d:d1, i64:r2, d:d2, i64:r3, d:d3
           alloca cast_ptr, 192
           mov loop_counter, 0
           mov r0, i64:0(frame_slots)
           mov r1, i64:8(frame_slots)
           mov r2, i64:16(frame_slots)
           mov r3, i64:24(frame_slots)
-          mov r4, i64:32(frame_slots)
-          mov r5, i64:40(frame_slots)
-          mov r6, i64:48(frame_slots)
-          mov r7, i64:56(frame_slots)
-          mov r8, i64:64(frame_slots)
-          mov r9, i64:72(frame_slots)
           beq entry_0, start_ip, 0
           beq entry_1, start_ip, 1
           beq entry_2, start_ip, 2
@@ -57,85 +51,6 @@ p_has_error: proto i64, p:vm
           beq entry_13, start_ip, 13
           beq entry_14, start_ip, 14
           beq entry_15, start_ip, 15
-          beq entry_16, start_ip, 16
-          beq entry_17, start_ip, 17
-          beq entry_18, start_ip, 18
-          beq entry_19, start_ip, 19
-          beq entry_20, start_ip, 20
-          beq entry_21, start_ip, 21
-          beq entry_22, start_ip, 22
-          beq entry_23, start_ip, 23
-          beq entry_24, start_ip, 24
-          beq entry_25, start_ip, 25
-          beq entry_26, start_ip, 26
-          beq entry_27, start_ip, 27
-          beq entry_28, start_ip, 28
-          beq entry_29, start_ip, 29
-          beq entry_30, start_ip, 30
-          beq entry_31, start_ip, 31
-          beq entry_32, start_ip, 32
-          beq entry_33, start_ip, 33
-          beq entry_34, start_ip, 34
-          beq entry_35, start_ip, 35
-          beq entry_36, start_ip, 36
-          beq entry_37, start_ip, 37
-          beq entry_38, start_ip, 38
-          beq entry_39, start_ip, 39
-          beq entry_40, start_ip, 40
-          beq entry_41, start_ip, 41
-          beq entry_42, start_ip, 42
-          beq entry_43, start_ip, 43
-          beq entry_44, start_ip, 44
-          beq entry_45, start_ip, 45
-          beq entry_46, start_ip, 46
-          beq entry_47, start_ip, 47
-          beq entry_48, start_ip, 48
-          beq entry_49, start_ip, 49
-          beq entry_50, start_ip, 50
-          beq entry_51, start_ip, 51
-          beq entry_52, start_ip, 52
-          beq entry_53, start_ip, 53
-          beq entry_54, start_ip, 54
-          beq entry_55, start_ip, 55
-          beq entry_56, start_ip, 56
-          beq entry_57, start_ip, 57
-          beq entry_58, start_ip, 58
-          beq entry_59, start_ip, 59
-          beq entry_60, start_ip, 60
-          beq entry_61, start_ip, 61
-          beq entry_62, start_ip, 62
-          beq entry_63, start_ip, 63
-          beq entry_64, start_ip, 64
-          beq entry_65, start_ip, 65
-          beq entry_66, start_ip, 66
-          beq entry_67, start_ip, 67
-          beq entry_68, start_ip, 68
-          beq entry_69, start_ip, 69
-          beq entry_70, start_ip, 70
-          beq entry_71, start_ip, 71
-          beq entry_72, start_ip, 72
-          beq entry_73, start_ip, 73
-          beq entry_74, start_ip, 74
-          beq entry_75, start_ip, 75
-          beq entry_76, start_ip, 76
-          beq entry_77, start_ip, 77
-          beq entry_78, start_ip, 78
-          beq entry_79, start_ip, 79
-          beq entry_80, start_ip, 80
-          beq entry_81, start_ip, 81
-          beq entry_82, start_ip, 82
-          beq entry_83, start_ip, 83
-          beq entry_84, start_ip, 84
-          beq entry_85, start_ip, 85
-          beq entry_86, start_ip, 86
-          beq entry_87, start_ip, 87
-          beq entry_88, start_ip, 88
-          beq entry_89, start_ip, 89
-          beq entry_90, start_ip, 90
-          beq entry_91, start_ip, 91
-          beq entry_92, start_ip, 92
-          beq entry_93, start_ip, 93
-          beq entry_94, start_ip, 94
 entry_0:
           jmp inst_0
 entry_1:
@@ -147,8 +62,6 @@ entry_3:
 entry_4:
           jmp inst_4
 entry_5:
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
           jmp inst_5
 entry_6:
           jmp inst_6
@@ -163,774 +76,186 @@ entry_10:
 entry_11:
           jmp inst_11
 entry_12:
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
           jmp inst_12
 entry_13:
           jmp inst_13
 entry_14:
           jmp inst_14
 entry_15:
-          jmp inst_15
-entry_16:
-          jmp inst_16
-entry_17:
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
-          jmp inst_17
-entry_18:
-          jmp inst_18
-entry_19:
-          jmp inst_19
-entry_20:
-          jmp inst_20
-entry_21:
-          jmp inst_21
-entry_22:
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
-          jmp inst_22
-entry_23:
-          jmp inst_23
-entry_24:
-          jmp inst_24
-entry_25:
-          jmp inst_25
-entry_26:
-          jmp inst_26
-entry_27:
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
-          jmp inst_27
-entry_28:
-          jmp inst_28
-entry_29:
-          jmp inst_29
-entry_30:
-          mov i64:48(cast_ptr), r6
-          dmov d6, d:48(cast_ptr)
-          jmp inst_30
-entry_31:
-          jmp inst_31
-entry_32:
-          jmp inst_32
-entry_33:
-          jmp inst_33
-entry_34:
-          jmp inst_34
-entry_35:
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
-          jmp inst_35
-entry_36:
-          jmp inst_36
-entry_37:
-          jmp inst_37
-entry_38:
-          jmp inst_38
-entry_39:
-          jmp inst_39
-entry_40:
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
-          jmp inst_40
-entry_41:
-          jmp inst_41
-entry_42:
-          jmp inst_42
-entry_43:
-          mov i64:48(cast_ptr), r6
-          dmov d6, d:48(cast_ptr)
-          jmp inst_43
-entry_44:
-          jmp inst_44
-entry_45:
-          jmp inst_45
-entry_46:
-          mov i64:56(cast_ptr), r7
-          dmov d7, d:56(cast_ptr)
-          jmp inst_46
-entry_47:
-          jmp inst_47
-entry_48:
-          jmp inst_48
-entry_49:
-          jmp inst_49
-entry_50:
-          jmp inst_50
-entry_51:
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
-          jmp inst_51
-entry_52:
-          jmp inst_52
-entry_53:
-          jmp inst_53
-entry_54:
-          jmp inst_54
-entry_55:
-          jmp inst_55
-entry_56:
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
-          jmp inst_56
-entry_57:
-          jmp inst_57
-entry_58:
-          jmp inst_58
-entry_59:
-          mov i64:48(cast_ptr), r6
-          dmov d6, d:48(cast_ptr)
-          jmp inst_59
-entry_60:
-          jmp inst_60
-entry_61:
-          jmp inst_61
-entry_62:
-          mov i64:56(cast_ptr), r7
-          dmov d7, d:56(cast_ptr)
-          jmp inst_62
-entry_63:
-          jmp inst_63
-entry_64:
-          jmp inst_64
-entry_65:
-          mov i64:64(cast_ptr), r8
-          dmov d8, d:64(cast_ptr)
-          jmp inst_65
-entry_66:
-          jmp inst_66
-entry_67:
-          jmp inst_67
-entry_68:
-          jmp inst_68
-entry_69:
-          jmp inst_69
-entry_70:
-          mov i64:32(cast_ptr), r4
-          dmov d4, d:32(cast_ptr)
-          jmp inst_70
-entry_71:
-          jmp inst_71
-entry_72:
-          jmp inst_72
-entry_73:
-          jmp inst_73
-entry_74:
-          jmp inst_74
-entry_75:
-          mov i64:40(cast_ptr), r5
-          dmov d5, d:40(cast_ptr)
-          jmp inst_75
-entry_76:
-          jmp inst_76
-entry_77:
-          jmp inst_77
-entry_78:
-          mov i64:48(cast_ptr), r6
-          dmov d6, d:48(cast_ptr)
-          jmp inst_78
-entry_79:
-          jmp inst_79
-entry_80:
-          jmp inst_80
-entry_81:
-          mov i64:56(cast_ptr), r7
-          dmov d7, d:56(cast_ptr)
-          jmp inst_81
-entry_82:
-          jmp inst_82
-entry_83:
-          jmp inst_83
-entry_84:
-          mov i64:64(cast_ptr), r8
-          dmov d8, d:64(cast_ptr)
-          jmp inst_84
-entry_85:
-          jmp inst_85
-entry_86:
-          jmp inst_86
-entry_87:
-          mov i64:72(cast_ptr), r9
-          dmov d9, d:72(cast_ptr)
-          jmp inst_87
-entry_88:
-          jmp inst_88
-entry_89:
-          jmp inst_89
-entry_90:
-          jmp inst_90
-entry_91:
-          jmp inst_91
-entry_92:
-          jmp inst_92
-entry_93:
-          jmp inst_93
-entry_94:
           mov i64:0(cast_ptr), r0
           dmov d0, d:0(cast_ptr)
-          jmp inst_94
+          jmp inst_15
 inst_0:
           mov tmp1, i64:0(constants_ptr)
-          call p_get_global, er_jit_get_global, r2, vm, tmp1
+          call p_get_global, er_jit_get_global, r0, vm, tmp1
           call p_has_error, er_jit_has_error, status, vm
           bne err_label, status, 0
 inst_1:
-          mov r3, r1
+          mov tmp, i64:8(constants_ptr)
+          mov r1, tmp
 inst_2:
-          mov tmp, r2
+          mov tmp, r0
           and tmp, tmp, 0xffff000000000000
           bne normal_call_2, tmp, 0xfff9000000000000
+          mov tmp, r0
+          and tmp, tmp, 0x0000ffffffffffff
+          or tmp, tmp, 0xfff5000000000000
+          call p_array_push, er_jit_array_push, tmp2, tmp, r1
+          mov r0, tmp2
+          jmp done_call_2
+normal_call_2:
+          mov i64:0(frame_slots), r0
+          mov i64:8(frame_slots), r1
+          add dest_ptr, frame_slots, 0
+          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r0, 0, 1, frame_slots
+          beq call_vm_label_2, status, -1
+          beq suspend_label_2, status, -3
+          blt err_label, status, 0
+          mov r0, i64:0(frame_slots)
+          jmp done_call_2
+suspend_label_2:
+          mov i64:(ip_out), 2
+          mov i64:(dest_reg_out), 0
+          mov i64:(func_reg_out), 0
+          mov i64:(arg_count_out), 1
+          ret 3
+call_vm_label_2:
+          mov i64:(ip_out), 3
+          mov i64:(dest_reg_out), 0
+          mov i64:(func_reg_out), 0
+          mov i64:(arg_count_out), 1
+          ret 0
+done_call_2:
+inst_3:
+          mov r1, r0
+inst_4:
+          mov tmp1, i64:16(constants_ptr)
+          call p_get_property, er_jit_get_property, r1, vm, r1, tmp1
+          call p_has_error, er_jit_has_error, status, vm
+          bne err_label, status, 0
+inst_5:
+          mov tmp, r1
+          and tmp, tmp, 0xffff000000000000
+          bne normal_call_5, tmp, 0xfffa000000000000
+          mov tmp, r1
+          and tmp, tmp, 0x0000ffffffffffff
+          or tmp, tmp, 0xfff5000000000000
+          call p_array_pop, er_jit_array_pop, tmp2, tmp
+          mov r1, tmp2
+          jmp done_call_5
+normal_call_5:
+          mov i64:8(frame_slots), r1
+          add dest_ptr, frame_slots, 8
+          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r1, 1, 0, frame_slots
+          beq call_vm_label_5, status, -1
+          beq suspend_label_5, status, -3
+          blt err_label, status, 0
+          mov r1, i64:8(frame_slots)
+          jmp done_call_5
+suspend_label_5:
+          mov i64:(ip_out), 5
+          mov i64:(dest_reg_out), 1
+          mov i64:(func_reg_out), 1
+          mov i64:(arg_count_out), 0
+          ret 3
+call_vm_label_5:
+          mov i64:(ip_out), 6
+          mov i64:(dest_reg_out), 1
+          mov i64:(func_reg_out), 1
+          mov i64:(arg_count_out), 0
+          ret 0
+done_call_5:
+inst_6:
+          mov tmp1, i64:24(constants_ptr)
+          call p_get_global, er_jit_get_global, r2, vm, tmp1
+          call p_has_error, er_jit_has_error, status, vm
+          bne err_label, status, 0
+inst_7:
+          mov tmp, i64:32(constants_ptr)
+          mov r3, tmp
+inst_8:
+          mov tmp, r2
+          and tmp, tmp, 0xffff000000000000
+          bne normal_call_8, tmp, 0xfff9000000000000
           mov tmp, r2
           and tmp, tmp, 0x0000ffffffffffff
           or tmp, tmp, 0xfff5000000000000
           call p_array_push, er_jit_array_push, tmp2, tmp, r3
           mov r2, tmp2
-          jmp done_call_2
-normal_call_2:
-          mov i64:0(frame_slots), r0
+          jmp done_call_8
+normal_call_8:
           mov i64:8(frame_slots), r1
           mov i64:16(frame_slots), r2
           mov i64:24(frame_slots), r3
           add dest_ptr, frame_slots, 16
           call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r2, 2, 1, frame_slots
-          beq call_vm_label_2, status, -1
-          beq suspend_label_2, status, -3
-          blt err_label, status, 0
-          mov r2, i64:16(frame_slots)
-          jmp done_call_2
-suspend_label_2:
-          mov i64:(ip_out), 2
-          mov i64:(dest_reg_out), 2
-          mov i64:(func_reg_out), 2
-          mov i64:(arg_count_out), 1
-          ret 3
-call_vm_label_2:
-          mov i64:(ip_out), 3
-          mov i64:(dest_reg_out), 2
-          mov i64:(func_reg_out), 2
-          mov i64:(arg_count_out), 1
-          ret 0
-done_call_2:
-inst_3:
-          mov r3, r2
-inst_4:
-          dmov d4, d:8(constants_ptr)
-inst_5:
-          ubge fallback_eq_5, r3, 0xfff0000000000000
-          mov i64:120(cast_ptr), r3
-          dmov d3, d:120(cast_ptr)
-          dbne take_branch_5, d3, d4
-          jmp inst_7
-fallback_eq_5:
-          dmov d:128(cast_ptr), d4
-          mov r4, i64:128(cast_ptr)
-          call p_equal, er_jit_equal, r3, vm, r3, r4
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-          beq take_branch_5, r3, 18442803424035602432
-          beq take_branch_5, r3, 18442521949058891776
-          jmp inst_7
-take_branch_5:
-          jmp inst_10
-inst_6:
-inst_7:
-          mov r3, r0
-inst_8:
-          mov tmp, r3
-          and tmp, tmp, 0xffff000000000000
-          bne normal_call_8, tmp, 0xfffa000000000000
-          mov tmp, r3
-          and tmp, tmp, 0x0000ffffffffffff
-          or tmp, tmp, 0xfff5000000000000
-          call p_array_pop, er_jit_array_pop, tmp2, tmp
-          mov r3, tmp2
-          jmp done_call_8
-normal_call_8:
-          mov i64:24(frame_slots), r3
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 0, frame_slots
           beq call_vm_label_8, status, -1
           beq suspend_label_8, status, -3
           blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
+          mov r2, i64:16(frame_slots)
           jmp done_call_8
 suspend_label_8:
           mov i64:(ip_out), 8
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 0
+          mov i64:(dest_reg_out), 2
+          mov i64:(func_reg_out), 2
+          mov i64:(arg_count_out), 1
           ret 3
 call_vm_label_8:
           mov i64:(ip_out), 9
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 0
+          mov i64:(dest_reg_out), 2
+          mov i64:(func_reg_out), 2
+          mov i64:(arg_count_out), 1
           ret 0
 done_call_8:
 inst_9:
-          mov i64:(ret_val_out), r3
-          ret 1
+          mov tmp1, i64:40(constants_ptr)
+          call p_get_global, er_jit_get_global, r2, vm, tmp1
+          call p_has_error, er_jit_has_error, status, vm
+          bne err_label, status, 0
 inst_10:
-          mov r3, r2
+          mov r3, r1
 inst_11:
-          dmov d4, d:16(constants_ptr)
+          mov tmp, r2
+          and tmp, tmp, 0xffff000000000000
+          bne normal_call_11, tmp, 0xfff9000000000000
+          mov tmp, r2
+          and tmp, tmp, 0x0000ffffffffffff
+          or tmp, tmp, 0xfff5000000000000
+          call p_array_push, er_jit_array_push, tmp2, tmp, r3
+          mov r2, tmp2
+          jmp done_call_11
+normal_call_11:
+          mov i64:8(frame_slots), r1
+          mov i64:16(frame_slots), r2
+          mov i64:24(frame_slots), r3
+          add dest_ptr, frame_slots, 16
+          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r2, 2, 1, frame_slots
+          beq call_vm_label_11, status, -1
+          beq suspend_label_11, status, -3
+          blt err_label, status, 0
+          mov r2, i64:16(frame_slots)
+          jmp done_call_11
+suspend_label_11:
+          mov i64:(ip_out), 11
+          mov i64:(dest_reg_out), 2
+          mov i64:(func_reg_out), 2
+          mov i64:(arg_count_out), 1
+          ret 3
+call_vm_label_11:
+          mov i64:(ip_out), 12
+          mov i64:(dest_reg_out), 2
+          mov i64:(func_reg_out), 2
+          mov i64:(arg_count_out), 1
+          ret 0
+done_call_11:
 inst_12:
-          ubge fallback_eq_12, r3, 0xfff0000000000000
-          mov i64:96(cast_ptr), r3
-          dmov d3, d:96(cast_ptr)
-          dbne take_branch_12, d3, d4
-          jmp inst_14
-fallback_eq_12:
-          dmov d:104(cast_ptr), d4
-          mov r4, i64:104(cast_ptr)
-          call p_equal, er_jit_equal, r3, vm, r3, r4
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-          beq take_branch_12, r3, 18442803424035602432
-          beq take_branch_12, r3, 18442521949058891776
-          jmp inst_14
-take_branch_12:
-          jmp inst_20
+          mov r2, r1
 inst_13:
+          mov i64:(ret_val_out), r2
+          ret 1
 inst_14:
-          mov r3, r0
-inst_15:
-          mov r4, r1
-inst_16:
-          dmov d5, d:24(constants_ptr)
-inst_17:
-          dmov d:8(cast_ptr), d5
-          mov r5, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r4, vm, r4, r5
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_18:
-          mov tmp, r3
-          and tmp, tmp, 0xffff000000000000
-          bne normal_call_18, tmp, 0xfff9000000000000
-          mov tmp, r3
-          and tmp, tmp, 0x0000ffffffffffff
-          or tmp, tmp, 0xfff5000000000000
-          call p_array_push, er_jit_array_push, tmp2, tmp, r4
-          mov r3, tmp2
-          jmp done_call_18
-normal_call_18:
-          mov i64:24(frame_slots), r3
-          mov i64:32(frame_slots), r4
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 1, frame_slots
-          beq call_vm_label_18, status, -1
-          beq suspend_label_18, status, -3
-          blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
-          jmp done_call_18
-suspend_label_18:
-          mov i64:(ip_out), 18
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 1
-          ret 3
-call_vm_label_18:
-          mov i64:(ip_out), 19
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 1
-          ret 0
-done_call_18:
-inst_19:
-          mov i64:(ret_val_out), r3
-          ret 1
-inst_20:
-          mov r3, r2
-inst_21:
-          dmov d4, d:32(constants_ptr)
-inst_22:
-          ubge fallback_eq_22, r3, 0xfff0000000000000
-          mov i64:144(cast_ptr), r3
-          dmov d3, d:144(cast_ptr)
-          dbne take_branch_22, d3, d4
-          jmp inst_24
-fallback_eq_22:
-          dmov d:152(cast_ptr), d4
-          mov r4, i64:152(cast_ptr)
-          call p_equal, er_jit_equal, r3, vm, r3, r4
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-          beq take_branch_22, r3, 18442803424035602432
-          beq take_branch_22, r3, 18442521949058891776
-          jmp inst_24
-take_branch_22:
-          jmp inst_33
-inst_23:
-inst_24:
-          mov r3, r0
-inst_25:
-          mov r4, r1
-inst_26:
-          dmov d5, d:40(constants_ptr)
-inst_27:
-          dmov d:8(cast_ptr), d5
-          mov r5, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r4, vm, r4, r5
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_28:
-          mov r5, r1
-inst_29:
-          dmov d6, d:48(constants_ptr)
-inst_30:
-          dmov d:8(cast_ptr), d6
-          mov r6, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r5, vm, r5, r6
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_31:
-          mov i64:24(frame_slots), r3
-          mov i64:32(frame_slots), r4
-          mov i64:40(frame_slots), r5
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 2, frame_slots
-          beq call_vm_label_31, status, -1
-          beq suspend_label_31, status, -3
-          blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
-          jmp done_call_31
-suspend_label_31:
-          mov i64:(ip_out), 31
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 2
-          ret 3
-call_vm_label_31:
-          mov i64:(ip_out), 32
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 2
-          ret 0
-done_call_31:
-inst_32:
-          mov i64:(ret_val_out), r3
-          ret 1
-inst_33:
-          mov r3, r2
-inst_34:
-          dmov d4, d:56(constants_ptr)
-inst_35:
-          ubge fallback_eq_35, r3, 0xfff0000000000000
-          mov i64:72(cast_ptr), r3
-          dmov d3, d:72(cast_ptr)
-          dbne take_branch_35, d3, d4
-          jmp inst_37
-fallback_eq_35:
-          dmov d:80(cast_ptr), d4
-          mov r4, i64:80(cast_ptr)
-          call p_equal, er_jit_equal, r3, vm, r3, r4
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-          beq take_branch_35, r3, 18442803424035602432
-          beq take_branch_35, r3, 18442521949058891776
-          jmp inst_37
-take_branch_35:
-          jmp inst_49
-inst_36:
-inst_37:
-          mov r3, r0
-inst_38:
-          mov r4, r1
-inst_39:
-          dmov d5, d:64(constants_ptr)
-inst_40:
-          dmov d:8(cast_ptr), d5
-          mov r5, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r4, vm, r4, r5
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_41:
-          mov r5, r1
-inst_42:
-          dmov d6, d:72(constants_ptr)
-inst_43:
-          dmov d:8(cast_ptr), d6
-          mov r6, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r5, vm, r5, r6
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_44:
-          mov r6, r1
-inst_45:
-          dmov d7, d:80(constants_ptr)
-inst_46:
-          dmov d:8(cast_ptr), d7
-          mov r7, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r6, vm, r6, r7
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_47:
-          mov i64:24(frame_slots), r3
-          mov i64:32(frame_slots), r4
-          mov i64:40(frame_slots), r5
-          mov i64:48(frame_slots), r6
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 3, frame_slots
-          beq call_vm_label_47, status, -1
-          beq suspend_label_47, status, -3
-          blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
-          jmp done_call_47
-suspend_label_47:
-          mov i64:(ip_out), 47
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 3
-          ret 3
-call_vm_label_47:
-          mov i64:(ip_out), 48
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 3
-          ret 0
-done_call_47:
-inst_48:
-          mov i64:(ret_val_out), r3
-          ret 1
-inst_49:
-          mov r3, r2
-inst_50:
-          dmov d4, d:88(constants_ptr)
-inst_51:
-          ubge fallback_eq_51, r3, 0xfff0000000000000
-          mov i64:72(cast_ptr), r3
-          dmov d3, d:72(cast_ptr)
-          dbne take_branch_51, d3, d4
-          jmp inst_53
-fallback_eq_51:
-          dmov d:80(cast_ptr), d4
-          mov r4, i64:80(cast_ptr)
-          call p_equal, er_jit_equal, r3, vm, r3, r4
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-          beq take_branch_51, r3, 18442803424035602432
-          beq take_branch_51, r3, 18442521949058891776
-          jmp inst_53
-take_branch_51:
-          jmp inst_68
-inst_52:
-inst_53:
-          mov r3, r0
-inst_54:
-          mov r4, r1
-inst_55:
-          dmov d5, d:96(constants_ptr)
-inst_56:
-          dmov d:8(cast_ptr), d5
-          mov r5, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r4, vm, r4, r5
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_57:
-          mov r5, r1
-inst_58:
-          dmov d6, d:104(constants_ptr)
-inst_59:
-          dmov d:8(cast_ptr), d6
-          mov r6, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r5, vm, r5, r6
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_60:
-          mov r6, r1
-inst_61:
-          dmov d7, d:112(constants_ptr)
-inst_62:
-          dmov d:8(cast_ptr), d7
-          mov r7, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r6, vm, r6, r7
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_63:
-          mov r7, r1
-inst_64:
-          dmov d8, d:120(constants_ptr)
-inst_65:
-          dmov d:8(cast_ptr), d8
-          mov r8, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r7, vm, r7, r8
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_66:
-          mov i64:24(frame_slots), r3
-          mov i64:32(frame_slots), r4
-          mov i64:40(frame_slots), r5
-          mov i64:48(frame_slots), r6
-          mov i64:56(frame_slots), r7
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 4, frame_slots
-          beq call_vm_label_66, status, -1
-          beq suspend_label_66, status, -3
-          blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
-          jmp done_call_66
-suspend_label_66:
-          mov i64:(ip_out), 66
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 4
-          ret 3
-call_vm_label_66:
-          mov i64:(ip_out), 67
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 4
-          ret 0
-done_call_66:
-inst_67:
-          mov i64:(ret_val_out), r3
-          ret 1
-inst_68:
-          mov r3, r2
-inst_69:
-          dmov d4, d:128(constants_ptr)
-inst_70:
-          ubge fallback_eq_70, r3, 0xfff0000000000000
-          mov i64:144(cast_ptr), r3
-          dmov d3, d:144(cast_ptr)
-          dbne take_branch_70, d3, d4
-          jmp inst_72
-fallback_eq_70:
-          dmov d:152(cast_ptr), d4
-          mov r4, i64:152(cast_ptr)
-          call p_equal, er_jit_equal, r3, vm, r3, r4
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-          beq take_branch_70, r3, 18442803424035602432
-          beq take_branch_70, r3, 18442521949058891776
-          jmp inst_72
-take_branch_70:
-          jmp inst_90
-inst_71:
-inst_72:
-          mov r3, r0
-inst_73:
-          mov r4, r1
-inst_74:
-          dmov d5, d:136(constants_ptr)
-inst_75:
-          dmov d:8(cast_ptr), d5
-          mov r5, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r4, vm, r4, r5
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_76:
-          mov r5, r1
-inst_77:
-          dmov d6, d:144(constants_ptr)
-inst_78:
-          dmov d:8(cast_ptr), d6
-          mov r6, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r5, vm, r5, r6
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_79:
-          mov r6, r1
-inst_80:
-          dmov d7, d:152(constants_ptr)
-inst_81:
-          dmov d:8(cast_ptr), d7
-          mov r7, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r6, vm, r6, r7
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_82:
-          mov r7, r1
-inst_83:
-          dmov d8, d:160(constants_ptr)
-inst_84:
-          dmov d:8(cast_ptr), d8
-          mov r8, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r7, vm, r7, r8
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_85:
-          mov r8, r1
-inst_86:
-          dmov d9, d:168(constants_ptr)
-inst_87:
-          dmov d:8(cast_ptr), d9
-          mov r9, i64:8(cast_ptr)
-          call p_get_index, er_jit_get_index, r8, vm, r8, r9
-          call p_has_error, er_jit_has_error, status, vm
-          bne err_label, status, 0
-inst_88:
-          mov i64:24(frame_slots), r3
-          mov i64:32(frame_slots), r4
-          mov i64:40(frame_slots), r5
-          mov i64:48(frame_slots), r6
-          mov i64:56(frame_slots), r7
-          mov i64:64(frame_slots), r8
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 5, frame_slots
-          beq call_vm_label_88, status, -1
-          beq suspend_label_88, status, -3
-          blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
-          jmp done_call_88
-suspend_label_88:
-          mov i64:(ip_out), 88
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 5
-          ret 3
-call_vm_label_88:
-          mov i64:(ip_out), 89
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 5
-          ret 0
-done_call_88:
-inst_89:
-          mov i64:(ret_val_out), r3
-          ret 1
-inst_90:
-          mov r3, r0
-inst_91:
-          mov tmp, r3
-          and tmp, tmp, 0xffff000000000000
-          bne normal_call_91, tmp, 0xfffa000000000000
-          mov tmp, r3
-          and tmp, tmp, 0x0000ffffffffffff
-          or tmp, tmp, 0xfff5000000000000
-          call p_array_pop, er_jit_array_pop, tmp2, tmp
-          mov r3, tmp2
-          jmp done_call_91
-normal_call_91:
-          mov i64:24(frame_slots), r3
-          add dest_ptr, frame_slots, 24
-          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r3, 3, 0, frame_slots
-          beq call_vm_label_91, status, -1
-          beq suspend_label_91, status, -3
-          blt err_label, status, 0
-          mov r3, i64:24(frame_slots)
-          jmp done_call_91
-suspend_label_91:
-          mov i64:(ip_out), 91
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 0
-          ret 3
-call_vm_label_91:
-          mov i64:(ip_out), 92
-          mov i64:(dest_reg_out), 3
-          mov i64:(func_reg_out), 3
-          mov i64:(arg_count_out), 0
-          ret 0
-done_call_91:
-inst_92:
-          mov i64:(ret_val_out), r3
-          ret 1
-inst_93:
           mov r0, 18442521949058891776
-inst_94:
+inst_15:
           dmov d:0(cast_ptr), d0
           mov tmp, i64:0(cast_ptr)
           mov i64:(ret_val_out), tmp

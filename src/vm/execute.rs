@@ -66,6 +66,7 @@ pub struct VM {
     pub mir_ctx: Option<*mut std::ffi::c_void>,
     pub use_jit: bool,
     pub alloc_count_local: usize,
+    pub use_evented_io: bool,
     
     // Event loop fields
     pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
@@ -108,6 +109,7 @@ impl VM {
             mir_ctx: None,
             use_jit,
             alloc_count_local: 0,
+            use_evented_io: false,
             event_loop_queue: Arc::new(Mutex::new(Vec::new())),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),

@@ -818,77 +818,17 @@ pub extern "C" fn er_ws_on_close(
 }
 
 pub fn native_fetch(args: Vec<Value>) -> Value {
-    if args.is_empty() {
-        return Value::null();
-    }
-    let url_val = args[0];
-    if !url_val.is_string() {
-        eprintln!("[Fetch] Error: URL must be a string");
-        return Value::null();
-    }
-    let url_str = unsafe {
-        match &(*url_val.as_gc_ptr()).data {
-            GcData::String(s) => s.as_ref().to_string(),
-            _ => return Value::null(),
-        }
-    };
-
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     if vm_ptr.is_null() {
         eprintln!("[Fetch] Error: ACTIVE_VM is null");
         return Value::null();
     }
-    let vm = unsafe { &mut *vm_ptr };
-
-    // 1. Create a promise
-    let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
-    let prom = crate::vm::gc::GcPromise {
-        state: state.clone(),
-        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-    };
-    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
-    let promise_val = Value::promise(promise_ptr);
-
-    // 2. Increment active async tasks counter
-    let active_counter = vm.active_async_tasks.clone();
-    let queue = vm.event_loop_queue.clone();
-    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    let promise_ptr_usize = promise_ptr as usize;
-
-    // 3. Spawn background thread to fetch URL
-    std::thread::spawn(move || {
-        let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
-        let output = std::process::Command::new("curl")
-            .arg("-s")
-            .arg("-L")
-            .arg(&url_str)
-            .output();
-
-        let res = match output {
-            Ok(out) => {
-                if out.status.success() {
-                    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-                } else {
-                    Err(String::from_utf8_lossy(&out.stderr).into_owned())
-                }
-            }
-            Err(e) => Err(e.to_string()),
-        };
-
-        // Post ResolveFetchPromise back to event loop
-        let mut q = queue.lock().unwrap();
-        q.push(crate::vm::execute::EventLoopTask {
-            callback: Value::null(),
-            args: Vec::new(),
-            result: crate::vm::execute::AsyncResult::ResolveFetchPromise(promise_ptr, res),
-        });
-
-        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    });
-
-    promise_val
+    let vm = unsafe { &*vm_ptr };
+    if vm.use_evented_io {
+        native_fetch_evented(args)
+    } else {
+        native_fetch_sync(args)
+    }
 }
 
 pub fn native_set_timeout(args: Vec<Value>) -> Value {
@@ -1231,6 +1171,44 @@ pub fn native_future_await(args: Vec<Value>) -> Value {
     }
 
     Value::null()
+}
+
+pub fn native_set_io_mode(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let mode_val = args[0];
+    if !mode_val.is_string() {
+        return Value::null();
+    }
+    let mode_str = unsafe {
+        match &(*mode_val.as_gc_ptr()).data {
+            GcData::String(s) => s.as_ref().to_string(),
+            _ => return Value::null(),
+        }
+    };
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if !vm_ptr.is_null() {
+        let vm = unsafe { &mut *vm_ptr };
+        if mode_str == "evented" {
+            vm.use_evented_io = true;
+        } else {
+            vm.use_evented_io = false;
+        }
+    }
+    Value::null()
+}
+
+pub fn native_get_io_mode(_args: Vec<Value>) -> Value {
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if !vm_ptr.is_null() {
+        let vm = unsafe { &*vm_ptr };
+        let mode = if vm.use_evented_io { "evented" } else { "threaded" };
+        let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::String(std::rc::Rc::from(mode)));
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
 }
 
 pub fn native_array_len(args: Vec<Value>) -> Value {

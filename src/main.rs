@@ -57,6 +57,8 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("arrayLen", Value::native_function(backend::er_http::native_array_len));
     vm.register_global("sleep", Value::native_function(backend::er_http::native_sleep));
     vm.register_global("createPromisePair", Value::native_function(backend::er_http::native_create_promise_pair));
+    vm.register_global("setIoMode", Value::native_function(backend::er_http::native_set_io_mode));
+    vm.register_global("getIoMode", Value::native_function(backend::er_http::native_get_io_mode));
     backend::er_http::set_target_script_path(path);
 
     let main_path = std::path::Path::new(path);

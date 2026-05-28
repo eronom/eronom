@@ -1,4 +1,4 @@
-// Standard I/O library for Eronom - Zig colorless model
+// Standard I/O library for Eronom
 
 const callWithArity = (func, args) => {
   const length = arrayLen(args)
@@ -11,38 +11,30 @@ const callWithArity = (func, args) => {
   return func()
 }
 
-// Threaded (blocking, synchronous) I/O mode
-const Threaded = {
-  fetch: (url) => {
-    return fetchSync(url)
-  },
-  spawn: (func, args) => {
-    return callWithArity(func, args)
-  },
-  wait: (future) => {
-    return future
-  }
-}
-
-// Evented (non-blocking, VM-suspending) I/O mode
-const Evented = {
-  fetch: (url) => {
-    return fetchEvented(url)
-  },
-  spawn: (func, args) => {
-    const pair = createPromisePair()
-    setTimeout((f, a, resolve) => {
-      const res = callWithArity(f, a)
-      resolve(res)
-    }, 0, func, args, pair.resolve)
-    return pair.promise
-  },
-  wait: (future) => {
-    return futureAwait(future)
-  }
-}
-
 export const Io = {
-  Threaded: Threaded,
-  Evented: Evented
+  setMode: (mode) => {
+    setIoMode(mode)
+  },
+  getMode: () => {
+    return getIoMode()
+  },
+  spawn: (func, args) => {
+    if (getIoMode() == "evented") {
+      const pair = createPromisePair()
+      setTimeout((f, a, resolve) => {
+        const res = callWithArity(f, a)
+        resolve(res)
+      }, 0, func, args, pair.resolve)
+      return pair.promise
+    } else {
+      return callWithArity(func, args)
+    }
+  },
+  wait: (future) => {
+    if (getIoMode() == "evented") {
+      return futureAwait(future)
+    } else {
+      return future
+    }
+  }
 }
