@@ -253,7 +253,14 @@ pub fn native_context_json(args: Vec<Value>) -> Value {
     Value::null()
 }
 
-fn value_to_json(val: Value) -> serde_json::Value {
+pub fn end_http_response_json(res: *mut std::ffi::c_void, json: &str) {
+    let c_str = std::ffi::CString::new(json).unwrap();
+    unsafe {
+        er_http_response_end_json(res, c_str.as_ptr(), c_str.as_bytes().len());
+    }
+}
+
+pub fn value_to_json(val: Value) -> serde_json::Value {
     if val.is_null() {
         serde_json::Value::Null
     } else if val.is_boolean() {
@@ -588,11 +595,11 @@ pub extern "C" fn er_http_on_request(
                 
                 let context_obj = crate::vm::gc::get_pooled_map(2);
                 let json_name = get_or_create_string("json");
-                let json_fn = Value::native_function(native_context_json);
+                let json_val = Value(crate::vm::value::TAG_METHOD_SEND_JSON | (res as u64 & crate::vm::value::PTR_MASK));
                 let req_key_name = get_or_create_string("req");
                 
                 let mut map = context_obj;
-                map.insert(crate::vm::value::MapKey(Value::string(json_name)), json_fn);
+                map.insert(crate::vm::value::MapKey(Value::string(json_name)), json_val);
                 map.insert(crate::vm::value::MapKey(Value::string(req_key_name)), req_obj);
                 let c_val = Value::object(crate::vm::gc::gc_allocate(GcData::Object(map)));
                 
@@ -611,6 +618,10 @@ pub extern "C" fn er_http_on_request(
                     if let Err(e) = vm.call_function_reentrant(callback, vec![c_val]) {
                         eprintln!("[HTTP] Error executing callback: {}", e);
                     }
+                }
+
+                if let Err(e) = vm.run_event_loop() {
+                    eprintln!("[HTTP] Event loop error: {}", e);
                 }
             } else {
                 eprintln!("[HTTP] Error: ACTIVE_VM is null during request handler");
@@ -822,37 +833,200 @@ pub fn native_fetch(args: Vec<Value>) -> Value {
         }
     };
 
-    // Use curl to fetch the URL synchronously
-    let output = std::process::Command::new("curl")
-        .arg("-s")
-        .arg("-L")
-        .arg(&url_str)
-        .output();
-
-    match output {
-        Ok(out) => {
-            if out.status.success() {
-                let body_str = String::from_utf8_lossy(&out.stdout).into_owned();
-                
-                // Create a response object
-                let mut map = crate::vm::gc::get_pooled_map(2);
-                
-                // Store the response body in the object as "_body"
-                let body_key = crate::vm::gc::get_or_create_string("_body");
-                let body_val = crate::vm::gc::get_or_create_string(&body_str);
-                map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
-                
-                let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
-                Value::object(ptr)
-            } else {
-                let err_msg = String::from_utf8_lossy(&out.stderr).into_owned();
-                eprintln!("[Fetch] Curl error: {}", err_msg);
-                Value::null()
-            }
-        }
-        Err(e) => {
-            eprintln!("[Fetch] Failed to execute curl: {}", e);
-            Value::null()
-        }
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        eprintln!("[Fetch] Error: ACTIVE_VM is null");
+        return Value::null();
     }
+    let vm = unsafe { &mut *vm_ptr };
+
+    // 1. Create a promise
+    let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
+    let prom = crate::vm::gc::GcPromise {
+        state: state.clone(),
+        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+    let promise_val = Value::promise(promise_ptr);
+
+    // 2. Increment active async tasks counter
+    let active_counter = vm.active_async_tasks.clone();
+    let queue = vm.event_loop_queue.clone();
+    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    let promise_ptr_usize = promise_ptr as usize;
+
+    // 3. Spawn background thread to fetch URL
+    std::thread::spawn(move || {
+        let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
+        let output = std::process::Command::new("curl")
+            .arg("-s")
+            .arg("-L")
+            .arg(&url_str)
+            .output();
+
+        let res = match output {
+            Ok(out) => {
+                if out.status.success() {
+                    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+                } else {
+                    Err(String::from_utf8_lossy(&out.stderr).into_owned())
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        };
+
+        // Post ResolveFetchPromise back to event loop
+        let mut q = queue.lock().unwrap();
+        q.push(crate::vm::execute::EventLoopTask {
+            callback: Value::null(),
+            args: Vec::new(),
+            result: crate::vm::execute::AsyncResult::ResolveFetchPromise(promise_ptr, res),
+        });
+
+        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    promise_val
+}
+
+pub fn native_set_timeout(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        eprintln!("[setTimeout] Error: callback and delay are required");
+        return Value::null();
+    }
+    let callback = args[0];
+    let delay_val = args[1];
+    if !callback.is_function() && !callback.is_native_function() {
+        eprintln!("[setTimeout] Error: first argument must be a function");
+        return Value::null();
+    }
+    if !delay_val.is_number() {
+        eprintln!("[setTimeout] Error: second argument must be a number");
+        return Value::null();
+    }
+    let delay_ms = delay_val.as_number() as u64;
+
+    let mut cb_args = Vec::new();
+    if args.len() > 2 {
+        cb_args.extend_from_slice(&args[2..]);
+    }
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        eprintln!("[setTimeout] Error: ACTIVE_VM is null");
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    let queue = vm.event_loop_queue.clone();
+    let active_counter = vm.active_async_tasks.clone();
+    let pending = vm.pending_callbacks.clone();
+
+    pending.lock().unwrap().push(crate::vm::execute::PendingAsync {
+        callback,
+        args: cb_args.clone(),
+    });
+    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+
+        let mut q = queue.lock().unwrap();
+        q.push(crate::vm::execute::EventLoopTask {
+            callback,
+            args: cb_args,
+            result: crate::vm::execute::AsyncResult::Timeout,
+        });
+
+        let mut p = pending.lock().unwrap();
+        if let Some(pos) = p.iter().position(|x| x.callback.0 == callback.0) {
+            p.remove(pos);
+        }
+
+        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    Value::null()
+}
+
+pub fn native_fetch_async(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        eprintln!("[fetchAsync] Error: URL and callback are required");
+        return Value::null();
+    }
+    let url_val = args[0];
+    let callback = args[1];
+    if !url_val.is_string() {
+        eprintln!("[fetchAsync] Error: URL must be a string");
+        return Value::null();
+    }
+    if !callback.is_function() && !callback.is_native_function() {
+        eprintln!("[fetchAsync] Error: callback must be a function");
+        return Value::null();
+    }
+    let url_str = unsafe {
+        match &(*url_val.as_gc_ptr()).data {
+            GcData::String(s) => s.as_ref().to_string(),
+            _ => return Value::null(),
+        }
+    };
+
+    let mut cb_args = Vec::new();
+    if args.len() > 2 {
+        cb_args.extend_from_slice(&args[2..]);
+    }
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        eprintln!("[fetchAsync] Error: ACTIVE_VM is null");
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    let queue = vm.event_loop_queue.clone();
+    let active_counter = vm.active_async_tasks.clone();
+    let pending = vm.pending_callbacks.clone();
+
+    pending.lock().unwrap().push(crate::vm::execute::PendingAsync {
+        callback,
+        args: cb_args.clone(),
+    });
+    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    std::thread::spawn(move || {
+        let output = std::process::Command::new("curl")
+            .arg("-s")
+            .arg("-L")
+            .arg(&url_str)
+            .output();
+
+        let res = match output {
+            Ok(out) => {
+                if out.status.success() {
+                    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+                } else {
+                    Err(String::from_utf8_lossy(&out.stderr).into_owned())
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        };
+
+        let mut q = queue.lock().unwrap();
+        q.push(crate::vm::execute::EventLoopTask {
+            callback,
+            args: cb_args,
+            result: crate::vm::execute::AsyncResult::Fetch(res),
+        });
+
+        let mut p = pending.lock().unwrap();
+        if let Some(pos) = p.iter().position(|x| x.callback.0 == callback.0) {
+            p.remove(pos);
+        }
+
+        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    Value::null()
 }

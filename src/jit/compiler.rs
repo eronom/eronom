@@ -1315,6 +1315,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 }
                 mir.push_str("          ret 1\n");
             }
+            OpCode::Await => {}
         }
     }
 
@@ -1382,7 +1383,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                     kill[pc][ra] = true;
                 }
             }
-            OpCode::Move | OpCode::Negate | OpCode::Not => {
+            OpCode::Move | OpCode::Negate | OpCode::Not | OpCode::Await => {
                 if rb < num_regs {
                     gen_set[pc][rb] = true;
                 }

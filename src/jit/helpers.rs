@@ -587,6 +587,20 @@ pub extern "C" fn er_jit_call_non_vm(
             };
             *dest = result;
             0
+        } else if callee.is_method_send_json() {
+            let res_ptr = (callee.0 & crate::vm::value::PTR_MASK) as *mut std::ffi::c_void;
+            if !res_ptr.is_null() {
+                let arg = if arg_count > 0 {
+                    *frame_slots.offset((func_reg + 1) as isize)
+                } else {
+                    Value::null()
+                };
+                let json_val = crate::vm::er_http::value_to_json(arg);
+                let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+                crate::vm::er_http::end_http_response_json(res_ptr, &json_str);
+            }
+            *dest = Value::null();
+            0
         } else if callee.is_array_method_push() || callee.is_array_method_pop() {
             let ptr = callee.as_gc_ptr();
             let result = match &mut (*ptr).data {

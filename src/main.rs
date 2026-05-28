@@ -49,6 +49,8 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("route", Value::native_function(backend::er_http::native_route));
     vm.register_global("fetch", Value::native_function(backend::er_http::native_fetch));
+    vm.register_global("setTimeout", Value::native_function(backend::er_http::native_set_timeout));
+    vm.register_global("fetchAsync", Value::native_function(backend::er_http::native_fetch_async));
     backend::er_http::set_target_script_path(path);
 
     let main_path = std::path::Path::new(path);
@@ -72,6 +74,10 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
 
     if let Err(e) = vm.run(function) {
         anyhow::bail!("VM Runtime error: {}", e);
+    }
+
+    if let Err(e) = vm.run_event_loop() {
+        anyhow::bail!("VM Event loop error: {}", e);
     }
 
     backend::er_http::start_http_server_if_needed(&mut vm);

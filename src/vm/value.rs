@@ -14,6 +14,8 @@ pub const TAG_METHOD_PUSH: u64 = 0xfff9_0000_0000_0000;
 pub const TAG_METHOD_POP: u64  = 0xfffa_0000_0000_0000;
 pub const TAG_METHOD_JSON: u64 = 0xfffb_0000_0000_0000;
 pub const TAG_METHOD_TEXT: u64 = 0xfffc_0000_0000_0000;
+pub const TAG_METHOD_SEND_JSON: u64 = 0xfffd_0000_0000_0000;
+pub const TAG_PROMISE: u64     = 0xfffe_0000_0000_0000;
 pub const PTR_MASK: u64        = 0x0000_ffff_ffff_ffff;
 
 #[repr(transparent)]
@@ -33,11 +35,13 @@ impl Value {
 
     #[inline(always)]
     pub fn number(n: f64) -> Self {
-        let mut bits = n.to_bits();
+        let bits = n.to_bits();
         if (bits & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
-            bits = 0x7ff8_0000_0000_0000; // Canonical NaN
+            // NaN or infinity that overlaps with our tags - box it as a normal number representation
+            Value(0x7ff8_0000_0000_0000)
+        } else {
+            Value(bits)
         }
-        Value(bits)
     }
 
     #[inline(always)]
@@ -63,6 +67,11 @@ impl Value {
     #[inline(always)]
     pub fn function(ptr: *mut GcObject) -> Self {
         Value(TAG_FUNCTION | (ptr as u64 & PTR_MASK))
+    }
+
+    #[inline(always)]
+    pub fn promise(ptr: *mut GcObject) -> Self {
+        Value(TAG_PROMISE | (ptr as u64 & PTR_MASK))
     }
 
     #[inline(always)]
@@ -151,6 +160,16 @@ impl Value {
     }
 
     #[inline(always)]
+    pub fn is_method_send_json(self) -> bool {
+        (self.0 & 0xffff_0000_0000_0000) == TAG_METHOD_SEND_JSON
+    }
+
+    #[inline(always)]
+    pub fn is_promise(self) -> bool {
+        (self.0 & 0xffff_0000_0000_0000) == TAG_PROMISE
+    }
+
+    #[inline(always)]
     pub fn as_gc_ptr(self) -> *mut GcObject {
         (self.0 & PTR_MASK) as *mut GcObject
     }
@@ -228,6 +247,10 @@ impl fmt::Debug for Value {
             write!(f, "MethodJson({:p})", self.as_gc_ptr())
         } else if self.is_method_text() {
             write!(f, "MethodText({:p})", self.as_gc_ptr())
+        } else if self.is_method_send_json() {
+            write!(f, "MethodSendJson({:p})", (self.0 & PTR_MASK) as *const ())
+        } else if self.is_promise() {
+            write!(f, "Promise({:p})", self.as_gc_ptr())
         } else {
             write!(f, "Value(invalid 0x{:x})", self.0)
         }
@@ -290,6 +313,10 @@ impl fmt::Display for Value {
             write!(f, "[Method json]")
         } else if self.is_method_text() {
             write!(f, "[Method text]")
+        } else if self.is_method_send_json() {
+            write!(f, "[Method sendJson]")
+        } else if self.is_promise() {
+            write!(f, "[Promise]")
         } else {
             write!(f, "[Unknown]")
         }

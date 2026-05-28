@@ -25,12 +25,27 @@ pub enum GcPhase {
     Sweep,
 }
 
+#[derive(Clone)]
+pub enum PromiseState {
+    Pending,
+    Fulfilled(Value),
+    Rejected(String),
+}
+
+#[derive(Clone)]
+pub struct GcPromise {
+    pub state: std::sync::Arc<std::sync::Mutex<PromiseState>>,
+    pub suspended_stack: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    pub suspended_frames: std::sync::Arc<std::sync::Mutex<Vec<crate::vm::execute::CallFrame>>>,
+}
+
 pub enum GcData {
     Empty,
     String(Rc<str>),
     Array(Vec<Value>),
     Object(ObjectMap),
     Function(Function),
+    Promise(GcPromise),
 }
 
 pub struct GcObject {
@@ -257,6 +272,19 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
             GcData::Function(func) => {
                 for constant in &func.chunk.constants {
                     gc_mark_value(constant);
+                }
+            }
+            GcData::Promise(prom) => {
+                if let Ok(stack) = prom.suspended_stack.lock() {
+                    for val in stack.iter() {
+                        gc_mark_value(val);
+                    }
+                }
+                if let Ok(frames) = prom.suspended_frames.lock() {
+                    for frame in frames.iter() {
+                        let fn_val = Value::function(frame.function);
+                        gc_mark_value(&fn_val);
+                    }
                 }
             }
         }

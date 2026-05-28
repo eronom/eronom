@@ -42,6 +42,8 @@ pub enum TokenType {
     Import,
     Export,
     From,
+    Async,
+    Await,
     Eof,
 }
 

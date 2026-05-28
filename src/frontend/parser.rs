@@ -272,8 +272,16 @@ impl Parser {
         Ok(expr)
     }
 
+    fn unary(&mut self) -> Result<Expr, String> {
+        if self.match_token(&[TokenType::Await]) {
+            let expr = self.unary()?;
+            return Ok(Expr::Await(Box::new(expr)));
+        }
+        self.primary()
+    }
+
     fn call(&mut self) -> Result<Expr, String> {
-        let mut expr = self.primary()?;
+        let mut expr = self.unary()?;
         loop {
             if self.match_token(&[TokenType::LeftParen]) {
                 let mut args = Vec::new();
@@ -332,6 +340,42 @@ impl Parser {
             return Ok(Expr::Literal(LiteralValue::String(s)));
         }
 
+        if self.match_token(&[TokenType::Async]) {
+            if self.check_ident() {
+                // Check if followed by Arrow
+                let temp = self.current;
+                if temp < self.tokens.len() && self.tokens[temp].ty == TokenType::Arrow {
+                    let name = self.consume_ident("Expected identifier")?;
+                    self.consume(TokenType::Arrow, "Expected '=>' after async parameter.")?;
+                    let body = self.statement()?;
+                    return Ok(Expr::Function(vec![name], Box::new(body), true));
+                } else {
+                    return Err(format!("Error at line {}: Expected '=>' after 'async identifier'.", self.peek().line));
+                }
+            } else if self.match_token(&[TokenType::LeftParen]) {
+                if self.check(&TokenType::RightParen) {
+                    self.advance(); // consume RightParen
+                    self.consume(TokenType::Arrow, "Expected '=>' after async parameters.")?;
+                    let body = self.statement()?;
+                    return Ok(Expr::Function(Vec::new(), Box::new(body), true));
+                }
+                let mut params = Vec::new();
+                loop {
+                    let name = self.consume_ident("Expected parameter name")?;
+                    params.push(name);
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+                self.consume(TokenType::RightParen, "Expected ')' after async parameters.")?;
+                self.consume(TokenType::Arrow, "Expected '=>' after async parameters.")?;
+                let body = self.statement()?;
+                return Ok(Expr::Function(params, Box::new(body), true));
+            } else {
+                return Err(format!("Error at line {}: Expected function after 'async'.", self.peek().line));
+            }
+        }
+
         if self.check_ident() {
             let name = self.consume_ident("Expected identifier")?;
             return Ok(Expr::Variable(name));
@@ -344,7 +388,7 @@ impl Parser {
                     self.advance(); // consume RightParen
                     self.advance(); // consume Arrow
                     let body = self.statement()?;
-                    return Ok(Expr::Function(Vec::new(), Box::new(body)));
+                    return Ok(Expr::Function(Vec::new(), Box::new(body), false));
                 }
             }
             let mut params = Vec::new();
@@ -373,7 +417,7 @@ impl Parser {
 
                 if is_arrow {
                     let body = self.statement()?;
-                    return Ok(Expr::Function(params, Box::new(body)));
+                    return Ok(Expr::Function(params, Box::new(body), false));
                 } else {
                     self.current = save_pos;
                 }
@@ -384,7 +428,7 @@ impl Parser {
 
             if self.match_token(&[TokenType::Arrow]) {
                 let body = self.statement()?;
-                return Ok(Expr::Function(vec![], Box::new(body)));
+                return Ok(Expr::Function(vec![], Box::new(body), false));
             }
 
             return Ok(expr);

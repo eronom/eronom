@@ -1,0 +1,249 @@
+warning: eronom@0.1.0: In file included from /home/vishnus/Downloads/eronom/external/mir/mir.h:21,
+warning: eronom@0.1.0:                  from /home/vishnus/Downloads/eronom/external/mir/mir.c:5:
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-interp.c: In function 'VARR_MIR_val_tlast':
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:55:31: note: the ABI of passing union with 'long double' has changed in GCC 4.4
+warning: eronom@0.1.0:    55 | #define VARR(T) VARR_CONCAT2 (VARR_, T)
+warning: eronom@0.1.0:       |                               ^~~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:53:28: note: in definition of macro 'VARR_CONCAT2'
+warning: eronom@0.1.0:    53 | #define VARR_CONCAT2(A, B) A##B
+warning: eronom@0.1.0:       |                            ^
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:60:18: note: in expansion of macro 'VARR'
+warning: eronom@0.1.0:    60 |   typedef struct VARR (T) { \
+warning: eronom@0.1.0:       |                  ^~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:71:3: note: in expansion of macro 'VARR_T'
+warning: eronom@0.1.0:    71 |   VARR_T (T);                                                                                 \
+warning: eronom@0.1.0:       |   ^~~~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-interp.c:73:1: note: in expansion of macro 'DEF_VARR'
+warning: eronom@0.1.0:    73 | DEF_VARR (MIR_val_t);
+warning: eronom@0.1.0:       | ^~~~~~~~
+    Checking eronom v0.1.0 (/home/vishnus/Downloads/eronom)
+error[E0277]: `*mut GcObject` cannot be sent between threads safely
+   --> src/vm/er_http.rs:859:24
+    |
+859 |       std::thread::spawn(move || {
+    |       ------------------ ^------
+    |       |                  |
+    |  _____|__________________within this `{closure@src/vm/er_http.rs:859:24: 859:31}`
+    | |     |
+    | |     required by a bound introduced by this call
+860 | |         let output = std::process::Command::new("curl")
+861 | |             .arg("-s")
+862 | |             .arg("-L")
+...   |
+885 | |         active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+886 | |     });
+    | |_____^ `*mut GcObject` cannot be sent between threads safely
+    |
+    = help: within `{closure@src/vm/er_http.rs:859:24: 859:31}`, the trait `Send` is not implemented for `*mut GcObject`
+note: required because it's used within this closure
+   --> src/vm/er_http.rs:859:24
+    |
+859 |     std::thread::spawn(move || {
+    |                        ^^^^^^^
+note: required by a bound in `spawn`
+   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/thread/functions.rs:125:0
+
+error[E0277]: `*mut GcObject` cannot be sent between threads safely
+   --> src/bin/../vm/er_http.rs:859:24
+    |
+859 |       std::thread::spawn(move || {
+    |       ------------------ ^------
+    |       |                  |
+    |  _____|__________________within this `{closure@src/bin/../vm/er_http.rs:859:24: 859:31}`
+    | |     |
+    | |     required by a bound introduced by this call
+860 | |         let output = std::process::Command::new("curl")
+861 | |             .arg("-s")
+862 | |             .arg("-L")
+...   |
+885 | |         active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+886 | |     });
+    | |_____^ `*mut GcObject` cannot be sent between threads safely
+    |
+    = help: within `{closure@src/bin/../vm/er_http.rs:859:24: 859:31}`, the trait `Send` is not implemented for `*mut GcObject`
+note: required because it's used within this closure
+   --> src/bin/../vm/er_http.rs:859:24
+    |
+859 |     std::thread::spawn(move || {
+    |                        ^^^^^^^
+note: required by a bound in `spawn`
+   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/std/src/thread/functions.rs:125:0
+
+warning: unnecessary `unsafe` block
+   --> src/vm/execute.rs:461:32
+    |
+413 |         unsafe {
+    |         ------ because it's nested under this `unsafe` block
+...
+461 |                 let is_async = unsafe {
+    |                                ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `frame_slots` is never read
+   --> src/vm/execute.rs:446:35
+    |
+446 |             let mut frame_slots = stack_start.add(slots_offset);
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `frame_slots` is never read
+   --> src/vm/execute.rs:451:21
+    |
+451 |                     frame_slots = stack_start.add(slots_offset);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+522 |                         reload_stack!();
+    |                         --------------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `reload_stack` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unnecessary `unsafe` block
+    --> src/vm/execute.rs:1230:41
+     |
+ 591 |         unsafe {
+     |         ------ because it's nested under this `unsafe` block
+...
+1230 |                             let state = unsafe {
+     |                                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> src/vm/execute.rs:1253:37
+     |
+ 591 |         unsafe {
+     |         ------ because it's nested under this `unsafe` block
+...
+1253 |                                     unsafe {
+     |                                     ^^^^^^ unnecessary `unsafe` block
+
+warning: variable does not need to be mutable
+    --> src/vm/execute.rs:1250:41
+     |
+1250 | ...                   let mut suspended_stack = std::mem::take(&mut self.stack);
+     |                           ----^^^^^^^^^^^^^^^
+     |                           |
+     |                           help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src/vm/execute.rs:1251:41
+     |
+1251 | ...                   let mut suspended_frames = std::mem::take(&mut self.frames);
+     |                           ----^^^^^^^^^^^^^^^^
+     |                           |
+     |                           help: remove this `mut`
+
+warning: unnecessary `unsafe` block
+   --> src/bin/../vm/execute.rs:461:32
+    |
+413 |         unsafe {
+    |         ------ because it's nested under this `unsafe` block
+...
+461 |                 let is_async = unsafe {
+    |                                ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `frame_slots` is never read
+   --> src/bin/../vm/execute.rs:446:35
+    |
+446 |             let mut frame_slots = stack_start.add(slots_offset);
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `frame_slots` is never read
+   --> src/bin/../vm/execute.rs:451:21
+    |
+451 |                     frame_slots = stack_start.add(slots_offset);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+522 |                         reload_stack!();
+    |                         --------------- in this macro invocation
+    |
+    = help: maybe it is overwritten before being read?
+    = note: this warning originates in the macro `reload_stack` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unnecessary `unsafe` block
+    --> src/bin/../vm/execute.rs:1230:41
+     |
+ 591 |         unsafe {
+     |         ------ because it's nested under this `unsafe` block
+...
+1230 |                             let state = unsafe {
+     |                                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> src/bin/../vm/execute.rs:1253:37
+     |
+ 591 |         unsafe {
+     |         ------ because it's nested under this `unsafe` block
+...
+1253 |                                     unsafe {
+     |                                     ^^^^^^ unnecessary `unsafe` block
+
+warning: variable does not need to be mutable
+    --> src/bin/../vm/execute.rs:1250:41
+     |
+1250 | ...                   let mut suspended_stack = std::mem::take(&mut self.stack);
+     |                           ----^^^^^^^^^^^^^^^
+     |                           |
+     |                           help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src/bin/../vm/execute.rs:1251:41
+     |
+1251 | ...                   let mut suspended_frames = std::mem::take(&mut self.frames);
+     |                           ----^^^^^^^^^^^^^^^^
+     |                           |
+     |                           help: remove this `mut`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `eronom` (bin "eronom") generated 7 warnings
+warning: eronom@0.1.0: In file included from /home/vishnus/Downloads/eronom/external/mir/mir.h:21,
+warning: eronom@0.1.0:                  from /home/vishnus/Downloads/eronom/external/mir/mir.c:5:
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-interp.c: In function 'VARR_MIR_val_tlast':
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:55:31: note: the ABI of passing union with 'long double' has changed in GCC 4.4
+warning: eronom@0.1.0:    55 | #define VARR(T) VARR_CONCAT2 (VARR_, T)
+warning: eronom@0.1.0:       |                               ^~~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:53:28: note: in definition of macro 'VARR_CONCAT2'
+warning: eronom@0.1.0:    53 | #define VARR_CONCAT2(A, B) A##B
+warning: eronom@0.1.0:       |                            ^
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:60:18: note: in expansion of macro 'VARR'
+warning: eronom@0.1.0:    60 |   typedef struct VARR (T) { \
+warning: eronom@0.1.0:       |                  ^~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:71:3: note: in expansion of macro 'VARR_T'
+warning: eronom@0.1.0:    71 |   VARR_T (T);                                                                                 \
+warning: eronom@0.1.0:       |   ^~~~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-interp.c:73:1: note: in expansion of macro 'DEF_VARR'
+warning: eronom@0.1.0:    73 | DEF_VARR (MIR_val_t);
+warning: eronom@0.1.0:       | ^~~~~~~~
+error: could not compile `eronom` (bin "eronom") due to 1 previous error; 7 warnings emitted
+warning: build failed, waiting for other jobs to finish...
+warning: `eronom` (bin "bench") generated 7 warnings
+warning: eronom@0.1.0: In file included from /home/vishnus/Downloads/eronom/external/mir/mir.h:21,
+warning: eronom@0.1.0:                  from /home/vishnus/Downloads/eronom/external/mir/mir.c:5:
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-interp.c: In function 'VARR_MIR_val_tlast':
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:55:31: note: the ABI of passing union with 'long double' has changed in GCC 4.4
+warning: eronom@0.1.0:    55 | #define VARR(T) VARR_CONCAT2 (VARR_, T)
+warning: eronom@0.1.0:       |                               ^~~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:53:28: note: in definition of macro 'VARR_CONCAT2'
+warning: eronom@0.1.0:    53 | #define VARR_CONCAT2(A, B) A##B
+warning: eronom@0.1.0:       |                            ^
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:60:18: note: in expansion of macro 'VARR'
+warning: eronom@0.1.0:    60 |   typedef struct VARR (T) { \
+warning: eronom@0.1.0:       |                  ^~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-varr.h:71:3: note: in expansion of macro 'VARR_T'
+warning: eronom@0.1.0:    71 |   VARR_T (T);                                                                                 \
+warning: eronom@0.1.0:       |   ^~~~~~
+warning: eronom@0.1.0: /home/vishnus/Downloads/eronom/external/mir/mir-interp.c:73:1: note: in expansion of macro 'DEF_VARR'
+warning: eronom@0.1.0:    73 | DEF_VARR (MIR_val_t);
+warning: eronom@0.1.0:       | ^~~~~~~~
+error: could not compile `eronom` (bin "bench") due to 1 previous error; 7 warnings emitted

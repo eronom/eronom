@@ -31,6 +31,33 @@ use super::gc::{
     GC_STATE, GC_ROOTS, GC_NEEDS_STEP, GcColor, GcPhase, GcData, GcObject
 };
 
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicUsize;
+
+pub enum AsyncResult {
+    Timeout,
+    Fetch(Result<String, String>),
+    ResolvePromise(*mut crate::vm::gc::GcObject, Value),
+    ResolveFetchPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+}
+
+pub struct EventLoopTask {
+    pub callback: Value,
+    pub args: Vec<Value>,
+    pub result: AsyncResult,
+}
+
+unsafe impl Send for EventLoopTask {}
+unsafe impl Sync for EventLoopTask {}
+
+pub struct PendingAsync {
+    pub callback: Value,
+    pub args: Vec<Value>,
+}
+
+unsafe impl Send for PendingAsync {}
+unsafe impl Sync for PendingAsync {}
+
 pub struct VM {
     pub frames: Vec<CallFrame>,
     pub stack: Vec<Value>,
@@ -39,6 +66,11 @@ pub struct VM {
     pub mir_ctx: Option<*mut std::ffi::c_void>,
     pub use_jit: bool,
     pub alloc_count_local: usize,
+    
+    // Event loop fields
+    pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
+    pub active_async_tasks: Arc<AtomicUsize>,
+    pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
 }
 
 pub struct CallFrame {
@@ -47,6 +79,9 @@ pub struct CallFrame {
     pub slots_offset: usize,
     pub dest_reg: usize,
 }
+
+unsafe impl Send for CallFrame {}
+unsafe impl Sync for CallFrame {}
 
 impl Default for VM {
     fn default() -> Self {
@@ -73,6 +108,9 @@ impl VM {
             mir_ctx: None,
             use_jit,
             alloc_count_local: 0,
+            event_loop_queue: Arc::new(Mutex::new(Vec::new())),
+            active_async_tasks: Arc::new(AtomicUsize::new(0)),
+            pending_callbacks: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -85,6 +123,7 @@ impl VM {
     }
 
     pub fn run(&mut self, function: Function) -> Result<Value, String> {
+        let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
         let func_ptr = gc_allocate(GcData::Function(function));
         self.frames.push(CallFrame {
             function: func_ptr,
@@ -93,7 +132,9 @@ impl VM {
             dest_reg: 0,
         });
 
-        self.execute()
+        let res = self.execute();
+        crate::vm::er_http::ACTIVE_VM.with(|active| active.set(prev_vm));
+        res
     }
 
     pub fn gc_step(&mut self) {
@@ -125,6 +166,22 @@ impl VM {
                         }
                         for frame in &self.frames {
                             mark_value(&Value::function(frame.function));
+                        }
+                        if let Ok(queue) = self.event_loop_queue.lock() {
+                            for task in queue.iter() {
+                                mark_value(&task.callback);
+                                for arg in task.args.iter() {
+                                    mark_value(arg);
+                                }
+                            }
+                        }
+                        if let Ok(pending) = self.pending_callbacks.lock() {
+                            for item in pending.iter() {
+                                mark_value(&item.callback);
+                                for arg in item.args.iter() {
+                                    mark_value(arg);
+                                }
+                            }
                         }
                         GC_ROOTS.with(|roots| {
                             if let Ok(borrowed) = roots.try_borrow() {
@@ -400,6 +457,16 @@ impl VM {
             loop {
                 self.gc_trigger();
                 reload_stack!();
+
+                let is_async = unsafe {
+                    match &(*frame.function).data {
+                        GcData::Function(f) => f.is_async,
+                        _ => false,
+                    }
+                };
+                if is_async {
+                    return self.execute_loop_interpreter(0);
+                }
 
                 // Ensure the current function is JIT compiled
                 let native_ptr = crate::jit::compile_function(self, frame.function);
@@ -1117,6 +1184,21 @@ impl VM {
                             };
                             reload_stack!();
                             *frame_slots.add(dest) = result;
+                        } else if callee.is_method_send_json() {
+                            let res_ptr = (callee.0 & super::value::PTR_MASK) as *mut std::ffi::c_void;
+                            if !res_ptr.is_null() {
+                                let arg = if arg_count > 0 {
+                                    *frame_slots.add(func_reg + 1)
+                                } else {
+                                    Value::null()
+                                };
+                                sync_stack!();
+                                let json_val = super::er_http::value_to_json(arg);
+                                let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+                                super::er_http::end_http_response_json(res_ptr, &json_str);
+                                reload_stack!();
+                            }
+                            *frame_slots.add(dest) = Value::null();
                         } else if callee.is_array_method_push() || callee.is_array_method_pop() {
                             let ptr = callee.as_gc_ptr();
                             sync_stack!();
@@ -1139,6 +1221,49 @@ impl VM {
                             *frame_slots.add(dest) = result;
                         } else {
                             return Err("Can only call functions".into());
+                        }
+                    }
+                    OpCode::Await => {
+                        let await_value = *frame_slots.add(instruction.rb as usize);
+                        if await_value.is_promise() {
+                            let promise_ptr = await_value.as_gc_ptr();
+                            let state = unsafe {
+                                match &(*promise_ptr).data {
+                                    crate::vm::gc::GcData::Promise(prom) => prom.state.clone(),
+                                    _ => unreachable!(),
+                                }
+                            };
+                            let promise_status = {
+                                let lock = state.lock().unwrap();
+                                lock.clone()
+                            };
+                            match promise_status {
+                                crate::vm::gc::PromiseState::Fulfilled(val) => {
+                                    *frame_slots.add(instruction.ra as usize) = val;
+                                }
+                                crate::vm::gc::PromiseState::Rejected(err) => {
+                                    return Err(err);
+                                }
+                                crate::vm::gc::PromiseState::Pending => {
+                                     frame.ip = unsafe { ip.offset_from(code_ptr) } as usize - 1;
+
+                                    let mut suspended_stack = std::mem::take(&mut self.stack);
+                                    let mut suspended_frames = std::mem::take(&mut self.frames);
+
+                                    unsafe {
+                                        match &mut (*promise_ptr).data {
+                                            crate::vm::gc::GcData::Promise(prom) => {
+                                                *prom.suspended_stack.lock().unwrap() = suspended_stack;
+                                                *prom.suspended_frames.lock().unwrap() = suspended_frames;
+                                            }
+                                            _ => unreachable!(),
+                                        }
+                                    }
+                                    return Ok(Value::null());
+                                }
+                            }
+                        } else {
+                            *frame_slots.add(instruction.ra as usize) = await_value;
                         }
                     }
                     OpCode::Return => {
@@ -1167,6 +1292,141 @@ impl VM {
                 }
             }
         }
+    }
+
+    pub fn run_event_loop(&mut self) -> Result<(), String> {
+        let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
+        let result = self.run_event_loop_inner();
+        crate::vm::er_http::ACTIVE_VM.with(|active| active.set(prev_vm));
+        result
+    }
+
+    fn run_event_loop_inner(&mut self) -> Result<(), String> {
+        loop {
+            let tasks = {
+                let mut queue = self.event_loop_queue.lock().unwrap();
+                std::mem::take(&mut *queue)
+            };
+
+            for task in tasks {
+                match task.result {
+                    AsyncResult::ResolvePromise(promise_ptr, _) |
+                    AsyncResult::ResolveFetchPromise(promise_ptr, _) => {
+                        let resolved_value = match task.result {
+                            AsyncResult::ResolvePromise(_, val) => val,
+                            AsyncResult::ResolveFetchPromise(_, res) => {
+                                match res {
+                                    Ok(body_str) => {
+                                        let mut map = crate::vm::gc::get_pooled_map(2);
+                                        let body_key = crate::vm::gc::get_or_create_string("_body");
+                                        let body_val = crate::vm::gc::get_or_create_string(&body_str);
+                                        map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
+                                        let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
+                                        Value::object(ptr)
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[FetchAsyncPromise] Error: {}", e);
+                                        Value::null()
+                                    }
+                                }
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        let (suspended_stack, suspended_frames) = unsafe {
+                            match &(*promise_ptr).data {
+                                crate::vm::gc::GcData::Promise(prom) => {
+                                    let mut state = prom.state.lock().unwrap();
+                                    match *state {
+                                        crate::vm::gc::PromiseState::Pending => {
+                                            *state = crate::vm::gc::PromiseState::Fulfilled(resolved_value);
+                                            (
+                                                std::mem::take(&mut *prom.suspended_stack.lock().unwrap()),
+                                                std::mem::take(&mut *prom.suspended_frames.lock().unwrap())
+                                            )
+                                        }
+                                        _ => continue, // already resolved
+                                    }
+                                }
+                                _ => unreachable!(),
+                            }
+                        };
+
+                        if suspended_frames.is_empty() {
+                            continue;
+                        }
+
+                        // Restore stack and frames
+                        self.stack = suspended_stack;
+                        self.frames = suspended_frames;
+
+                        // Find the destination register from the Await instruction
+                        let frame = self.frames.last_mut().unwrap();
+                        let func = unsafe {
+                            match &(*frame.function).data {
+                                crate::vm::gc::GcData::Function(f) => f,
+                                _ => unreachable!(),
+                            }
+                        };
+                        let inst = func.chunk.code[frame.ip];
+                        assert_eq!(inst.op, OpCode::Await);
+
+                        // Write the resolved value to the destination register
+                        self.stack[frame.slots_offset + inst.ra as usize] = resolved_value;
+
+                        // Advance instruction pointer past Await
+                        frame.ip += 1;
+
+                        // Resume execution!
+                        if let Err(e) = self.execute_loop_interpreter(0) {
+                            return Err(e);
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                let mut args = Vec::new();
+                match task.result {
+                    AsyncResult::Timeout => {
+                        args.extend(task.args);
+                    }
+                    AsyncResult::Fetch(res) => {
+                        match res {
+                            Ok(body_str) => {
+                                let mut map = crate::vm::gc::get_pooled_map(2);
+                                let body_key = crate::vm::gc::get_or_create_string("_body");
+                                let body_val = crate::vm::gc::get_or_create_string(&body_str);
+                                map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
+                                let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
+                                args.push(Value::object(ptr));
+                            }
+                            Err(e) => {
+                                eprintln!("[FetchAsync] Error: {}", e);
+                                args.push(Value::null());
+                            }
+                        }
+                        args.extend(task.args);
+                    }
+                    _ => unreachable!(),
+                };
+
+                if let Err(e) = self.call_function_reentrant(task.callback, args) {
+                    return Err(e);
+                }
+            }
+
+            let active = self.active_async_tasks.load(std::sync::atomic::Ordering::SeqCst);
+            if active == 0 {
+                let queue_empty = self.event_loop_queue.lock().unwrap().is_empty();
+                if queue_empty {
+                    break;
+                }
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        Ok(())
     }
 }
 
@@ -1347,5 +1607,33 @@ mod tests {
         
         // Clean up
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_async_await_event_loop() {
+        gc_free_all();
+        let source = "
+            let result = 0
+            const get_val = async () => {
+                return 42
+            }
+            const main = async () => {
+                let x = await get_val()
+                result = x + 10
+            }
+            main()
+        ";
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        
+        let mut vm = VM::new();
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+        vm.run_event_loop().unwrap();
+        
+        assert_eq!(vm.get_global("result").unwrap().as_number(), 52.0);
     }
 }

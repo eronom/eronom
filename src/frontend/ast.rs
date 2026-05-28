@@ -12,7 +12,8 @@ pub enum Expr {
     Set(Box<Expr>, String, Box<Expr>),
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
-    Function(Vec<String>, Box<Stmt>),
+    Function(Vec<String>, Box<Stmt>, bool), // params, body, is_async
+    Await(Box<Expr>),
     GetIndex(Box<Expr>, Box<Expr>),
     SetIndex(Box<Expr>, Box<Expr>, Box<Expr>),
 }
