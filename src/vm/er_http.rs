@@ -805,3 +805,54 @@ pub extern "C" fn er_ws_on_close(
         ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
     }
 }
+
+pub fn native_fetch(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let url_val = args[0];
+    if !url_val.is_string() {
+        eprintln!("[Fetch] Error: URL must be a string");
+        return Value::null();
+    }
+    let url_str = unsafe {
+        match &(*url_val.as_gc_ptr()).data {
+            GcData::String(s) => s.as_ref().to_string(),
+            _ => return Value::null(),
+        }
+    };
+
+    // Use curl to fetch the URL synchronously
+    let output = std::process::Command::new("curl")
+        .arg("-s")
+        .arg("-L")
+        .arg(&url_str)
+        .output();
+
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let body_str = String::from_utf8_lossy(&out.stdout).into_owned();
+                
+                // Create a response object
+                let mut map = crate::vm::gc::get_pooled_map(2);
+                
+                // Store the response body in the object as "_body"
+                let body_key = crate::vm::gc::get_or_create_string("_body");
+                let body_val = crate::vm::gc::get_or_create_string(&body_str);
+                map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
+                
+                let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
+                Value::object(ptr)
+            } else {
+                let err_msg = String::from_utf8_lossy(&out.stderr).into_owned();
+                eprintln!("[Fetch] Curl error: {}", err_msg);
+                Value::null()
+            }
+        }
+        Err(e) => {
+            eprintln!("[Fetch] Failed to execute curl: {}", e);
+            Value::null()
+        }
+    }
+}

@@ -315,3 +315,39 @@ pub fn get_or_create_string(s: &str) -> *mut GcObject {
         }
     })
 }
+
+pub fn json_to_value(val: serde_json::Value) -> Value {
+    match val {
+        serde_json::Value::Null => Value::null(),
+        serde_json::Value::Bool(b) => Value::boolean(b),
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                Value::number(f)
+            } else {
+                Value::null()
+            }
+        }
+        serde_json::Value::String(s) => {
+            let ptr = get_or_create_string(&s);
+            Value::string(ptr)
+        }
+        serde_json::Value::Array(arr) => {
+            let mut elements = get_pooled_vec(arr.len());
+            for v in arr {
+                elements.push(json_to_value(v));
+            }
+            let ptr = gc_allocate(GcData::Array(elements));
+            Value::array(ptr)
+        }
+        serde_json::Value::Object(obj) => {
+            let mut map = get_pooled_map(obj.len());
+            for (k, v) in obj {
+                let key_ptr = get_or_create_string(&k);
+                let val = json_to_value(v);
+                map.insert(MapKey(Value::string(key_ptr)), val);
+            }
+            let ptr = gc_allocate(GcData::Object(map));
+            Value::object(ptr)
+        }
+    }
+}

@@ -1,0 +1,9 @@
+const getTodos = () => {
+  const todo = fetch('https://jsonplaceholder.typicode.com/todos/1')
+  return todo
+}
+
+const todos = getTodos()
+const response = todos.json()
+
+print(response)

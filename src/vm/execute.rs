@@ -817,12 +817,38 @@ impl VM {
                         let obj = *frame_slots.add(obj_reg);
                         if obj.is_object() {
                             let ptr = obj.as_gc_ptr();
-                            match &(*ptr).data {
-                                GcData::Object(map) => {
-                                    let val = map.get(&super::value::MapKey(name_val)).cloned().unwrap_or(Value::null());
-                                    *frame_slots.add(dest) = val;
+                            let name = match &(*name_val.as_gc_ptr()).data {
+                                GcData::String(s) => s.as_ref(),
+                                _ => "",
+                            };
+                            let mut is_json_method = false;
+                            let mut is_text_method = false;
+                            if name == "json" || name == "text" {
+                                let body_key = super::gc::get_or_create_string("_body");
+                                let is_response = match &(*ptr).data {
+                                    GcData::Object(map) => map.contains_key(&super::value::MapKey(Value::string(body_key))),
+                                    _ => false,
+                                };
+                                if is_response {
+                                    if name == "json" {
+                                        is_json_method = true;
+                                    } else {
+                                        is_text_method = true;
+                                    }
                                 }
-                                _ => unreachable!(),
+                            }
+                            if is_json_method {
+                                *frame_slots.add(dest) = Value(super::value::TAG_METHOD_JSON | (ptr as u64 & super::value::PTR_MASK));
+                            } else if is_text_method {
+                                *frame_slots.add(dest) = Value(super::value::TAG_METHOD_TEXT | (ptr as u64 & super::value::PTR_MASK));
+                            } else {
+                                match &(*ptr).data {
+                                    GcData::Object(map) => {
+                                        let val = map.get(&super::value::MapKey(name_val)).cloned().unwrap_or(Value::null());
+                                        *frame_slots.add(dest) = val;
+                                    }
+                                    _ => unreachable!(),
+                                }
                             }
                         } else if obj.is_array() {
                             let name = match &(*name_val.as_gc_ptr()).data {
@@ -1060,6 +1086,35 @@ impl VM {
                             }
                             sync_stack!();
                             let result = native(args);
+                            reload_stack!();
+                            *frame_slots.add(dest) = result;
+                        } else if callee.is_method_json() || callee.is_method_text() {
+                            let ptr = callee.as_gc_ptr();
+                            sync_stack!();
+                            let result = match &(*ptr).data {
+                                GcData::Object(map) => {
+                                    let body_key = super::gc::get_or_create_string("_body");
+                                    let body_val = map.get(&super::value::MapKey(Value::string(body_key))).cloned().unwrap_or(Value::null());
+                                    if callee.is_method_json() {
+                                        if body_val.is_string() {
+                                            let s = match &(*body_val.as_gc_ptr()).data {
+                                                GcData::String(st) => st.as_ref(),
+                                                _ => "",
+                                            };
+                                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(s) {
+                                                super::gc::json_to_value(json_val)
+                                            } else {
+                                                Value::null()
+                                            }
+                                        } else {
+                                            Value::null()
+                                        }
+                                    } else {
+                                        body_val
+                                    }
+                                }
+                                _ => unreachable!(),
+                            };
                             reload_stack!();
                             *frame_slots.add(dest) = result;
                         } else if callee.is_array_method_push() || callee.is_array_method_pop() {

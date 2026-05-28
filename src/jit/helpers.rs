@@ -287,11 +287,37 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
     unsafe {
         let res = if obj.is_object() {
             let ptr = obj.as_gc_ptr();
-            match &(*ptr).data {
-                GcData::Object(map) => {
-                    map.get(&MapKey(name_val)).cloned().unwrap_or(Value::null())
+            let name = match &(*name_val.as_gc_ptr()).data {
+                GcData::String(s) => s.as_ref(),
+                _ => "",
+            };
+            let mut is_json_method = false;
+            let mut is_text_method = false;
+            if name == "json" || name == "text" {
+                let body_key = get_or_create_string("_body");
+                let is_response = match &(*ptr).data {
+                    GcData::Object(map) => map.contains_key(&MapKey(Value::string(body_key))),
+                    _ => false,
+                };
+                if is_response {
+                    if name == "json" {
+                        is_json_method = true;
+                    } else {
+                        is_text_method = true;
+                    }
                 }
-                _ => unreachable!(),
+            }
+            if is_json_method {
+                Value(crate::vm::value::TAG_METHOD_JSON | (ptr as u64 & crate::vm::value::PTR_MASK))
+            } else if is_text_method {
+                Value(crate::vm::value::TAG_METHOD_TEXT | (ptr as u64 & crate::vm::value::PTR_MASK))
+            } else {
+                match &(*ptr).data {
+                    GcData::Object(map) => {
+                        map.get(&MapKey(name_val)).cloned().unwrap_or(Value::null())
+                    }
+                    _ => unreachable!(),
+                }
             }
         } else if obj.is_array() {
             let name = match &(*name_val.as_gc_ptr()).data {
@@ -531,6 +557,34 @@ pub extern "C" fn er_jit_call_non_vm(
                 args.push(*frame_slots.offset((func_reg + 1 + i) as isize));
             }
             let result = native(args);
+            *dest = result;
+            0
+        } else if callee.is_method_json() || callee.is_method_text() {
+            let ptr = callee.as_gc_ptr();
+            let result = match &(*ptr).data {
+                GcData::Object(map) => {
+                    let body_key = get_or_create_string("_body");
+                    let body_val = map.get(&MapKey(Value::string(body_key))).cloned().unwrap_or(Value::null());
+                    if callee.is_method_json() {
+                        if body_val.is_string() {
+                            let s = match &(*body_val.as_gc_ptr()).data {
+                                GcData::String(st) => st.as_ref(),
+                                _ => "",
+                            };
+                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(s) {
+                                crate::vm::gc::json_to_value(json_val)
+                            } else {
+                                Value::null()
+                            }
+                        } else {
+                            Value::null()
+                        }
+                    } else {
+                        body_val
+                    }
+                }
+                _ => unreachable!(),
+            };
             *dest = result;
             0
         } else if callee.is_array_method_push() || callee.is_array_method_pop() {
