@@ -16,6 +16,7 @@ pub const TAG_METHOD_JSON: u64 = 0xfffb_0000_0000_0000;
 pub const TAG_METHOD_TEXT: u64 = 0xfffc_0000_0000_0000;
 pub const TAG_METHOD_SEND_JSON: u64 = 0xfffd_0000_0000_0000;
 pub const TAG_PROMISE: u64     = 0xfffe_0000_0000_0000;
+pub const TAG_METHOD_RESOLVE: u64 = 0xffff_0000_0000_0000;
 pub const PTR_MASK: u64        = 0x0000_ffff_ffff_ffff;
 
 #[repr(transparent)]
@@ -165,6 +166,11 @@ impl Value {
     }
 
     #[inline(always)]
+    pub fn is_method_resolve(self) -> bool {
+        (self.0 & 0xffff_0000_0000_0000) == TAG_METHOD_RESOLVE
+    }
+
+    #[inline(always)]
     pub fn is_promise(self) -> bool {
         (self.0 & 0xffff_0000_0000_0000) == TAG_PROMISE
     }
@@ -249,6 +255,8 @@ impl fmt::Debug for Value {
             write!(f, "MethodText({:p})", self.as_gc_ptr())
         } else if self.is_method_send_json() {
             write!(f, "MethodSendJson({:p})", (self.0 & PTR_MASK) as *const ())
+        } else if self.is_method_resolve() {
+            write!(f, "MethodResolve({:p})", (self.0 & PTR_MASK) as *const ())
         } else if self.is_promise() {
             write!(f, "Promise({:p})", self.as_gc_ptr())
         } else {
@@ -315,6 +323,8 @@ impl fmt::Display for Value {
             write!(f, "[Method text]")
         } else if self.is_method_send_json() {
             write!(f, "[Method sendJson]")
+        } else if self.is_method_resolve() {
+            write!(f, "[Method resolve]")
         } else if self.is_promise() {
             write!(f, "[Promise]")
         } else {

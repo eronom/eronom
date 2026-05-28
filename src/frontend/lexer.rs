@@ -237,8 +237,6 @@ impl<'a> Lexer<'a> {
                     "import" => TokenType::Import,
                     "export" => TokenType::Export,
                     "from" => TokenType::From,
-                    "async" => TokenType::Async,
-                    "await" => TokenType::Await,
                     _ => TokenType::Identifier(ident),
                 }
             }

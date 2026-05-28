@@ -1,0 +1,32 @@
+import { Io } from "std/io"
+
+// Colorless async/sync fetch routine
+const getTodoColorless = (io, url) => {
+  print("[Colorless] Fetching URL: " + url)
+  const response = io.fetch(url)
+  print("[Colorless] Decode response...")
+  const todo = response.json()
+  print("[Colorless] Decoded Todo:")
+  print(todo)
+  return todo
+}
+
+print("=== Running in Threaded (Blocking) Mode ===")
+const todo1 = getTodoColorless(Io.Threaded, "https://jsonplaceholder.typicode.com/todos/1")
+print("Result 1 title: " + todo1.title)
+
+print("=== Running in Evented (Non-Blocking) Mode ===")
+const todo2 = getTodoColorless(Io.Evented, "https://jsonplaceholder.typicode.com/todos/2")
+print("Result 2 title: " + todo2.title)
+
+print("=== Running Concurrent Tasks via Io.spawn ===")
+// Spawn two fetches in background (asynchronously)
+const future1 = Io.Evented.spawn(getTodoColorless, [Io.Evented, "https://jsonplaceholder.typicode.com/todos/3"])
+const future2 = Io.Evented.spawn(getTodoColorless, [Io.Evented, "https://jsonplaceholder.typicode.com/todos/4"])
+
+print("Awaiting concurrent tasks...")
+const res1 = Io.Evented.wait(future1)
+const res2 = Io.Evented.wait(future2)
+
+print("Result 3 title: " + res1.title)
+print("Result 4 title: " + res2.title)

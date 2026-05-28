@@ -413,10 +413,10 @@ impl Compiler {
                     pairs.len() as u32,
                 );
             }
-            Expr::Function(params, body, is_async) => {
+            Expr::Function(params, body) => {
                 let mut compiler = Compiler::new();
                 compiler.function.arity = params.len();
-                compiler.function.is_async = *is_async;
+                compiler.function.is_async = false;
                 compiler.next_reg = params.len();
                 compiler.begin_scope();
                 for param in params {
@@ -440,16 +440,6 @@ impl Compiler {
                     0,
                     0,
                     idx as u32,
-                );
-            }
-            Expr::Await(expr) => {
-                self.compile_expr(expr, dest)?;
-                self.current_chunk().write_instruction(
-                    OpCode::Await,
-                    dest as u8,
-                    dest as u8,
-                    0,
-                    0,
                 );
             }
             Expr::GetIndex(obj, index) => {

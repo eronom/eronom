@@ -1,0 +1,48 @@
+// Standard I/O library for Eronom - Zig colorless model
+
+const callWithArity = (func, args) => {
+  const length = arrayLen(args)
+  if (length == 0) { return func() }
+  if (length == 1) { return func(args[0]) }
+  if (length == 2) { return func(args[0], args[1]) }
+  if (length == 3) { return func(args[0], args[1], args[2]) }
+  if (length == 4) { return func(args[0], args[1], args[2], args[3]) }
+  if (length == 5) { return func(args[0], args[1], args[2], args[3], args[4]) }
+  return func()
+}
+
+// Threaded (blocking, synchronous) I/O mode
+const Threaded = {
+  fetch: (url) => {
+    return fetchSync(url)
+  },
+  spawn: (func, args) => {
+    return callWithArity(func, args)
+  },
+  wait: (future) => {
+    return future
+  }
+}
+
+// Evented (non-blocking, VM-suspending) I/O mode
+const Evented = {
+  fetch: (url) => {
+    return fetchEvented(url)
+  },
+  spawn: (func, args) => {
+    const pair = createPromisePair()
+    setTimeout((f, a, resolve) => {
+      const res = callWithArity(f, a)
+      resolve(res)
+    }, 0, func, args, pair.resolve)
+    return pair.promise
+  },
+  wait: (future) => {
+    return futureAwait(future)
+  }
+}
+
+export const Io = {
+  Threaded: Threaded,
+  Evented: Evented
+}

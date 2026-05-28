@@ -1030,3 +1030,287 @@ pub fn native_fetch_async(args: Vec<Value>) -> Value {
 
     Value::null()
 }
+
+pub fn native_fetch_sync(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let url_val = args[0];
+    if !url_val.is_string() {
+        eprintln!("[FetchSync] Error: URL must be a string");
+        return Value::null();
+    }
+    let url_str = unsafe {
+        match &(*url_val.as_gc_ptr()).data {
+            GcData::String(s) => s.as_ref().to_string(),
+            _ => return Value::null(),
+        }
+    };
+
+    let output = std::process::Command::new("curl")
+        .arg("-s")
+        .arg("-L")
+        .arg(&url_str)
+        .output();
+
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let body_str = String::from_utf8_lossy(&out.stdout).into_owned();
+                let mut map = crate::vm::gc::get_pooled_map(2);
+                let body_key = crate::vm::gc::get_or_create_string("_body");
+                let body_val = crate::vm::gc::get_or_create_string(&body_str);
+                map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
+                let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
+                Value::object(ptr)
+            } else {
+                let err_str = String::from_utf8_lossy(&out.stderr).into_owned();
+                eprintln!("[FetchSync] Error: {}", err_str);
+                Value::null()
+            }
+        }
+        Err(e) => {
+            eprintln!("[FetchSync] Error: {}", e);
+            Value::null()
+        }
+    }
+}
+
+pub fn native_fetch_evented(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let url_val = args[0];
+    if !url_val.is_string() {
+        eprintln!("[FetchEvented] Error: URL must be a string");
+        return Value::null();
+    }
+    let url_str = unsafe {
+        match &(*url_val.as_gc_ptr()).data {
+            GcData::String(s) => s.as_ref().to_string(),
+            _ => return Value::null(),
+        }
+    };
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        eprintln!("[FetchEvented] Error: ACTIVE_VM is null");
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    // 1. Create a promise
+    let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
+    let prom = crate::vm::gc::GcPromise {
+        state: state.clone(),
+        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+
+    // 2. Take the stack and frames to suspend the VM
+    let suspended_stack = std::mem::take(&mut vm.stack);
+    let suspended_frames = std::mem::take(&mut vm.frames);
+
+    unsafe {
+        match &mut (*promise_ptr).data {
+            crate::vm::gc::GcData::Promise(p) => {
+                *p.suspended_stack.lock().unwrap() = suspended_stack;
+                *p.suspended_frames.lock().unwrap() = suspended_frames;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    // 3. Increment active async tasks counter
+    let active_counter = vm.active_async_tasks.clone();
+    let queue = vm.event_loop_queue.clone();
+    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    let promise_ptr_usize = promise_ptr as usize;
+
+    // 4. Spawn background thread to fetch URL
+    std::thread::spawn(move || {
+        let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
+        let output = std::process::Command::new("curl")
+            .arg("-s")
+            .arg("-L")
+            .arg(&url_str)
+            .output();
+
+        let res = match output {
+            Ok(out) => {
+                if out.status.success() {
+                    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+                } else {
+                    Err(String::from_utf8_lossy(&out.stderr).into_owned())
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        };
+
+        // Post ResolveFetchPromise back to event loop
+        let mut q = queue.lock().unwrap();
+        q.push(crate::vm::execute::EventLoopTask {
+            callback: Value::null(),
+            args: Vec::new(),
+            result: crate::vm::execute::AsyncResult::ResolveFetchPromise(promise_ptr, res),
+        });
+
+        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    Value::null()
+}
+
+pub fn native_future_await(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let future_val = args[0];
+    let promise_ptr = if future_val.is_promise() {
+        future_val.as_gc_ptr()
+    } else if future_val.is_object() {
+        unsafe {
+            match &(*future_val.as_gc_ptr()).data {
+                GcData::Object(map) => {
+                    let key = crate::vm::gc::get_or_create_string("_promise");
+                    if let Some(val) = map.get(&crate::vm::value::MapKey(Value::string(key))) {
+                        if val.is_promise() {
+                            val.as_gc_ptr()
+                        } else {
+                            return Value::null();
+                        }
+                    } else {
+                        return Value::null();
+                    }
+                }
+                _ => return Value::null(),
+            }
+        }
+    } else {
+        return Value::null();
+    };
+
+    unsafe {
+        match &(*promise_ptr).data {
+            GcData::Promise(prom) => {
+                let state = prom.state.lock().unwrap();
+                match &*state {
+                    crate::vm::gc::PromiseState::Fulfilled(val) => {
+                        return *val;
+                    }
+                    crate::vm::gc::PromiseState::Rejected(err) => {
+                        eprintln!("[Future Await] Error: {}", err);
+                        return Value::null();
+                    }
+                    crate::vm::gc::PromiseState::Pending => {}
+                }
+            }
+            _ => return Value::null(),
+        }
+    }
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    let suspended_stack = std::mem::take(&mut vm.stack);
+    let suspended_frames = std::mem::take(&mut vm.frames);
+
+    unsafe {
+        match &mut (*promise_ptr).data {
+            GcData::Promise(p) => {
+                *p.suspended_stack.lock().unwrap() = suspended_stack;
+                *p.suspended_frames.lock().unwrap() = suspended_frames;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    Value::null()
+}
+
+pub fn native_array_len(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::number(0.0);
+    }
+    let arr_val = args[0];
+    if !arr_val.is_array() {
+        return Value::number(0.0);
+    }
+    let arr_ptr = arr_val.as_gc_ptr();
+    unsafe {
+        match &(*arr_ptr).data {
+            GcData::Array(arr) => Value::number(arr.len() as f64),
+            _ => Value::number(0.0),
+        }
+    }
+}
+
+pub fn native_sleep(args: Vec<Value>) -> Value {
+    let delay_ms = if args.is_empty() {
+        0
+    } else {
+        args[0].as_number() as u64
+    };
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    let prom = crate::vm::gc::GcPromise {
+        state: std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending)),
+        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+    let promise_val = Value::promise(promise_ptr);
+
+    let queue = vm.event_loop_queue.clone();
+    let active_counter = vm.active_async_tasks.clone();
+    let promise_usize = promise_ptr as usize;
+
+    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+
+        let promise_ptr = promise_usize as *mut crate::vm::gc::GcObject;
+        let mut q = queue.lock().unwrap();
+        q.push(crate::vm::execute::EventLoopTask {
+            callback: Value::null(),
+            args: Vec::new(),
+            result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, Value::null()),
+        });
+
+        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    promise_val
+}
+pub fn native_create_promise_pair(_args: Vec<Value>) -> Value {
+    let prom = crate::vm::gc::GcPromise {
+        state: std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending)),
+        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
+    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+    let promise_val = Value::promise(promise_ptr);
+
+    let resolver = Value(crate::vm::value::TAG_METHOD_RESOLVE | (promise_ptr as u64 & crate::vm::value::PTR_MASK));
+
+    let mut map = crate::vm::gc::get_pooled_map(2);
+    let promise_key = crate::vm::gc::get_or_create_string("promise");
+    let resolve_key = crate::vm::gc::get_or_create_string("resolve");
+    map.insert(crate::vm::value::MapKey(Value::string(promise_key)), promise_val);
+    map.insert(crate::vm::value::MapKey(Value::string(resolve_key)), resolver);
+
+    let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
+    Value::object(ptr)
+}
+

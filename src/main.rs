@@ -51,6 +51,12 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("fetch", Value::native_function(backend::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(backend::er_http::native_set_timeout));
     vm.register_global("fetchAsync", Value::native_function(backend::er_http::native_fetch_async));
+    vm.register_global("fetchSync", Value::native_function(backend::er_http::native_fetch_sync));
+    vm.register_global("fetchEvented", Value::native_function(backend::er_http::native_fetch_evented));
+    vm.register_global("futureAwait", Value::native_function(backend::er_http::native_future_await));
+    vm.register_global("arrayLen", Value::native_function(backend::er_http::native_array_len));
+    vm.register_global("sleep", Value::native_function(backend::er_http::native_sleep));
+    vm.register_global("createPromisePair", Value::native_function(backend::er_http::native_create_promise_pair));
     backend::er_http::set_target_script_path(path);
 
     let main_path = std::path::Path::new(path);

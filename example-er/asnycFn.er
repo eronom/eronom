@@ -1,0 +1,10 @@
+const getTodos = () => {
+  const promise = fetch('https://jsonplaceholder.typicode.com/todos/1')
+  const response = futureAwait(promise)
+  const todo = response.json()
+  print("Todo received:")
+  print(todo)
+  return todo
+}
+
+getTodos()
