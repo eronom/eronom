@@ -12,6 +12,7 @@ pub struct Function {
     pub chunk: Chunk,
     pub arity: usize,
     pub jit_ptr: std::cell::Cell<Option<*const std::ffi::c_void>>,
+    pub is_async: bool,
 }
 
 #[repr(u8)]
@@ -43,6 +44,7 @@ pub enum OpCode {
     SetProperty,
     GetIndex,
     SetIndex,
+    Await,
     Return,
 }
 

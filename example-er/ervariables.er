@@ -1,0 +1,8 @@
+import { num } from "./ervaruse.er"
+
+const array = []
+
+array.push(1)
+array.push(num)
+
+print(array)

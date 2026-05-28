@@ -81,7 +81,32 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt, String> {
-        if self.match_token(&[TokenType::Let, TokenType::Const]) {
+        if self.match_token(&[TokenType::Import]) {
+            self.consume(TokenType::LeftBrace, "Expected '{' after import.")?;
+            let mut names = Vec::new();
+            if !self.check(&TokenType::RightBrace) {
+                loop {
+                    let name = self.consume_ident("Expected identifier in import list.")?;
+                    names.push(name);
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after import list.")?;
+            self.consume(TokenType::From, "Expected 'from' after import list.")?;
+            let path_token = self.peek().clone();
+            let path = if let TokenType::String(s) = path_token.ty {
+                self.advance();
+                s
+            } else {
+                return Err(format!("Error at line {}: Expected string literal for import path.", path_token.line));
+            };
+            Ok(Stmt::Import(names, path))
+        } else if self.match_token(&[TokenType::Export]) {
+            let decl = self.declaration()?;
+            Ok(Stmt::Export(Box::new(decl)))
+        } else if self.match_token(&[TokenType::Let, TokenType::Const]) {
             let is_const = self.previous().ty == TokenType::Const;
             let name = self.consume_ident("Expected variable name.")?;
 
@@ -247,8 +272,16 @@ impl Parser {
         Ok(expr)
     }
 
+    fn unary(&mut self) -> Result<Expr, String> {
+        if self.match_token(&[TokenType::Await]) {
+            let expr = self.unary()?;
+            return Ok(Expr::Await(Box::new(expr)));
+        }
+        self.primary()
+    }
+
     fn call(&mut self) -> Result<Expr, String> {
-        let mut expr = self.primary()?;
+        let mut expr = self.unary()?;
         loop {
             if self.match_token(&[TokenType::LeftParen]) {
                 let mut args = Vec::new();
@@ -307,12 +340,57 @@ impl Parser {
             return Ok(Expr::Literal(LiteralValue::String(s)));
         }
 
+        if self.match_token(&[TokenType::Async]) {
+            if self.check_ident() {
+                // Check if followed by Arrow
+                let temp = self.current;
+                if temp < self.tokens.len() && self.tokens[temp].ty == TokenType::Arrow {
+                    let name = self.consume_ident("Expected identifier")?;
+                    self.consume(TokenType::Arrow, "Expected '=>' after async parameter.")?;
+                    let body = self.statement()?;
+                    return Ok(Expr::Function(vec![name], Box::new(body), true));
+                } else {
+                    return Err(format!("Error at line {}: Expected '=>' after 'async identifier'.", self.peek().line));
+                }
+            } else if self.match_token(&[TokenType::LeftParen]) {
+                if self.check(&TokenType::RightParen) {
+                    self.advance(); // consume RightParen
+                    self.consume(TokenType::Arrow, "Expected '=>' after async parameters.")?;
+                    let body = self.statement()?;
+                    return Ok(Expr::Function(Vec::new(), Box::new(body), true));
+                }
+                let mut params = Vec::new();
+                loop {
+                    let name = self.consume_ident("Expected parameter name")?;
+                    params.push(name);
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+                self.consume(TokenType::RightParen, "Expected ')' after async parameters.")?;
+                self.consume(TokenType::Arrow, "Expected '=>' after async parameters.")?;
+                let body = self.statement()?;
+                return Ok(Expr::Function(params, Box::new(body), true));
+            } else {
+                return Err(format!("Error at line {}: Expected function after 'async'.", self.peek().line));
+            }
+        }
+
         if self.check_ident() {
             let name = self.consume_ident("Expected identifier")?;
             return Ok(Expr::Variable(name));
         }
 
         if self.match_token(&[TokenType::LeftParen]) {
+            if self.check(&TokenType::RightParen) {
+                let temp = self.current;
+                if temp + 1 < self.tokens.len() && self.tokens[temp + 1].ty == TokenType::Arrow {
+                    self.advance(); // consume RightParen
+                    self.advance(); // consume Arrow
+                    let body = self.statement()?;
+                    return Ok(Expr::Function(Vec::new(), Box::new(body), false));
+                }
+            }
             let mut params = Vec::new();
             if self.check_ident() {
                 let save_pos = self.current;
@@ -339,7 +417,7 @@ impl Parser {
 
                 if is_arrow {
                     let body = self.statement()?;
-                    return Ok(Expr::Function(params, Box::new(body)));
+                    return Ok(Expr::Function(params, Box::new(body), false));
                 } else {
                     self.current = save_pos;
                 }
@@ -350,7 +428,7 @@ impl Parser {
 
             if self.match_token(&[TokenType::Arrow]) {
                 let body = self.statement()?;
-                return Ok(Expr::Function(vec![], Box::new(body)));
+                return Ok(Expr::Function(vec![], Box::new(body), false));
             }
 
             return Ok(expr);
@@ -393,6 +471,151 @@ impl Parser {
             return Ok(Expr::Object(pairs));
         }
 
-        Err(format!("Unexpected token: {:?}", self.peek().ty))
+        Err(format!("Error at line {}: Unexpected token: {:?}", self.peek().line, self.peek().ty))
     }
+}
+
+pub fn parse_and_resolve_imports(path: &std::path::Path) -> Result<Vec<Stmt>, String> {
+    let mut visited = std::collections::HashSet::new();
+    resolve_imports_recursive(path, &mut visited)
+}
+
+fn get_exported_names(stmts: &[Stmt]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for stmt in stmts {
+        if let Stmt::Export(inner) = stmt {
+            if let Stmt::VarDecl(name, _, _) = &**inner {
+                names.insert(name.clone());
+            }
+        }
+    }
+    names
+}
+
+fn find_std_dir(start_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    // 1. Search upwards from the compiling file's directory
+    let mut current = Some(start_dir);
+    while let Some(dir) = current {
+        let std_dir = dir.join("std");
+        if std_dir.is_dir() {
+            return Some(std_dir);
+        }
+        current = dir.parent();
+    }
+
+    // 2. Search upwards from current working directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut current = Some(cwd.as_path());
+        while let Some(dir) = current {
+            let std_dir = dir.join("std");
+            if std_dir.is_dir() {
+                return Some(std_dir);
+            }
+            current = dir.parent();
+        }
+    }
+
+    // 3. Search relative to executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut current = Some(exe_dir);
+            while let Some(dir) = current {
+                let std_dir = dir.join("std");
+                if std_dir.is_dir() {
+                    return Some(std_dir);
+                }
+                current = dir.parent();
+            }
+        }
+    }
+
+    None
+}
+
+fn resolve_imports_recursive(
+    path: &std::path::Path,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+) -> Result<Vec<Stmt>, String> {
+    let canonical = path.canonicalize()
+        .map_err(|e| format!("Failed to canonicalize path {:?}: {}", path, e))?;
+
+    if visited.contains(&canonical) {
+        return Ok(Vec::new());
+    }
+    visited.insert(canonical.clone());
+
+    let content = std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("Failed to read file {:?}: {}", canonical, e))?;
+
+    let tokens = super::lexer::lex(&content);
+    let mut parser = Parser::new(tokens);
+    let stmts = parser.parse()?;
+
+    let mut resolved_stmts = Vec::new();
+    let parent_dir = canonical.parent().ok_or_else(|| "No parent directory".to_string())?;
+
+    for stmt in stmts {
+        match stmt {
+            Stmt::Import(names, import_path) => {
+                let is_std_import = import_path.starts_with("std/") || import_path == "std" || import_path.starts_with("std\\");
+                let mut resolved_path = if is_std_import {
+                    if let Some(std_root) = find_std_dir(parent_dir) {
+                        let std_parent = std_root.parent().unwrap_or(&std_root);
+                        std_parent.join(&import_path)
+                    } else {
+                        parent_dir.join(&import_path)
+                    }
+                } else {
+                    parent_dir.join(&import_path)
+                };
+                
+                // Fallbacks:
+                if !resolved_path.exists() {
+                    if import_path.ends_with(".js") {
+                        let er_path = resolved_path.with_extension("er");
+                        if er_path.exists() {
+                            resolved_path = er_path;
+                        }
+                    }
+                }
+                
+                if !resolved_path.exists() {
+                    let er_path = resolved_path.with_extension("er");
+                    if er_path.exists() {
+                        resolved_path = er_path;
+                    }
+                }
+
+                if !resolved_path.exists() {
+                    return Err(format!(
+                        "Imported file not found: {:?} (specified as {})",
+                        resolved_path, import_path
+                    ));
+                }
+
+                let sub_stmts = resolve_imports_recursive(&resolved_path, visited)?;
+                
+                // Verify names are exported
+                let exports = get_exported_names(&sub_stmts);
+                for name in &names {
+                    if !exports.contains(name) {
+                        return Err(format!(
+                            "Name '{}' is not exported by {:?}",
+                            name, resolved_path
+                        ));
+                    }
+                }
+                
+                resolved_stmts.extend(sub_stmts);
+            }
+            Stmt::Export(inner) => {
+                resolved_stmts.push(Stmt::Export(inner));
+            }
+            _ => {
+                resolved_stmts.push(stmt);
+            }
+        }
+    }
+
+    Ok(resolved_stmts)
 }

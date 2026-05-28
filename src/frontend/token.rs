@@ -39,6 +39,11 @@ pub enum TokenType {
     Let,
     Const,
     In,
+    Import,
+    Export,
+    From,
+    Async,
+    Await,
     Eof,
 }
 

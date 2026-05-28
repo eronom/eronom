@@ -12,7 +12,8 @@ pub enum Expr {
     Set(Box<Expr>, String, Box<Expr>),
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
-    Function(Vec<String>, Box<Stmt>),
+    Function(Vec<String>, Box<Stmt>, bool), // params, body, is_async
+    Await(Box<Expr>),
     GetIndex(Box<Expr>, Box<Expr>),
     SetIndex(Box<Expr>, Box<Expr>, Box<Expr>),
 }
@@ -34,4 +35,6 @@ pub enum Stmt {
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
     For(String, Expr, Expr, Box<Stmt>), // var, start, end, body
     Return(Option<Expr>),
+    Import(Vec<String>, String), // imported names, source path
+    Export(Box<Stmt>), // exported declaration statement
 }

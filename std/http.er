@@ -1,0 +1,57 @@
+// Standard HTTP library for Eronom
+
+// Native route constructor
+export const route = route
+
+// HTTP Status Codes mapping
+export const status = {
+  OK: 200,
+  CREATED: 201,
+  ACCEPTED: 202,
+  NO_CONTENT: 204,
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  INTERNAL_SERVER_ERROR: 500
+}
+
+// NodeJS-compatible createServer API
+export const createServer = (handler) => {
+  let app = route()
+  
+  let dispatch = (c) => {
+    let req = {
+      url: c.req.url,
+      method: c.req.method,
+      headers: {}
+    }
+    
+    let res = {
+      statusCode: 200,
+      headers: {},
+      writeHead: (statusCode, headers) => {
+        res.statusCode = statusCode
+        if (headers) {
+          res.headers = headers
+        }
+      },
+      end: (data) => {
+        c.json(data)
+      }
+    }
+    
+    handler(req, res)
+  }
+  
+  // Register wildcard routes to catch all incoming requests
+  app.get("/*", dispatch)
+  app.post("/*", dispatch)
+  
+  return {
+    listen: (port) => {
+      // Eronom server starts automatically when the VM finishes executing 
+      // if any routes are registered.
+    }
+  }
+}

@@ -1,8 +1,18 @@
-/// Benchmark: VM-based vs Legacy tree-walking interpreter
 /// Run with: cargo run --release --bin bench -p er
+#[path = "../vm/mod.rs"]
+pub mod vm;
+pub use vm as backend;
+#[path = "../frontend/mod.rs"]
+pub mod frontend;
+#[path = "../jit/mod.rs"]
+pub mod jit;
+
+use crate as eronom;
+
 use std::time::Instant;
 use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
 
 struct Counter {
     allocated: AtomicUsize,
@@ -168,6 +178,7 @@ for i in 1..50000 {
                     vm.use_jit = false;
                     vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
+                    eronom::backend::gc_free_all();
                 }
                 // Loop
                 for _ in 0..iterations {
@@ -180,6 +191,7 @@ for i in 1..50000 {
                     vm.use_jit = false;
                     vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
+                    eronom::backend::gc_free_all();
                 }
                 return;
             }
@@ -195,6 +207,7 @@ for i in 1..50000 {
                     vm.use_jit = true;
                     vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
+                    eronom::backend::gc_free_all();
                 }
                 // Loop
                 for _ in 0..iterations {
@@ -207,6 +220,7 @@ for i in 1..50000 {
                     vm.use_jit = true;
                     vm.register_global("print", eronom::backend::Value::native_function(noop_print));
                     vm.run(function).ok();
+                    eronom::backend::gc_free_all();
                 }
                 return;
             }
@@ -217,6 +231,7 @@ for i in 1..50000 {
                     let stmts = parser.parse().unwrap();
                     let compiler = eronom::backend::Compiler::new();
                     let _function = compiler.compile(&stmts).unwrap();
+                    eronom::backend::gc_free_all();
                 }
                 return;
             }
@@ -247,6 +262,7 @@ for i in 1..50000 {
         vm.use_jit = true;
         vm.register_global("print", eronom::backend::Value::native_function(noop_print));
         vm.run(function).ok();
+        eronom::backend::gc_free_all();
     }
 
     // Warmup (Interpreter)
@@ -260,6 +276,7 @@ for i in 1..50000 {
         vm.use_jit = false;
         vm.register_global("print", eronom::backend::Value::native_function(noop_print));
         vm.run(function).ok();
+        eronom::backend::gc_free_all();
     }
 
     // Benchmark VM (Interpreter)
@@ -281,6 +298,7 @@ for i in 1..50000 {
         vm.use_jit = false;
         vm.register_global("print", eronom::backend::Value::native_function(noop_print));
         vm.run(function).ok();
+        eronom::backend::gc_free_all();
     }
     let vm_interpreter_elapsed = start.elapsed();
     println!("--- Interpreter GC stats ---");
@@ -314,6 +332,7 @@ for i in 1..50000 {
             vm.use_jit = true;
             vm.register_global("print", eronom::backend::Value::native_function(noop_print));
             vm.run(function).ok();
+            eronom::backend::gc_free_all();
         }
         let vm_jit_elapsed = start.elapsed();
         println!("--- JIT GC stats ---");
@@ -337,6 +356,7 @@ for i in 1..50000 {
         let stmts = parser.parse().unwrap();
         let compiler = eronom::backend::Compiler::new();
         let _function = compiler.compile(&stmts).unwrap();
+        eronom::backend::gc_free_all();
     }
     let compile_elapsed = start.elapsed();
     let compile_avg = compile_elapsed / iterations;

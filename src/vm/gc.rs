@@ -25,11 +25,27 @@ pub enum GcPhase {
     Sweep,
 }
 
+#[derive(Clone)]
+pub enum PromiseState {
+    Pending,
+    Fulfilled(Value),
+    Rejected(String),
+}
+
+#[derive(Clone)]
+pub struct GcPromise {
+    pub state: std::sync::Arc<std::sync::Mutex<PromiseState>>,
+    pub suspended_stack: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    pub suspended_frames: std::sync::Arc<std::sync::Mutex<Vec<crate::vm::execute::CallFrame>>>,
+}
+
 pub enum GcData {
+    Empty,
     String(Rc<str>),
     Array(Vec<Value>),
     Object(ObjectMap),
     Function(Function),
+    Promise(GcPromise),
 }
 
 pub struct GcObject {
@@ -113,7 +129,7 @@ pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
                 std::ptr::drop_in_place(data);
             }
         }
-        std::ptr::write(data, GcData::String(std::rc::Rc::from("")));
+        std::ptr::write(data, GcData::Empty);
     }
 }
 
@@ -240,6 +256,7 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
         }
         (*ptr).color = GcColor::Black;
         match &(*ptr).data {
+            GcData::Empty => {}
             GcData::String(_) => {}
             GcData::Array(arr) => {
                 for val in arr {
@@ -255,6 +272,19 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
             GcData::Function(func) => {
                 for constant in &func.chunk.constants {
                     gc_mark_value(constant);
+                }
+            }
+            GcData::Promise(prom) => {
+                if let Ok(stack) = prom.suspended_stack.lock() {
+                    for val in stack.iter() {
+                        gc_mark_value(val);
+                    }
+                }
+                if let Ok(frames) = prom.suspended_frames.lock() {
+                    for frame in frames.iter() {
+                        let fn_val = Value::function(frame.function);
+                        gc_mark_value(&fn_val);
+                    }
                 }
             }
         }
@@ -312,4 +342,40 @@ pub fn get_or_create_string(s: &str) -> *mut GcObject {
             ptr
         }
     })
+}
+
+pub fn json_to_value(val: serde_json::Value) -> Value {
+    match val {
+        serde_json::Value::Null => Value::null(),
+        serde_json::Value::Bool(b) => Value::boolean(b),
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                Value::number(f)
+            } else {
+                Value::null()
+            }
+        }
+        serde_json::Value::String(s) => {
+            let ptr = get_or_create_string(&s);
+            Value::string(ptr)
+        }
+        serde_json::Value::Array(arr) => {
+            let mut elements = get_pooled_vec(arr.len());
+            for v in arr {
+                elements.push(json_to_value(v));
+            }
+            let ptr = gc_allocate(GcData::Array(elements));
+            Value::array(ptr)
+        }
+        serde_json::Value::Object(obj) => {
+            let mut map = get_pooled_map(obj.len());
+            for (k, v) in obj {
+                let key_ptr = get_or_create_string(&k);
+                let val = json_to_value(v);
+                map.insert(MapKey(Value::string(key_ptr)), val);
+            }
+            let ptr = gc_allocate(GcData::Object(map));
+            Value::object(ptr)
+        }
+    }
 }
