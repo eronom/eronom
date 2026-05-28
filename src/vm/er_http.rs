@@ -891,6 +891,18 @@ pub fn native_set_timeout(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+use std::sync::OnceLock;
+
+fn get_http_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent("Eronom/0.1.0")
+            .build()
+            .unwrap()
+    })
+}
+
 pub fn native_fetch_async(args: Vec<Value>) -> Value {
     if args.len() < 2 {
         eprintln!("[fetchAsync] Error: URL and callback are required");
@@ -936,20 +948,9 @@ pub fn native_fetch_async(args: Vec<Value>) -> Value {
     active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     std::thread::spawn(move || {
-        let output = std::process::Command::new("curl")
-            .arg("-s")
-            .arg("-L")
-            .arg(&url_str)
-            .output();
-
-        let res = match output {
-            Ok(out) => {
-                if out.status.success() {
-                    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-                } else {
-                    Err(String::from_utf8_lossy(&out.stderr).into_owned())
-                }
-            }
+        let client = get_http_client();
+        let res = match client.get(&url_str).send() {
+            Ok(resp) => resp.text().map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
         };
 
@@ -987,26 +988,22 @@ pub fn native_fetch_sync(args: Vec<Value>) -> Value {
         }
     };
 
-    let output = std::process::Command::new("curl")
-        .arg("-s")
-        .arg("-L")
-        .arg(&url_str)
-        .output();
-
-    match output {
-        Ok(out) => {
-            if out.status.success() {
-                let body_str = String::from_utf8_lossy(&out.stdout).into_owned();
-                let mut map = crate::vm::gc::get_pooled_map(2);
-                let body_key = crate::vm::gc::get_or_create_string("_body");
-                let body_val = crate::vm::gc::get_or_create_string(&body_str);
-                map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
-                let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
-                Value::object(ptr)
-            } else {
-                let err_str = String::from_utf8_lossy(&out.stderr).into_owned();
-                eprintln!("[FetchSync] Error: {}", err_str);
-                Value::null()
+    let client = get_http_client();
+    match client.get(&url_str).send() {
+        Ok(resp) => {
+            match resp.text() {
+                Ok(body_str) => {
+                    let mut map = crate::vm::gc::get_pooled_map(2);
+                    let body_key = crate::vm::gc::get_or_create_string("_body");
+                    let body_val = crate::vm::gc::get_or_create_string(&body_str);
+                    map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
+                    let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
+                    Value::object(ptr)
+                }
+                Err(e) => {
+                    eprintln!("[FetchSync] Error reading body: {}", e);
+                    Value::null()
+                }
             }
         }
         Err(e) => {
@@ -1072,20 +1069,9 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
     // 4. Spawn background thread to fetch URL
     std::thread::spawn(move || {
         let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
-        let output = std::process::Command::new("curl")
-            .arg("-s")
-            .arg("-L")
-            .arg(&url_str)
-            .output();
-
-        let res = match output {
-            Ok(out) => {
-                if out.status.success() {
-                    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-                } else {
-                    Err(String::from_utf8_lossy(&out.stderr).into_owned())
-                }
-            }
+        let client = get_http_client();
+        let res = match client.get(&url_str).send() {
+            Ok(resp) => resp.text().map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
         };
 

@@ -109,7 +109,7 @@ impl VM {
             mir_ctx: None,
             use_jit,
             alloc_count_local: 0,
-            use_evented_io: false,
+            use_evented_io: true,
             event_loop_queue: Arc::new(Mutex::new(Vec::new())),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
