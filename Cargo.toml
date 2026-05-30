@@ -23,17 +23,3 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
-so by default the @[example-er/colorless_io.er]the fetch in it can be evented ?
-so fix these issues and it needed to be faster tahn bun asnyc,await
-To resolve the performance bottlenecks and make Eronom's sequential fetches faster than Bun, we replaced the external curl process spawning with a native Rust HTTP client using reqwest (configured with rustls-tls to avoid system OpenSSL dependencies).
-
-What We Did
-Added reqwest to Cargo.toml: Enabled the blocking and rustls-tls features.
-Replaced Subprocess calls: Modified native_fetch_async, native_fetch_sync, and native_fetch_evented in src/vm/er_http.rs to use reqwest.
-Implemented Connection Pooling: Defined a global static reqwest::blocking::Client initialized via std::sync::OnceLock. This enables full HTTP/2 multiplexing, connection pooling, and TLS session reuse across all background thread invocations.
-Compiled and Verified: Rebuilt Eronom in release mode and verified that all existing tests pass successfully.
-Final Benchmark Results (5 Sequential Fetches)
-We kept the benchmark scripts (bench_bun.js and bench_eronom.er) in the example-er folder. Running them shows that Eronom is now consistently faster than Bun:
-
-Runtime / Engine	Connection Type	Execution Time
-Eronom (New Native reqwest integr
