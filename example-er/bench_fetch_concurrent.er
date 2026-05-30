@@ -1,0 +1,18 @@
+import { Io } from "std/io"
+
+Io.setMode("evented")
+
+print("Starting concurrent evented fetches (Io.spawn)...")
+const f1 = Io.spawn(fetch, ["https://jsonplaceholder.typicode.com/todos/1"])
+const f2 = Io.spawn(fetch, ["https://jsonplaceholder.typicode.com/todos/2"])
+const f3 = Io.spawn(fetch, ["https://jsonplaceholder.typicode.com/todos/3"])
+const f4 = Io.spawn(fetch, ["https://jsonplaceholder.typicode.com/todos/4"])
+const f5 = Io.spawn(fetch, ["https://jsonplaceholder.typicode.com/todos/5"])
+
+print("Awaiting concurrent fetches...")
+Io.wait(f1)
+Io.wait(f2)
+Io.wait(f3)
+Io.wait(f4)
+Io.wait(f5)
+print("Finished concurrent evented fetches.")
