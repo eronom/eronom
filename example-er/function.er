@@ -1,0 +1,8 @@
+let num = 5
+
+function test(){
+    print(num)
+}
+
+test()
+

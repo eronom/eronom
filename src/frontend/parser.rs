@@ -120,6 +120,28 @@ impl Parser {
                 initializer = self.expression()?;
             }
             Ok(Stmt::VarDecl(name, is_const, initializer))
+        } else if self.match_token(&[TokenType::Function]) {
+            let name = self.consume_ident("Expected function name.")?;
+            self.consume(TokenType::LeftParen, "Expected '(' after function name.")?;
+            let mut params = Vec::new();
+            if !self.check(&TokenType::RightParen) {
+                loop {
+                    let param = self.consume_ident("Expected parameter name.")?;
+                    params.push(param);
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+            self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
+            let mut stmts = Vec::new();
+            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                stmts.push(self.declaration()?);
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
+            let body = Stmt::Block(stmts);
+            Ok(Stmt::VarDecl(name, false, Expr::Function(params, Box::new(body))))
         } else if self.check_ident() && {
             // Check for simple assignment without let/const: ident = expr
             self.current + 1 < self.tokens.len()
@@ -316,6 +338,34 @@ impl Parser {
     }
 
     fn primary(&mut self) -> Result<Expr, String> {
+        if self.match_token(&[TokenType::Function]) {
+            let _name = if self.check_ident() {
+                Some(self.consume_ident("Expected function name.")?)
+            } else {
+                None
+            };
+            self.consume(TokenType::LeftParen, "Expected '(' after function keyword.")?;
+            let mut params = Vec::new();
+            if !self.check(&TokenType::RightParen) {
+                loop {
+                    let param = self.consume_ident("Expected parameter name.")?;
+                    params.push(param);
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+            self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
+            let mut stmts = Vec::new();
+            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                stmts.push(self.declaration()?);
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
+            let body = Stmt::Block(stmts);
+            return Ok(Expr::Function(params, Box::new(body)));
+        }
+
         if self.match_token(&[TokenType::False]) {
             return Ok(Expr::Literal(LiteralValue::Boolean(false)));
         }

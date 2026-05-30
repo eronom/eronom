@@ -42,6 +42,7 @@ pub enum TokenType {
     Import,
     Export,
     From,
+    Function,
     Eof,
 }
 
