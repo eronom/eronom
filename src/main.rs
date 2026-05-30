@@ -59,6 +59,9 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("createPromisePair", Value::native_function(backend::er_http::native_create_promise_pair));
     vm.register_global("setIoMode", Value::native_function(backend::er_http::native_set_io_mode));
     vm.register_global("getIoMode", Value::native_function(backend::er_http::native_get_io_mode));
+    vm.register_global("nativeSpawn", Value::native_function(backend::er_http::native_spawn));
+    vm.register_global("nativeRegisterChild", Value::native_function(backend::er_http::native_register_child));
+    vm.register_global("nativeKill", Value::native_function(backend::er_http::native_kill));
     backend::er_http::set_target_script_path(path);
 
     let main_path = std::path::Path::new(path);

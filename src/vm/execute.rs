@@ -39,6 +39,9 @@ pub enum AsyncResult {
     Fetch(Result<String, String>),
     ResolvePromise(*mut crate::vm::gc::GcObject, Value),
     ResolveFetchPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+    ChildProcessStdout(*mut crate::vm::gc::GcObject, String),
+    ChildProcessStderr(*mut crate::vm::gc::GcObject, String),
+    ChildProcessExit(*mut crate::vm::gc::GcObject, i32),
 }
 
 pub struct EventLoopTask {
@@ -498,11 +501,17 @@ impl VM {
                     if callee.is_function() {
                         let func_ptr = callee.as_gc_ptr();
                         let func_val = get_func!(func_ptr);
-                        if arg_count_out != func_val.arity {
+                        if arg_count_out > func_val.arity {
                             return Err(format!(
-                                "Expected {} args but got {}",
+                                "Expected at most {} args but got {}",
                                 func_val.arity, arg_count_out
                             ));
+                        }
+                        if arg_count_out < func_val.arity {
+                            let new_slots_offset = slots_offset + func_reg_out + 1;
+                            for i in arg_count_out..func_val.arity {
+                                *stack_start.add(new_slots_offset + i) = Value::null();
+                            }
                         }
                         // Save current IP (resume position: ip_out)
                         frame.ip = ip_out;
@@ -1130,11 +1139,17 @@ impl VM {
                         if callee.is_function() {
                             let func_ptr = callee.as_gc_ptr();
                             let func_val = get_func!(func_ptr);
-                            if arg_count != func_val.arity {
+                            if arg_count > func_val.arity {
                                 return Err(format!(
-                                    "Expected {} args but got {}",
+                                    "Expected at most {} args but got {}",
                                     func_val.arity, arg_count
                                 ));
+                            }
+                            if arg_count < func_val.arity {
+                                let new_slots_offset = slots_offset + func_reg + 1;
+                                for i in arg_count..func_val.arity {
+                                    *stack_start.add(new_slots_offset + i) = Value::null();
+                                }
                             }
                             frame.ip = ip.offset_from(code_ptr) as usize;
                             let new_slots_offset = slots_offset + func_reg + 1;
@@ -1323,6 +1338,22 @@ impl VM {
         }
     }
 
+fn get_property_val(obj: Value, name: &str) -> Value {
+    if obj.is_object() {
+        let ptr = obj.as_gc_ptr();
+        unsafe {
+            match &(*ptr).data {
+                GcData::Object(map) => {
+                    let name_ptr = crate::vm::gc::get_or_create_string(name);
+                    return map.get(&crate::vm::value::MapKey(Value::string(name_ptr))).cloned().unwrap_or(Value::null());
+                }
+                _ => {}
+            }
+        }
+    }
+    Value::null()
+}
+
     pub fn run_event_loop(&mut self) -> Result<(), String> {
         let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
         let result = self.run_event_loop_inner();
@@ -1410,6 +1441,55 @@ impl VM {
                         if let Err(e) = self.execute_loop_interpreter(0) {
                             return Err(e);
                         }
+                        continue;
+                    }
+                    AsyncResult::ChildProcessStdout(child_ptr, data) => {
+                        let child_val = Value::object(child_ptr);
+                        let stdout_val = Self::get_property_val(child_val, "stdout");
+                        if stdout_val.is_object() {
+                            let on_data_val = Self::get_property_val(stdout_val, "_onData");
+                            if on_data_val.is_function() || on_data_val.is_native_function() {
+                                let str_ptr = crate::vm::gc::get_or_create_string(&data);
+                                let args = vec![Value::string(str_ptr)];
+                                if let Err(e) = self.call_function_reentrant(on_data_val, args) {
+                                    eprintln!("[ChildProcess Stdout] Error calling callback: {}", e);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    AsyncResult::ChildProcessStderr(child_ptr, data) => {
+                        let child_val = Value::object(child_ptr);
+                        let stderr_val = Self::get_property_val(child_val, "stderr");
+                        if stderr_val.is_object() {
+                            let on_data_val = Self::get_property_val(stderr_val, "_onData");
+                            if on_data_val.is_function() || on_data_val.is_native_function() {
+                                let str_ptr = crate::vm::gc::get_or_create_string(&data);
+                                let args = vec![Value::string(str_ptr)];
+                                if let Err(e) = self.call_function_reentrant(on_data_val, args) {
+                                    eprintln!("[ChildProcess Stderr] Error calling callback: {}", e);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    AsyncResult::ChildProcessExit(child_ptr, code) => {
+                        let child_val = Value::object(child_ptr);
+                        let on_exit_val = Self::get_property_val(child_val, "_onExit");
+                        if on_exit_val.is_function() || on_exit_val.is_native_function() {
+                            let args = vec![Value::number(code as f64)];
+                            if let Err(e) = self.call_function_reentrant(on_exit_val, args) {
+                                    eprintln!("[ChildProcess Exit] Error calling callback: {}", e);
+                            }
+                        }
+                        let on_close_val = Self::get_property_val(child_val, "_onClose");
+                        if on_close_val.is_function() || on_close_val.is_native_function() {
+                            let args = vec![Value::number(code as f64)];
+                            if let Err(e) = self.call_function_reentrant(on_close_val, args) {
+                                    eprintln!("[ChildProcess Close] Error calling callback: {}", e);
+                            }
+                        }
+                        crate::vm::er_http::remove_active_process(child_ptr);
                         continue;
                     }
                     _ => {}

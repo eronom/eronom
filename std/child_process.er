@@ -1,0 +1,52 @@
+// Node-like child_process module for Eronom
+
+let lastSpawned = null
+
+export const spawn = (command, args, options) => {
+  const rawChild = nativeSpawn(command, args or [], options or {})
+  if (rawChild == null) {
+    return null
+  }
+
+  const stdout = {
+    _onData: null,
+    on: (event, cb) => {
+      if (event == "data") {
+        lastSpawned.stdout._onData = cb
+      }
+    }
+  }
+
+  const stderr = {
+    _onData: null,
+    on: (event, cb) => {
+      if (event == "data") {
+        lastSpawned.stderr._onData = cb
+      }
+    }
+  }
+
+  const child = {
+    pid: rawChild.pid,
+    stdout: stdout,
+    stderr: stderr,
+    _onExit: null,
+    _onClose: null,
+    on: (event, cb) => {
+      if (event == "exit") {
+        lastSpawned._onExit = cb
+      }
+      if (event == "close") {
+        lastSpawned._onClose = cb
+      }
+    },
+    kill: (signal) => {
+      nativeKill(lastSpawned.pid, signal or "SIGTERM")
+    }
+  }
+
+  lastSpawned = child
+  nativeRegisterChild(rawChild.pid, child)
+
+  return child
+}

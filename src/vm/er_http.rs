@@ -1278,3 +1278,260 @@ pub fn native_create_promise_pair(_args: Vec<Value>) -> Value {
     Value::object(ptr)
 }
 
+pub struct PendingProcess {
+    pub child: std::process::Child,
+}
+
+thread_local! {
+    pub static PENDING_PROCESSES: RefCell<HashMap<u32, PendingProcess>> = RefCell::new(HashMap::new());
+    pub static ACTIVE_PROCESSES: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    static PROCESS_GC_ROOT_REGISTERED: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn register_process_gc_root_if_needed() {
+    PROCESS_GC_ROOT_REGISTERED.with(|registered| {
+        if !registered.get() {
+            crate::vm::gc::GC_ROOTS.with(|roots| {
+                roots.borrow_mut().push(Box::new(|| {
+                    ACTIVE_PROCESSES.with(|procs| {
+                        for &proc in procs.borrow().iter() {
+                            crate::vm::gc::mark_value(&proc);
+                        }
+                    });
+                }));
+            });
+            registered.set(true);
+        }
+    });
+}
+
+pub fn remove_active_process(ptr: *mut crate::vm::gc::GcObject) {
+    ACTIVE_PROCESSES.with(|procs| {
+        let mut list = procs.borrow_mut();
+        if let Some(pos) = list.iter().position(|v| v.as_gc_ptr() == ptr) {
+            list.remove(pos);
+        }
+    });
+}
+
+pub fn native_spawn(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        eprintln!("[nativeSpawn] Error: command is required");
+        return Value::null();
+    }
+    let command_val = args[0];
+    if !command_val.is_string() {
+        eprintln!("[nativeSpawn] Error: command must be a string");
+        return Value::null();
+    }
+    let command = command_val.as_str().unwrap().to_string();
+
+    let mut cmd_args = Vec::new();
+    if args.len() > 1 {
+        let args_arr_val = args[1];
+        if args_arr_val.is_array() {
+            let ptr = args_arr_val.as_gc_ptr();
+            unsafe {
+                if let GcData::Array(arr) = &(*ptr).data {
+                    for val in arr {
+                        if val.is_string() {
+                            if let Some(s) = val.as_str() {
+                                cmd_args.push(s.to_string());
+                            }
+                        } else {
+                            cmd_args.push(val.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cwd_opt = None;
+    if args.len() > 2 {
+        let options_val = args[2];
+        if options_val.is_object() {
+            let cwd_key = crate::vm::gc::get_or_create_string("cwd");
+            let cwd_val = get_property_helper(options_val, Value::string(cwd_key));
+            if cwd_val.is_string() {
+                if let Some(s) = cwd_val.as_str() {
+                    cwd_opt = Some(s.to_string());
+                }
+            }
+        }
+    }
+
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(&command);
+    cmd.args(&cmd_args);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    if let Some(cwd) = cwd_opt {
+        cmd.current_dir(cwd);
+    }
+
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[nativeSpawn] Error spawning process '{}': {}", command, e);
+            return Value::null();
+        }
+    };
+
+    let pid = child.id();
+
+    PENDING_PROCESSES.with(|p| {
+        p.borrow_mut().insert(pid, PendingProcess { child });
+    });
+
+    let mut map = crate::vm::gc::get_pooled_map(1);
+    let pid_name = crate::vm::gc::get_or_create_string("pid");
+    map.insert(crate::vm::value::MapKey(Value::string(pid_name)), Value::number(pid as f64));
+    let ptr = crate::vm::gc::gc_allocate(GcData::Object(map));
+    Value::object(ptr)
+}
+
+pub fn native_register_child(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        eprintln!("[nativeRegisterChild] Error: pid and child object are required");
+        return Value::null();
+    }
+    let pid_val = args[0];
+    let child_val = args[1];
+
+    if !pid_val.is_number() {
+        eprintln!("[nativeRegisterChild] Error: pid must be a number");
+        return Value::null();
+    }
+    if !child_val.is_object() {
+        eprintln!("[nativeRegisterChild] Error: child must be an object");
+        return Value::null();
+    }
+
+    let pid = pid_val.as_number() as u32;
+
+    let pending_opt = PENDING_PROCESSES.with(|p| {
+        p.borrow_mut().remove(&pid)
+    });
+
+    let Some(mut pending) = pending_opt else {
+        eprintln!("[nativeRegisterChild] Error: no pending process found with pid {}", pid);
+        return Value::null();
+    };
+
+    register_process_gc_root_if_needed();
+
+    ACTIVE_PROCESSES.with(|a| {
+        a.borrow_mut().push(child_val);
+    });
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        eprintln!("[nativeRegisterChild] Error: ACTIVE_VM is null");
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    let queue = vm.event_loop_queue.clone();
+    let active_counter = vm.active_async_tasks.clone();
+
+    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    let child_ptr = child_val.as_gc_ptr();
+    let child_ptr_usize = child_ptr as usize;
+
+    let stdout = pending.child.stdout.take().unwrap();
+    let stderr = pending.child.stderr.take().unwrap();
+
+    let queue_stdout = queue.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufReader, Read};
+        let mut reader = BufReader::new(stdout);
+        let mut buf = [0u8; 1024];
+        let child_ptr = child_ptr_usize as *mut crate::vm::gc::GcObject;
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let mut q = queue_stdout.lock().unwrap();
+                    q.push(crate::vm::execute::EventLoopTask {
+                        callback: Value::null(),
+                        args: Vec::new(),
+                        result: crate::vm::execute::AsyncResult::ChildProcessStdout(child_ptr, data),
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let queue_stderr = queue.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufReader, Read};
+        let mut reader = BufReader::new(stderr);
+        let mut buf = [0u8; 1024];
+        let child_ptr = child_ptr_usize as *mut crate::vm::gc::GcObject;
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let mut q = queue_stderr.lock().unwrap();
+                    q.push(crate::vm::execute::EventLoopTask {
+                        callback: Value::null(),
+                        args: Vec::new(),
+                        result: crate::vm::execute::AsyncResult::ChildProcessStderr(child_ptr, data),
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let queue_exit = queue.clone();
+    std::thread::spawn(move || {
+        let child_ptr = child_ptr_usize as *mut crate::vm::gc::GcObject;
+        let exit_status = pending.child.wait();
+        let code = match exit_status {
+            Ok(status) => status.code().unwrap_or(0),
+            Err(_) => 0,
+        };
+
+        let mut q = queue_exit.lock().unwrap();
+        q.push(crate::vm::execute::EventLoopTask {
+            callback: Value::null(),
+            args: Vec::new(),
+            result: crate::vm::execute::AsyncResult::ChildProcessExit(child_ptr, code),
+        });
+        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    Value::null()
+}
+
+pub fn native_kill(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let pid_val = args[0];
+    if !pid_val.is_number() {
+        return Value::null();
+    }
+    let pid = pid_val.as_number() as u32;
+
+    let signal = if args.len() > 1 && args[1].is_string() {
+        args[1].as_str().unwrap_or("SIGTERM")
+    } else {
+        "SIGTERM"
+    };
+
+    let sig_arg = format!("-{}", signal);
+    let _ = std::process::Command::new("kill")
+        .arg(&sig_arg)
+        .arg(pid.to_string())
+        .spawn();
+
+    Value::null()
+}
+

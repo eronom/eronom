@@ -1,0 +1,21 @@
+import { spawn } from "std/child_process"
+
+print("Spawning sleep 10...")
+const child = spawn("sleep", ["10"])
+
+if (child == null) {
+  print("Failed to spawn sleep")
+} else {
+  print("Spawned sleep with PID: " + child.pid)
+
+  child.on("exit", (code) => {
+    print("Sleep process exited with code: " + code)
+  })
+
+  setTimeout(() => {
+    print("Killing sleep process...")
+    child.kill()
+  }, 500)
+}
+
+print("Event loop running...")

@@ -1,0 +1,24 @@
+import { spawn } from "std/child_process"
+
+print("Spawning child process...")
+const child = spawn("echo", ["Hello from child process!"])
+
+if (child == null) {
+  print("Failed to spawn process")
+} else {
+  print("Spawned process with PID: " + child.pid)
+
+  child.stdout.on("data", (data) => {
+    print("Received stdout: " + data)
+  })
+
+  child.stderr.on("data", (data) => {
+    print("Received stderr: " + data)
+  })
+
+  child.on("exit", (code) => {
+    print("Child process exited with code: " + code)
+  })
+}
+
+print("Main script end, event loop running...")
