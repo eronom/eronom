@@ -1,0 +1,17 @@
+import { route } from "std/http"
+
+let app = route()
+
+// Middleware to attach a value to the context
+app.use((c) => {
+  c.user = "Alice"
+})
+
+let todos = [
+  { id: 1, text: "Learn Eronom - dynamic reload worked!ss for itzzzz", done: false }
+]
+
+app.get("/todos", (c) => {
+  print("User attached by middleware: " + c.user)
+  return c.json(todos)
+})

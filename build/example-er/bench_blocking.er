@@ -1,0 +1,15 @@
+import { Io } from "std/io"
+
+Io.setMode("threaded")
+
+const start = () => {
+  print("Starting sequential fetches (blocking)...")
+  fetch("https://jsonplaceholder.typicode.com/todos/1")
+  fetch("https://jsonplaceholder.typicode.com/todos/2")
+  fetch("https://jsonplaceholder.typicode.com/todos/3")
+  fetch("https://jsonplaceholder.typicode.com/todos/4")
+  fetch("https://jsonplaceholder.typicode.com/todos/5")
+  print("Finished sequential fetches.")
+}
+
+start()

@@ -1,0 +1,14 @@
+let array = [1, 2, 3];
+array.push(4);
+print(array);
+array.push(5);
+print("New array: {array}");
+let empty = [];
+empty.push(10);
+print(empty);
+empty.pop();
+print("Empty after pop: {empty}");
+let single = [5];
+single.pop();
+print("Single after pop: {single}");
+    

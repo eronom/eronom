@@ -1,0 +1,17 @@
+let user = {
+  name: "Vishnu",
+  meta: {
+    tags: ["coder", "eronom"],
+    counts: {
+      stars: 10
+    }
+  }
+}
+
+print("User: {user.name}")
+print("First tag: {user.meta.tags.0}")
+print("Stars: {user.meta.counts.stars}")
+
+user.meta.tags.push("eronom")
+print("All tags: {user.meta.tags}")
+print("New tag: {user.meta.tags.2}")

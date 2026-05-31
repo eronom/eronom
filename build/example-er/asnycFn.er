@@ -1,0 +1,47 @@
+import { Io } from "std/io"
+
+// ----------------------------------------------------
+// 1. Threaded (Blocking) Demo
+// ----------------------------------------------------
+print("=== DEMO 1: Threaded (Blocking) Mode ===")
+Io.setMode("threaded")
+
+setTimeout(() => {
+  print("[Timer] Timer callback executed!")
+}, 100)
+
+print("[Threaded] Starting fetch (this blocks the whole engine for a moment)...")
+const res1 = fetch("https://jsonplaceholder.typicode.com/todos/1")
+print("[Threaded] Fetch finished.")
+// Note: In threaded mode, the timer is blocked and only runs after the fetch completes.
+
+// ----------------------------------------------------
+// 2. Evented (Non-Blocking) Demo
+// ----------------------------------------------------
+print("")
+print("=== DEMO 2: Evented (Non-Blocking) Mode ===")
+Io.setMode("evented")
+
+setTimeout(() => {
+  print("[Timer] Timer callback executed!")
+}, 100)
+
+print("[Evented] Starting fetch (this yields to allow other tasks to run)...")
+const res2 = fetch("https://jsonplaceholder.typicode.com/todos/2")
+print("[Evented] Fetch finished.")
+// Note: In evented mode, the timer will fire in the middle of the fetch.
+
+// ----------------------------------------------------
+// 3. Evented Concurrency (Parallel Execution) Demo
+// ----------------------------------------------------
+print("")
+print("=== DEMO 3: Evented Concurrency ===")
+
+print("[Evented] Spawning concurrent tasks in parallel...")
+const todo3 = fetch("https://jsonplaceholder.typicode.com/todos/3")
+const todo4 = fetch("https://jsonplaceholder.typicode.com/todos/4")
+
+
+print("[Evented] Got todo 3 title: " + todo3.json().title)
+print("[Evented] Got todo 4 title: " + todo4.json().title)
+print("=== Demo Completed ===")

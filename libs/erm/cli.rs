@@ -9,6 +9,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     let mut dir = ".";
     let mut port: u16 = 3000;
     let mut is_ssr = false;
+    let mut has_custom_port = false;
 
     if args.len() > 1 {
         let first_arg = &args[1];
@@ -21,6 +22,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                     is_ssr = true;
                 } else if arg.starts_with("--port=") {
                     port = arg[7..].parse().unwrap_or(3000);
+                    has_custom_port = true;
                 } else if arg.starts_with('-') {
                     // ignore unknown flags for now
                 } else {
@@ -32,6 +34,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                 dir = pos_args[0];
                 if pos_args.len() > 1 && cmd != "build" {
                     port = pos_args[1].parse().unwrap_or(3000);
+                    has_custom_port = true;
                 }
             }
         } else if first_arg.ends_with(".er") {
@@ -39,6 +42,12 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
             return Ok(());
         } else {
             dir = first_arg;
+        }
+    }
+
+    if !has_custom_port {
+        if let Some(config_port) = get_port_from_config_file(dir) {
+            port = config_port;
         }
     }
 
@@ -100,11 +109,19 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
            name_str == "build" || 
            name_str == "node_modules" || 
            name_str == "src" ||
+           name_str == "libs" ||
+           name_str == "external" ||
+           name_str == "std" ||
            name_str == "Cargo.toml" ||
            name_str == "Cargo.lock" ||
+           name_str == "cargo.log" ||
+           name_str == "build.rs" ||
+           name_str == "benchmark_ws.py" ||
+           name_str == "temp_compiled.mir" ||
            name_str == "eronom" ||
            name_str == "LICENSE" ||
-           name_str == "README.md"
+           name_str == "README.md" ||
+           path.extension().map_or(false, |ext| ext == "rs" || ext == "py" || ext == "log" || ext == "mir")
         {
             continue;
         }
@@ -286,4 +303,22 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(std::path::PathBuf, s
     }
 
     Some((current_path, params))
+}
+
+fn get_port_from_config_file(dir: &str) -> Option<u16> {
+    let path = Path::new(dir);
+    let config_path = if path.is_file() {
+        path.parent()?.join("config.er")
+    } else {
+        path.join("config.er")
+    };
+
+    if !config_path.exists() {
+        return None;
+    }
+
+    let content = fs::read_to_string(config_path).ok()?;
+    let re = regex::Regex::new(r"(?s)server\s*:\s*\{[^}]*port\s*:\s*(\d+)").ok()?;
+    let caps = re.captures(&content)?;
+    caps.get(1)?.as_str().parse::<u16>().ok()
 }
