@@ -6,7 +6,7 @@ default-run = "eronom"
 
 [lib]
 name = "eronom"
-path = "libs/core/lib.rs"
+path = "libs/erm/lib.rs"
 
 
 [dependencies]

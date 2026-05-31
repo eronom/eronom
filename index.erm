@@ -44,13 +44,13 @@
 </script>
 
 
-<h1>HMR gfibhNOW WORKING PERFECTsLY!</h1>
+<h1>HMRss gfibhNOW WORKING PERFECTsLY!</h1>
 vcbc fdh scvxhhhhhhhhhhhhhh
 fdvchgvyufdnb
 gvfcjb hyun
 <p>hello DHBVYUCBHNFDBVH BHYU</p>
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
-    <h3>Reactive Signal Demo (Svelte-like)</h3>
+    <h3>Reactive Signal Demo/h3>
     <button onClick={()=>{count++}}>Count {count}</button>
     <p>Double (Count * 2): <strong>{double}</strong></p>
     <p>Background Timer: <strong>{timer}s</strong></p>
@@ -100,7 +100,7 @@ gvfcjb hyun
 <Header />
 {#if showExtraContent}
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
-        <h3>🎉 Condsfssitsionalssssssss Rendered Boxxxxxss</h3>
+        <h3>🎉 Condsfssitsionalssssssss Rendered Boxxxxxssaaa</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
     <button onclick={()=>{showExtraContent=false}}>Hide Content</button>

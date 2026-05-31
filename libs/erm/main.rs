@@ -163,7 +163,15 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
     let server = Server::http(format!("0.0.0.0:{}", port)).map_err(|e| anyhow::anyhow!(e))?;
     println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
 
-    let base_path = fs::canonicalize(dir)?;
+    let mut base_path = fs::canonicalize(dir)?;
+    let mut default_file = None;
+
+    if base_path.is_file() {
+        default_file = Some(base_path.clone());
+        if let Some(parent) = base_path.parent() {
+            base_path = parent.to_path_buf();
+        }
+    }
 
     for request in server.incoming_requests() {
         let url = request.url();
@@ -173,16 +181,14 @@ fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
 
         println!("Request: {} {}", request.method(), target);
 
-        if target.ends_with(".erm") {
-            let response = Response::from_string("Not Found").with_status_code(404);
-            request.respond(response).ok();
-            continue;
-        }
-
         let mut params = std::collections::HashMap::new();
         let file_path = if target == "/" {
-            let index_erm = base_path.join("index.erm");
-            if index_erm.exists() { index_erm } else { base_path.join("index.html") }
+            if let Some(ref def_file) = default_file {
+                def_file.clone()
+            } else {
+                let index_erm = base_path.join("index.erm");
+                if index_erm.exists() { index_erm } else { base_path.join("index.html") }
+            }
         } else {
             if let Some((path, p)) = resolve_path(&base_path, target) {
                 params = p;
