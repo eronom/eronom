@@ -396,16 +396,16 @@ for i in 1..50000 {
 
 
 
-    // --- Node benchmark ---
-    let run_node_file =
+    // --- Bun benchmark ---
+    let run_bun_file =
         |args: &[&str], source: &str| -> Result<(String, Option<usize>), Box<dyn std::error::Error>> {
-            let temp_filename = "temp_bench_node.js";
+            let temp_filename = "temp_bench_bun.js";
             std::fs::write(temp_filename, source)?;
             
             let mut full_args = args.to_vec();
             full_args.push(temp_filename);
             
-            let result = run_command_with_metrics("node", &full_args);
+            let result = run_command_with_metrics("bun", &full_args);
             let _ = std::fs::remove_file(temp_filename);
             
             if let (Some(stdout), rss) = result {
@@ -415,7 +415,7 @@ for i in 1..50000 {
             }
         };
 
-    let node_source = r#"
+    let bun_source = r#"
 for (let i = 1; i < 50000; i++) {
     let arr = [i, i + 1, i + 2];
     arr.push(i + 3);
@@ -426,7 +426,7 @@ for (let i = 1; i < 50000; i++) {
 }
 "#;
 
-    let node_pure_source = format!(
+    let bun_pure_source = format!(
         r#"
 const start = performance.now();
 for (let r = 0; r < {}; r++) {{
@@ -444,28 +444,28 @@ console.log((performance.now() - start) / 1000);
         iterations
     );
 
-    let mut node_pure_avg = std::time::Duration::from_secs(0);
-    let mut node_pure_rss = None;
-    if let Ok((output, rss)) = run_node_file(&[], &node_pure_source) {
+    let mut bun_pure_avg = std::time::Duration::from_secs(0);
+    let mut bun_pure_rss = None;
+    if let Ok((output, rss)) = run_bun_file(&[], &bun_pure_source) {
         if let Ok(secs) = output.trim().parse::<f64>() {
-            node_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
-            node_pure_rss = rss;
+            bun_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
+            bun_pure_rss = rss;
         }
     }
 
-    let mut node_cli_avg = std::time::Duration::from_secs(0);
-    let mut node_cli_rss = None;
-    if std::process::Command::new("node")
+    let mut bun_cli_avg = std::time::Duration::from_secs(0);
+    let mut bun_cli_rss = None;
+    if std::process::Command::new("bun")
         .arg("-v")
         .output()
         .is_ok()
     {
-        let temp_filename = "temp_bench_node_cli.js";
-        if std::fs::write(temp_filename, node_source).is_ok() {
+        let temp_filename = "temp_bench_bun_cli.js";
+        if std::fs::write(temp_filename, bun_source).is_ok() {
             let start = Instant::now();
             let mut success = true;
             for _ in 0..iterations {
-                if !std::process::Command::new("node")
+                if !std::process::Command::new("bun")
                     .arg(temp_filename)
                     .output()
                     .map(|o| o.status.success())
@@ -476,11 +476,136 @@ console.log((performance.now() - start) / 1000);
                 }
             }
             if success {
-                node_cli_avg = start.elapsed() / iterations;
-                let (_, rss) = run_command_with_metrics("node", &[temp_filename]);
-                node_cli_rss = rss;
+                bun_cli_avg = start.elapsed() / iterations;
+                let (_, rss) = run_command_with_metrics("bun", &[temp_filename]);
+                bun_cli_rss = rss;
             }
             let _ = std::fs::remove_file(temp_filename);
+        }
+    }
+
+    // --- Go benchmark ---
+    let run_go_file =
+        |args: &[&str], source: &str| -> Result<(String, Option<usize>), Box<dyn std::error::Error>> {
+            let temp_filename = "temp_bench_go.go";
+            std::fs::write(temp_filename, source)?;
+            
+            let build_status = std::process::Command::new("go")
+                .args(&["build", "-o", "temp_bench_go_bin", temp_filename])
+                .status()?;
+            
+            let _ = std::fs::remove_file(temp_filename);
+            
+            if !build_status.success() {
+                return Err("Go build failed".into());
+            }
+            
+            let result = run_command_with_metrics("./temp_bench_go_bin", args);
+            let _ = std::fs::remove_file("temp_bench_go_bin");
+            
+            if let (Some(stdout), rss) = result {
+                Ok((stdout, rss))
+            } else {
+                Err("Command failed".into())
+            }
+        };
+
+    let go_source = r#"
+package main
+
+import (
+	"fmt"
+)
+
+func main() {
+	for i := 1; i < 50000; i++ {
+		arr := []interface{}{i, i + 1, i + 2}
+		arr = append(arr, i+3)
+		arr = arr[:len(arr)-1]
+		obj := map[string]interface{}{
+			"a": arr,
+			"b": i,
+		}
+		_ = fmt.Sprintf("num: %d", i)
+		_ = obj["a"]
+	}
+}
+"#;
+
+    let go_pure_source = format!(
+        r#"
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {{
+	start := time.Now()
+	for r := 0; r < {}; r++ {{
+		for i := 1; i < 50000; i++ {{
+			arr := []interface{{}}{{i, i + 1, i + 2}}
+			arr = append(arr, i+3)
+			arr = arr[:len(arr)-1]
+			obj := map[string]interface{{}}{{
+				"a": arr,
+				"b": i,
+			}}
+			_ = fmt.Sprintf("num: %d", i)
+			_ = obj["a"]
+		}}
+	}}
+	fmt.Printf("%.6f\n", time.Since(start).Seconds())
+}}
+"#,
+        iterations
+    );
+
+    let mut go_pure_avg = std::time::Duration::from_secs(0);
+    let mut go_pure_rss = None;
+    if let Ok((output, rss)) = run_go_file(&[], &go_pure_source) {
+        if let Ok(secs) = output.trim().parse::<f64>() {
+            go_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
+            go_pure_rss = rss;
+        }
+    }
+
+    let mut go_cli_avg = std::time::Duration::from_secs(0);
+    let mut go_cli_rss = None;
+    if std::process::Command::new("go")
+        .arg("version")
+        .output()
+        .is_ok()
+    {
+        let temp_go_file = "temp_bench_go_cli.go";
+        if std::fs::write(temp_go_file, go_source).is_ok() {
+            if std::process::Command::new("go")
+                .args(&["build", "-o", "temp_bench_go_cli_bin", temp_go_file])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                let start = Instant::now();
+                let mut success = true;
+                for _ in 0..iterations {
+                    if !std::process::Command::new("./temp_bench_go_cli_bin")
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false)
+                    {
+                        success = false;
+                        break;
+                    }
+                }
+                if success {
+                    go_cli_avg = start.elapsed() / iterations;
+                    let (_, rss) = run_command_with_metrics("./temp_bench_go_cli_bin", &[]);
+                    go_cli_rss = rss;
+                }
+                let _ = std::fs::remove_file("temp_bench_go_cli_bin");
+            }
+            let _ = std::fs::remove_file(temp_go_file);
         }
     }
 
@@ -508,11 +633,17 @@ console.log((performance.now() - start) / 1000);
     }
     print_row("Compile only", compile_avg, compile_rss, Some(compile_peak_heap));
 
-    if node_pure_avg.as_nanos() > 0 {
-        print_row("Node (pure run)", node_pure_avg, node_pure_rss, None);
+    if bun_pure_avg.as_nanos() > 0 {
+        print_row("Bun (pure run)", bun_pure_avg, bun_pure_rss, None);
     }
-    if node_cli_avg.as_nanos() > 0 {
-        print_row("Node (external CLI)", node_cli_avg, node_cli_rss, None);
+    if bun_cli_avg.as_nanos() > 0 {
+        print_row("Bun (external CLI)", bun_cli_avg, bun_cli_rss, None);
+    }
+    if go_pure_avg.as_nanos() > 0 {
+        print_row("Go (pure run)", go_pure_avg, go_pure_rss, None);
+    }
+    if go_cli_avg.as_nanos() > 0 {
+        print_row("Go (external CLI)", go_cli_avg, go_cli_rss, None);
     }
 
     // Footers / Speedups comparisons
@@ -537,28 +668,50 @@ console.log((performance.now() - start) / 1000);
 
     let vm_avg = if vm_jit_avg.as_nanos() > 0 { vm_jit_avg } else { vm_interpreter_avg };
 
-
-
-    if node_pure_avg.as_nanos() > 0 {
-        if vm_avg < node_pure_avg {
-            let speedup = node_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Node (pure)", speedup);
+    if bun_pure_avg.as_nanos() > 0 {
+        if vm_avg < bun_pure_avg {
+            let speedup = bun_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Bun (pure)", speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Node (pure)", slowdown);
+            let slowdown = vm_avg.as_nanos() as f64 / bun_pure_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Bun (pure)", slowdown);
             print_footer("⚠️", &text);
         }
     }
 
-    if node_cli_avg.as_nanos() > 0 {
-        if vm_avg < node_cli_avg {
-            let speedup = node_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Node (CLI)", speedup);
+    if bun_cli_avg.as_nanos() > 0 {
+        if vm_avg < bun_cli_avg {
+            let speedup = bun_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Bun (CLI)", speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Node (CLI)", slowdown);
+            let slowdown = vm_avg.as_nanos() as f64 / bun_cli_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Bun (CLI)", slowdown);
+            print_footer("⚠️", &text);
+        }
+    }
+
+    if go_pure_avg.as_nanos() > 0 {
+        if vm_avg < go_pure_avg {
+            let speedup = go_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Go (pure)", speedup);
+            print_footer("✅", &text);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / go_pure_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Go (pure)", slowdown);
+            print_footer("⚠️", &text);
+        }
+    }
+
+    if go_cli_avg.as_nanos() > 0 {
+        if vm_avg < go_cli_avg {
+            let speedup = go_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Go (CLI)", speedup);
+            print_footer("✅", &text);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / go_cli_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Go (CLI)", slowdown);
             print_footer("⚠️", &text);
         }
     }
