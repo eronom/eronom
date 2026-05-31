@@ -373,6 +373,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
         for sig in &atom_vars {
             transformed = replace_word(&transformed, sig, ".value");
         }
+        transformed = transformed.replace("import.meta.hot", "window.hmr");
         *s = transformed;
     }
 
@@ -817,11 +818,13 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     scripts_to_inject.insert(0, params_js);
 
     if !scripts_to_inject.is_empty() || !result.atom_vars.is_empty() || !block_logic.is_empty() {
-        assets.push_str("<script>\n");
+        assets.push_str("<script class=\"__erm_script\">\n");
         assets.push_str(runtime);
         assets.push('\n');
+        assets.push_str("{\n");
         for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
         for s in &block_logic { assets.push_str(s); assets.push('\n'); }
+        assets.push_str("}\n");
         assets.push_str("</script>\n");
     }
 
@@ -870,8 +873,9 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     return originalElementAddEventListener.call(this, type, listener, options);
   };
 
-  const es = new EventSource("/__hmr");
-  es.onmessage = (e) => {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(protocol + '//' + location.host + '/__hmr');
+  ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === 'reload') {
       location.reload();
@@ -947,7 +951,10 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
 
           window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
           window.__hmr_hooks.dispose = [];
+          
+          const oldAccepts = window.__hmr_hooks.accept;
           window.__hmr_hooks.accept = [];
+
           window.__hmr_intervals.forEach(clearInterval);
           window.__hmr_intervals = [];
           window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
@@ -956,22 +963,29 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
           });
           window.__hmr_listeners = [];
 
+          // Clean up old erm scripts
+          document.querySelectorAll('script.__erm_script').forEach(s => s.remove());
+
           morph(document.body, doc.body);
 
-          const scripts = document.body.querySelectorAll('script');
-          scripts.forEach(s => {
+          const newScripts = doc.querySelectorAll('script');
+          newScripts.forEach(s => {
             if (s.textContent.includes("__hmr_initialized")) return;
             const newScript = document.createElement('script');
             newScript.text = s.innerHTML;
-            if(s.src) {
+            if (s.className) newScript.className = s.className;
+            if (s.src) {
                let sUrl = new URL(s.src, location.href);
                sUrl.searchParams.set('t', new Date().getTime());
                newScript.src = sUrl.href;
             }
-            s.replaceWith(newScript);
+            document.head.appendChild(newScript);
           });
           document.dispatchEvent(new Event('DOMContentLoaded'));
           window.dispatchEvent(new Event('load'));
+          
+          oldAccepts.forEach(cb => { try { cb(); } catch(err) {} });
+          
           if (window.__erm_update) window.__erm_update();
         });
     }

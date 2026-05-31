@@ -9,17 +9,7 @@
     let porridge = atom({ temperature: 100 });
     
 
-    const fetchTodos = async () => {
-        try {
-            const response = await fetch('/api/todo');
-            if (response.ok) {
-                const data = await response.json();
-                todos = data;
-            }
-        } catch (e) {
-            console.error('Fetch error:', e);
-        }
-    };
+
 
     document.addEventListener('DOMContentLoaded', () => {
         const app = document.getElementById('app');
@@ -30,7 +20,7 @@
                 timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
             }, 1);
         }
-        fetchTodos();
+    
     });
 
     // TEST: Background updates now work automatically!
@@ -44,13 +34,13 @@
 </script>
 
 
-<h1>HMRss gfibhNOW WORKING PERFECTsLY!</h1>
+<h1>HMR is now runningggggvs heyyyy from a dedicated server module!</h1>
 vcbc fdh scvxhhhhhhhhhhhhhh
 fdvchgvyufdnb
 gvfcjb hyun
-<p>hello DHBVYUCBHNFDBVH BHYU</p>
+<p>helloo DHBVYUCBHNFDBVH BHYU</p>
 <div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
-    <h3>Reactive Signal Demo/h3>
+    <h3>Reactive Signal Demo</h3>
     <button onClick={()=>{count++}}>Count {count}</button>
     <p>Double (Count * 2): <strong>{double}</strong></p>
     <p>Background Timer: <strong>{timer}s</strong></p>
@@ -78,7 +68,7 @@ gvfcjb hyun
 <h1>hello api todos </h1>
 
 <div style="padding: 20px; border: 2px solid #e67e22; border-radius: 10px; margin-bottom: 20px;">
-    <h3>API Todo Demo (from <code>/api/todo</code>)</h3>
+    <h3>API Todo Demosss (from <code>/api/todo</code>)</h3>
     <button onClick={fetchTodos}>Refresh API Todos</button>
     <div style="margin-top: 10px;">
         {#for todo in todos}

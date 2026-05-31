@@ -1,7 +1,7 @@
 use std::path::Path;
 use crate::er;
 use crate::compiler;
-use tiny_http::{Server, Response, Header};
+use crate::server::start_server;
 use std::fs;
 
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
@@ -176,134 +176,6 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
     Ok(())
 }
 
-fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
-    let server = Server::http(format!("0.0.0.0:{}", port)).map_err(|e| anyhow::anyhow!(e))?;
-    println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
-
-    let mut base_path = fs::canonicalize(dir)?;
-    let mut default_file = None;
-
-    if base_path.is_file() {
-        default_file = Some(base_path.clone());
-        if let Some(parent) = base_path.parent() {
-            base_path = parent.to_path_buf();
-        }
-    }
-
-    for request in server.incoming_requests() {
-        let url = request.url();
-        let mut target = url;
-        if let Some(idx) = target.find('?') { target = &target[..idx]; }
-        if let Some(idx) = target.find('#') { target = &target[..idx]; }
-
-        println!("Request: {} {}", request.method(), target);
-
-        let mut params = std::collections::HashMap::new();
-        let file_path = if target == "/" {
-            if let Some(ref def_file) = default_file {
-                def_file.clone()
-            } else {
-                let index_erm = base_path.join("index.erm");
-                if index_erm.exists() { index_erm } else { base_path.join("index.html") }
-            }
-        } else {
-            if let Some((path, p)) = resolve_path(&base_path, target) {
-                params = p;
-                path
-            } else {
-                base_path.join(&target[1..])
-            }
-        };
-
-        if file_path.exists() && file_path.is_file() {
-            if file_path.extension().map_or(false, |ext| ext == "erm") {
-                let content = fs::read_to_string(&file_path)?;
-                let parent = file_path.parent().unwrap().to_string_lossy();
-                match compiler::process_erm_component(&parent, &content, is_prod, &params) {
-                    Ok(processed) => {
-                        let response = Response::from_string(processed)
-                            .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap());
-                        request.respond(response).ok();
-                    }
-                    Err(e) => {
-                        let response = Response::from_string(format!("Error: {}", e)).with_status_code(500);
-                        request.respond(response).ok();
-                    }
-                }
-            } else {
-                let content = fs::read(&file_path)?;
-                let response = Response::from_data(content);
-                request.respond(response).ok();
-            }
-        } else {
-            let response = Response::from_string("Not Found").with_status_code(404);
-            request.respond(response).ok();
-        }
-    }
-    Ok(())
-}
-
-fn resolve_path(base_path: &Path, target: &str) -> Option<(std::path::PathBuf, std::collections::HashMap<String, String>)> {
-    let parts: Vec<&str> = target.split('/').filter(|s| !s.is_empty()).collect();
-    let mut current_path = base_path.to_path_buf();
-    let mut params = std::collections::HashMap::new();
-
-    for (i, part) in parts.iter().enumerate() {
-        let mut found = false;
-        
-        // 1. Try exact match (directory or file)
-        let exact = current_path.join(part);
-        if exact.exists() {
-            current_path = exact;
-            found = true;
-        } else {
-            // 2. Try .erm match
-            let erm = current_path.join(format!("{}.erm", part));
-            if erm.exists() {
-                current_path = erm;
-                found = true;
-            } else {
-                // 3. Try dynamic match
-                if let Ok(entries) = fs::read_dir(&current_path) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        if name.starts_with('[') {
-                            if name.ends_with(']') { // Directory [slug]
-                                let param_name = &name[1..name.len() - 1];
-                                params.insert(param_name.to_string(), part.to_string());
-                                current_path.push(name);
-                                found = true;
-                                break;
-                            } else if name.ends_with("].erm") { // File [slug].erm
-                                let param_name = &name[1..name.len() - 5];
-                                params.insert(param_name.to_string(), part.to_string());
-                                current_path.push(name);
-                                found = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        if !found { return None; }
-        
-        // If we found a file and it's not the last part, we can't go further
-        if current_path.is_file() && i < parts.len() - 1 {
-            return None;
-        }
-    }
-
-    if current_path.is_dir() {
-        let index_erm = current_path.join("index.erm");
-        if index_erm.exists() { return Some((index_erm, params)); }
-        let page_erm = current_path.join("page.erm");
-        if page_erm.exists() { return Some((page_erm, params)); }
-    }
-
-    Some((current_path, params))
-}
 
 fn get_port_from_config_file(dir: &str) -> Option<u16> {
     let path = Path::new(dir);
