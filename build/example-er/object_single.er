@@ -1,3 +1,0 @@
-let user = { name: "Vishnu", age: 25 }
-user.number = 30
-print("{user.name} is {user.age} and number is {user.number}")

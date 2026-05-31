@@ -1,6 +1,0 @@
-let todos = [
-  { id: 1, text: "Learn Eronom", done: false },
-  {id: 2, text: "Learn rust", done: false }
-]
-
-print(todos)
