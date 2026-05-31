@@ -1,7 +1,9 @@
+/build
+
 # Added by cargo
 
 /target
-/build
+
 
 # eronom release binary
 eronom
