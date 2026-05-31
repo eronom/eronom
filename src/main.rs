@@ -96,11 +96,19 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <file.er>", args[0]);
+        eprintln!("Usage: {} <file.er> OR {} [dev|build|start|init] [options]", args[0], args[0]);
         std::process::exit(1);
     }
-    if let Err(e) = run_file(&args[1]) {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
+    let first_arg = &args[1];
+    if matches!(first_arg.as_str(), "build" | "dev" | "start" | "init") {
+        if let Err(e) = eronom::cli::run_cli(args) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    } else {
+        if let Err(e) = run_file(first_arg) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
     }
 }

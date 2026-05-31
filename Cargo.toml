@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 default-run = "eronom"
 
+[lib]
+name = "eronom"
+path = "libs/core/lib.rs"
+
+
 [dependencies]
 anyhow = "1.0.102"
 base64 = "0.22.1"

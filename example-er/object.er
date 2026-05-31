@@ -1,4 +1,11 @@
 
+let obj = {
+    key:[5,8],
+    a:10, b:20
+    
+    }
+print(obj.key[0])
+
 let user = {
   name: "Vishnu",
   age: 25

@@ -1,6 +1,6 @@
 
 
 let name : string = "Vishnuss"
-const age = 7
+const age : int = 7
 
 print("Hello {age}");

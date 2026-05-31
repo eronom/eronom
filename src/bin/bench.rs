@@ -8,6 +8,11 @@ pub mod frontend;
 pub mod jit;
 
 use crate as eronom;
+#[allow(unused_imports)]
+use eronom as _lib;
+
+
+
 
 use std::time::Instant;
 use std::alloc::{GlobalAlloc, Layout};
