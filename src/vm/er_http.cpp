@@ -115,3 +115,10 @@ extern "C" void er_http_response_end_json(void* res, const char* json_str, size_
     http_res->writeHeader("Content-Type", "application/json");
     http_res->end(std::string_view(json_str, json_len));
 }
+
+extern "C" void er_http_response_end_html(void* res, const char* html_str, size_t html_len) {
+    auto* http_res = static_cast<uWS::HttpResponse<false>*>(res);
+    http_res->writeHeader("Content-Type", "text/html; charset=utf-8");
+    http_res->end(std::string_view(html_str, html_len));
+}
+

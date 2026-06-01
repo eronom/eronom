@@ -22,6 +22,78 @@ fn native_print(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+fn native_render_erm(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let file_path_val = args[0];
+    let params_val = args[1];
+    
+    let file_path = match file_path_val.as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    
+    let mut params_map = std::collections::HashMap::new();
+    if params_val.is_object() {
+        unsafe {
+            if let backend::GcData::Object(map) = &(*params_val.as_gc_ptr()).data {
+                for (k, v) in map {
+                    if let Some(key_str) = k.0.as_str() {
+                        let val_str = if let Some(s) = v.as_str() {
+                            s.to_string()
+                        } else {
+                            v.to_string()
+                        };
+                        params_map.insert(key_str.to_string(), val_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    let path = std::path::Path::new(file_path);
+    let resolved_path = if path.is_relative() {
+        if let Some(script_path) = backend::er_http::get_target_script_path() {
+            if let Some(parent) = std::path::Path::new(&script_path).parent() {
+                parent.join(path)
+            } else {
+                path.to_path_buf()
+            }
+        } else {
+            path.to_path_buf()
+        }
+    } else {
+        path.to_path_buf()
+    };
+    
+    if !resolved_path.exists() {
+        return Value::null();
+    }
+    
+    let base_dir = match resolved_path.parent() {
+        Some(p) => p.to_string_lossy().to_string(),
+        None => "".to_string(),
+    };
+    
+    let content = match std::fs::read_to_string(&resolved_path) {
+        Ok(c) => c,
+        Err(_) => return Value::null(),
+    };
+    
+    match eronom::compiler::process_erm_component(&base_dir, &content, true, &params_map) {
+        Ok(html) => {
+            let ptr = backend::gc::get_or_create_string(&html);
+            Value::string(ptr)
+        }
+        Err(e) => {
+            eprintln!("[renderErm] Compiler error: {:?}", e);
+            Value::null()
+        }
+    }
+}
+
+
 pub fn run_file(path: &str) -> anyhow::Result<()> {
     let _guard = GcGuard;
     let path_buf = std::path::PathBuf::from(path);
@@ -48,6 +120,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     }
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("route", Value::native_function(backend::er_http::native_route));
+    vm.register_global("renderErm", Value::native_function(native_render_erm));
     vm.register_global("fetch", Value::native_function(backend::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(backend::er_http::native_set_timeout));
     vm.register_global("fetchAsync", Value::native_function(backend::er_http::native_fetch_async));

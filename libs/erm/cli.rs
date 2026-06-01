@@ -70,6 +70,83 @@ fn init_project(dir: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct PageRoute {
+    rel_path: String,
+    route_path: String,
+    params: Vec<(String, usize)>,
+}
+
+fn get_page_route(rel_path: &str) -> Option<PageRoute> {
+    let path_str = rel_path.replace("\\", "/");
+    let mut parts: Vec<&str> = path_str.split('/').collect();
+    
+    // Check if filename starts with uppercase (it's a component, not a page)
+    if let Some(last) = parts.last() {
+        if last.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+            return None;
+        }
+        if *last == "layout.erm" {
+            return None;
+        }
+    }
+    
+    // Remove extension from last part
+    if let Some(last) = parts.last_mut() {
+        if last.ends_with(".erm") {
+            *last = &last[..last.len() - 4];
+        }
+    }
+    
+    // Handle index / page
+    if let Some(last) = parts.last() {
+        if *last == "index" || *last == "page" {
+            parts.pop();
+        }
+    }
+    
+    let mut route_segments = Vec::new();
+    let mut params = Vec::new();
+    
+    for (i, part) in parts.iter().enumerate() {
+        if part.starts_with('[') && part.ends_with(']') {
+            let param_name = &part[1..part.len() - 1];
+            route_segments.push(format!(":{}", param_name));
+            // Index in url.split("/") will be i + 1
+            params.push((param_name.to_string(), i + 1));
+        } else {
+            route_segments.push(part.to_string());
+        }
+    }
+    
+    let route_path = if route_segments.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", route_segments.join("/"))
+    };
+    
+    Some(PageRoute {
+        rel_path: path_str,
+        route_path,
+        params,
+    })
+}
+
+fn generate_server_er(routes: &[PageRoute]) -> String {
+    let mut code = String::new();
+    code.push_str("import { route } from \"std/http\"\n\n");
+    code.push_str("let app = route()\n\n");
+    
+    for route in routes {
+        code.push_str(&format!("app.get(\"{}\", (c) => {{\n", route.route_path));
+        code.push_str(&format!("  let html = renderErm(\"{}\", c.req.params)\n", route.rel_path));
+        code.push_str("  return c.html(html)\n");
+        code.push_str("})\n\n");
+    }
+    
+    code
+}
+
 fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     let build_dir = Path::new(dir).join("build");
     if is_ssr {
@@ -84,22 +161,20 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     fs::create_dir_all(&build_dir)?;
 
     let base_path = fs::canonicalize(dir)?;
-    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr)?;
+    let mut routes = Vec::new();
+    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr, &mut routes)?;
 
     if is_ssr {
-        // Copy current executable to build folder for deployment
-        if let Ok(exe_path) = std::env::current_exe() {
-            let exe_name = exe_path.file_name().unwrap();
-            let dest_exe = build_dir.join(exe_name);
-            println!("Copying binary to {:?}", dest_exe);
-            fs::copy(exe_path, dest_exe).ok();
-        }
+        // Write the generated server.er file
+        let server_er_content = generate_server_er(&routes);
+        let server_er_path = build_dir.join("server.er");
+        fs::write(server_er_path, server_er_content)?;
     }
 
     Ok(())
 }
 
-fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: bool) -> anyhow::Result<()> {
+fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: bool, routes: &mut Vec<PageRoute>) -> anyhow::Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
@@ -129,7 +204,7 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
         }
 
         if path.is_dir() {
-            build_dir_recursive(root, &path, build_root, is_ssr)?;
+            build_dir_recursive(root, &path, build_root, is_ssr, routes)?;
         } else {
             let rel_path = path.strip_prefix(root)?;
             let dest_path = build_root.join(rel_path);
@@ -142,6 +217,9 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
                 if is_ssr {
                     // SSR mode: just copy the .erm file
                     fs::copy(&path, &dest_path)?;
+                    if let Some(r) = get_page_route(&rel_path.to_string_lossy()) {
+                        routes.push(r);
+                    }
                 } else {
                     // SSG mode: compile to .html
                     if name_str == "layout.erm" {

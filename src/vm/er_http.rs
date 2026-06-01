@@ -40,6 +40,7 @@ unsafe extern "C" {
     fn er_http_register_route(method: *const c_char, path: *const c_char);
     fn er_http_listen_and_run(port: i32);
     fn er_http_response_end_json(res: *mut c_void, json_str: *const c_char, json_len: usize);
+    fn er_http_response_end_html(res: *mut c_void, html_str: *const c_char, html_len: usize);
     
     fn er_ws_register_route(path: *const c_char);
     fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
@@ -252,6 +253,42 @@ pub fn native_context_json(args: Vec<Value>) -> Value {
     
     Value::null()
 }
+
+pub fn native_context_html(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let html_val = args[0];
+    let html_str = if html_val.is_string() {
+        unsafe {
+            match &(*html_val.as_gc_ptr()).data {
+                GcData::String(s) => s.as_ref().to_string(),
+                _ => return Value::null(),
+            }
+        }
+    } else {
+        html_val.to_string()
+    };
+    
+    ACTIVE_HTTP_RESPONSE.with(|resp| {
+        let ptr = resp.get();
+        if !ptr.is_null() {
+            let c_str = CString::new(html_str).unwrap();
+            unsafe {
+                er_http_response_end_html(ptr, c_str.as_ptr(), c_str.as_bytes().len());
+            }
+        } else {
+            eprintln!("[HTTP] Error: ACTIVE_HTTP_RESPONSE is null");
+        }
+    });
+    
+    Value::null()
+}
+
+pub fn get_target_script_path() -> Option<String> {
+    TARGET_SCRIPT_PATH.with(|p| p.borrow().clone())
+}
+
 
 pub fn end_http_response_json(res: *mut std::ffi::c_void, json: &str) {
     let c_str = std::ffi::CString::new(json).unwrap();
@@ -540,6 +577,27 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     println!("[HTTP] Reload successful. VM state and routes updated.");
 }
 
+fn match_route_path(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
+    let pattern_parts: Vec<&str> = pattern.split('/').collect();
+    let path_parts: Vec<&str> = path.split('/').collect();
+    
+    if pattern_parts.len() != path_parts.len() {
+        return None;
+    }
+    
+    let mut params = HashMap::new();
+    for (pat_part, path_part) in pattern_parts.iter().zip(path_parts.iter()) {
+        if pat_part.starts_with(':') {
+            let param_name = &pat_part[1..];
+            params.insert(param_name.to_string(), path_part.to_string());
+        } else if pat_part != path_part {
+            return None;
+        }
+    }
+    
+    Some(params)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn er_http_on_request(
     res: *mut c_void,
@@ -563,10 +621,14 @@ pub extern "C" fn er_http_on_request(
         std::str::from_utf8(slice).unwrap_or("")
     };
     
+    let mut extracted_params = HashMap::new();
     let callback_opt = ROUTES.with(|routes| {
         for route in routes.borrow().iter() {
-            if route.method == method && route.path == path {
-                return Some(route.callback);
+            if route.method == method {
+                if let Some(params) = match_route_path(&route.path, path) {
+                    extracted_params = params;
+                    return Some(route.callback);
+                }
             }
         }
         None
@@ -582,24 +644,37 @@ pub extern "C" fn er_http_on_request(
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
                 
-                let mut req_map = crate::vm::gc::get_pooled_map(2);
+                let mut req_map = crate::vm::gc::get_pooled_map(3);
                 let url_name = get_or_create_string("url");
                 let method_name = get_or_create_string("method");
+                let params_name = get_or_create_string("params");
                 let path_str = get_or_create_string(path);
                 let method_str = get_or_create_string(method);
                 
+                let mut params_obj_map = crate::vm::gc::get_pooled_map(extracted_params.len());
+                for (k, v) in extracted_params {
+                    let k_str = get_or_create_string(&k);
+                    let v_str = get_or_create_string(&v);
+                    params_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
+                }
+                let params_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(params_obj_map)));
+                
                 req_map.insert(crate::vm::value::MapKey(Value::string(url_name)), Value::string(path_str));
                 req_map.insert(crate::vm::value::MapKey(Value::string(method_name)), Value::string(method_str));
+                req_map.insert(crate::vm::value::MapKey(Value::string(params_name)), params_obj);
                 
                 let req_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(req_map)));
                 
-                let context_obj = crate::vm::gc::get_pooled_map(2);
+                let context_obj = crate::vm::gc::get_pooled_map(3);
                 let json_name = get_or_create_string("json");
                 let json_val = Value(crate::vm::value::TAG_METHOD_SEND_JSON | (res as u64 & crate::vm::value::PTR_MASK));
+                let html_name = get_or_create_string("html");
+                let html_val = Value::native_function(native_context_html);
                 let req_key_name = get_or_create_string("req");
                 
                 let mut map = context_obj;
                 map.insert(crate::vm::value::MapKey(Value::string(json_name)), json_val);
+                map.insert(crate::vm::value::MapKey(Value::string(html_name)), html_val);
                 map.insert(crate::vm::value::MapKey(Value::string(req_key_name)), req_obj);
                 let c_val = Value::object(crate::vm::gc::gc_allocate(GcData::Object(map)));
                 
