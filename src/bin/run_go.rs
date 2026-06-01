@@ -9,14 +9,22 @@ struct ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        println!("\n[Rust] Shutting down Go API server...");
+        println!("\n[Rust] Shutting down Go API server (air)...");
         let _ = self.child.kill();
         let _ = self.child.wait();
         
-        // Clean up the compiled binary
+        // Clean up any compiled binaries
         if Path::new("main_go").exists() {
             let _ = std::fs::remove_file("main_go");
             println!("[Rust] Removed temporary binary ./main_go");
+        }
+        if Path::new("tmp/main").exists() {
+            let _ = std::fs::remove_file("tmp/main");
+            println!("[Rust] Removed temporary binary ./tmp/main");
+        }
+        if Path::new("tmp").exists() {
+            let _ = std::fs::remove_dir_all("tmp");
+            println!("[Rust] Cleaned up temporary directory ./tmp");
         }
         println!("[Rust] Go API server stopped.");
     }
@@ -26,21 +34,31 @@ fn main() -> io::Result<()> {
     println!("==================================================");
     println!("          Go Todo API Server Runner (Rust)        ");
     println!("==================================================");
-    println!("[Rust] Compiling main.go...");
+    println!("[Rust] Locating 'air' binary...");
 
-    let build_status = Command::new("go")
-        .args(&["build", "-o", "main_go", "main.go"])
-        .status()?;
+    let air_bin = if Command::new("air")
+        .arg("-v")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+    {
+        "air".to_string()
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let fallback = format!("{}/go/bin/air", home);
+        if Path::new(&fallback).exists() {
+            fallback
+        } else {
+            eprintln!("[Rust] Error: 'air' binary not found in PATH or at $HOME/go/bin/air.");
+            eprintln!("[Rust] Please install it using: go install github.com/air-verse/air@latest");
+            std::process::exit(1);
+        }
+    };
 
-    if !build_status.success() {
-        eprintln!("[Rust] Error: Failed to compile main.go");
-        std::process::exit(1);
-    }
+    println!("[Rust] Starting Go server with air ({})...", air_bin);
 
-    println!("[Rust] Successfully compiled main.go -> ./main_go");
-    println!("[Rust] Starting Go server...");
-
-    let mut child = Command::new("./main_go")
+    let mut child = Command::new(&air_bin)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
@@ -51,7 +69,7 @@ fn main() -> io::Result<()> {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             if let Ok(l) = line {
-                println!("[Go Log] {}", l);
+                println!("[Air Log] {}", l);
             }
         }
     });
@@ -62,14 +80,14 @@ fn main() -> io::Result<()> {
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
             if let Ok(l) = line {
-                eprintln!("[Go Err] {}", l);
+                eprintln!("[Air Err] {}", l);
             }
         }
     });
 
     let _guard = ChildGuard { child };
 
-    println!("[Rust] Go API server is running at http://localhost:8080");
+    println!("[Rust] Go API server is running with live reload at http://localhost:8080");
     println!("[Rust] Press ENTER to stop the server...");
 
     let mut input = String::new();
