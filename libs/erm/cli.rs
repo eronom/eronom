@@ -36,6 +36,8 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                     port = pos_args[1].parse().unwrap_or(3000);
                     has_custom_port = true;
                 }
+            } else if cmd == "start" {
+                dir = "build";
             }
         } else if first_arg.ends_with(".er") {
             er::run_file(first_arg)?;
