@@ -68,7 +68,120 @@ fn write_ws_text_frame<W: std::io::Write>(writer: &mut W, text: &str) -> std::io
     Ok(())
 }
 
+fn get_go_port_from_config() -> u16 {
+    if let Ok(content) = fs::read_to_string("config.er") {
+        let re = regex::Regex::new(r"(?s)go_api\s*:\s*\{[^}]*port\s*:\s*(\d+)").ok();
+        if let Some(re_val) = re {
+            if let Some(caps) = re_val.captures(&content) {
+                if let Some(port_match) = caps.get(1) {
+                    if let Ok(port) = port_match.as_str().parse::<u16>() {
+                        return port;
+                    }
+                }
+            }
+        }
+    }
+    8080
+}
+
+static GO_CHILD: Mutex<Option<std::process::Child>> = Mutex::new(None);
+
+struct GoServerGuard;
+
+fn kill_processes_on_port(port: u16) {
+    let _ = std::process::Command::new("fuser")
+        .args(&["-k", &format!("{}/tcp", port)])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+        
+    if let Ok(output) = std::process::Command::new("lsof")
+        .args(&["-t", "-i", &format!(":{}", port)])
+        .output()
+    {
+        let pids = String::from_utf8_lossy(&output.stdout);
+        for pid in pids.lines() {
+            if let Ok(pid_num) = pid.trim().parse::<i32>() {
+                let _ = std::process::Command::new("kill")
+                    .args(&["-9", &pid_num.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+    }
+}
+
+impl Drop for GoServerGuard {
+    fn drop(&mut self) {
+        let mut guard = GO_CHILD.lock().unwrap();
+        if let Some(mut child) = guard.take() {
+            println!("[Eronom] Shutting down Go API server...");
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let go_port = get_go_port_from_config();
+        kill_processes_on_port(go_port);
+        println!("[Eronom] Go API server stopped.");
+    }
+}
+
+fn spawn_go_server_if_needed() {
+    if !Path::new("main.go").exists() {
+        return;
+    }
+    let go_port = get_go_port_from_config();
+    kill_processes_on_port(go_port);
+
+    println!("[Eronom] Found main.go, spawning Go API server...");
+    
+    // Find air binary or run fallback
+    let air_bin = if std::process::Command::new("air")
+        .arg("-v")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+    {
+        Some("air".to_string())
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let fallback = format!("{}/go/bin/air", home);
+        if Path::new(&fallback).exists() {
+            Some(fallback)
+        } else {
+            None
+        }
+    };
+
+    let child = if let Some(bin) = air_bin {
+        std::process::Command::new(bin)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+    } else {
+        // Fallback to go run main.go
+        std::process::Command::new("go")
+            .args(&["run", "main.go"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+    };
+
+    match child {
+        Ok(c) => {
+            println!("[Eronom] Go API server spawned successfully.");
+            *GO_CHILD.lock().unwrap() = Some(c);
+        }
+        Err(e) => {
+            eprintln!("[Eronom] Failed to spawn Go API server: {}", e);
+        }
+    }
+}
+
 pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
+    spawn_go_server_if_needed();
+    let _go_guard = GoServerGuard;
     let server = Server::http(format!("0.0.0.0:{}", port)).map_err(|e| anyhow::anyhow!(e))?;
     println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
 
@@ -173,6 +286,28 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
             if let Some(idx) = target.find('#') { target = &target[..idx]; }
 
             println!("Request: {} {}", request.method(), target);
+
+            if target == "/api/todo" {
+                let go_port = get_go_port_from_config();
+                let url = format!("http://localhost:{}/todos", go_port);
+                match reqwest::blocking::get(&url) {
+                    Ok(resp) => {
+                        if let Ok(body) = resp.bytes() {
+                            let response = Response::from_data(body)
+                                .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap());
+                            request.respond(response).ok();
+                        } else {
+                            let response = Response::from_string("Error reading response from Go API").with_status_code(502);
+                            request.respond(response).ok();
+                        }
+                    }
+                    Err(e) => {
+                        let response = Response::from_string(format!("Error connecting to Go API: {}", e)).with_status_code(502);
+                        request.respond(response).ok();
+                    }
+                }
+                return;
+            }
 
             if target == "/__hmr" {
                 let mut ws_key = None;

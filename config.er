@@ -1,5 +1,8 @@
 let config = {
     server: { 
         port: 4000 
-    } 
+    },
+    go_api: {
+        port: 8080
+    }
 }

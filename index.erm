@@ -11,6 +11,18 @@
 
 
 
+    async function fetchTodos() {
+        try {
+            const res = await fetch('/api/todo');
+            if (res.ok) {
+                const data = await res.json();
+                todos = data;
+            }
+        } catch (err) {
+            console.error("fetchTodos error:", err);
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         const app = document.getElementById('app');
         if (app) {
@@ -20,7 +32,7 @@
                 timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
             }, 1);
         }
-    
+        fetchTodos();
     });
 
     // TEST: Background updates now work automatically!

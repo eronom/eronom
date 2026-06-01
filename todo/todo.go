@@ -17,7 +17,7 @@ type Todo struct {
 var (
 	todos = []Todo{
 		{ID: 1, Text: "Learn Eronom", Done: false},
-		{ID: 2, Text: "Add todo API in Gosssssvs", Done: true},
+		{ID: 2, Text: "Add todo API in Gosssssvs gooooo", Done: true},
 	}
 	nextID = 3
 	mu     sync.Mutex
