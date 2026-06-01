@@ -1,0 +1,7 @@
+<script>
+    const params = useParams()
+  
+</script>
+
+
+<p>Hello {params.slug}</p>

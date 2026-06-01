@@ -1,0 +1,40 @@
+// Standard I/O library for Eronom
+
+const callWithArity = (func, args) => {
+  const length = arrayLen(args)
+  if (length == 0) { return func() }
+  if (length == 1) { return func(args[0]) }
+  if (length == 2) { return func(args[0], args[1]) }
+  if (length == 3) { return func(args[0], args[1], args[2]) }
+  if (length == 4) { return func(args[0], args[1], args[2], args[3]) }
+  if (length == 5) { return func(args[0], args[1], args[2], args[3], args[4]) }
+  return func()
+}
+
+export const Io = {
+  setMode: (mode) => {
+    setIoMode(mode)
+  },
+  getMode: () => {
+    return getIoMode()
+  },
+  spawn: (func, args) => {
+    if (getIoMode() == "evented") {
+      const pair = createPromisePair()
+      setTimeout((f, a, resolve) => {
+        const res = callWithArity(f, a)
+        resolve(res)
+      }, 0, func, args, pair.resolve)
+      return pair.promise
+    } else {
+      return callWithArity(func, args)
+    }
+  },
+  wait: (future) => {
+    if (getIoMode() == "evented") {
+      return futureAwait(future)
+    } else {
+      return future
+    }
+  }
+}

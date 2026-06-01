@@ -1,0 +1,5 @@
+let config = {
+    server: { 
+        port: 4000 
+    } 
+}

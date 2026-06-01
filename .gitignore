@@ -1,4 +1,9 @@
-# Added by cargo
+#Build output
+/build
 
+# Added by cargo
 /target
+
+# eronom binary
+eronom
 

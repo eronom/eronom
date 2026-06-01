@@ -1164,12 +1164,19 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
                 mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots\n", rb, rb, arg_count));
                 mir.push_str(&format!("          beq call_vm_label_{}, status, -1\n", idx));
+                mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
                 mir.push_str(&format!("          blt err_label, status, 0\n"));
                 mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
                 if next_types[ra] == RegType::Double {
                     mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
                 }
                 mir.push_str(&format!("          jmp done_call_{}\n", idx));
+                mir.push_str(&format!("suspend_label_{}:\n", idx));
+                mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx));
+                mir.push_str(&format!("          mov i64:(dest_reg_out), {}\n", ra));
+                mir.push_str(&format!("          mov i64:(func_reg_out), {}\n", rb));
+                mir.push_str(&format!("          mov i64:(arg_count_out), {}\n", arg_count));
+                mir.push_str("          ret 3\n");
                 mir.push_str(&format!("call_vm_label_{}:\n", idx));
                 mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx + 1));
                 mir.push_str(&format!("          mov i64:(dest_reg_out), {}\n", ra));

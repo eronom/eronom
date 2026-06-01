@@ -66,6 +66,7 @@ pub struct VM {
     pub mir_ctx: Option<*mut std::ffi::c_void>,
     pub use_jit: bool,
     pub alloc_count_local: usize,
+    pub use_evented_io: bool,
     
     // Event loop fields
     pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
@@ -108,6 +109,7 @@ impl VM {
             mir_ctx: None,
             use_jit,
             alloc_count_local: 0,
+            use_evented_io: true,
             event_loop_queue: Arc::new(Mutex::new(Vec::new())),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
@@ -529,6 +531,10 @@ impl VM {
                         }
                         let result = native(args);
                         reload_stack!();
+                        if self.stack.is_empty() {
+                            frame.ip = ip_out - 1;
+                            return Ok(Value::null());
+                        }
                         *frame_slots.add(dest_reg_out) = result;
                         ip_val = ip_out;
                     } else if callee.is_array_method_push() || callee.is_array_method_pop() {
@@ -578,6 +584,10 @@ impl VM {
                     // YieldGc / YieldLoop
                     frame.ip = ip_out;
                     ip_val = ip_out;
+                } else if status == 3 {
+                    // YieldSuspend: a native function suspended the VM during JIT execution.
+                    frame.ip = ip_out;
+                    return Ok(Value::null());
                 } else {
                     // RuntimeError or JIT compilation/execution error.
                     let err_msg = self.error.take().unwrap_or_else(|| "JIT execution error".into());
@@ -1152,8 +1162,12 @@ impl VM {
                                 args.push(*frame_slots.add(func_reg + 1 + i));
                             }
                             sync_stack!();
+                            frame.ip = unsafe { ip.offset_from(code_ptr) } as usize - 1;
                             let result = native(args);
                             reload_stack!();
+                            if self.stack.is_empty() {
+                                return Ok(Value::null());
+                            }
                             *frame_slots.add(dest) = result;
                         } else if callee.is_method_json() || callee.is_method_text() {
                             let ptr = callee.as_gc_ptr();
@@ -1198,6 +1212,21 @@ impl VM {
                                 super::er_http::end_http_response_json(res_ptr, &json_str);
                                 reload_stack!();
                             }
+                            *frame_slots.add(dest) = Value::null();
+                        } else if callee.is_method_resolve() {
+                            let promise_ptr = callee.as_gc_ptr();
+                            let arg = if arg_count > 0 {
+                                *frame_slots.add(func_reg + 1)
+                            } else {
+                                Value::null()
+                            };
+                            let queue = self.event_loop_queue.clone();
+                            let mut q = queue.lock().unwrap();
+                            q.push(crate::vm::execute::EventLoopTask {
+                                callback: Value::null(),
+                                args: Vec::new(),
+                                result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, arg),
+                            });
                             *frame_slots.add(dest) = Value::null();
                         } else if callee.is_array_method_push() || callee.is_array_method_pop() {
                             let ptr = callee.as_gc_ptr();
@@ -1360,7 +1389,7 @@ impl VM {
                         self.stack = suspended_stack;
                         self.frames = suspended_frames;
 
-                        // Find the destination register from the Await instruction
+                        // Find the destination register from the Await or Call instruction
                         let frame = self.frames.last_mut().unwrap();
                         let func = unsafe {
                             match &(*frame.function).data {
@@ -1369,7 +1398,7 @@ impl VM {
                             }
                         };
                         let inst = func.chunk.code[frame.ip];
-                        assert_eq!(inst.op, OpCode::Await);
+                        assert!(inst.op == OpCode::Await || inst.op == OpCode::Call);
 
                         // Write the resolved value to the destination register
                         self.stack[frame.slots_offset + inst.ra as usize] = resolved_value;
@@ -1509,6 +1538,13 @@ mod tests {
     }
 
     #[test]
+    fn test_function_declaration() {
+        let vm = run_code("function add(a, b) {\n  return a + b\n}\nlet res = add(3, 4)\nlet res2 = (function(x) { return x * 2 })(5)").unwrap();
+        assert_eq!(vm.get_global("res").unwrap().as_number(), 7.0);
+        assert_eq!(vm.get_global("res2").unwrap().as_number(), 10.0);
+    }
+
+    #[test]
     fn test_recursion() {
         let vm = run_code("let fib = (n) => {\n  if (n < 2) { return n }\n  return fib(n - 1) + fib(n - 2)\n}\nlet res = fib(5)").unwrap();
         assert_eq!(vm.get_global("res").unwrap().as_number(), 5.0);
@@ -1614,11 +1650,16 @@ mod tests {
         gc_free_all();
         let source = "
             let result = 0
-            const get_val = async () => {
+            const get_val = () => {
                 return 42
             }
-            const main = async () => {
-                let x = await get_val()
+            const main = () => {
+                const pair = createPromisePair()
+                setTimeout((resolve) => {
+                    const x = get_val()
+                    resolve(x)
+                }, 0, pair.resolve)
+                let x = futureAwait(pair.promise)
                 result = x + 10
             }
             main()
@@ -1630,6 +1671,9 @@ mod tests {
         let function = compiler.compile(&stmts).unwrap();
         
         let mut vm = VM::new();
+        vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+        vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
+        vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
         vm.use_jit = true;
         vm.run(function).unwrap();
         vm.run_event_loop().unwrap();

@@ -1,7 +1,7 @@
 let user = {
   name: "Vishnu",
   meta: {
-    tags: ["coder", "zig"],
+    tags: ["coder", "eronom"],
     counts: {
       stars: 10
     }

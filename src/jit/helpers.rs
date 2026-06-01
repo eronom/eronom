@@ -557,8 +557,12 @@ pub extern "C" fn er_jit_call_non_vm(
                 args.push(*frame_slots.offset((func_reg + 1 + i) as isize));
             }
             let result = native(args);
-            *dest = result;
-            0
+            if (*_vm).stack.is_empty() {
+                -3
+            } else {
+                *dest = result;
+                0
+            }
         } else if callee.is_method_json() || callee.is_method_text() {
             let ptr = callee.as_gc_ptr();
             let result = match &(*ptr).data {
@@ -599,6 +603,22 @@ pub extern "C" fn er_jit_call_non_vm(
                 let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
                 crate::vm::er_http::end_http_response_json(res_ptr, &json_str);
             }
+            *dest = Value::null();
+            0
+        } else if callee.is_method_resolve() {
+            let promise_ptr = callee.as_gc_ptr();
+            let arg = if arg_count > 0 {
+                *frame_slots.offset((func_reg + 1) as isize)
+            } else {
+                Value::null()
+            };
+            let queue = (*_vm).event_loop_queue.clone();
+            let mut q = queue.lock().unwrap();
+            q.push(crate::vm::execute::EventLoopTask {
+                callback: Value::null(),
+                args: Vec::new(),
+                result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, arg),
+            });
             *dest = Value::null();
             0
         } else if callee.is_array_method_push() || callee.is_array_method_pop() {
