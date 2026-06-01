@@ -7,3 +7,8 @@
 # eronom binary
 eronom
 
+#config
+config.er
+
+# temporary compiled MIR output
+temp_compiled.mir
