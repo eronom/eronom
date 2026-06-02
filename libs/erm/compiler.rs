@@ -324,35 +324,56 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                 }
             };
             let tag_content = &content[i + 1..i + tag_end];
-            if !tag_content.is_empty() && !tag_content.starts_with('/') {
-                let mut parts = tag_content.split_whitespace();
-                let tag_name = parts.next().unwrap_or("");
-                if !tag_name.is_empty() && tag_name.chars().next().unwrap().is_ascii_uppercase() {
-                    let comp_filename = format!("{}.erm", tag_name);
-                    let comp_path = std::path::Path::new(base_dir).join(&comp_filename);
-                    if comp_path.exists() {
-                        let comp_path_str = comp_path.to_string_lossy().into_owned();
-                        if !visited.contains_key(&comp_path_str) {
-                            visited.insert(comp_path_str.clone(), true);
-                            let comp_content = std::fs::read_to_string(&comp_path)?;
-                            let mut sub_res = process_component_tree(base_dir, &comp_content, visited, None)?;
-                            html_buf.push_str(&sub_res.html);
-                            scripts.append(&mut sub_res.scripts);
-                            styles.append(&mut sub_res.styles);
-                            for v in sub_res.atom_vars {
-                                if !atom_vars.contains(&v) { atom_vars.push(v); }
+            if !tag_content.is_empty() {
+                if tag_content.starts_with('/') {
+                    let closing_tag_name = tag_content[1..].trim();
+                    if closing_tag_name == "Link" {
+                        html_buf.push_str("</a>");
+                        i += tag_end + 1;
+                        continue;
+                    }
+                } else {
+                    let mut parts = tag_content.split_whitespace();
+                    let tag_name = parts.next().unwrap_or("");
+                    if tag_name == "Link" {
+                        let mut new_tag_content = tag_content.to_string();
+                        new_tag_content = new_tag_content.replacen("Link", "a", 1);
+                        new_tag_content = new_tag_content.replace("to=", "href=");
+                        new_tag_content = new_tag_content.replace("to =", "href=");
+                        new_tag_content = new_tag_content.replace("to  =", "href=");
+                        html_buf.push('<');
+                        html_buf.push_str(&new_tag_content);
+                        html_buf.push('>');
+                        i += tag_end + 1;
+                        continue;
+                    }
+                    if !tag_name.is_empty() && tag_name.chars().next().unwrap().is_ascii_uppercase() {
+                        let comp_filename = format!("{}.erm", tag_name);
+                        let comp_path = std::path::Path::new(base_dir).join(&comp_filename);
+                        if comp_path.exists() {
+                            let comp_path_str = comp_path.to_string_lossy().into_owned();
+                            if !visited.contains_key(&comp_path_str) {
+                                visited.insert(comp_path_str.clone(), true);
+                                let comp_content = std::fs::read_to_string(&comp_path)?;
+                                let mut sub_res = process_component_tree(base_dir, &comp_content, visited, None)?;
+                                html_buf.push_str(&sub_res.html);
+                                scripts.append(&mut sub_res.scripts);
+                                styles.append(&mut sub_res.styles);
+                                for v in sub_res.atom_vars {
+                                    if !atom_vars.contains(&v) { atom_vars.push(v); }
+                                }
+                                i += tag_end + 1;
+                                continue;
                             }
-                            i += tag_end + 1;
-                            continue;
                         }
                     }
-                }
-                if tag_name == "slot" {
-                    if let Some(s) = slot_html {
-                        html_buf.push_str(s);
+                    if tag_name == "slot" {
+                        if let Some(s) = slot_html {
+                            html_buf.push_str(s);
+                        }
+                        i += tag_end + 1;
+                        continue;
                     }
-                    i += tag_end + 1;
-                    continue;
                 }
             }
             html_buf.push('<');
@@ -1017,3 +1038,19 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
 
     Ok(output)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_link_compilation() {
+        let content = "<Link to=\"/contact\">Contact</Link>";
+        let mut visited = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None).unwrap();
+        assert!(res.html.contains("<a"));
+        assert!(res.html.contains("href=\"/contact\""));
+        assert!(res.html.contains(">Contact</a>"));
+    }
+}
+

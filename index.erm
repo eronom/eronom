@@ -34,7 +34,7 @@
 </script>
 
 
-<h1>HMRssssaaaa is now runningggggvs heyyyy from a dedicated server module!</h1>
+<h1>HMR is now running from a dedicated server module!</h1>
 <h2>hello</h2>
 <p>vcbc fdh scvxhhhhhhhhhhhhhh
 fdvchgvyufdnb
@@ -87,6 +87,8 @@ gvfcjb hyun</p>
 {:else}
     <p>just right!</p>
 {/if}
+
+<Link to="/contact">Contact</Link>
 
 <Header />
 {#if showExtraContent}
