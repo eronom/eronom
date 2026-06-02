@@ -1,15 +1,36 @@
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::io::Write;
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, SystemTime};
 use std::collections::HashMap;
-use tiny_http::{Server, Response, Header};
+use std::ffi::{c_char, c_void, CString};
 use crate::compiler;
-use base64::{Engine as _, engine::general_purpose};
-use sha1::{Sha1, Digest};
+
+static BASE_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+static DEFAULT_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
+static IS_PROD: Mutex<bool> = Mutex::new(false);
+
+static HMR_QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+unsafe extern "C" {
+    fn er_http_init_with_callbacks(
+        http_req_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
+        ws_open_cb: extern "C" fn(*mut c_void, *const c_char, usize),
+        ws_message_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
+        ws_close_cb: extern "C" fn(*mut c_void, *const c_char, usize, i32, *const c_char, usize),
+    );
+    fn er_ws_register_route(path: *const c_char);
+    fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
+    fn er_http_listen_and_run(port: i32);
+    
+    fn er_http_response_write_status(res: *mut c_void, status_str: *const c_char, status_len: usize);
+    fn er_http_response_write_header(res: *mut c_void, key_str: *const c_char, key_len: usize, val_str: *const c_char, val_len: usize);
+    fn er_http_response_end(res: *mut c_void, data_str: *const c_char, data_len: usize);
+    
+    fn er_http_create_timer(ms: i32, cb: extern "C" fn(*mut c_void));
+}
 
 fn scan_directory(dir: &Path, files: &mut HashMap<PathBuf, SystemTime>) {
     if let Ok(entries) = fs::read_dir(dir) {
@@ -43,35 +64,176 @@ fn scan_directory(dir: &Path, files: &mut HashMap<PathBuf, SystemTime>) {
     }
 }
 
-fn broadcast_hmr(clients: &Mutex<Vec<Sender<String>>>, msg: String) {
-    let mut guard = clients.lock().unwrap();
-    guard.retain(|tx| {
-        tx.send(msg.clone()).is_ok()
-    });
+extern "C" fn dev_http_callback(
+    res: *mut c_void,
+    method_ptr: *const c_char,
+    method_len: usize,
+    path_ptr: *const c_char,
+    path_len: usize,
+) {
+    let method = unsafe {
+        let slice = std::slice::from_raw_parts(method_ptr as *const u8, method_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    let path = unsafe {
+        let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+
+    if let Err(e) = handle_dev_request(res, method, path) {
+        let err_msg = format!("Internal Server Error: {}", e);
+        let err_bytes = err_msg.as_bytes();
+        unsafe {
+            let status = CString::new("500 Internal Server Error").unwrap();
+            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+            let content_type = CString::new("text/plain; charset=utf-8").unwrap();
+            let content_type_key = CString::new("Content-Type").unwrap();
+            er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
+            er_http_response_end(res, err_msg.as_ptr() as *const c_char, err_bytes.len());
+        }
+    }
 }
 
-fn write_ws_text_frame<W: std::io::Write>(writer: &mut W, text: &str) -> std::io::Result<()> {
-    let bytes = text.as_bytes();
-    let len = bytes.len();
-    writer.write_all(&[0x81])?;
-    if len < 126 {
-        writer.write_all(&[len as u8])?;
-    } else if len <= 65535 {
-        writer.write_all(&[126])?;
-        writer.write_all(&(len as u16).to_be_bytes())?;
-    } else {
-        writer.write_all(&[127])?;
-        writer.write_all(&(len as u64).to_be_bytes())?;
+extern "C" fn dev_ws_open_callback(
+    ws: *mut c_void,
+    _path_ptr: *const c_char,
+    _path_len: usize,
+) {
+    let mut conns = ACTIVE_CONNECTIONS.lock().unwrap();
+    if !conns.contains(&(ws as usize)) {
+        conns.push(ws as usize);
     }
-    writer.write_all(bytes)?;
-    writer.flush()?;
+}
+
+extern "C" fn dev_ws_message_callback(
+    _ws: *mut c_void,
+    _path_ptr: *const c_char,
+    _path_len: usize,
+    _msg_ptr: *const c_char,
+    _msg_len: usize,
+) {
+}
+
+extern "C" fn dev_ws_close_callback(
+    ws: *mut c_void,
+    _path_ptr: *const c_char,
+    _path_len: usize,
+    _code: i32,
+    _msg_ptr: *const c_char,
+    _msg_len: usize,
+) {
+    let mut conns = ACTIVE_CONNECTIONS.lock().unwrap();
+    if let Some(pos) = conns.iter().position(|&x| x == ws as usize) {
+        conns.remove(pos);
+    }
+}
+
+extern "C" fn check_hmr_queue(_timer: *mut c_void) {
+    let mut queue = HMR_QUEUE.lock().unwrap();
+    if !queue.is_empty() {
+        let conns = ACTIVE_CONNECTIONS.lock().unwrap();
+        for &ws in conns.iter() {
+            for msg in queue.iter() {
+                let msg_c = CString::new(msg.as_str()).unwrap();
+                unsafe {
+                    er_ws_send(ws as *mut c_void, msg_c.as_ptr(), msg_c.as_bytes().len());
+                }
+            }
+        }
+        queue.clear();
+    }
+}
+
+fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::Result<()> {
+    let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
+    let default_file = DEFAULT_FILE.lock().unwrap().clone();
+    let is_prod = *IS_PROD.lock().unwrap();
+
+    println!("Request: {} {}", method, target);
+
+    let mut params = HashMap::new();
+    let file_path = if target == "/" {
+        if let Some(ref def_file) = default_file {
+            def_file.clone()
+        } else {
+            let index_erm = base_path.join("index.erm");
+            if index_erm.exists() { index_erm } else { base_path.join("index.html") }
+        }
+    } else {
+        if let Some((path, p)) = resolve_path(&base_path, target) {
+            params = p;
+            path
+        } else {
+            base_path.join(&target[1..])
+        }
+    };
+
+    if file_path.exists() && file_path.is_file() {
+        if file_path.extension().map_or(false, |ext| ext == "erm") {
+            let content = fs::read_to_string(&file_path)?;
+            let parent = file_path.parent().unwrap().to_string_lossy();
+            match compiler::process_erm_component(&parent, &content, is_prod, &params) {
+                Ok(processed) => {
+                    unsafe {
+                        let status = CString::new("200 OK").unwrap();
+                        er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+                        let content_type = CString::new("text/html; charset=utf-8").unwrap();
+                        let content_type_key = CString::new("Content-Type").unwrap();
+                        er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
+                        er_http_response_end(res, processed.as_ptr() as *const c_char, processed.len());
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("Error: {}", e);
+                    unsafe {
+                        let status = CString::new("500 Internal Server Error").unwrap();
+                        er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+                        er_http_response_end(res, err_msg.as_ptr() as *const c_char, err_msg.len());
+                    }
+                }
+            }
+        } else {
+            let content = fs::read(&file_path)?;
+            let mime = if let Some(ext) = file_path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                match ext_str.as_str() {
+                    "html" => Some("text/html; charset=utf-8"),
+                    "css" => Some("text/css; charset=utf-8"),
+                    "js" => Some("application/javascript; charset=utf-8"),
+                    "json" => Some("application/json; charset=utf-8"),
+                    "png" => Some("image/png"),
+                    "jpg" | "jpeg" => Some("image/jpeg"),
+                    "gif" => Some("image/gif"),
+                    "svg" => Some("image/svg+xml"),
+                    "ico" => Some("image/x-icon"),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            unsafe {
+                let status = CString::new("200 OK").unwrap();
+                er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+                if let Some(mime_type) = mime {
+                    let content_type = CString::new(mime_type).unwrap();
+                    let content_type_key = CString::new("Content-Type").unwrap();
+                    er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
+                }
+                er_http_response_end(res, content.as_ptr() as *const c_char, content.len());
+            }
+        }
+    } else {
+        unsafe {
+            let status = CString::new("404 Not Found").unwrap();
+            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+            let not_found = "Not Found";
+            er_http_response_end(res, not_found.as_ptr() as *const c_char, not_found.len());
+        }
+    }
     Ok(())
 }
 
 pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
-    let server = Server::http(format!("0.0.0.0:{}", port)).map_err(|e| anyhow::anyhow!(e))?;
-    println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
-
     let mut base_path = fs::canonicalize(dir)?;
     let mut default_file = None;
 
@@ -82,10 +244,20 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         }
     }
 
-    let hmr_clients = Arc::new(Mutex::new(Vec::new()));
+    *BASE_PATH.lock().unwrap() = Some(base_path.clone());
+    *DEFAULT_FILE.lock().unwrap() = default_file;
+    *IS_PROD.lock().unwrap() = is_prod;
+
+    unsafe {
+        er_http_init_with_callbacks(
+            dev_http_callback,
+            dev_ws_open_callback,
+            dev_ws_message_callback,
+            dev_ws_close_callback,
+        );
+    }
 
     if !is_prod {
-        let clients_clone = Arc::clone(&hmr_clients);
         let watch_path = base_path.clone();
         thread::spawn(move || {
             let mut last_files: HashMap<PathBuf, SystemTime> = HashMap::new();
@@ -143,7 +315,7 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                         "path": path_str
                     }).to_string();
                     
-                    broadcast_hmr(&clients_clone, msg);
+                    HMR_QUEUE.lock().unwrap().push(msg);
                     last_ping = SystemTime::now();
                 } else {
                     last_files = current_files;
@@ -152,155 +324,27 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                             let ping = serde_json::json!({
                                 "type": "ping"
                             }).to_string();
-                            broadcast_hmr(&clients_clone, ping);
+                            HMR_QUEUE.lock().unwrap().push(ping);
                             last_ping = SystemTime::now();
                         }
                     }
                 }
             }
         });
+
+        unsafe {
+            let hmr_route = CString::new("/__hmr").unwrap();
+            er_ws_register_route(hmr_route.as_ptr());
+            er_http_create_timer(200, check_hmr_queue);
+        }
     }
 
-    for request in server.incoming_requests() {
-        let base_path = base_path.clone();
-        let default_file = default_file.clone();
-        let hmr_clients = Arc::clone(&hmr_clients);
+    println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
 
-        thread::spawn(move || {
-            let url = request.url();
-            let mut target = url;
-            if let Some(idx) = target.find('?') { target = &target[..idx]; }
-            if let Some(idx) = target.find('#') { target = &target[..idx]; }
-
-            println!("Request: {} {}", request.method(), target);
-
-            if target == "/__hmr" {
-                let mut ws_key = None;
-                for h in request.headers() {
-                    let field_str: &str = h.field.as_str().as_ref();
-                    if field_str.eq_ignore_ascii_case("sec-websocket-key") {
-                        let value_str: &str = h.value.as_str().as_ref();
-                        ws_key = Some(value_str.to_string());
-                        break;
-                    }
-                }
-
-                let Some(key) = ws_key else {
-                    let response = Response::from_string("Bad Request: Missing Sec-WebSocket-Key").with_status_code(400);
-                    request.respond(response).ok();
-                    return;
-                };
-
-                let mut hasher = Sha1::new();
-                hasher.update(key.as_bytes());
-                hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-                let hash = hasher.finalize();
-                let accept = general_purpose::STANDARD.encode(&hash);
-
-                let response_headers = format!(
-                    "HTTP/1.1 101 Switching Protocols\r\n\
-                     Upgrade: websocket\r\n\
-                     Connection: Upgrade\r\n\
-                     Sec-WebSocket-Accept: {}\r\n\r\n",
-                    accept
-                );
-
-                let mut writer = request.into_writer();
-                if writer.write_all(response_headers.as_bytes()).is_err() {
-                    return;
-                }
-                if writer.flush().is_err() {
-                    return;
-                }
-
-                let (tx, rx) = channel();
-                hmr_clients.lock().unwrap().push(tx);
-
-                while let Ok(msg) = rx.recv() {
-                    if write_ws_text_frame(&mut writer, &msg).is_err() {
-                        break;
-                    }
-                }
-                return;
-            }
-
-            let mut params = HashMap::new();
-            let file_path = if target == "/" {
-                if let Some(ref def_file) = default_file {
-                    def_file.clone()
-                } else {
-                    let index_erm = base_path.join("index.erm");
-                    if index_erm.exists() { index_erm } else { base_path.join("index.html") }
-                }
-            } else {
-                if let Some((path, p)) = resolve_path(&base_path, target) {
-                    params = p;
-                    path
-                } else {
-                    base_path.join(&target[1..])
-                }
-            };
-
-            if file_path.exists() && file_path.is_file() {
-                if file_path.extension().map_or(false, |ext| ext == "erm") {
-                    let content = match fs::read_to_string(&file_path) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let response = Response::from_string(format!("Error reading file: {}", e)).with_status_code(500);
-                            request.respond(response).ok();
-                            return;
-                        }
-                    };
-                    let parent = file_path.parent().unwrap().to_string_lossy();
-                    match compiler::process_erm_component(&parent, &content, is_prod, &params) {
-                        Ok(processed) => {
-                            let response = Response::from_string(processed)
-                                .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap());
-                            request.respond(response).ok();
-                        }
-                        Err(e) => {
-                            let response = Response::from_string(format!("Error: {}", e)).with_status_code(500);
-                            request.respond(response).ok();
-                        }
-                    }
-                } else {
-                    let content = match fs::read(&file_path) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let response = Response::from_string(format!("Error reading file: {}", e)).with_status_code(500);
-                            request.respond(response).ok();
-                            return;
-                        }
-                    };
-                    let mut response = Response::from_data(content);
-                    if let Some(ext) = file_path.extension() {
-                        let ext_str = ext.to_string_lossy().to_lowercase();
-                        let mime = match ext_str.as_str() {
-                            "html" => Some("text/html; charset=utf-8"),
-                            "css" => Some("text/css; charset=utf-8"),
-                            "js" => Some("application/javascript; charset=utf-8"),
-                            "json" => Some("application/json; charset=utf-8"),
-                            "png" => Some("image/png"),
-                            "jpg" | "jpeg" => Some("image/jpeg"),
-                            "gif" => Some("image/gif"),
-                            "svg" => Some("image/svg+xml"),
-                            "ico" => Some("image/x-icon"),
-                            _ => None,
-                        };
-                        if let Some(mime_type) = mime {
-                            response = response.with_header(
-                                Header::from_bytes(&b"Content-Type"[..], mime_type.as_bytes()).unwrap()
-                            );
-                        }
-                    }
-                    request.respond(response).ok();
-                }
-            } else {
-                let response = Response::from_string("Not Found").with_status_code(404);
-                request.respond(response).ok();
-            }
-        });
+    unsafe {
+        er_http_listen_and_run(port as i32);
     }
+
     Ok(())
 }
 
