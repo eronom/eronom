@@ -92,18 +92,18 @@ You need standard build tools, `git` (to fetch submodules), and Rust installed o
    ```
 2. Build the project:
    ```bash
-   cargo build --release
+   cargo build
    ```
 
 ### Running Eronom Scripts
 
 You can execute any `.er` script directly:
 ```bash
-cargo run --release -- path/to/script.er
+cargo run -- path/to/script.er
 ```
 
 To run the included HTTP API example:
 ```bash
-cargo run --release -- example-er/my-api/server.er
+cargo run -- example-er/my-api/server.er
 ```
 The server will start on port `3000` (or as configured in `example-er/my-api/config.er`). You can edit `server.er` at any time, and the runtime will automatically reload the code on the next HTTP request!

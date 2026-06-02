@@ -30,14 +30,37 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                 }
             }
             
-            if !pos_args.is_empty() {
-                dir = pos_args[0];
-                if pos_args.len() > 1 && cmd != "build" {
-                    port = pos_args[1].parse().unwrap_or(3000);
-                    has_custom_port = true;
-                }
-            } else if cmd == "start" {
+            if cmd == "start" {
                 dir = "build";
+                if !pos_args.is_empty() {
+                    match pos_args[0].parse::<u16>() {
+                        Ok(p) => {
+                            port = p;
+                            has_custom_port = true;
+                        }
+                        Err(_) => {
+                            anyhow::bail!("Invalid port number or unknown argument: '{}'", pos_args[0]);
+                        }
+                    }
+                    if pos_args.len() > 1 {
+                        anyhow::bail!("Unexpected argument: '{}'", pos_args[1]);
+                    }
+                }
+            } else {
+                if !pos_args.is_empty() {
+                    dir = pos_args[0];
+                    if pos_args.len() > 1 && cmd != "build" {
+                        match pos_args[1].parse::<u16>() {
+                            Ok(p) => {
+                                port = p;
+                                has_custom_port = true;
+                            }
+                            Err(_) => {
+                                anyhow::bail!("Invalid port number: '{}'", pos_args[1]);
+                            }
+                        }
+                    }
+                }
             }
         } else if first_arg.ends_with(".er") {
             er::run_file(first_arg)?;
@@ -147,6 +170,34 @@ fn generate_server_er(routes: &[PageRoute]) -> String {
     code
 }
 
+fn get_ssg_html_path(rel_path: &str) -> String {
+    let path = Path::new(rel_path);
+    let name_str = path.file_name().unwrap_or_default().to_string_lossy();
+    let mut dest_path = path.to_path_buf();
+    if name_str == "page.erm" || name_str == "index.erm" {
+        dest_path.set_file_name("index.html");
+    } else {
+        dest_path.set_extension("html");
+    }
+    dest_path.to_string_lossy().replace("\\", "/")
+}
+
+fn generate_server_er_ssg(routes: &[PageRoute]) -> String {
+    let mut code = String::new();
+    code.push_str("import { route } from \"std/http\"\n\n");
+    code.push_str("let app = route()\n\n");
+    
+    for route in routes {
+        let ssg_html = get_ssg_html_path(&route.rel_path);
+        code.push_str(&format!("app.get(\"{}\", (c) => {{\n", route.route_path));
+        code.push_str(&format!("  let html = renderErm(\"{}\", c.req.params)\n", ssg_html));
+        code.push_str("  return c.html(html)\n");
+        code.push_str("})\n\n");
+    }
+    
+    code
+}
+
 fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     let build_dir = Path::new(dir).join("build");
     if is_ssr {
@@ -167,6 +218,11 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     if is_ssr {
         // Write the generated server.er file
         let server_er_content = generate_server_er(&routes);
+        let server_er_path = build_dir.join("server.er");
+        fs::write(server_er_path, server_er_content)?;
+    } else {
+        // Write the generated server.er file for SSG
+        let server_er_content = generate_server_er_ssg(&routes);
         let server_er_path = build_dir.join("server.er");
         fs::write(server_er_path, server_er_content)?;
     }
@@ -241,6 +297,9 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
                                 html_dest.set_extension("html");
                             }
                             fs::write(html_dest, processed)?;
+                            if let Some(r) = get_page_route(&rel_path.to_string_lossy()) {
+                                routes.push(r);
+                            }
                         }
                         Err(e) => {
                             eprintln!("Error compiling {}: {}", path.display(), e);

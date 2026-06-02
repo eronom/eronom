@@ -22,8 +22,7 @@ pub fn evaluate_file(
 ) -> anyhow::Result<()> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(anyhow::anyhow!("File not found: {}", path)),
     };
 
     let lines: Vec<&str> = content.lines().collect();

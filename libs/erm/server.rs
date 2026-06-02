@@ -272,7 +272,27 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                             return;
                         }
                     };
-                    let response = Response::from_data(content);
+                    let mut response = Response::from_data(content);
+                    if let Some(ext) = file_path.extension() {
+                        let ext_str = ext.to_string_lossy().to_lowercase();
+                        let mime = match ext_str.as_str() {
+                            "html" => Some("text/html; charset=utf-8"),
+                            "css" => Some("text/css; charset=utf-8"),
+                            "js" => Some("application/javascript; charset=utf-8"),
+                            "json" => Some("application/json; charset=utf-8"),
+                            "png" => Some("image/png"),
+                            "jpg" | "jpeg" => Some("image/jpeg"),
+                            "gif" => Some("image/gif"),
+                            "svg" => Some("image/svg+xml"),
+                            "ico" => Some("image/x-icon"),
+                            _ => None,
+                        };
+                        if let Some(mime_type) = mime {
+                            response = response.with_header(
+                                Header::from_bytes(&b"Content-Type"[..], mime_type.as_bytes()).unwrap()
+                            );
+                        }
+                    }
                     request.respond(response).ok();
                 }
             } else {
@@ -337,6 +357,10 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
         if index_erm.exists() { return Some((index_erm, params)); }
         let page_erm = current_path.join("page.erm");
         if page_erm.exists() { return Some((page_erm, params)); }
+        let index_html = current_path.join("index.html");
+        if index_html.exists() { return Some((index_html, params)); }
+        let page_html = current_path.join("page.html");
+        if page_html.exists() { return Some((page_html, params)); }
     }
 
     Some((current_path, params))

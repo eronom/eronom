@@ -80,6 +80,20 @@ fn native_render_erm(args: Vec<Value>) -> Value {
         Ok(c) => c,
         Err(_) => return Value::null(),
     };
+
+    if resolved_path.extension().map_or(false, |ext| ext == "html") {
+        let mut final_content = content;
+        if !params_map.is_empty() {
+            let mut params_js = String::from("window.__erm_params = {");
+            for (k, v) in &params_map {
+                params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+            }
+            params_js.push_str("};");
+            final_content = final_content.replace("window.__erm_params = {};", &params_js);
+        }
+        let ptr = backend::gc::get_or_create_string(&final_content);
+        return Value::string(ptr);
+    }
     
     match eronom::compiler::process_erm_component(&base_dir, &content, true, &params_map) {
         Ok(html) => {
@@ -98,7 +112,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     let _guard = GcGuard;
     let path_buf = std::path::PathBuf::from(path);
     if !path_buf.exists() {
-        return Ok(());
+        anyhow::bail!("File not found: {}", path);
     }
 
     let stmts = match frontend::parse_and_resolve_imports(&path_buf) {
@@ -178,10 +192,13 @@ fn main() {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
-    } else {
+    } else if first_arg.ends_with(".er") || std::path::Path::new(first_arg).exists() {
         if let Err(e) = run_file(first_arg) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
+    } else {
+        eprintln!("Error: Unknown command: {}", first_arg);
+        std::process::exit(1);
     }
 }
