@@ -7,7 +7,7 @@ use std::fs;
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     let mut cmd = "dev";
     let mut dir = ".";
-    let mut port: u16 = 3000;
+    let mut port_val: Option<u16> = None;
     let mut is_ssr = true;
     let mut has_custom_port = false;
 
@@ -22,9 +22,6 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                     is_ssr = false;
                 } else if arg == "--ssr" || arg == "-ssr" {
                     is_ssr = true;
-                } else if arg.starts_with("--port=") {
-                    port = arg[7..].parse().unwrap_or(3000);
-                    has_custom_port = true;
                 } else if arg.starts_with('-') {
                     // ignore unknown flags for now
                 } else {
@@ -37,7 +34,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                 if !pos_args.is_empty() {
                     match pos_args[0].parse::<u16>() {
                         Ok(p) => {
-                            port = p;
+                            port_val = Some(p);
                             has_custom_port = true;
                         }
                         Err(_) => {
@@ -54,7 +51,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                     if pos_args.len() > 1 && cmd != "build" {
                         match pos_args[1].parse::<u16>() {
                             Ok(p) => {
-                                port = p;
+                                port_val = Some(p);
                                 has_custom_port = true;
                             }
                             Err(_) => {
@@ -69,11 +66,21 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
         }
     }
 
-    if !has_custom_port {
-        if let Some(config_port) = get_port_from_config_file(dir) {
-            port = config_port;
+    let port = if has_custom_port {
+        port_val.unwrap()
+    } else if let Ok(port_str) = std::env::var("PORT") {
+        if let Ok(p) = port_str.parse::<u16>() {
+            p
+        } else {
+            anyhow::bail!("Invalid port in PORT environment variable: '{}'", port_str);
         }
-    }
+    } else if let Some(config_port) = get_port_from_config_file(dir) {
+        config_port
+    } else if cmd == "build" || cmd == "init" {
+        0
+    } else {
+        anyhow::bail!("No port specified. Please provide a port in config.er or PORT environment variable.");
+    };
 
     match cmd {
         "init" => init_project(dir)?,
@@ -102,6 +109,12 @@ struct PageRoute {
 fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     let path_str = rel_path.replace("\\", "/");
     let mut parts: Vec<&str> = path_str.split('/').collect();
+    
+    if let Some(pages_idx) = parts.iter().position(|&s| s == "pages") {
+        parts = parts[(pages_idx + 1)..].to_vec();
+    } else {
+        return None;
+    }
     
     // Check if filename starts with uppercase (it's a component, not a page)
     if let Some(last) = parts.last() {
@@ -330,13 +343,18 @@ fn build_dir_recursive(
                     }
                 }
             } else if name_str.ends_with(".er") {
-                if rel_path.starts_with("api") {
+                let rel_path_str = rel_path.to_string_lossy().replace('\\', "/");
+                if rel_path_str.starts_with("server/api/") {
                     let content = fs::read_to_string(&path)?;
                     let parent = rel_path.parent().unwrap_or(Path::new(""));
-                    let prefix = if parent.as_os_str().is_empty() {
+                    let mut parent_str = parent.to_string_lossy().replace('\\', "/");
+                    if parent_str.starts_with("server/") {
+                        parent_str = parent_str["server/".len()..].to_string();
+                    }
+                    let prefix = if parent_str.is_empty() {
                         String::new()
                     } else {
-                        format!("/{}", parent.to_string_lossy().replace('\\', "/"))
+                        format!("/{}", parent_str)
                     };
                     
                     let rewritten = rewrite_api_route_paths(&content, &prefix);

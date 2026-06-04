@@ -511,9 +511,9 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     let mut layout_path = None;
     let mut curr = std::path::PathBuf::from(base_dir);
     loop {
-        let p = curr.join("layout.erm");
-        if p.exists() {
-            layout_path = Some(p);
+        let p_layouts = curr.join("layouts").join("layout.erm");
+        if p_layouts.exists() {
+            layout_path = Some(p_layouts);
             break;
         }
         if let Some(parent) = curr.parent() {

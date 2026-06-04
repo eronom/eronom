@@ -10,5 +10,8 @@ eronom
 #config
 config.er
 
+#project folder
+app/
+
 # temporary compiled MIR output
 temp_compiled.mir

@@ -226,11 +226,14 @@ fn execute_api_route(
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
     let rel = file_path.strip_prefix(&base_path)?;
     let parent = rel.parent().unwrap_or(Path::new(""));
-    let prefix = if parent.as_os_str().is_empty() {
+    let mut prefix = if parent.as_os_str().is_empty() {
         String::new()
     } else {
         format!("/{}", parent.to_string_lossy().replace('\\', "/"))
     };
+    if prefix.starts_with("/server/") {
+        prefix = prefix["/server".len()..].to_string();
+    }
 
     let stmts = match crate::frontend::parse_and_resolve_imports(file_path) {
         Ok(s) => s,
@@ -318,15 +321,35 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
         if let Some(ref def_file) = default_file {
             def_file.clone()
         } else {
-            let index_erm = base_path.join("index.erm");
-            if index_erm.exists() { index_erm } else { base_path.join("index.html") }
+            let index_erm = base_path.join("pages").join("index.erm");
+            if index_erm.exists() {
+                index_erm
+            } else {
+                base_path.join("pages").join("index.html")
+            }
         }
     } else {
-        if let Some((path, p)) = resolve_path(&base_path, target) {
+        let resolve_root = if !target.starts_with("/api/") {
+            base_path.join("pages")
+        } else {
+            base_path.join("server")
+        };
+
+        if let Some((path, p)) = resolve_path(&resolve_root, target) {
             params = p;
             path
         } else {
-            base_path.join(&target[1..])
+            let primary_fallback = resolve_root.join(&target[1..]);
+            if !target.starts_with("/api/") && !primary_fallback.exists() {
+                let secondary_fallback = base_path.join(&target[1..]);
+                if secondary_fallback.exists() {
+                    secondary_fallback
+                } else {
+                    primary_fallback
+                }
+            } else {
+                primary_fallback
+            }
         }
     };
 
@@ -572,7 +595,13 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
             }
         }
         
-        if !found { return None; }
+        if !found {
+            let routes_er = current_path.join("routes.er");
+            if routes_er.exists() {
+                return Some((routes_er, params));
+            }
+            return None;
+        }
         
         if current_path.is_file() && i < parts.len() - 1 {
             return None;
@@ -588,8 +617,8 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
         if index_html.exists() { return Some((index_html, params)); }
         let page_html = current_path.join("page.html");
         if page_html.exists() { return Some((page_html, params)); }
-        let route_er = current_path.join("route.er");
-        if route_er.exists() { return Some((route_er, params)); }
+        let routes_er = current_path.join("routes.er");
+        if routes_er.exists() { return Some((routes_er, params)); }
     }
 
     Some((current_path, params))
