@@ -106,7 +106,7 @@ pub struct ProcessResult {
     pub html: String,
     pub scripts: Vec<String>,
     pub styles: Vec<String>,
-    pub atom_vars: Vec<String>,
+    pub state_vars: Vec<String>,
 }
 
 pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
@@ -179,7 +179,7 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
     res
 }
 
-pub fn inject_atom_name(input: &str, name: &str) -> String {
+pub fn inject_state_name(input: &str, name: &str) -> String {
     let mut res = String::new();
     let mut i = 0;
     while i < input.len() {
@@ -204,9 +204,9 @@ pub fn inject_atom_name(input: &str, name: &str) -> String {
                         break;
                     }
                 }
-                if input[k..].starts_with("atom(") {
+                if input[k..].starts_with("useState(") {
                     let mut depth = 1;
-                    let mut j = k + 5;
+                    let mut j = k + 9;
                     while j < input.len() && depth > 0 {
                         let c = input[j..].chars().next().unwrap();
                         if c == '(' { depth += 1; }
@@ -218,7 +218,7 @@ pub fn inject_atom_name(input: &str, name: &str) -> String {
                         res.push_str(", \"");
                         res.push_str(name);
                         res.push_str("\")");
-                        res.push_str(&inject_atom_name(&input[j..], name));
+                        res.push_str(&inject_state_name(&input[j..], name));
                         return res;
                     }
                 }
@@ -234,7 +234,7 @@ pub fn inject_atom_name(input: &str, name: &str) -> String {
 pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashMap<String, bool>, slot_html: Option<&str>) -> anyhow::Result<ProcessResult> {
     let mut scripts = Vec::new();
     let mut styles = Vec::new();
-    let mut atom_vars = Vec::new();
+    let mut state_vars = Vec::new();
 
     let mut hasher = FnvHasher::default();
     hasher.write(content.as_bytes());
@@ -255,9 +255,9 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = script_tag[content_start..script_tag.len() - 9].trim();
 
-            // Find atom vars in script
+            // Find state vars in script
             let mut aj = 0;
-            while let Some(idx) = script_content[aj..].find("atom(") {
+            while let Some(idx) = script_content[aj..].find("useState(") {
                 let call_pos = aj + idx;
                 // find variable name
                 let mut k = call_pos;
@@ -292,12 +292,12 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                             }
                         }
                         let name = &script_content[m_start..ne];
-                        if !atom_vars.contains(&name.to_string()) {
-                            atom_vars.push(name.to_string());
+                        if !state_vars.contains(&name.to_string()) {
+                            state_vars.push(name.to_string());
                         }
                     }
                 }
-                aj = call_pos + 5;
+                aj = call_pos + 9;
             }
 
             scripts.push(script_content.to_string());
@@ -359,8 +359,8 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                                 html_buf.push_str(&sub_res.html);
                                 scripts.append(&mut sub_res.scripts);
                                 styles.append(&mut sub_res.styles);
-                                for v in sub_res.atom_vars {
-                                    if !atom_vars.contains(&v) { atom_vars.push(v); }
+                                for v in sub_res.state_vars {
+                                    if !state_vars.contains(&v) { state_vars.push(v); }
                                 }
                                 i += tag_end + 1;
                                 continue;
@@ -388,10 +388,10 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
     // Transform scripts
     for s in scripts.iter_mut() {
         let mut transformed = s.clone();
-        for sig in &atom_vars {
-            transformed = inject_atom_name(&transformed, sig);
+        for sig in &state_vars {
+            transformed = inject_state_name(&transformed, sig);
         }
-        for sig in &atom_vars {
+        for sig in &state_vars {
             transformed = replace_word(&transformed, sig, ".value");
         }
         transformed = transformed.replace("import.meta.hot", "window.hmr");
@@ -400,7 +400,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
 
     let mut bindings = Vec::new();
     let mut events = Vec::new();
-    let reactive_html = parse_reactivity(&html_buf, &mut bindings, &mut events, &atom_vars);
+    let reactive_html = parse_reactivity(&html_buf, &mut bindings, &mut events, &state_vars);
     let scoped_html = scope_html(&reactive_html, &scope_id)?;
 
     scripts.append(&mut bindings);
@@ -410,11 +410,11 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
         html: scoped_html,
         scripts,
         styles,
-        atom_vars,
+        state_vars,
     })
 }
 
-fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<String>, atoms: &[String]) -> String {
+fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<String>, states: &[String]) -> String {
     let mut out = String::new();
     let mut i = 0;
     let mut in_tag = false;
@@ -448,7 +448,7 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
                     }
                     if depth == 0 {
                         let mut expr = html[i + 1..j - 1].to_string();
-                        for sig in atoms {
+                        for sig in states {
                             expr = replace_word(&expr, sig, ".value");
                         }
                         let id = format!("erm-bind-{}", j);
@@ -482,7 +482,7 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
                         }
                         if depth == 0 {
                             let mut expr = html[k + 2..j - 1].to_string();
-                            for sig in atoms {
+                            for sig in states {
                                 expr = replace_word(&expr, sig, ".value");
                             }
                             let event_type = attr_name[2..].to_lowercase();
@@ -539,8 +539,8 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                 for s in page_res.styles {
                     if !layout_res.styles.contains(&s) { layout_res.styles.push(s); }
                 }
-                for v in page_res.atom_vars {
-                    if !layout_res.atom_vars.contains(&v) { layout_res.atom_vars.push(v); }
+                for v in page_res.state_vars {
+                    if !layout_res.state_vars.contains(&v) { layout_res.state_vars.push(v); }
                 }
                 layout_res
             } else {
@@ -595,7 +595,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         let vars_part = header[0..in_idx].trim();
         let collection_expr_raw = header[in_idx + 4..].trim();
         let mut collection_expr = collection_expr_raw.to_string();
-        for sig in &result.atom_vars {
+        for sig in &result.state_vars {
             collection_expr = replace_word(&collection_expr, sig, ".value");
         }
         let (item_name, index_name) = if let Some(comma_idx) = vars_part.find(',') {
@@ -620,7 +620,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                     if c == '{' && !body[bit..].starts_with("{#") && !body[bit..].starts_with("{/") && !body[bit..].starts_with("{:") {
                         if let Some(brace_end) = body[bit..].find('}') {
                             let mut sub_expr = body[bit + 1..bit + brace_end].to_string();
-                            for sig in &result.atom_vars {
+                            for sig in &result.state_vars {
                                 sub_expr = replace_word(&sub_expr, sig, ".value");
                             }
                             let val = sub_ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
@@ -698,7 +698,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
             } else {
                 break;
             };
-            for sig in &result.atom_vars {
+            for sig in &result.state_vars {
                 cond_expr = replace_word(&cond_expr, sig, ".value");
             }
             let next_else = rem[body_start..].find("{:else").unwrap_or_else(|| rem[body_start..].find("{/if}").unwrap_or(0));
@@ -743,14 +743,14 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
 
     let runtime = r#"
 (() => {
-  window.__hmr_data = window.__hmr_data || { atoms: {} };
-  if (!window.__hmr_data.atoms) window.__hmr_data.atoms = {};
+  window.__hmr_data = window.__hmr_data || { states: {} };
+  if (!window.__hmr_data.states) window.__hmr_data.states = {};
   window.__erm_b64utf8 = function(str) {
       return decodeURIComponent(escape(window.atob(str)));
     };
-  window.atom = function(val, name) {
-    if (name && window.__hmr_data.atoms[name] !== undefined) {
-      val = window.__hmr_data.atoms[name];
+  window.useState = function(val, name) {
+    if (name && window.__hmr_data.states[name] !== undefined) {
+      val = window.__hmr_data.states[name];
     }
     if (typeof val === 'function') {
       return {
@@ -786,7 +786,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
       set(target, prop, newVal) {
         if (prop === 'value') {
           target._val = newVal;
-          if (name) window.__hmr_data.atoms[name] = newVal;
+          if (name) window.__hmr_data.states[name] = newVal;
           if (window.__erm_update) window.__erm_update();
           return true;
         }
@@ -838,7 +838,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     let mut scripts_to_inject = result.scripts.clone();
     scripts_to_inject.insert(0, params_js);
 
-    if !scripts_to_inject.is_empty() || !result.atom_vars.is_empty() || !block_logic.is_empty() {
+    if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() || !block_logic.is_empty() {
         assets.push_str("<script class=\"__erm_script\">\n");
         assets.push_str(runtime);
         assets.push('\n');
@@ -1051,6 +1051,22 @@ mod tests {
         assert!(res.html.contains("<a"));
         assert!(res.html.contains("href=\"/contact\""));
         assert!(res.html.contains(">Contact</a>"));
+    }
+
+    #[test]
+    fn test_use_state_compilation() {
+        let content = r#"
+        <script>
+            let count = useState(0);
+        </script>
+        <button onClick={()=>{count++}}>Count {count}</button>
+        "#;
+        let mut visited = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None).unwrap();
+        assert!(res.state_vars.contains(&"count".to_string()));
+        let combined = res.scripts.join("\n");
+        assert!(combined.contains("useState(0, \"count\")"));
+        assert!(combined.contains("count.value++"));
     }
 }
 

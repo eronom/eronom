@@ -353,8 +353,8 @@ pub fn parse_js_value(s: &str) -> anyhow::Result<(Option<Value>, usize)> {
     }
     if p >= s.len() { return Ok((None, p)); }
 
-    if s[p..].starts_with("atom(") {
-        p += 5;
+    if s[p..].starts_with("useState(") {
+        p += 9;
         let (inner, next_p) = parse_js_value(&s[p..])?;
         p += next_p;
         while p < s.len() && s.as_bytes()[p] != b')' { p += 1; }

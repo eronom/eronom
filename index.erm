@@ -1,9 +1,9 @@
 <script>
 
-    let count = atom(0);
-    let double = atom(() => count * 2);
-    let todoText = atom('');
-    let todos = atom([]);
+    let count = useState(0);
+    let double = useState(() => count * 2);
+    let todoText = useState('');
+    let todos = useState([]);
     
     async function fetchTodos() {
         try {
@@ -15,9 +15,10 @@
     }
     fetchTodos();
     
-    let showExtraContent = atom(true);
-    let porridge = atom({ temperature: 100 });
+    let showExtraContent = useState(true);
+    let porridge = useState({ temperature: 100 });
     
+
 
 
 
@@ -34,17 +35,17 @@
     });
 
     // TEST: Background updates now work automatically!
-    let timer = atom(0);
+    let timer = useState(0);
     setInterval(() => {
         timer++;
     }, 1000);
 
     let randomNum = Math.floor(Math.random() * 1000);
-    let items = atom([1, 2, 3, 4, 5]);
+    let items = useState([1, 2, 3, 4, 5]);
 </script>
 
 
-<h1>HMRssssvvvv is now running from a dedicated server module!</h1>
+<h1>HMRssssvvvvvssssvs is now running from a dedicated server module!</h1>
 <h2>hello</h2>
 <p>vcbc fdh scvxhhhhhhhhhhhhhh
 fdvchgvyufdnb
