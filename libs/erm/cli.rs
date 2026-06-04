@@ -8,7 +8,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     let mut cmd = "dev";
     let mut dir = ".";
     let mut port: u16 = 3000;
-    let mut is_ssr = false;
+    let mut is_ssr = true;
     let mut has_custom_port = false;
 
     if args.len() > 1 {
@@ -18,7 +18,9 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
             
             let mut pos_args = Vec::new();
             for arg in args.iter().skip(2) {
-                if arg == "--ssr" || arg == "-ssr" {
+                if arg == "--ssg" || arg == "-ssg" {
+                    is_ssr = false;
+                } else if arg == "--ssr" || arg == "-ssr" {
                     is_ssr = true;
                 } else if arg.starts_with("--port=") {
                     port = arg[7..].parse().unwrap_or(3000);
@@ -155,19 +157,39 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     })
 }
 
-fn generate_server_er(routes: &[PageRoute]) -> String {
-    let mut code = String::new();
-    code.push_str("import { route } from \"std/http\"\n\n");
-    code.push_str("let app = route()\n\n");
-    
-    for route in routes {
-        code.push_str(&format!("app.get(\"{}\", (c) => {{\n", route.route_path));
-        code.push_str(&format!("  let html = renderErm(\"{}\", c.req.params)\n", route.rel_path));
-        code.push_str("  return c.html(html)\n");
-        code.push_str("})\n\n");
+fn generate_server_script<F>(routes: &[PageRoute], get_render_path: F) -> String
+where
+    F: Fn(&PageRoute) -> String,
+{
+    let mut sorted_routes = routes.to_vec();
+    sorted_routes.sort_by(|a, b| {
+        if a.route_path == "/" {
+            std::cmp::Ordering::Less
+        } else if b.route_path == "/" {
+            std::cmp::Ordering::Greater
+        } else {
+            a.route_path.cmp(&b.route_path)
+        }
+    });
+
+    let mut code = String::from("import { route } from \"std/http\"\n\nlet app = route()\n\n");
+    for route in &sorted_routes {
+        let render_path = get_render_path(route);
+        let route_block = format!(
+            r#"app.get("{}", (c) => {{
+  let template = render("{}", c.req.params)
+  return c.html(template)
+}})"#,
+            route.route_path, render_path
+        );
+        code.push_str(&route_block);
+        code.push_str("\n\n");
     }
-    
     code
+}
+
+fn generate_server_er(routes: &[PageRoute]) -> String {
+    generate_server_script(routes, |r| r.rel_path.clone())
 }
 
 fn get_ssg_html_path(rel_path: &str) -> String {
@@ -183,19 +205,7 @@ fn get_ssg_html_path(rel_path: &str) -> String {
 }
 
 fn generate_server_er_ssg(routes: &[PageRoute]) -> String {
-    let mut code = String::new();
-    code.push_str("import { route } from \"std/http\"\n\n");
-    code.push_str("let app = route()\n\n");
-    
-    for route in routes {
-        let ssg_html = get_ssg_html_path(&route.rel_path);
-        code.push_str(&format!("app.get(\"{}\", (c) => {{\n", route.route_path));
-        code.push_str(&format!("  let html = renderErm(\"{}\", c.req.params)\n", ssg_html));
-        code.push_str("  return c.html(html)\n");
-        code.push_str("})\n\n");
-    }
-    
-    code
+    generate_server_script(routes, |r| get_ssg_html_path(&r.rel_path))
 }
 
 fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {

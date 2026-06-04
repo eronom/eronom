@@ -22,7 +22,7 @@ fn native_print(args: Vec<Value>) -> Value {
     Value::null()
 }
 
-fn native_render_erm(args: Vec<Value>) -> Value {
+fn native_render(args: Vec<Value>) -> Value {
     if args.len() < 2 {
         return Value::null();
     }
@@ -101,7 +101,7 @@ fn native_render_erm(args: Vec<Value>) -> Value {
             Value::string(ptr)
         }
         Err(e) => {
-            eprintln!("[renderErm] Compiler error: {:?}", e);
+            eprintln!("[render] Compiler error: {:?}", e);
             Value::null()
         }
     }
@@ -134,7 +134,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     }
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("route", Value::native_function(backend::er_http::native_route));
-    vm.register_global("renderErm", Value::native_function(native_render_erm));
+    vm.register_global("render", Value::native_function(native_render));
     vm.register_global("fetch", Value::native_function(backend::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(backend::er_http::native_set_timeout));
     vm.register_global("fetchAsync", Value::native_function(backend::er_http::native_fetch_async));
