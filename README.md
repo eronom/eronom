@@ -69,7 +69,7 @@ print("Sum is: {sum}")
 
 ### 3. HTTP Server
 ```javascript
-let app = route()
+let app = router()
 let todos = [
   { id: 1, text: "Learn Eronom", done: false }
 ]

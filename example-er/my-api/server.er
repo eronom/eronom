@@ -1,6 +1,6 @@
-import { route } from "std/http"
+import { router } from "std/http"
 
-let app = route()
+let app = router()
 let todos = [
   { id: 1, text: "Learn Eronom - dynamic reload worked!ss for itzzzz", done: false }
 ]

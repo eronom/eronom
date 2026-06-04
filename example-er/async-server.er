@@ -1,4 +1,4 @@
-const app = route()
+const app = router()
 
 app.get("/async", (c) => {
   setTimeout((ctx) => {

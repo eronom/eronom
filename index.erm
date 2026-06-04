@@ -5,6 +5,16 @@
     let todoText = atom('');
     let todos = atom([]);
     
+    async function fetchTodos() {
+        try {
+            const res = await fetch('/api/todo');
+            todos = await res.json();
+        } catch (e) {
+            console.error("Failed to fetch todos:", e);
+        }
+    }
+    fetchTodos();
+    
     let showExtraContent = atom(true);
     let porridge = atom({ temperature: 100 });
     
@@ -34,7 +44,7 @@
 </script>
 
 
-<h1>HMRssss is now running from a dedicated server module!</h1>
+<h1>HMRssssvvvv is now running from a dedicated server module!</h1>
 <h2>hello</h2>
 <p>vcbc fdh scvxhhhhhhhhhhhhhh
 fdvchgvyufdnb

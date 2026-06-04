@@ -1,6 +1,6 @@
-import { route } from "std/http"
+import { router } from "std/http"
 
-let app = route()
+let app = router()
 
 app.ws('/ws', {
   open: (ws) => {

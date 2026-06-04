@@ -82,27 +82,37 @@ impl Parser {
 
     fn declaration(&mut self) -> Result<Stmt, String> {
         if self.match_token(&[TokenType::Import]) {
-            self.consume(TokenType::LeftBrace, "Expected '{' after import.")?;
-            let mut names = Vec::new();
-            if !self.check(&TokenType::RightBrace) {
-                loop {
-                    let name = self.consume_ident("Expected identifier in import list.")?;
-                    names.push(name);
-                    if !self.match_token(&[TokenType::Comma]) {
-                        break;
+            if self.match_token(&[TokenType::LeftBrace]) {
+                let mut names = Vec::new();
+                if !self.check(&TokenType::RightBrace) {
+                    loop {
+                        let name = self.consume_ident("Expected identifier in import list.")?;
+                        names.push(name);
+                        if !self.match_token(&[TokenType::Comma]) {
+                            break;
+                        }
                     }
                 }
-            }
-            self.consume(TokenType::RightBrace, "Expected '}' after import list.")?;
-            self.consume(TokenType::From, "Expected 'from' after import list.")?;
-            let path_token = self.peek().clone();
-            let path = if let TokenType::String(s) = path_token.ty {
-                self.advance();
-                s
+                self.consume(TokenType::RightBrace, "Expected '}' after import list.")?;
+                self.consume(TokenType::From, "Expected 'from' after import list.")?;
+                let path_token = self.peek().clone();
+                let path = if let TokenType::String(s) = path_token.ty {
+                    self.advance();
+                    s
+                } else {
+                    return Err(format!("Error at line {}: Expected string literal for import path.", path_token.line));
+                };
+                Ok(Stmt::Import(names, path))
             } else {
-                return Err(format!("Error at line {}: Expected string literal for import path.", path_token.line));
-            };
-            Ok(Stmt::Import(names, path))
+                let path_token = self.peek().clone();
+                let path = if let TokenType::String(s) = path_token.ty {
+                    self.advance();
+                    s
+                } else {
+                    return Err(format!("Error at line {}: Expected string literal or '{{' after import.", path_token.line));
+                };
+                Ok(Stmt::Import(Vec::new(), path))
+            }
         } else if self.match_token(&[TokenType::Export]) {
             let decl = self.declaration()?;
             Ok(Stmt::Export(Box::new(decl)))
@@ -487,7 +497,8 @@ impl Parser {
 
 pub fn parse_and_resolve_imports(path: &std::path::Path) -> Result<Vec<Stmt>, String> {
     let mut visited = std::collections::HashSet::new();
-    resolve_imports_recursive(path, &mut visited)
+    let mut visited_exports = std::collections::HashMap::new();
+    resolve_imports_recursive(path, &mut visited, &mut visited_exports)
 }
 
 fn get_exported_names(stmts: &[Stmt]) -> std::collections::HashSet<String> {
@@ -545,6 +556,7 @@ fn find_std_dir(start_dir: &std::path::Path) -> Option<std::path::PathBuf> {
 fn resolve_imports_recursive(
     path: &std::path::Path,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    visited_exports: &mut std::collections::HashMap<std::path::PathBuf, std::collections::HashSet<String>>,
 ) -> Result<Vec<Stmt>, String> {
     let canonical = path.canonicalize()
         .map_err(|e| format!("Failed to canonicalize path {:?}: {}", path, e))?;
@@ -560,6 +572,10 @@ fn resolve_imports_recursive(
     let tokens = super::lexer::lex(&content);
     let mut parser = Parser::new(tokens);
     let stmts = parser.parse()?;
+
+    // Populate visited_exports for this file with its direct exports
+    let direct_exports = get_exported_names(&stmts);
+    visited_exports.insert(canonical.clone(), direct_exports);
 
     let mut resolved_stmts = Vec::new();
     let parent_dir = canonical.parent().ok_or_else(|| "No parent directory".to_string())?;
@@ -603,10 +619,16 @@ fn resolve_imports_recursive(
                     ));
                 }
 
-                let sub_stmts = resolve_imports_recursive(&resolved_path, visited)?;
+                let resolved_canonical = resolved_path.canonicalize()
+                    .map_err(|e| format!("Failed to canonicalize path {:?}: {}", resolved_path, e))?;
+
+                let sub_stmts = if visited.contains(&resolved_canonical) {
+                    Vec::new()
+                } else {
+                    resolve_imports_recursive(&resolved_path, visited, visited_exports)?
+                };
                 
-                // Verify names are exported
-                let exports = get_exported_names(&sub_stmts);
+                let exports = visited_exports.get(&resolved_canonical).cloned().unwrap_or_default();
                 for name in &names {
                     if !exports.contains(name) {
                         return Err(format!(

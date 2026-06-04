@@ -1,15 +1,9 @@
 /// Run with: cargo run --release --bin bench -p er
-#[path = "../vm/mod.rs"]
-pub mod vm;
-pub use vm as backend;
-#[path = "../frontend/mod.rs"]
-pub mod frontend;
-#[path = "../jit/mod.rs"]
-pub mod jit;
+pub use ::eronom::vm as backend;
+pub use ::eronom::frontend;
+pub use ::eronom::jit;
 
 use crate as eronom;
-#[allow(unused_imports)]
-use eronom as _lib;
 
 
 

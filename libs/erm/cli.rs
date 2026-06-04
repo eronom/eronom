@@ -1,5 +1,5 @@
 use std::path::Path;
-use crate::er;
+use regex::Regex;
 use crate::compiler;
 use crate::server::start_server;
 use std::fs;
@@ -64,9 +64,6 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                     }
                 }
             }
-        } else if first_arg.ends_with(".er") {
-            er::run_file(first_arg)?;
-            return Ok(());
         } else {
             dir = first_arg;
         }
@@ -157,7 +154,7 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     })
 }
 
-fn generate_server_script<F>(routes: &[PageRoute], get_render_path: F) -> String
+fn generate_server_script<F>(routes: &[PageRoute], api_routes: &[String], get_render_path: F) -> String
 where
     F: Fn(&PageRoute) -> String,
 {
@@ -172,7 +169,15 @@ where
         }
     });
 
-    let mut code = String::from("import { route } from \"std/http\"\n\nlet app = route()\n\n");
+    let mut code = String::new();
+    for api in api_routes {
+        code.push_str(&format!("import \"./{}\"\n", api.replace('\\', "/")));
+    }
+    if !api_routes.is_empty() {
+        code.push_str("\n");
+    }
+
+    code.push_str("import { router } from \"std/http\"\n\nlet app = router()\n\n");
     for route in &sorted_routes {
         let render_path = get_render_path(route);
         let route_block = format!(
@@ -188,8 +193,8 @@ where
     code
 }
 
-fn generate_server_er(routes: &[PageRoute]) -> String {
-    generate_server_script(routes, |r| r.rel_path.clone())
+fn generate_server_er(routes: &[PageRoute], api_routes: &[String]) -> String {
+    generate_server_script(routes, api_routes, |r| r.rel_path.clone())
 }
 
 fn get_ssg_html_path(rel_path: &str) -> String {
@@ -204,8 +209,8 @@ fn get_ssg_html_path(rel_path: &str) -> String {
     dest_path.to_string_lossy().replace("\\", "/")
 }
 
-fn generate_server_er_ssg(routes: &[PageRoute]) -> String {
-    generate_server_script(routes, |r| get_ssg_html_path(&r.rel_path))
+fn generate_server_er_ssg(routes: &[PageRoute], api_routes: &[String]) -> String {
+    generate_server_script(routes, api_routes, |r| get_ssg_html_path(&r.rel_path))
 }
 
 fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
@@ -223,16 +228,17 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
 
     let base_path = fs::canonicalize(dir)?;
     let mut routes = Vec::new();
-    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr, &mut routes)?;
+    let mut api_routes = Vec::new();
+    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr, &mut routes, &mut api_routes)?;
 
     if is_ssr {
         // Write the generated server.er file
-        let server_er_content = generate_server_er(&routes);
+        let server_er_content = generate_server_er(&routes, &api_routes);
         let server_er_path = build_dir.join("server.er");
         fs::write(server_er_path, server_er_content)?;
     } else {
         // Write the generated server.er file for SSG
-        let server_er_content = generate_server_er_ssg(&routes);
+        let server_er_content = generate_server_er_ssg(&routes, &api_routes);
         let server_er_path = build_dir.join("server.er");
         fs::write(server_er_path, server_er_content)?;
     }
@@ -240,7 +246,14 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: bool, routes: &mut Vec<PageRoute>) -> anyhow::Result<()> {
+fn build_dir_recursive(
+    root: &Path,
+    current: &Path,
+    build_root: &Path,
+    is_ssr: bool,
+    routes: &mut Vec<PageRoute>,
+    api_routes: &mut Vec<String>,
+) -> anyhow::Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
@@ -270,7 +283,7 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
         }
 
         if path.is_dir() {
-            build_dir_recursive(root, &path, build_root, is_ssr, routes)?;
+            build_dir_recursive(root, &path, build_root, is_ssr, routes, api_routes)?;
         } else {
             let rel_path = path.strip_prefix(root)?;
             let dest_path = build_root.join(rel_path);
@@ -316,6 +329,22 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
                         }
                     }
                 }
+            } else if name_str.ends_with(".er") {
+                if rel_path.starts_with("api") {
+                    let content = fs::read_to_string(&path)?;
+                    let parent = rel_path.parent().unwrap_or(Path::new(""));
+                    let prefix = if parent.as_os_str().is_empty() {
+                        String::new()
+                    } else {
+                        format!("/{}", parent.to_string_lossy().replace('\\', "/"))
+                    };
+                    
+                    let rewritten = rewrite_api_route_paths(&content, &prefix);
+                    fs::write(&dest_path, rewritten)?;
+                    api_routes.push(rel_path.to_string_lossy().into_owned());
+                } else {
+                    fs::copy(&path, &dest_path)?;
+                }
             } else {
                 // Copy assets
                 fs::copy(&path, &dest_path)?;
@@ -323,6 +352,28 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
         }
     }
     Ok(())
+}
+
+fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
+    let re = Regex::new(r#"(?x)
+        app\s*\.\s*(get|post|put|delete|patch|ws)\s*\(\s*(['"])([^'"]*)(['"])
+    "#).unwrap();
+    
+    re.replace_all(content, |caps: &regex::Captures| {
+        let method = &caps[1];
+        let quote = &caps[2];
+        let path = &caps[3];
+        
+        let new_path = if path == "/" {
+            prefix.to_string()
+        } else if path.starts_with('/') {
+            format!("{}{}", prefix, path)
+        } else {
+            format!("{}/{}", prefix, path)
+        };
+        
+        format!("app.{}({}{}{}", method, quote, new_path, quote)
+    }).into_owned()
 }
 
 

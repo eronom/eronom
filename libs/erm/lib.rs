@@ -1,11 +1,17 @@
 //! By convention, lib.rs is the root source file when making a library.
 
-pub mod er;
 pub mod compiler;
 pub mod eval;
 pub mod router;
 pub mod server;
 pub mod cli;
+
+#[path = "../../src/vm/mod.rs"]
+pub mod vm;
+#[path = "../../src/frontend/mod.rs"]
+pub mod frontend;
+#[path = "../../src/jit/mod.rs"]
+pub mod jit;
 
 use std::io::{self, Write};
 

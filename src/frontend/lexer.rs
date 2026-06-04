@@ -237,7 +237,7 @@ impl<'a> Lexer<'a> {
                     "import" => TokenType::Import,
                     "export" => TokenType::Export,
                     "from" => TokenType::From,
-                    "function" => TokenType::Function,
+                    "fn" => TokenType::Function,
                     _ => TokenType::Identifier(ident),
                 }
             }

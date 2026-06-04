@@ -144,6 +144,168 @@ extern "C" fn check_hmr_queue(_timer: *mut c_void) {
     }
 }
 
+use crate::vm::value::Value;
+
+struct GcGuard;
+impl Drop for GcGuard {
+    fn drop(&mut self) {
+        crate::vm::gc::gc_free_all();
+    }
+}
+
+fn native_print(args: Vec<Value>) -> Value {
+    let mut outputs = Vec::new();
+    for arg in args {
+        outputs.push(arg.to_string());
+    }
+    println!("{}", outputs.join(" "));
+    Value::null()
+}
+
+fn native_render(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let file_path_val = args[0];
+    let params_val = args[1];
+    
+    let file_path = match file_path_val.as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    
+    let mut params_map = std::collections::HashMap::new();
+    if params_val.is_object() {
+        unsafe {
+            if let crate::vm::gc::GcData::Object(map) = &(*params_val.as_gc_ptr()).data {
+                for (k, v) in map {
+                    if let Some(key_str) = k.0.as_str() {
+                        let val_str = if let Some(s) = v.as_str() {
+                            s.to_string()
+                        } else {
+                            v.to_string()
+                        };
+                        params_map.insert(key_str.to_string(), val_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    let base_path = BASE_PATH.lock().unwrap().clone().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let path = base_path.join(file_path);
+    if !path.exists() {
+        return Value::null();
+    }
+    
+    let is_prod = *IS_PROD.lock().unwrap();
+    match fs::read_to_string(&path) {
+        Ok(content) => {
+            let parent = path.parent().unwrap().to_string_lossy();
+            match compiler::process_erm_component(&parent, &content, is_prod, &params_map) {
+                Ok(html) => {
+                    let ptr = crate::vm::gc::get_or_create_string(&html);
+                    Value::string(ptr)
+                }
+                Err(e) => {
+                    eprintln!("[render] Compiler error: {:?}", e);
+                    Value::null()
+                }
+            }
+        }
+        Err(_) => Value::null(),
+    }
+}
+
+fn execute_api_route(
+    res: *mut c_void,
+    method: &str,
+    target: &str,
+    file_path: &Path,
+) -> anyhow::Result<()> {
+    let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
+    let rel = file_path.strip_prefix(&base_path)?;
+    let parent = rel.parent().unwrap_or(Path::new(""));
+    let prefix = if parent.as_os_str().is_empty() {
+        String::new()
+    } else {
+        format!("/{}", parent.to_string_lossy().replace('\\', "/"))
+    };
+
+    let stmts = match crate::frontend::parse_and_resolve_imports(file_path) {
+        Ok(s) => s,
+        Err(e) => anyhow::bail!("Compile/Import error: {}", e),
+    };
+
+    let compiler = crate::vm::compiler::Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => anyhow::bail!("Compile error: {}", e),
+    };
+
+    crate::vm::er_http::ROUTES.with(|r| r.borrow_mut().clear());
+    crate::vm::er_http::WS_ROUTES.with(|w| w.borrow_mut().clear());
+    crate::vm::er_http::MIDDLEWARES.with(|m| m.borrow_mut().clear());
+    
+    crate::vm::er_http::ROUTE_PREFIX.with(|p| {
+        *p.borrow_mut() = Some(prefix);
+    });
+
+    let mut vm = crate::vm::execute::VM::new();
+    vm.register_global("print", Value::native_function(native_print));
+    vm.register_global("router", Value::native_function(crate::vm::er_http::native_route));
+    vm.register_global("render", Value::native_function(native_render));
+    vm.register_global("fetch", Value::native_function(crate::vm::er_http::native_fetch));
+    vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+    vm.register_global("fetchAsync", Value::native_function(crate::vm::er_http::native_fetch_async));
+    vm.register_global("fetchSync", Value::native_function(crate::vm::er_http::native_fetch_sync));
+    vm.register_global("fetchEvented", Value::native_function(crate::vm::er_http::native_fetch_evented));
+    vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
+    vm.register_global("arrayLen", Value::native_function(crate::vm::er_http::native_array_len));
+    vm.register_global("sleep", Value::native_function(crate::vm::er_http::native_sleep));
+    vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
+    vm.register_global("setIoMode", Value::native_function(crate::vm::er_http::native_set_io_mode));
+    vm.register_global("getIoMode", Value::native_function(crate::vm::er_http::native_get_io_mode));
+
+    crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
+
+    let _guard = GcGuard;
+    
+    if let Err(e) = vm.run(function) {
+        anyhow::bail!("VM Runtime error: {}", e);
+    }
+    if let Err(e) = vm.run_event_loop() {
+        anyhow::bail!("VM Event loop error: {}", e);
+    }
+
+    let method_c = CString::new(method).unwrap();
+    let target_c = CString::new(target).unwrap();
+    
+    crate::vm::er_http::ACTIVE_VM.with(|active| {
+        active.set(&mut vm as *mut crate::vm::execute::VM);
+    });
+
+    unsafe {
+        crate::vm::er_http::er_http_on_request(
+            res,
+            method_c.as_ptr(),
+            method.len(),
+            target_c.as_ptr(),
+            target.len(),
+        );
+    }
+
+    crate::vm::er_http::ACTIVE_VM.with(|active| {
+        active.set(std::ptr::null_mut());
+    });
+
+    crate::vm::er_http::ROUTE_PREFIX.with(|p| {
+        *p.borrow_mut() = None;
+    });
+
+    Ok(())
+}
+
 fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::Result<()> {
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
     let default_file = DEFAULT_FILE.lock().unwrap().clone();
@@ -190,6 +352,15 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
                         er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
                         er_http_response_end(res, err_msg.as_ptr() as *const c_char, err_msg.len());
                     }
+                }
+            }
+        } else if file_path.extension().map_or(false, |ext| ext == "er") {
+            if let Err(e) = execute_api_route(res, method, target, &file_path) {
+                let err_msg = format!("Error running route: {}", e);
+                unsafe {
+                    let status = CString::new("500 Internal Server Error").unwrap();
+                    er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+                    er_http_response_end(res, err_msg.as_ptr() as *const c_char, err_msg.len());
                 }
             }
         } else {
@@ -366,22 +537,34 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
                 current_path = erm;
                 found = true;
             } else {
-                if let Ok(entries) = fs::read_dir(&current_path) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        if name.starts_with('[') {
-                            if name.ends_with(']') {
-                                let param_name = &name[1..name.len() - 1];
-                                params.insert(param_name.to_string(), part.to_string());
-                                current_path.push(name);
-                                found = true;
-                                break;
-                            } else if name.ends_with("].erm") {
-                                let param_name = &name[1..name.len() - 5];
-                                params.insert(param_name.to_string(), part.to_string());
-                                current_path.push(name);
-                                found = true;
-                                break;
+                let er = current_path.join(format!("{}.er", part));
+                if er.exists() {
+                    current_path = er;
+                    found = true;
+                } else {
+                    if let Ok(entries) = fs::read_dir(&current_path) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name().to_string_lossy().into_owned();
+                            if name.starts_with('[') {
+                                if name.ends_with(']') {
+                                    let param_name = &name[1..name.len() - 1];
+                                    params.insert(param_name.to_string(), part.to_string());
+                                    current_path.push(name);
+                                    found = true;
+                                    break;
+                                } else if name.ends_with("].erm") {
+                                    let param_name = &name[1..name.len() - 5];
+                                    params.insert(param_name.to_string(), part.to_string());
+                                    current_path.push(name);
+                                    found = true;
+                                    break;
+                                } else if name.ends_with("].er") {
+                                    let param_name = &name[1..name.len() - 4];
+                                    params.insert(param_name.to_string(), part.to_string());
+                                    current_path.push(name);
+                                    found = true;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -405,6 +588,8 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
         if index_html.exists() { return Some((index_html, params)); }
         let page_html = current_path.join("page.html");
         if page_html.exists() { return Some((page_html, params)); }
+        let route_er = current_path.join("route.er");
+        if route_er.exists() { return Some((route_er, params)); }
     }
 
     Some((current_path, params))

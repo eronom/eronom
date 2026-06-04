@@ -1,4 +1,6 @@
-let num = 5
+let num = 5;
+
+names  = "vishnu"
 
 function test(){
     print(num)

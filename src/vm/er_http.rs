@@ -30,6 +30,7 @@ thread_local! {
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_WEBSOCKET: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_CONNECTIONS: RefCell<HashMap<*mut c_void, Value>> = RefCell::new(HashMap::new());
+    pub static ROUTE_PREFIX: RefCell<Option<String>> = const { RefCell::new(None) };
     static TARGET_SCRIPT_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
     static LAST_MTIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
     static LAST_CHECK_TIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
@@ -205,12 +206,27 @@ fn register_route_internal(method: &str, args: Vec<Value>) -> Value {
         return Value::null();
     }
     
-    let path_str = unsafe {
+    let mut path_str = unsafe {
         match &(*path_val.as_gc_ptr()).data {
             GcData::String(s) => s.as_ref().to_string(),
             _ => return Value::null(),
         }
     };
+    
+    ROUTE_PREFIX.with(|prefix| {
+        if let Some(ref p) = *prefix.borrow() {
+            let already_prepended = path_str == *p || path_str.starts_with(&format!("{}/", p));
+            if !already_prepended {
+                if path_str == "/" {
+                    path_str = p.clone();
+                } else if path_str.starts_with('/') {
+                    path_str = format!("{}{}", p, path_str);
+                } else {
+                    path_str = format!("{}/{}", p, path_str);
+                }
+            }
+        }
+    });
     
     ROUTES.with(|routes| {
         routes.borrow_mut().push(Route {

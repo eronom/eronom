@@ -1,6 +1,6 @@
-import { route } from "std/http"
+import { router } from "std/http"
 
-let app = route()
+let app = router()
 
 // Middleware to attach a value to the context
 app.use((c) => {
