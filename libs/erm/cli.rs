@@ -31,22 +31,13 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
             
             if cmd == "start" {
                 dir = "build";
-                if !pos_args.is_empty() {
-                    match pos_args[0].parse::<u16>() {
-                        Ok(p) => {
-                            port_val = Some(p);
-                            has_custom_port = true;
-                        }
-                        Err(_) => {
-                            anyhow::bail!("Invalid port number or unknown argument: '{}'", pos_args[0]);
-                        }
-                    }
-                    if pos_args.len() > 1 {
-                        anyhow::bail!("Unexpected argument: '{}'", pos_args[1]);
-                    }
-                }
-            } else {
-                if !pos_args.is_empty() {
+            }
+            if !pos_args.is_empty() {
+                if cmd == "start" && pos_args[0].parse::<u16>().is_ok() {
+                    let p = pos_args[0].parse::<u16>().unwrap();
+                    port_val = Some(p);
+                    has_custom_port = true;
+                } else {
                     dir = pos_args[0];
                     if pos_args.len() > 1 && cmd != "build" {
                         match pos_args[1].parse::<u16>() {
@@ -64,6 +55,16 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
         } else {
             dir = first_arg;
         }
+    }
+
+    if dir == "." {
+        let app_path = Path::new("app");
+        if app_path.join("pages").exists() {
+            dir = "app";
+        }
+    }
+    if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
+        dir = "app/build";
     }
 
     let port = if has_custom_port {
@@ -96,8 +97,61 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
 fn init_project(dir: &str) -> anyhow::Result<()> {
     println!("Initializing fresh Eronom project in {}", dir);
     fs::create_dir_all(dir)?;
+
+    let dst_dir = Path::new(dir);
+
+    // Locate the template init directory
+    let mut src_init = std::path::PathBuf::from("libs/init");
+    if !src_init.exists() {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let sibling_init = exe_dir.join("libs/init");
+                if sibling_init.exists() {
+                    src_init = sibling_init;
+                } else if let Some(parent_dir) = exe_dir.parent() {
+                    let parent_init = parent_dir.join("libs/init");
+                    if parent_init.exists() {
+                        src_init = parent_init;
+                    }
+                }
+            }
+        }
+    }
+
+    if !src_init.exists() {
+        anyhow::bail!("Source 'libs/init' directory not found. Please run 'eronom init' from the directory containing the 'libs/init' template.");
+    }
+
+    println!("Copying template from {} to {}", src_init.display(), dst_dir.display());
+    copy_dir_all(&src_init, dst_dir)?;
+
+    println!("Fresh Eronom project initialized successfully under {}", dst_dir.display());
     Ok(())
 }
+
+fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let file_name = entry.file_name();
+        
+        // Exclude the compiled eronom binary if it is in the source folder
+        if file_name == "eronom" {
+            continue;
+        }
+
+        let dst_path = dst.join(&file_name);
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path)?;
+        } else {
+            fs::copy(&entry.path(), &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+
 
 #[derive(Debug, Clone)]
 struct PageRoute {
@@ -397,11 +451,21 @@ fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
 
 fn get_port_from_config_file(dir: &str) -> Option<u16> {
     let path = Path::new(dir);
-    let config_path = if path.is_file() {
+    let mut config_path = if path.is_file() {
         path.parent()?.join("config.er")
     } else {
         path.join("config.er")
     };
+
+    let mut current = config_path.parent();
+    while let Some(p) = current {
+        let check = p.join("config.er");
+        if check.exists() {
+            config_path = check;
+            break;
+        }
+        current = p.parent();
+    }
 
     if !config_path.exists() {
         return None;
