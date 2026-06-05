@@ -1539,7 +1539,7 @@ mod tests {
 
     #[test]
     fn test_function_declaration() {
-        let vm = run_code("function add(a, b) {\n  return a + b\n}\nlet res = add(3, 4)\nlet res2 = (function(x) { return x * 2 })(5)").unwrap();
+        let vm = run_code("fn add(a, b) {\n  return a + b\n}\nlet res = add(3, 4)\nlet res2 = (fn(x) { return x * 2 })(5)").unwrap();
         assert_eq!(vm.get_global("res").unwrap().as_number(), 7.0);
         assert_eq!(vm.get_global("res2").unwrap().as_number(), 10.0);
     }

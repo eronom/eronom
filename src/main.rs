@@ -1,7 +1,6 @@
-pub mod vm;
-pub use vm as backend;
-pub mod frontend;
-pub mod jit;
+pub use eronom::vm as backend;
+pub use eronom::frontend;
+pub use eronom::jit;
 
 use backend::{Compiler, VM, Value};
 use frontend::{Parser, lex};
@@ -22,7 +21,7 @@ fn native_print(args: Vec<Value>) -> Value {
     Value::null()
 }
 
-fn native_render_erm(args: Vec<Value>) -> Value {
+fn native_render(args: Vec<Value>) -> Value {
     if args.len() < 2 {
         return Value::null();
     }
@@ -80,6 +79,20 @@ fn native_render_erm(args: Vec<Value>) -> Value {
         Ok(c) => c,
         Err(_) => return Value::null(),
     };
+
+    if resolved_path.extension().map_or(false, |ext| ext == "html") {
+        let mut final_content = content;
+        if !params_map.is_empty() {
+            let mut params_js = String::from("window.__erm_params = {");
+            for (k, v) in &params_map {
+                params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+            }
+            params_js.push_str("};");
+            final_content = final_content.replace("window.__erm_params = {};", &params_js);
+        }
+        let ptr = backend::gc::get_or_create_string(&final_content);
+        return Value::string(ptr);
+    }
     
     match eronom::compiler::process_erm_component(&base_dir, &content, true, &params_map) {
         Ok(html) => {
@@ -87,7 +100,7 @@ fn native_render_erm(args: Vec<Value>) -> Value {
             Value::string(ptr)
         }
         Err(e) => {
-            eprintln!("[renderErm] Compiler error: {:?}", e);
+            eprintln!("[render] Compiler error: {:?}", e);
             Value::null()
         }
     }
@@ -98,7 +111,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     let _guard = GcGuard;
     let path_buf = std::path::PathBuf::from(path);
     if !path_buf.exists() {
-        return Ok(());
+        anyhow::bail!("File not found: {}", path);
     }
 
     let stmts = match frontend::parse_and_resolve_imports(&path_buf) {
@@ -119,8 +132,8 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         eprintln!("[VM] Running with bytecode interpreter (no JIT)");
     }
     vm.register_global("print", Value::native_function(native_print));
-    vm.register_global("route", Value::native_function(backend::er_http::native_route));
-    vm.register_global("renderErm", Value::native_function(native_render_erm));
+    vm.register_global("router", Value::native_function(backend::er_http::native_route));
+    vm.register_global("render", Value::native_function(native_render));
     vm.register_global("fetch", Value::native_function(backend::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(backend::er_http::native_set_timeout));
     vm.register_global("fetchAsync", Value::native_function(backend::er_http::native_fetch_async));
@@ -178,10 +191,13 @@ fn main() {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
-    } else {
+    } else if first_arg.ends_with(".er") || std::path::Path::new(first_arg).exists() {
         if let Err(e) = run_file(first_arg) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
+    } else {
+        eprintln!("Error: Unknown command: {}", first_arg);
+        std::process::exit(1);
     }
 }

@@ -1,7 +1,7 @@
 // Standard HTTP library for Eronom
 
-// Native route constructor
-export const route = route
+// Native router constructor
+export const router = router
 
 // HTTP Status Codes mapping
 export const status = {
@@ -18,7 +18,7 @@ export const status = {
 
 // NodeJS-compatible createServer API
 export const createServer = (handler) => {
-  let app = route()
+  let app = router()
   
   let dispatch = (c) => {
     let req = {

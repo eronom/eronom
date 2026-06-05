@@ -1,5 +1,5 @@
 use std::path::Path;
-use crate::er;
+use regex::Regex;
 use crate::compiler;
 use crate::server::start_server;
 use std::fs;
@@ -7,8 +7,8 @@ use std::fs;
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     let mut cmd = "dev";
     let mut dir = ".";
-    let mut port: u16 = 3000;
-    let mut is_ssr = false;
+    let mut port_val: Option<u16> = None;
+    let mut is_ssr = true;
     let mut has_custom_port = false;
 
     if args.len() > 1 {
@@ -18,11 +18,10 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
             
             let mut pos_args = Vec::new();
             for arg in args.iter().skip(2) {
-                if arg == "--ssr" || arg == "-ssr" {
+                if arg == "--ssg" || arg == "-ssg" {
+                    is_ssr = false;
+                } else if arg == "--ssr" || arg == "-ssr" {
                     is_ssr = true;
-                } else if arg.starts_with("--port=") {
-                    port = arg[7..].parse().unwrap_or(3000);
-                    has_custom_port = true;
                 } else if arg.starts_with('-') {
                     // ignore unknown flags for now
                 } else {
@@ -30,28 +29,58 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
                 }
             }
             
-            if !pos_args.is_empty() {
-                dir = pos_args[0];
-                if pos_args.len() > 1 && cmd != "build" {
-                    port = pos_args[1].parse().unwrap_or(3000);
-                    has_custom_port = true;
-                }
-            } else if cmd == "start" {
+            if cmd == "start" {
                 dir = "build";
+                if !pos_args.is_empty() {
+                    match pos_args[0].parse::<u16>() {
+                        Ok(p) => {
+                            port_val = Some(p);
+                            has_custom_port = true;
+                        }
+                        Err(_) => {
+                            anyhow::bail!("Invalid port number or unknown argument: '{}'", pos_args[0]);
+                        }
+                    }
+                    if pos_args.len() > 1 {
+                        anyhow::bail!("Unexpected argument: '{}'", pos_args[1]);
+                    }
+                }
+            } else {
+                if !pos_args.is_empty() {
+                    dir = pos_args[0];
+                    if pos_args.len() > 1 && cmd != "build" {
+                        match pos_args[1].parse::<u16>() {
+                            Ok(p) => {
+                                port_val = Some(p);
+                                has_custom_port = true;
+                            }
+                            Err(_) => {
+                                anyhow::bail!("Invalid port number: '{}'", pos_args[1]);
+                            }
+                        }
+                    }
+                }
             }
-        } else if first_arg.ends_with(".er") {
-            er::run_file(first_arg)?;
-            return Ok(());
         } else {
             dir = first_arg;
         }
     }
 
-    if !has_custom_port {
-        if let Some(config_port) = get_port_from_config_file(dir) {
-            port = config_port;
+    let port = if has_custom_port {
+        port_val.unwrap()
+    } else if let Ok(port_str) = std::env::var("PORT") {
+        if let Ok(p) = port_str.parse::<u16>() {
+            p
+        } else {
+            anyhow::bail!("Invalid port in PORT environment variable: '{}'", port_str);
         }
-    }
+    } else if let Some(config_port) = get_port_from_config_file(dir) {
+        config_port
+    } else if cmd == "build" || cmd == "init" {
+        0
+    } else {
+        anyhow::bail!("No port specified. Please provide a port in config.er or PORT environment variable.");
+    };
 
     match cmd {
         "init" => init_project(dir)?,
@@ -80,6 +109,12 @@ struct PageRoute {
 fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     let path_str = rel_path.replace("\\", "/");
     let mut parts: Vec<&str> = path_str.split('/').collect();
+    
+    if let Some(pages_idx) = parts.iter().position(|&s| s == "pages") {
+        parts = parts[(pages_idx + 1)..].to_vec();
+    } else {
+        return None;
+    }
     
     // Check if filename starts with uppercase (it's a component, not a page)
     if let Some(last) = parts.last() {
@@ -132,19 +167,63 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     })
 }
 
-fn generate_server_er(routes: &[PageRoute]) -> String {
+fn generate_server_script<F>(routes: &[PageRoute], api_routes: &[String], get_render_path: F) -> String
+where
+    F: Fn(&PageRoute) -> String,
+{
+    let mut sorted_routes = routes.to_vec();
+    sorted_routes.sort_by(|a, b| {
+        if a.route_path == "/" {
+            std::cmp::Ordering::Less
+        } else if b.route_path == "/" {
+            std::cmp::Ordering::Greater
+        } else {
+            a.route_path.cmp(&b.route_path)
+        }
+    });
+
     let mut code = String::new();
-    code.push_str("import { route } from \"std/http\"\n\n");
-    code.push_str("let app = route()\n\n");
-    
-    for route in routes {
-        code.push_str(&format!("app.get(\"{}\", (c) => {{\n", route.route_path));
-        code.push_str(&format!("  let html = renderErm(\"{}\", c.req.params)\n", route.rel_path));
-        code.push_str("  return c.html(html)\n");
-        code.push_str("})\n\n");
+    for api in api_routes {
+        code.push_str(&format!("import \"./{}\"\n", api.replace('\\', "/")));
     }
-    
+    if !api_routes.is_empty() {
+        code.push_str("\n");
+    }
+
+    code.push_str("import { router } from \"std/http\"\n\nlet app = router()\n\n");
+    for route in &sorted_routes {
+        let render_path = get_render_path(route);
+        let route_block = format!(
+            r#"app.get("{}", (c) => {{
+  let template = render("{}", c.req.params)
+  return c.html(template)
+}})"#,
+            route.route_path, render_path
+        );
+        code.push_str(&route_block);
+        code.push_str("\n\n");
+    }
     code
+}
+
+fn generate_server_er(routes: &[PageRoute], api_routes: &[String]) -> String {
+    generate_server_script(routes, api_routes, |r| r.rel_path.clone())
+}
+
+fn get_ssg_html_path(rel_path: &str) -> String {
+    let path = Path::new(rel_path);
+    let name_str = path.file_name().unwrap_or_default().to_string_lossy();
+    let mut dest_path = path.to_path_buf();
+    if name_str == "page.erm" || name_str == "index.erm" {
+        dest_path.set_file_name("index.html");
+    } else {
+        dest_path.set_extension("html");
+    }
+    dest_path.to_string_lossy().replace("\\", "/")
+}
+
+fn generate_server_er_ssg(routes: &[PageRoute], api_routes: &[String]) -> String {
+    generate_server_script(routes, api_routes, |r| get_ssg_html_path(&r.rel_path))
 }
 
 fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
@@ -162,11 +241,17 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
 
     let base_path = fs::canonicalize(dir)?;
     let mut routes = Vec::new();
-    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr, &mut routes)?;
+    let mut api_routes = Vec::new();
+    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr, &mut routes, &mut api_routes)?;
 
     if is_ssr {
         // Write the generated server.er file
-        let server_er_content = generate_server_er(&routes);
+        let server_er_content = generate_server_er(&routes, &api_routes);
+        let server_er_path = build_dir.join("server.er");
+        fs::write(server_er_path, server_er_content)?;
+    } else {
+        // Write the generated server.er file for SSG
+        let server_er_content = generate_server_er_ssg(&routes, &api_routes);
         let server_er_path = build_dir.join("server.er");
         fs::write(server_er_path, server_er_content)?;
     }
@@ -174,7 +259,14 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: bool, routes: &mut Vec<PageRoute>) -> anyhow::Result<()> {
+fn build_dir_recursive(
+    root: &Path,
+    current: &Path,
+    build_root: &Path,
+    is_ssr: bool,
+    routes: &mut Vec<PageRoute>,
+    api_routes: &mut Vec<String>,
+) -> anyhow::Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
@@ -204,7 +296,7 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
         }
 
         if path.is_dir() {
-            build_dir_recursive(root, &path, build_root, is_ssr, routes)?;
+            build_dir_recursive(root, &path, build_root, is_ssr, routes, api_routes)?;
         } else {
             let rel_path = path.strip_prefix(root)?;
             let dest_path = build_root.join(rel_path);
@@ -241,11 +333,35 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
                                 html_dest.set_extension("html");
                             }
                             fs::write(html_dest, processed)?;
+                            if let Some(r) = get_page_route(&rel_path.to_string_lossy()) {
+                                routes.push(r);
+                            }
                         }
                         Err(e) => {
                             eprintln!("Error compiling {}: {}", path.display(), e);
                         }
                     }
+                }
+            } else if name_str.ends_with(".er") {
+                let rel_path_str = rel_path.to_string_lossy().replace('\\', "/");
+                if rel_path_str.starts_with("server/api/") {
+                    let content = fs::read_to_string(&path)?;
+                    let parent = rel_path.parent().unwrap_or(Path::new(""));
+                    let mut parent_str = parent.to_string_lossy().replace('\\', "/");
+                    if parent_str.starts_with("server/") {
+                        parent_str = parent_str["server/".len()..].to_string();
+                    }
+                    let prefix = if parent_str.is_empty() {
+                        String::new()
+                    } else {
+                        format!("/{}", parent_str)
+                    };
+                    
+                    let rewritten = rewrite_api_route_paths(&content, &prefix);
+                    fs::write(&dest_path, rewritten)?;
+                    api_routes.push(rel_path.to_string_lossy().into_owned());
+                } else {
+                    fs::copy(&path, &dest_path)?;
                 }
             } else {
                 // Copy assets
@@ -254,6 +370,28 @@ fn build_dir_recursive(root: &Path, current: &Path, build_root: &Path, is_ssr: b
         }
     }
     Ok(())
+}
+
+fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
+    let re = Regex::new(r#"(?x)
+        app\s*\.\s*(get|post|put|delete|patch|ws)\s*\(\s*(['"])([^'"]*)(['"])
+    "#).unwrap();
+    
+    re.replace_all(content, |caps: &regex::Captures| {
+        let method = &caps[1];
+        let quote = &caps[2];
+        let path = &caps[3];
+        
+        let new_path = if path == "/" {
+            prefix.to_string()
+        } else if path.starts_with('/') {
+            format!("{}{}", prefix, path)
+        } else {
+            format!("{}/{}", prefix, path)
+        };
+        
+        format!("app.{}({}{}{}", method, quote, new_path, quote)
+    }).into_owned()
 }
 
 
