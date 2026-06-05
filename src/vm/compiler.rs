@@ -8,11 +8,14 @@ pub struct Compiler {
     locals: Vec<Local>,
     scope_depth: usize,
     next_reg: usize,
+    const_globals: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, crate::frontend::SourceLocation>>>,
 }
 
 struct Local {
     name: String,
     depth: usize,
+    is_const: bool,
+    loc: crate::frontend::SourceLocation,
 }
 
 impl Default for Compiler {
@@ -34,6 +37,7 @@ impl Compiler {
             locals: Vec::new(),
             scope_depth: 0,
             next_reg: 0,
+            const_globals: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
@@ -77,13 +81,15 @@ impl Compiler {
                     1,
                 );
             }
-            Stmt::VarDecl(name, _, expr) => {
+            Stmt::VarDecl(name, is_const, expr, loc) => {
                 if self.scope_depth > 0 {
                     let local_reg = self.locals.len();
                     self.compile_expr(expr, local_reg)?;
                     self.locals.push(Local {
                         name: name.clone(),
                         depth: self.scope_depth,
+                        is_const: *is_const,
+                        loc: loc.clone(),
                     });
                 } else {
                     let temp_reg = self.next_reg;
@@ -98,6 +104,9 @@ impl Compiler {
                         0,
                         name_idx as u32,
                     );
+                    if *is_const {
+                        self.const_globals.borrow_mut().insert(name.clone(), loc.clone());
+                    }
                 }
             }
             Stmt::Block(stmts) => {
@@ -129,6 +138,8 @@ impl Compiler {
                 self.locals.push(Local {
                     name: var_name.clone(),
                     depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
                 });
 
                 let limit_reg = self.locals.len();
@@ -137,6 +148,8 @@ impl Compiler {
                 self.locals.push(Local {
                     name: temp_name.clone(),
                     depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
                 });
 
                 let one_reg = self.locals.len();
@@ -152,6 +165,8 @@ impl Compiler {
                 self.locals.push(Local {
                     name: temp_one_name.clone(),
                     depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
                 });
 
                 let loop_start = self.current_chunk().code.len();
@@ -240,7 +255,7 @@ impl Compiler {
                     }
                 }
             }
-            Expr::Variable(name) => {
+            Expr::Variable(name, _) => {
                 if let Some(idx) = self.resolve_local(name) {
                     if dest != idx {
                         self.current_chunk().write_instruction(
@@ -264,9 +279,12 @@ impl Compiler {
                     );
                 }
             }
-            Expr::Assign(name, val) => {
-                self.compile_expr(val, dest)?;
+            Expr::Assign(name, val, assign_loc) => {
                 if let Some(idx) = self.resolve_local(name) {
+                    if self.locals[idx].is_const {
+                        return Err(self.format_const_assign_error(name, assign_loc, &self.locals[idx].loc));
+                    }
+                    self.compile_expr(val, dest)?;
                     if dest != idx {
                         self.current_chunk().write_instruction(
                             OpCode::Move,
@@ -277,6 +295,10 @@ impl Compiler {
                         );
                     }
                 } else {
+                    if let Some(decl_loc) = self.const_globals.borrow().get(name).cloned() {
+                        return Err(self.format_const_assign_error(name, assign_loc, &decl_loc));
+                    }
+                    self.compile_expr(val, dest)?;
                     let idx = self
                         .current_chunk()
                         .add_constant(Value::string(get_or_create_string(name.as_str())));
@@ -415,6 +437,7 @@ impl Compiler {
             }
             Expr::Function(params, body) => {
                 let mut compiler = Compiler::new();
+                compiler.const_globals = self.const_globals.clone();
                 compiler.function.arity = params.len();
                 compiler.function.is_async = false;
                 compiler.next_reg = params.len();
@@ -423,6 +446,8 @@ impl Compiler {
                     compiler.locals.push(Local {
                         name: param.clone(),
                         depth: compiler.scope_depth,
+                        is_const: false,
+                        loc: crate::frontend::SourceLocation::default(),
                     });
                 }
                 compiler.compile_stmt(body)?;
@@ -521,5 +546,42 @@ impl Compiler {
     fn emit_loop(&mut self, loop_start: usize) {
         let offset = self.current_chunk().code.len() - loop_start + 1;
         self.current_chunk().write_instruction(OpCode::Loop, 0, 0, 0, offset as u32);
+    }
+
+    fn format_const_assign_error(&self, name: &str, assign_loc: &crate::frontend::SourceLocation, decl_loc: &crate::frontend::SourceLocation) -> String {
+        fn get_file_line(path: &str, line_num: usize) -> Option<String> {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                content.lines().nth(line_num - 1).map(|s| s.to_string())
+            } else {
+                None
+            }
+        }
+        
+        fn format_snippet(loc: &crate::frontend::SourceLocation) -> String {
+            let line_str = loc.line.to_string();
+            let prefix = format!("{} | ", line_str);
+            let mut result = String::new();
+            if let Some(content) = get_file_line(&loc.file_path, loc.line) {
+                result.push_str(&format!("{}{}\n", prefix, content));
+                let spaces = " ".repeat(line_str.len() + 3 + loc.col - 1);
+                result.push_str(&format!("{}^\n", spaces));
+            }
+            result
+        }
+
+        format!(
+            "{}\
+            error: This assignment will throw because \"{}\" is a constant\n\
+            \x20\x20\x20\x20at {}:{}:{}\n\n\
+            {}\
+            note: The symbol \"{}\" was declared a constant here:\n\
+            \x20\x20\x20at {}:{}:{}",
+            format_snippet(assign_loc),
+            name,
+            assign_loc.file_path, assign_loc.line, assign_loc.col,
+            format_snippet(decl_loc),
+            name,
+            decl_loc.file_path, decl_loc.line, decl_loc.col
+        )
     }
 }

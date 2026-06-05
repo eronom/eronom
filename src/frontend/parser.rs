@@ -1,14 +1,20 @@
 use super::token::{Token, TokenType};
-use super::ast::{Expr, LiteralValue, Stmt};
+use super::ast::{Expr, LiteralValue, Stmt, SourceLocation};
 
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    pub file_path: String,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+        Self { tokens, current: 0, file_path: "".to_string() }
+    }
+
+    pub fn with_file_path(mut self, path: String) -> Self {
+        self.file_path = path;
+        self
     }
 
     fn peek(&self) -> &Token {
@@ -118,6 +124,7 @@ impl Parser {
             Ok(Stmt::Export(Box::new(decl)))
         } else if self.match_token(&[TokenType::Let, TokenType::Const]) {
             let is_const = self.previous().ty == TokenType::Const;
+            let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected variable name.")?;
 
             // Skip optional type annotation like `: string`
@@ -129,8 +136,14 @@ impl Parser {
             if self.match_token(&[TokenType::Equal]) {
                 initializer = self.expression()?;
             }
-            Ok(Stmt::VarDecl(name, is_const, initializer))
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::VarDecl(name, is_const, initializer, loc))
         } else if self.match_token(&[TokenType::Function]) {
+            let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected function name.")?;
             self.consume(TokenType::LeftParen, "Expected '(' after function name.")?;
             let mut params = Vec::new();
@@ -151,16 +164,27 @@ impl Parser {
             }
             self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
             let body = Stmt::Block(stmts);
-            Ok(Stmt::VarDecl(name, false, Expr::Function(params, Box::new(body))))
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::VarDecl(name, false, Expr::Function(params, Box::new(body)), loc))
         } else if self.check_ident() && {
             // Check for simple assignment without let/const: ident = expr
             self.current + 1 < self.tokens.len()
                 && self.tokens[self.current + 1].ty == TokenType::Equal
         } {
+            let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected variable name.")?;
             self.advance(); // consume =
             let expr = self.expression()?;
-            Ok(Stmt::Expr(Expr::Assign(name, Box::new(expr))))
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::Expr(Expr::Assign(name, Box::new(expr), loc)))
         } else {
             self.statement()
         }
@@ -227,8 +251,8 @@ impl Parser {
         let expr = self.or()?;
         if self.match_token(&[TokenType::Equal]) {
             let value = self.assignment()?;
-            if let Expr::Variable(name) = expr {
-                return Ok(Expr::Assign(name, Box::new(value)));
+            if let Expr::Variable(name, loc) = expr {
+                return Ok(Expr::Assign(name, Box::new(value), loc));
             } else if let Expr::Get(obj, name) = expr {
                 return Ok(Expr::Set(obj, name, Box::new(value)));
             } else if let Expr::GetIndex(obj, index) = expr {
@@ -397,8 +421,14 @@ impl Parser {
         }
 
         if self.check_ident() {
+            let tok = self.peek().clone();
             let name = self.consume_ident("Expected identifier")?;
-            return Ok(Expr::Variable(name));
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: tok.line,
+                col: tok.col,
+            };
+            return Ok(Expr::Variable(name, loc));
         }
 
         if self.match_token(&[TokenType::LeftParen]) {
@@ -505,7 +535,7 @@ fn get_exported_names(stmts: &[Stmt]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for stmt in stmts {
         if let Stmt::Export(inner) = stmt {
-            if let Stmt::VarDecl(name, _, _) = &**inner {
+            if let Stmt::VarDecl(name, _, _, _) = &**inner {
                 names.insert(name.clone());
             }
         }
@@ -570,7 +600,7 @@ fn resolve_imports_recursive(
         .map_err(|e| format!("Failed to read file {:?}: {}", canonical, e))?;
 
     let tokens = super::lexer::lex(&content);
-    let mut parser = Parser::new(tokens);
+    let mut parser = Parser::new(tokens).with_file_path(canonical.to_string_lossy().to_string());
     let stmts = parser.parse()?;
 
     // Populate visited_exports for this file with its direct exports

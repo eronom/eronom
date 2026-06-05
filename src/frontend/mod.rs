@@ -5,5 +5,5 @@ pub mod parser;
 
 pub use token::{Token, TokenType};
 pub use lexer::{Lexer, lex};
-pub use ast::{Expr, LiteralValue, Stmt};
+pub use ast::{Expr, LiteralValue, Stmt, SourceLocation};
 pub use parser::{Parser, parse_and_resolve_imports};

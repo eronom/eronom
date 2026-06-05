@@ -5,6 +5,7 @@ use super::token::{Token, TokenType};
 pub struct Lexer<'a> {
     chars: Peekable<Chars<'a>>,
     line: usize,
+    col: usize,
     buffer: Vec<Token>,
 }
 
@@ -13,6 +14,7 @@ impl<'a> Lexer<'a> {
         Self {
             chars: source.chars().peekable(),
             line: 1,
+            col: 1,
             buffer: Vec::new(),
         }
     }
@@ -21,6 +23,9 @@ impl<'a> Lexer<'a> {
         let c = self.chars.next();
         if c == Some('\n') {
             self.line += 1;
+            self.col = 1;
+        } else if c.is_some() {
+            self.col += 1;
         }
         c
     }
@@ -70,6 +75,7 @@ impl<'a> Lexer<'a> {
 
         self.skip_whitespace();
         let line = self.line;
+        let col = self.col;
 
         let c = match self.advance() {
             Some(c) => c,
@@ -77,6 +83,7 @@ impl<'a> Lexer<'a> {
                 return Token {
                     ty: TokenType::Eof,
                     line,
+                    col,
                 };
             }
         };
@@ -144,10 +151,12 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token {
                             ty: TokenType::String(string.clone()),
                             line: self.line,
+                            col: self.col,
                         });
                         tokens.push(Token {
                             ty: TokenType::Plus,
                             line: self.line,
+                            col: self.col,
                         });
                         string.clear();
 
@@ -170,6 +179,7 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token {
                             ty: TokenType::Plus,
                             line: self.line,
+                            col: self.col,
                         });
                     } else {
                         string.push(nc);
@@ -185,6 +195,7 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token {
                             ty: TokenType::String(string),
                             line: self.line,
+                            col: self.col,
                         });
                     }
                     self.buffer.extend(tokens.into_iter().rev());
@@ -244,7 +255,7 @@ impl<'a> Lexer<'a> {
             _ => TokenType::Eof, // Or an error token, but for simplicity...
         };
 
-        Token { ty, line }
+        Token { ty, line, col }
     }
 }
 

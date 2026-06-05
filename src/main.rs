@@ -122,7 +122,10 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     let compiler = Compiler::new();
     let function = match compiler.compile(&stmts) {
         Ok(f) => f,
-        Err(e) => anyhow::bail!("Compile error: {}", e),
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
     };
 
     let mut vm = VM::new();
