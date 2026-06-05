@@ -1564,6 +1564,26 @@ mod tests {
     }
 
     #[test]
+    fn test_struct() {
+        let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\nlet val = p.name").unwrap();
+        assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Vishnu");
+    }
+
+    #[test]
+    fn test_struct_type_safety() {
+        let code = "struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: 67,\n  age: 25,\n}";
+        let res = run_code(code);
+        match res {
+            Err(err) => {
+                assert!(err.contains("Expected type \"string\" but got 67"));
+            }
+            Ok(_) => {
+                panic!("Expected type error but code compiled successfully");
+            }
+        }
+    }
+
+    #[test]
     fn test_incremental_garbage_collector() {
         gc_free_all();
 

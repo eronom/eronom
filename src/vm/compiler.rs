@@ -9,6 +9,7 @@ pub struct Compiler {
     scope_depth: usize,
     next_reg: usize,
     const_globals: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, crate::frontend::SourceLocation>>>,
+    structs: std::collections::HashMap<String, Vec<(String, String)>>,
 }
 
 struct Local {
@@ -38,6 +39,7 @@ impl Compiler {
             scope_depth: 0,
             next_reg: 0,
             const_globals: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            structs: std::collections::HashMap::new(),
         }
     }
 
@@ -46,6 +48,7 @@ impl Compiler {
     }
 
     pub fn compile(mut self, stmts: &[Stmt]) -> Result<Function, String> {
+        collect_structs(stmts, &mut self.structs);
         for stmt in stmts {
             self.compile_stmt(stmt)?;
         }
@@ -81,7 +84,10 @@ impl Compiler {
                     1,
                 );
             }
-            Stmt::VarDecl(name, is_const, expr, loc) => {
+            Stmt::VarDecl(name, type_annotation, is_const, expr, loc) => {
+                if let Some(t_name) = type_annotation {
+                    check_type(expr, t_name, &self.structs, loc)?;
+                }
                 if self.scope_depth > 0 {
                     let local_reg = self.locals.len();
                     self.compile_expr(expr, local_reg)?;
@@ -211,6 +217,7 @@ impl Compiler {
             Stmt::Export(inner) => {
                 self.compile_stmt(inner)?;
             }
+            Stmt::Struct(_, _, _) => {}
         }
         Ok(())
     }
@@ -438,6 +445,7 @@ impl Compiler {
             Expr::Function(params, body) => {
                 let mut compiler = Compiler::new();
                 compiler.const_globals = self.const_globals.clone();
+                compiler.structs = self.structs.clone();
                 compiler.function.arity = params.len();
                 compiler.function.is_async = false;
                 compiler.next_reg = params.len();
@@ -584,4 +592,136 @@ impl Compiler {
             decl_loc.file_path, decl_loc.line, decl_loc.col
         )
     }
+}
+
+fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, Vec<(String, String)>>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Struct(name, fields, _) => {
+                map.insert(name.clone(), fields.clone());
+            }
+            Stmt::Block(inner_stmts) => {
+                collect_structs(inner_stmts, map);
+            }
+            Stmt::If(_, then_branch, else_branch) => {
+                collect_structs(std::slice::from_ref(then_branch), map);
+                if let Some(eb) = else_branch {
+                    collect_structs(std::slice::from_ref(eb), map);
+                }
+            }
+            Stmt::For(_, _, _, body) => {
+                collect_structs(std::slice::from_ref(body), map);
+            }
+            Stmt::Export(inner) => {
+                collect_structs(std::slice::from_ref(inner), map);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn check_type(
+    expr: &Expr,
+    expected_type: &str,
+    structs: &std::collections::HashMap<String, Vec<(String, String)>>,
+    loc: &crate::frontend::SourceLocation,
+) -> Result<(), String> {
+    if let Some(struct_fields) = structs.get(expected_type) {
+        match expr {
+            Expr::Object(pairs) => {
+                let mut object_fields = std::collections::HashMap::new();
+                for (k, v) in pairs {
+                    object_fields.insert(k.clone(), v);
+                }
+
+                for (field_name, field_type) in struct_fields {
+                    if let Some(field_val_expr) = object_fields.remove(field_name) {
+                        check_type(field_val_expr, field_type, structs, loc)?;
+                    } else {
+                        return Err(format!(
+                            "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
+                            field_name, field_type, expected_type, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                }
+
+                if !object_fields.is_empty() {
+                    let extra_fields: Vec<String> = object_fields.keys().cloned().collect();
+                    return Err(format!(
+                        "error: Extra fields {:?} not declared in struct \"{}\"\n    at {}:{}:{}",
+                        extra_fields, expected_type, loc.file_path, loc.line, loc.col
+                    ));
+                }
+            }
+            Expr::Literal(LiteralValue::Null) => {}
+            _ => {
+                return Err(format!(
+                    "error: Expected struct \"{}\" but got non-object expression\n    at {}:{}:{}",
+                    expected_type, loc.file_path, loc.line, loc.col
+                ));
+            }
+        }
+    } else {
+        match expected_type {
+            "string" => {
+                match expr {
+                    Expr::Literal(LiteralValue::String(_)) => {}
+                    Expr::Literal(LiteralValue::Null) => {}
+                    Expr::Literal(val) => {
+                        let got_str = match val {
+                            LiteralValue::Number(n) => n.to_string(),
+                            LiteralValue::String(s) => format!("\"{}\"", s),
+                            LiteralValue::Boolean(b) => b.to_string(),
+                            LiteralValue::Null => "null".to_string(),
+                        };
+                        return Err(format!(
+                            "error: Expected type \"string\" but got {}\n    at {}:{}:{}",
+                            got_str, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            "int" | "number" | "float" => {
+                match expr {
+                    Expr::Literal(LiteralValue::Number(_)) => {}
+                    Expr::Literal(LiteralValue::Null) => {}
+                    Expr::Literal(val) => {
+                        let got_str = match val {
+                            LiteralValue::Number(n) => n.to_string(),
+                            LiteralValue::String(s) => format!("\"{}\"", s),
+                            LiteralValue::Boolean(b) => b.to_string(),
+                            LiteralValue::Null => "null".to_string(),
+                        };
+                        return Err(format!(
+                            "error: Expected type \"{}\" but got {}\n    at {}:{}:{}",
+                            expected_type, got_str, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            "bool" | "boolean" => {
+                match expr {
+                    Expr::Literal(LiteralValue::Boolean(_)) => {}
+                    Expr::Literal(LiteralValue::Null) => {}
+                    Expr::Literal(val) => {
+                        let got_str = match val {
+                            LiteralValue::Number(n) => n.to_string(),
+                            LiteralValue::String(s) => format!("\"{}\"", s),
+                            LiteralValue::Boolean(b) => b.to_string(),
+                            LiteralValue::Null => "null".to_string(),
+                        };
+                        return Err(format!(
+                            "error: Expected type \"{}\" but got {}\n    at {}:{}:{}",
+                            expected_type, got_str, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }

@@ -122,14 +122,41 @@ impl Parser {
         } else if self.match_token(&[TokenType::Export]) {
             let decl = self.declaration()?;
             Ok(Stmt::Export(Box::new(decl)))
+        } else if self.match_token(&[TokenType::Struct]) {
+            let name_tok = self.peek().clone();
+            let name = self.consume_ident("Expected struct name.")?;
+            self.consume(TokenType::LeftBrace, "Expected '{' before struct body.")?;
+            let mut fields = Vec::new();
+            if !self.check(&TokenType::RightBrace) {
+                loop {
+                    let field_name = self.consume_ident("Expected field name.")?;
+                    self.consume(TokenType::Colon, "Expected ':' after field name.")?;
+                    let field_type = self.consume_ident("Expected field type.")?;
+                    fields.push((field_name, field_type));
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                    if self.check(&TokenType::RightBrace) {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after struct body.")?;
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::Struct(name, fields, loc))
         } else if self.match_token(&[TokenType::Let, TokenType::Const]) {
             let is_const = self.previous().ty == TokenType::Const;
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected variable name.")?;
 
             // Skip optional type annotation like `: string`
+            let mut type_annotation = None;
             if self.match_token(&[TokenType::Colon]) {
-                self.consume_ident("Expected type name after ':'.")?;
+                type_annotation = Some(self.consume_ident("Expected type name after ':'.")?);
             }
 
             let mut initializer = Expr::Literal(LiteralValue::Null);
@@ -141,7 +168,7 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::VarDecl(name, is_const, initializer, loc))
+            Ok(Stmt::VarDecl(name, type_annotation, is_const, initializer, loc))
         } else if self.match_token(&[TokenType::Function]) {
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected function name.")?;
@@ -169,7 +196,7 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::VarDecl(name, false, Expr::Function(params, Box::new(body)), loc))
+            Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, Box::new(body)), loc))
         } else if self.check_ident() && {
             // Check for simple assignment without let/const: ident = expr
             self.current + 1 < self.tokens.len()
@@ -512,6 +539,9 @@ impl Parser {
                     if !self.match_token(&[TokenType::Comma]) {
                         break;
                     }
+                    if self.check(&TokenType::RightBrace) {
+                        break;
+                    }
                 }
             }
             self.consume(
@@ -535,7 +565,7 @@ fn get_exported_names(stmts: &[Stmt]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for stmt in stmts {
         if let Stmt::Export(inner) = stmt {
-            if let Stmt::VarDecl(name, _, _, _) = &**inner {
+            if let Stmt::VarDecl(name, _, _, _, _) = &**inner {
                 names.insert(name.clone());
             }
         }

@@ -43,6 +43,7 @@ pub enum TokenType {
     Export,
     From,
     Function,
+    Struct,
     Eof,
 }
 

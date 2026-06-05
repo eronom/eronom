@@ -249,6 +249,7 @@ impl<'a> Lexer<'a> {
                     "export" => TokenType::Export,
                     "from" => TokenType::From,
                     "fn" => TokenType::Function,
+                    "struct" => TokenType::Struct,
                     _ => TokenType::Identifier(ident),
                 }
             }

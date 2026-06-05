@@ -36,11 +36,12 @@ pub enum LiteralValue {
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
-    VarDecl(String, bool, Expr, SourceLocation), // name, is_const, initializer, location
+    VarDecl(String, Option<String>, bool, Expr, SourceLocation), // name, type_annotation, is_const, initializer, location
     Block(Vec<Stmt>),
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
     For(String, Expr, Expr, Box<Stmt>), // var, start, end, body
     Return(Option<Expr>),
     Import(Vec<String>, String), // imported names, source path
     Export(Box<Stmt>), // exported declaration statement
+    Struct(String, Vec<(String, String)>, SourceLocation), // name, fields (name, type), location
 }
