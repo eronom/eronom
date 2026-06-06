@@ -217,7 +217,27 @@ impl Compiler {
             Stmt::Export(inner) => {
                 self.compile_stmt(inner)?;
             }
-            Stmt::Struct(_, _, _) => {}
+            Stmt::Struct(name, fields, _) => {
+                let name_val = Value::string(get_or_create_string(name.as_str()));
+                let name_idx = self.current_chunk().add_constant(name_val);
+                
+                let mut field_names_vals = Vec::new();
+                for (field_name, _) in fields {
+                    let f_ptr = get_or_create_string(field_name.as_str());
+                    field_names_vals.push(Value::string(f_ptr));
+                }
+                let array_ptr = gc_allocate(GcData::Array(field_names_vals));
+                let fields_val = Value::array(array_ptr);
+                let fields_idx = self.current_chunk().add_constant(fields_val);
+
+                self.current_chunk().write_instruction(
+                    OpCode::DefineStruct,
+                    fields_idx as u8,
+                    0,
+                    0,
+                    name_idx as u32,
+                );
+            }
         }
         Ok(())
     }

@@ -89,7 +89,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_jit_define_struct\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -120,6 +120,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_array_push: proto i64, i64:arr, i64:arg\n");
     mir.push_str("p_array_pop: proto i64, i64:arr\n");
     mir.push_str("p_has_error: proto i64, p:vm\n");
+    mir.push_str("p_def_struct: proto i64, p:vm, i64:name, i64:fields\n");
 
     mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter\n");
     mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr\n");
@@ -131,6 +132,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::MakeArray => inst.rb as usize + inst.operand as usize,
             OpCode::MakeObject => inst.rb as usize + 2 * (inst.operand as usize),
             OpCode::Call => inst.rb as usize + 1 + inst.operand as usize,
+            OpCode::DefineStruct => 0,
             _ => {
                 let mut m = inst.ra as usize;
                 if inst.rb as usize > m { m = inst.rb as usize; }
@@ -1031,6 +1033,13 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
                 mir.push_str(&format!("          call p_def_global, er_jit_define_global, status, vm, tmp1, r{}\n", ra));
             }
+            OpCode::DefineStruct => {
+                let name_idx = instruction.operand;
+                let fields_idx = instruction.ra as u32;
+                mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", name_idx * 8));
+                mir.push_str(&format!("          mov tmp2, i64:{}(constants_ptr)\n", fields_idx * 8));
+                mir.push_str("          call p_def_struct, er_jit_define_struct, status, vm, tmp1, tmp2\n");
+            }
             OpCode::GetGlobal => {
                 let c_idx = instruction.operand;
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
@@ -1419,7 +1428,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                     gen_set[pc][ra] = true;
                 }
             }
-            OpCode::Loop | OpCode::Jump => {}
+            OpCode::Loop | OpCode::Jump | OpCode::DefineStruct => {}
             OpCode::Call => {
                 if rb < num_regs {
                     gen_set[pc][rb] = true;
@@ -1638,6 +1647,7 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         ("er_jit_array_pop", helpers::er_jit_array_pop as *mut c_void),
         ("er_jit_has_error", helpers::er_jit_has_error as *mut c_void),
         ("er_jit_needs_gc", helpers::er_jit_needs_gc as *mut c_void),
+        ("er_jit_define_struct", helpers::er_jit_define_struct as *mut c_void),
     ];
 
     for &(name, ptr) in helpers {

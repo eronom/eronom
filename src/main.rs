@@ -36,17 +36,31 @@ fn native_render(args: Vec<Value>) -> Value {
     let mut params_map = std::collections::HashMap::new();
     if params_val.is_object() {
         unsafe {
-            if let backend::GcData::Object(map) = &(*params_val.as_gc_ptr()).data {
-                for (k, v) in map {
-                    if let Some(key_str) = k.0.as_str() {
+            match &(*params_val.as_gc_ptr()).data {
+                backend::GcData::Object(map) => {
+                    for (k, v) in map {
+                        if let Some(key_str) = k.0.as_str() {
+                            let val_str = if let Some(s) = v.as_str() {
+                                s.to_string()
+                            } else {
+                                v.to_string()
+                            };
+                            params_map.insert(key_str.to_string(), val_str);
+                        }
+                    }
+                }
+                backend::GcData::Struct(s) => {
+                    for (name, &idx) in &s.descriptor.field_indices {
+                        let v = s.fields[idx];
                         let val_str = if let Some(s) = v.as_str() {
                             s.to_string()
                         } else {
                             v.to_string()
                         };
-                        params_map.insert(key_str.to_string(), val_str);
+                        params_map.insert(name.to_string(), val_str);
                     }
                 }
+                _ => {}
             }
         }
     }
