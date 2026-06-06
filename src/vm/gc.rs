@@ -42,7 +42,7 @@ pub struct GcPromise {
 #[derive(Clone, Debug)]
 pub struct StructDescriptor {
     pub name: Rc<str>,
-    pub field_indices: FnvHashMap<Rc<str>, usize>,
+    pub field_indices: FnvHashMap<super::value::MapKey, usize>,
 }
 
 #[derive(Clone)]
@@ -52,13 +52,23 @@ pub struct GcStruct {
 }
 
 impl GcStruct {
-    pub fn get_field(&self, name: &str) -> Option<Value> {
-        let idx = self.descriptor.field_indices.get(name)?;
+    pub fn get_field(&self, name_val: Value) -> Option<Value> {
+        let idx = self.descriptor.field_indices.get(&super::value::MapKey(name_val))?;
         Some(self.fields[*idx])
     }
 
-    pub fn set_field(&mut self, name: &str, val: Value) -> bool {
-        if let Some(idx) = self.descriptor.field_indices.get(name) {
+    pub fn get_field_by_name(&self, name: &str) -> Option<Value> {
+        for (map_key, &idx) in &self.descriptor.field_indices {
+            let k_str = map_key.0.as_str().unwrap_or("");
+            if k_str == name {
+                return Some(self.fields[idx]);
+            }
+        }
+        None
+    }
+
+    pub fn set_field(&mut self, name_val: Value, val: Value) -> bool {
+        if let Some(idx) = self.descriptor.field_indices.get(&super::value::MapKey(name_val)) {
             self.fields[*idx] = val;
             true
         } else {

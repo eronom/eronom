@@ -50,7 +50,8 @@ fn native_render(args: Vec<Value>) -> Value {
                     }
                 }
                 backend::GcData::Struct(s) => {
-                    for (name, &idx) in &s.descriptor.field_indices {
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        let name = map_key.0.as_str().unwrap_or("");
                         let v = s.fields[idx];
                         let val_str = if let Some(s) = v.as_str() {
                             s.to_string()

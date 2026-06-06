@@ -68,6 +68,9 @@ pub struct VM {
     pub alloc_count_local: usize,
     pub use_evented_io: bool,
     pub structs: FnvHashMap<Rc<str>, Rc<super::gc::StructDescriptor>>,
+    pub last_matched_keys: Vec<Value>,
+    pub last_matched_descriptor: Option<Rc<super::gc::StructDescriptor>>,
+    pub last_matched_offsets: Vec<usize>,
     
     // Event loop fields
     pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
@@ -112,24 +115,66 @@ impl VM {
             alloc_count_local: 0,
             use_evented_io: true,
             structs: FnvHashMap::default(),
+            last_matched_keys: Vec::new(),
+            last_matched_descriptor: None,
+            last_matched_offsets: Vec::new(),
             event_loop_queue: Arc::new(Mutex::new(Vec::new())),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    pub fn find_matching_struct(&self, keys: &[Rc<str>]) -> Option<Rc<super::gc::StructDescriptor>> {
+    pub fn find_matching_struct(&self, keys: &[Value]) -> Option<Rc<super::gc::StructDescriptor>> {
         for desc in self.structs.values() {
             if desc.field_indices.len() == keys.len() {
                 let mut all_match = true;
-                for key in keys {
-                    if !desc.field_indices.contains_key(key) {
+                for &key in keys {
+                    if !desc.field_indices.contains_key(&super::value::MapKey(key)) {
                         all_match = false;
                         break;
                     }
                 }
                 if all_match {
                     return Some(desc.clone());
+                }
+            }
+        }
+        None
+    }
+
+    pub fn find_matching_struct_cached(&mut self, keys: &[Value]) -> Option<(Rc<super::gc::StructDescriptor>, Vec<usize>)> {
+        if self.last_matched_descriptor.is_some() && self.last_matched_keys.len() == keys.len() {
+            let mut match_ok = true;
+            for i in 0..keys.len() {
+                if self.last_matched_keys[i].0 != keys[i].0 {
+                    match_ok = false;
+                    break;
+                }
+            }
+            if match_ok {
+                return Some((self.last_matched_descriptor.as_ref().unwrap().clone(), self.last_matched_offsets.clone()));
+            }
+        }
+
+        for desc in self.structs.values() {
+            if desc.field_indices.len() == keys.len() {
+                let mut all_match = true;
+                for &key in keys {
+                    if !desc.field_indices.contains_key(&super::value::MapKey(key)) {
+                        all_match = false;
+                        break;
+                    }
+                }
+                if all_match {
+                    let mut offsets = Vec::with_capacity(keys.len());
+                    for &key in keys {
+                        let idx = *desc.field_indices.get(&super::value::MapKey(key)).unwrap();
+                        offsets.push(idx);
+                    }
+                    self.last_matched_keys = keys.to_vec();
+                    self.last_matched_descriptor = Some(desc.clone());
+                    self.last_matched_offsets = offsets.clone();
+                    return Some((desc.clone(), offsets));
                 }
             }
         }
@@ -903,22 +948,17 @@ impl VM {
                             if !key_val.is_string() {
                                 return Err("Object key must be string".into());
                             }
-                            let name_rc = match &(*key_val.as_gc_ptr()).data {
-                                GcData::String(s) => s.clone(),
-                                _ => unreachable!(),
-                            };
-                            keys.push(name_rc);
+                            keys.push(key_val);
                             values.push(val);
                         }
 
-                        let desc = self.find_matching_struct(&keys);
-                        let ptr = if let Some(desc) = desc {
-                            let mut fields = vec![Value::null(); keys.len()];
+                        let ptr = if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys) {
+                            let mut fields = super::gc::get_pooled_vec(keys.len());
+                            fields.resize(keys.len(), Value::null());
                             for i in 0..count {
-                                let key = &keys[i];
                                 let val = values[i];
-                                let idx = desc.field_indices.get(key.as_ref()).unwrap();
-                                fields[*idx] = val;
+                                let idx = offsets[i];
+                                fields[idx] = val;
                             }
                             gc_allocate(GcData::Struct(super::gc::GcStruct {
                                 descriptor: desc,
@@ -952,7 +992,7 @@ impl VM {
                                 let body_key = super::gc::get_or_create_string("_body");
                                 let is_response = match &(*ptr).data {
                                     GcData::Object(map) => map.contains_key(&super::value::MapKey(Value::string(body_key))),
-                                    GcData::Struct(s) => s.get_field("_body").is_some(),
+                                    GcData::Struct(s) => s.get_field_by_name("_body").is_some(),
                                     _ => false,
                                 };
                                 if is_response {
@@ -974,7 +1014,7 @@ impl VM {
                                         *frame_slots.add(dest) = val;
                                     }
                                     GcData::Struct(s) => {
-                                        let val = s.get_field(name).unwrap_or(Value::null());
+                                        let val = s.get_field(name_val).unwrap_or(Value::null());
                                         *frame_slots.add(dest) = val;
                                     }
                                     _ => unreachable!(),
@@ -1021,13 +1061,10 @@ impl VM {
                                     gc_write_barrier(ptr, &val);
                                 }
                                 GcData::Struct(s) => {
-                                    let name = match &(*name_val.as_gc_ptr()).data {
-                                        GcData::String(st) => st.as_ref(),
-                                        _ => "",
-                                    };
-                                    if s.set_field(name, val) {
+                                    if s.set_field(name_val, val) {
                                         gc_write_barrier(ptr, &val);
                                     } else {
+                                        let name = name_val.as_str().unwrap_or("");
                                         return Err(format!("Struct has no field '{}'", name));
                                     }
                                 }
@@ -1107,11 +1144,7 @@ impl VM {
                                         *frame_slots.add(dest) = val;
                                     }
                                     GcData::Struct(s) => {
-                                        let name = match &(*index.as_gc_ptr()).data {
-                                            GcData::String(st) => st.as_ref(),
-                                            _ => unreachable!(),
-                                        };
-                                        let val = s.get_field(name).unwrap_or(Value::null());
+                                        let val = s.get_field(index).unwrap_or(Value::null());
                                         *frame_slots.add(dest) = val;
                                     }
                                     _ => unreachable!(),
@@ -1186,13 +1219,10 @@ impl VM {
                                         gc_write_barrier(ptr, &val);
                                     }
                                     GcData::Struct(s) => {
-                                        let name = match &(*index.as_gc_ptr()).data {
-                                            GcData::String(st) => st.as_ref(),
-                                            _ => unreachable!(),
-                                        };
-                                        if s.set_field(name, val) {
+                                        if s.set_field(index, val) {
                                             gc_write_barrier(ptr, &val);
                                         } else {
+                                            let name = index.as_str().unwrap_or("");
                                             return Err(format!("Struct has no field '{}'", name));
                                         }
                                     }
@@ -1386,17 +1416,13 @@ impl VM {
                             _ => unreachable!(),
                         };
                         let fields_vec = match &(*fields_val.as_gc_ptr()).data {
-                            GcData::Array(arr) => arr.clone(),
+                            GcData::Array(arr) => arr,
                             _ => unreachable!(),
                         };
                         
                         let mut field_indices = FnvHashMap::default();
-                        for (idx, f_val) in fields_vec.iter().enumerate() {
-                            let f_name = match &(*f_val.as_gc_ptr()).data {
-                                GcData::String(s) => s.clone(),
-                                _ => unreachable!(),
-                            };
-                            field_indices.insert(f_name, idx);
+                        for (idx, &f_val) in fields_vec.iter().enumerate() {
+                            field_indices.insert(super::value::MapKey(f_val), idx);
                         }
                         
                         let descriptor = std::rc::Rc::new(super::gc::StructDescriptor {

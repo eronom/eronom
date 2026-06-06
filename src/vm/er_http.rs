@@ -353,7 +353,8 @@ pub fn value_to_json(val: Value) -> serde_json::Value {
                 }
                 GcData::Struct(s) => {
                     let mut obj = serde_json::Map::new();
-                    for (name, &idx) in &s.descriptor.field_indices {
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        let name = map_key.0.as_str().unwrap_or("");
                         obj.insert(name.to_string(), value_to_json(s.fields[idx]));
                     }
                     serde_json::Value::Object(obj)
@@ -375,11 +376,7 @@ fn get_property_helper(obj: Value, name_val: Value) -> Value {
                     return map.get(&crate::vm::value::MapKey(name_val)).cloned().unwrap_or(Value::null());
                 }
                 GcData::Struct(s) => {
-                    let name = match &(*name_val.as_gc_ptr()).data {
-                        GcData::String(st) => st.as_ref(),
-                        _ => "",
-                    };
-                    return s.get_field(name).unwrap_or(Value::null());
+                    return s.get_field(name_val).unwrap_or(Value::null());
                 }
                 _ => {}
             }
@@ -1217,7 +1214,7 @@ pub fn native_future_await(args: Vec<Value>) -> Value {
                     }
                 }
                 GcData::Struct(s) => {
-                    if let Some(val) = s.get_field("_promise") {
+                    if let Some(val) = s.get_field_by_name("_promise") {
                         if val.is_promise() {
                             val.as_gc_ptr()
                         } else {
