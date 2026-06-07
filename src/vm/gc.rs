@@ -39,6 +39,44 @@ pub struct GcPromise {
     pub suspended_frames: std::sync::Arc<std::sync::Mutex<Vec<crate::vm::execute::CallFrame>>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct StructDescriptor {
+    pub name: Rc<str>,
+    pub field_indices: FnvHashMap<super::value::MapKey, usize>,
+}
+
+#[derive(Clone)]
+pub struct GcStruct {
+    pub descriptor: Rc<StructDescriptor>,
+    pub fields: Vec<Value>,
+}
+
+impl GcStruct {
+    pub fn get_field(&self, name_val: Value) -> Option<Value> {
+        let idx = self.descriptor.field_indices.get(&super::value::MapKey(name_val))?;
+        Some(self.fields[*idx])
+    }
+
+    pub fn get_field_by_name(&self, name: &str) -> Option<Value> {
+        for (map_key, &idx) in &self.descriptor.field_indices {
+            let k_str = map_key.0.as_str().unwrap_or("");
+            if k_str == name {
+                return Some(self.fields[idx]);
+            }
+        }
+        None
+    }
+
+    pub fn set_field(&mut self, name_val: Value, val: Value) -> bool {
+        if let Some(idx) = self.descriptor.field_indices.get(&super::value::MapKey(name_val)) {
+            self.fields[*idx] = val;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 pub enum GcData {
     Empty,
     String(Rc<str>),
@@ -46,6 +84,7 @@ pub enum GcData {
     Object(ObjectMap),
     Function(Function),
     Promise(GcPromise),
+    Struct(GcStruct),
 }
 
 pub struct GcObject {
@@ -124,6 +163,11 @@ pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
                 let mut map = std::ptr::read(obj);
                 map.clear();
                 state.map_pool.push(map);
+            }
+            GcData::Struct(s) => {
+                let mut s_val = std::ptr::read(s);
+                s_val.fields.clear();
+                state.vector_pool.push(s_val.fields);
             }
             _ => {
                 std::ptr::drop_in_place(data);
@@ -266,6 +310,11 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
             GcData::Object(obj) => {
                 for (key, val) in obj {
                     gc_mark_value(&key.0);
+                    gc_mark_value(val);
+                }
+            }
+            GcData::Struct(s) => {
+                for val in &s.fields {
                     gc_mark_value(val);
                 }
             }

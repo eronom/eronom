@@ -306,6 +306,14 @@ impl fmt::Display for Value {
                             .collect();
                         write!(f, "{{{}}}", items.join(", "))
                     }
+                    GcData::Struct(s) => {
+                        let mut items = vec![String::new(); s.fields.len()];
+                        for (map_key, &idx) in &s.descriptor.field_indices {
+                            let name = map_key.0.as_str().unwrap_or("");
+                            items[idx] = format!("\"{}\": {}", name, s.fields[idx]);
+                        }
+                        write!(f, "{{{}}}", items.join(", "))
+                    }
                     _ => unreachable!(),
                 }
             }

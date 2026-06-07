@@ -1,0 +1,12 @@
+struct Player{
+    name: string,
+    age: int,
+}
+
+let p1 : Player = {
+    name: "vishnu",
+    age: 25,
+}
+
+print(p1.name)
+print(p1.age)

@@ -43,6 +43,7 @@ pub enum TokenType {
     Export,
     From,
     Function,
+    Struct,
     Eof,
 }
 
@@ -50,4 +51,5 @@ pub enum TokenType {
 pub struct Token {
     pub ty: TokenType,
     pub line: usize,
+    pub col: usize,
 }

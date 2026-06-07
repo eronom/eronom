@@ -1,10 +1,17 @@
 use super::token::TokenType;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceLocation {
+    pub file_path: String,
+    pub line: usize,
+    pub col: usize,
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(LiteralValue),
-    Variable(String),
-    Assign(String, Box<Expr>),
+    Variable(String, SourceLocation),
+    Assign(String, Box<Expr>, SourceLocation),
     Binary(Box<Expr>, TokenType, Box<Expr>),
     Logical(Box<Expr>, TokenType, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
@@ -29,11 +36,12 @@ pub enum LiteralValue {
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
-    VarDecl(String, bool, Expr), // name, is_const, initializer
+    VarDecl(String, Option<String>, bool, Expr, SourceLocation), // name, type_annotation, is_const, initializer, location
     Block(Vec<Stmt>),
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
     For(String, Expr, Expr, Box<Stmt>), // var, start, end, body
     Return(Option<Expr>),
     Import(Vec<String>, String), // imported names, source path
     Export(Box<Stmt>), // exported declaration statement
+    Struct(String, Vec<(String, String)>, SourceLocation), // name, fields (name, type), location
 }

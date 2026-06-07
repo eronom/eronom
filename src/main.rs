@@ -36,17 +36,32 @@ fn native_render(args: Vec<Value>) -> Value {
     let mut params_map = std::collections::HashMap::new();
     if params_val.is_object() {
         unsafe {
-            if let backend::GcData::Object(map) = &(*params_val.as_gc_ptr()).data {
-                for (k, v) in map {
-                    if let Some(key_str) = k.0.as_str() {
+            match &(*params_val.as_gc_ptr()).data {
+                backend::GcData::Object(map) => {
+                    for (k, v) in map {
+                        if let Some(key_str) = k.0.as_str() {
+                            let val_str = if let Some(s) = v.as_str() {
+                                s.to_string()
+                            } else {
+                                v.to_string()
+                            };
+                            params_map.insert(key_str.to_string(), val_str);
+                        }
+                    }
+                }
+                backend::GcData::Struct(s) => {
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        let name = map_key.0.as_str().unwrap_or("");
+                        let v = s.fields[idx];
                         let val_str = if let Some(s) = v.as_str() {
                             s.to_string()
                         } else {
                             v.to_string()
                         };
-                        params_map.insert(key_str.to_string(), val_str);
+                        params_map.insert(name.to_string(), val_str);
                     }
                 }
+                _ => {}
             }
         }
     }
@@ -122,15 +137,13 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     let compiler = Compiler::new();
     let function = match compiler.compile(&stmts) {
         Ok(f) => f,
-        Err(e) => anyhow::bail!("Compile error: {}", e),
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
     };
 
     let mut vm = VM::new();
-    if vm.use_jit {
-        eprintln!("[VM] Running with JIT compiler enabled");
-    } else {
-        eprintln!("[VM] Running with bytecode interpreter (no JIT)");
-    }
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("router", Value::native_function(backend::er_http::native_route));
     vm.register_global("render", Value::native_function(native_render));

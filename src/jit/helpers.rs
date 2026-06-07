@@ -3,6 +3,7 @@ use crate::vm::execute::VM;
 use crate::vm::value::{Value, MapKey, push_positive_integer, ADD_SCRATCH};
 use crate::vm::gc::{gc_allocate, gc_write_barrier, GcData, get_or_create_string, get_pooled_vec, get_pooled_map, GC_NEEDS_STEP};
 use super::profile::{JIT_PROFILING, JIT_PROFILER};
+use fnv::FnvHashMap;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_negate(vm: *mut VM, val: Value) -> Value {
@@ -255,10 +256,38 @@ pub extern "C" fn er_jit_make_array(_vm: *mut VM, start_reg: *const Value, count
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val: Value) -> i64 {
+    unsafe {
+        let name_rc = match &(*name_val.as_gc_ptr()).data {
+            GcData::String(s) => s.clone(),
+            _ => unreachable!(),
+        };
+        let fields_vec = match &(*fields_val.as_gc_ptr()).data {
+            GcData::Array(arr) => arr,
+            _ => unreachable!(),
+        };
+        
+        let mut field_indices = FnvHashMap::default();
+        for (idx, &f_val) in fields_vec.iter().enumerate() {
+            field_indices.insert(MapKey(f_val), idx);
+        }
+        
+        let descriptor = std::rc::Rc::new(crate::vm::gc::StructDescriptor {
+            name: name_rc.clone(),
+            field_indices,
+        });
+        (*vm).structs.insert(name_rc, descriptor);
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count: i64) -> Value {
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
-        let mut obj = get_pooled_map(count as usize);
+        let count_usize = count as usize;
+        let mut keys = Vec::with_capacity(count_usize);
+        let mut values = Vec::with_capacity(count_usize);
         for i in 0..count {
             let key_val = *start_reg.offset((i * 2) as isize);
             let val = *start_reg.offset((i * 2 + 1) as isize);
@@ -266,9 +295,31 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
                 (*vm).error = Some("Object key must be string".into());
                 return Value::null();
             }
-            obj.insert(MapKey(key_val), val);
+            keys.push(key_val);
+            values.push(val);
         }
-        let ptr = gc_allocate(GcData::Object(obj));
+
+        let ptr = if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
+            let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
+            fields.resize(keys.len(), Value::null());
+            for i in 0..count_usize {
+                let val = values[i];
+                let idx = offsets[i];
+                fields[idx] = val;
+            }
+            gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                descriptor: desc,
+                fields,
+            }))
+        } else {
+            let mut obj = get_pooled_map(count_usize);
+            for i in 0..count {
+                let key_val = *start_reg.offset((i * 2) as isize);
+                let val = *start_reg.offset((i * 2 + 1) as isize);
+                obj.insert(MapKey(key_val), val);
+            }
+            gc_allocate(GcData::Object(obj))
+        };
         let res = Value::object(ptr);
         if JIT_PROFILING {
             JIT_PROFILER.with(|p| {
@@ -297,6 +348,7 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
                 let body_key = get_or_create_string("_body");
                 let is_response = match &(*ptr).data {
                     GcData::Object(map) => map.contains_key(&MapKey(Value::string(body_key))),
+                    GcData::Struct(s) => s.get_field_by_name("_body").is_some(),
                     _ => false,
                 };
                 if is_response {
@@ -315,6 +367,9 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
                 match &(*ptr).data {
                     GcData::Object(map) => {
                         map.get(&MapKey(name_val)).cloned().unwrap_or(Value::null())
+                    }
+                    GcData::Struct(s) => {
+                        s.get_field(name_val).unwrap_or(Value::null())
                     }
                     _ => unreachable!(),
                 }
@@ -366,6 +421,16 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                     map.insert(MapKey(name_val), val);
                     gc_write_barrier(ptr, &val);
                     0
+                }
+                GcData::Struct(s) => {
+                    if s.set_field(name_val, val) {
+                        gc_write_barrier(ptr, &val);
+                        0
+                    } else {
+                        let name = name_val.as_str().unwrap_or("");
+                        (*vm).error = Some(format!("Struct has no field '{}'", name));
+                        -1
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -444,6 +509,9 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Val
                 match &(*ptr).data {
                     GcData::Object(map) => {
                         map.get(&MapKey(index)).cloned().unwrap_or(Value::null())
+                    }
+                    GcData::Struct(s) => {
+                        s.get_field(index).unwrap_or(Value::null())
                     }
                     _ => unreachable!(),
                 }
@@ -525,6 +593,16 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                         map.insert(MapKey(index), val);
                         gc_write_barrier(ptr, &val);
                         0
+                    }
+                    GcData::Struct(s) => {
+                        if s.set_field(index, val) {
+                            gc_write_barrier(ptr, &val);
+                            0
+                        } else {
+                            let name = index.as_str().unwrap_or("");
+                            (*vm).error = Some(format!("Struct has no field '{}'", name));
+                            -1
+                        }
                     }
                     _ => unreachable!(),
                 }

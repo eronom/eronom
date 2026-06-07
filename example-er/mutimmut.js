@@ -1,0 +1,7 @@
+let num = 5
+
+num = 6
+
+const newnumsss = 2
+
+newnumsss = 3

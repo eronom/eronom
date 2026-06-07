@@ -46,6 +46,7 @@ pub enum OpCode {
     SetIndex,
     Await,
     Return,
+    DefineStruct,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
