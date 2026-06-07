@@ -184,13 +184,21 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
-            self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
-            let mut stmts = Vec::new();
-            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
-                stmts.push(self.declaration()?);
-            }
-            self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
-            let body = Stmt::Block(stmts);
+            let body = if self.match_token(&[TokenType::Arrow]) {
+                let body_stmt = self.statement()?;
+                match body_stmt {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    other => other,
+                }
+            } else {
+                self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
+                let mut stmts = Vec::new();
+                while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                    stmts.push(self.declaration()?);
+                }
+                self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
+                Stmt::Block(stmts)
+            };
             let loc = SourceLocation {
                 file_path: self.file_path.clone(),
                 line: name_tok.line,
@@ -417,13 +425,21 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
-            self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
-            let mut stmts = Vec::new();
-            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
-                stmts.push(self.declaration()?);
-            }
-            self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
-            let body = Stmt::Block(stmts);
+            let body = if self.match_token(&[TokenType::Arrow]) {
+                let body_stmt = self.statement()?;
+                match body_stmt {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    other => other,
+                }
+            } else {
+                self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
+                let mut stmts = Vec::new();
+                while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                    stmts.push(self.declaration()?);
+                }
+                self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
+                Stmt::Block(stmts)
+            };
             return Ok(Expr::Function(params, Box::new(body)));
         }
 
@@ -465,6 +481,10 @@ impl Parser {
                     self.advance(); // consume RightParen
                     self.advance(); // consume Arrow
                     let body = self.statement()?;
+                    let body = match body {
+                        Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                        other => other,
+                    };
                     return Ok(Expr::Function(Vec::new(), Box::new(body)));
                 }
             }
@@ -494,6 +514,10 @@ impl Parser {
 
                 if is_arrow {
                     let body = self.statement()?;
+                    let body = match body {
+                        Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                        other => other,
+                    };
                     return Ok(Expr::Function(params, Box::new(body)));
                 } else {
                     self.current = save_pos;
@@ -505,6 +529,10 @@ impl Parser {
 
             if self.match_token(&[TokenType::Arrow]) {
                 let body = self.statement()?;
+                let body = match body {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    other => other,
+                };
                 return Ok(Expr::Function(vec![], Box::new(body)));
             }
 

@@ -1,0 +1,12 @@
+const start = () => {
+print("hello")
+}
+start()
+
+fn add(a, b) => print(a + b)
+
+add(2, 3)
+
+const sub = (a, b) => print(a - b)
+
+sub(5, 2)
