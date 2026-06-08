@@ -1772,6 +1772,21 @@ mod tests {
     }
 
     #[test]
+    fn test_struct_nested_typecheck() {
+        let code = "struct Position {\n  x: int,\n  y: int,\n}\nstruct Player {\n  pos: Position,\n  name: string,\n}\nlet position : Position = {\n  x: 10,\n  y: 20,\n}\nlet p : Player = {\n  pos: position,\n  name: \"Vishnu\",\n}\nlet val = p.pos.x";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("val").unwrap().as_number(), 10.0);
+    }
+
+    #[test]
+    fn test_struct_composition() {
+        let code = "struct Position {\n  x: int,\n  y: int,\n  fn printPos() {\n    return this.x\n  }\n}\nstruct Player {\n  Position,\n  name: string,\n  fn printPlayer() {\n    return this.name\n  }\n}\nlet p : Player = {\n  x: 10,\n  y: 20,\n  name: \"Vishnu\",\n}\nlet val_x = p.printPos()\nlet val_name = p.printPlayer()";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("val_x").unwrap().as_number(), 10.0);
+        assert_eq!(vm.get_global("val_name").unwrap().as_str().unwrap(), "Vishnu");
+    }
+
+    #[test]
     fn test_incremental_garbage_collector() {
         gc_free_all();
 

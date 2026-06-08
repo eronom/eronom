@@ -1,13 +1,25 @@
+struct Position {
+    x: int,
+    y: int,
+    fn printPos() {
+        print("x: {this.x}, y: {this.y}")
+    }
+}
+
 struct Player {
+    Position,
     name: string,
     age: int,
     fn printPlayer() {
-        print(this.name)
-        print(this.age)
+        print("Player name: {this.name}")
+        print("Player age: {this.age}")
+        this.printPos()
     }
 }
 
 let p : Player = {
+    x: 10,
+    y: 20,
     name: "vishnu",
     age: 25,
 }

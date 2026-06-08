@@ -3,13 +3,26 @@ use super::value::Value;
 use super::bytecode::{Function, Chunk, OpCode};
 use super::gc::{gc_allocate, GcData, get_or_create_string};
 
+#[derive(Clone)]
+pub struct FlattenedStructInfo {
+    pub fields: Vec<(String, String)>,
+    pub methods: Vec<(String, Vec<String>, Stmt)>,
+}
+
+#[derive(Clone)]
+pub struct RawStructInfo {
+    pub composed: Vec<String>,
+    pub fields: Vec<(String, String)>,
+    pub methods: Vec<(String, Vec<String>, Stmt)>,
+}
+
 pub struct Compiler {
     function: Function,
     locals: Vec<Local>,
     scope_depth: usize,
     next_reg: usize,
     const_globals: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, crate::frontend::SourceLocation>>>,
-    structs: std::collections::HashMap<String, Vec<(String, String)>>,
+    structs: std::collections::HashMap<String, FlattenedStructInfo>,
 }
 
 struct Local {
@@ -48,7 +61,17 @@ impl Compiler {
     }
 
     pub fn compile(mut self, stmts: &[Stmt]) -> Result<Function, String> {
-        collect_structs(stmts, &mut self.structs);
+        let mut raw_structs = std::collections::HashMap::new();
+        collect_structs(stmts, &mut raw_structs);
+
+        let mut resolved = std::collections::HashMap::new();
+        for name in raw_structs.keys() {
+            let mut visiting = std::collections::HashSet::new();
+            flatten_struct(name, &raw_structs, &mut resolved, &mut visiting)?;
+        }
+
+        self.structs = resolved;
+
         for stmt in stmts {
             self.compile_stmt(stmt)?;
         }
@@ -217,12 +240,16 @@ impl Compiler {
             Stmt::Export(inner) => {
                 self.compile_stmt(inner)?;
             }
-            Stmt::Struct(name, fields, methods, _) => {
+            Stmt::Struct(name, _, _, _, _) => {
+                let flat = self.structs.get(name).cloned().unwrap_or(FlattenedStructInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                });
                 let name_val = Value::string(get_or_create_string(name.as_str()));
                 let name_idx = self.current_chunk().add_constant(name_val);
                 
                 let mut field_names_vals = Vec::new();
-                for (field_name, _) in fields {
+                for (field_name, _) in &flat.fields {
                     let f_ptr = get_or_create_string(field_name.as_str());
                     field_names_vals.push(Value::string(f_ptr));
                 }
@@ -230,8 +257,8 @@ impl Compiler {
                 let fields_val = Value::array(array_ptr);
                 let fields_idx = self.current_chunk().add_constant(fields_val);
 
-                let mut methods_map = crate::vm::gc::get_pooled_map(methods.len());
-                for (m_name, m_params, m_body) in methods {
+                let mut methods_map = crate::vm::gc::get_pooled_map(flat.methods.len());
+                for (m_name, m_params, m_body) in &flat.methods {
                     let mut method_params = vec!["this".to_string()];
                     method_params.extend(m_params.clone());
 
@@ -649,11 +676,15 @@ impl Compiler {
     }
 }
 
-fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, Vec<(String, String)>>) {
+fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, RawStructInfo>) {
     for stmt in stmts {
         match stmt {
-            Stmt::Struct(name, fields, _, _) => {
-                map.insert(name.clone(), fields.clone());
+            Stmt::Struct(name, composed, fields, methods, _) => {
+                map.insert(name.clone(), RawStructInfo {
+                    composed: composed.clone(),
+                    fields: fields.clone(),
+                    methods: methods.clone(),
+                });
             }
             Stmt::Block(inner_stmts) => {
                 collect_structs(inner_stmts, map);
@@ -675,13 +706,64 @@ fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, V
     }
 }
 
+fn flatten_struct(
+    name: &str,
+    structs: &std::collections::HashMap<String, RawStructInfo>,
+    resolved: &mut std::collections::HashMap<String, FlattenedStructInfo>,
+    visiting: &mut std::collections::HashSet<String>,
+) -> Result<FlattenedStructInfo, String> {
+    if let Some(res) = resolved.get(name) {
+        return Ok(res.clone());
+    }
+    if visiting.contains(name) {
+        return Err(format!("Circular dependency detected in struct composition: {}", name));
+    }
+    visiting.insert(name.to_string());
+
+    let info = structs.get(name).ok_or_else(|| format!("Undefined struct: {}", name))?;
+    let mut flat_fields = Vec::new();
+    let mut flat_methods = Vec::new();
+
+    let own_field_names: std::collections::HashSet<&str> = info.fields.iter().map(|(n, _)| n.as_str()).collect();
+    for comp in &info.composed {
+        let comp_flat = flatten_struct(comp, structs, resolved, visiting)?;
+        for (f_name, f_type) in comp_flat.fields {
+            if !own_field_names.contains(f_name.as_str()) {
+                flat_fields.push((f_name, f_type));
+            }
+        }
+    }
+    flat_fields.extend(info.fields.clone());
+
+    let own_method_names: std::collections::HashSet<&str> = info.methods.iter().map(|(n, _, _)| n.as_str()).collect();
+    for comp in &info.composed {
+        let comp_flat = flatten_struct(comp, structs, resolved, visiting)?;
+        for (m_name, m_params, m_body) in comp_flat.methods {
+            if !own_method_names.contains(m_name.as_str()) {
+                flat_methods.push((m_name, m_params, m_body));
+            }
+        }
+    }
+    flat_methods.extend(info.methods.clone());
+
+    let flat_info = FlattenedStructInfo {
+        fields: flat_fields,
+        methods: flat_methods,
+    };
+
+    resolved.insert(name.to_string(), flat_info.clone());
+    visiting.remove(name);
+    Ok(flat_info)
+}
+
 fn check_type(
     expr: &Expr,
     expected_type: &str,
-    structs: &std::collections::HashMap<String, Vec<(String, String)>>,
+    structs: &std::collections::HashMap<String, FlattenedStructInfo>,
     loc: &crate::frontend::SourceLocation,
 ) -> Result<(), String> {
-    if let Some(struct_fields) = structs.get(expected_type) {
+    if let Some(struct_info) = structs.get(expected_type) {
+        let struct_fields = &struct_info.fields;
         match expr {
             Expr::Object(pairs) => {
                 let mut object_fields = std::collections::HashMap::new();
@@ -709,12 +791,19 @@ fn check_type(
                 }
             }
             Expr::Literal(LiteralValue::Null) => {}
-            _ => {
+            Expr::Literal(val) => {
+                let got_str = match val {
+                    LiteralValue::Number(n) => n.to_string(),
+                    LiteralValue::String(s) => format!("\"{}\"", s),
+                    LiteralValue::Boolean(b) => b.to_string(),
+                    LiteralValue::Null => "null".to_string(),
+                };
                 return Err(format!(
-                    "error: Expected struct \"{}\" but got non-object expression\n    at {}:{}:{}",
-                    expected_type, loc.file_path, loc.line, loc.col
+                    "error: Expected struct \"{}\" but got {}\n    at {}:{}:{}",
+                    expected_type, got_str, loc.file_path, loc.line, loc.col
                 ));
             }
+            _ => {}
         }
     } else {
         match expected_type {
