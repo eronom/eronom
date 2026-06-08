@@ -125,8 +125,17 @@ impl Parser {
         } else if self.match_token(&[TokenType::Struct]) {
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected struct name.")?;
-            self.consume(TokenType::LeftBrace, "Expected '{' before struct body.")?;
             let mut composed = Vec::new();
+            if self.match_token(&[TokenType::Embed]) {
+                loop {
+                    let parent = self.consume_ident("Expected parent struct name after 'embed'.")?;
+                    composed.push(parent);
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenType::LeftBrace, "Expected '{' before struct body.")?;
             let mut fields = Vec::new();
             let mut methods = Vec::new();
             if !self.check(&TokenType::RightBrace) {
@@ -154,13 +163,10 @@ impl Parser {
                         let body = Stmt::Block(stmts);
                         methods.push((method_name, params, body));
                     } else {
-                        let item_name = self.consume_ident("Expected field name or composed struct name.")?;
-                        if self.match_token(&[TokenType::Colon]) {
-                            let field_type = self.consume_ident("Expected field type.")?;
-                            fields.push((item_name, field_type));
-                        } else {
-                            composed.push(item_name);
-                        }
+                        let field_name = self.consume_ident("Expected field name.")?;
+                        self.consume(TokenType::Colon, "Expected ':' after field name.")?;
+                        let field_type = self.consume_ident("Expected field type.")?;
+                        fields.push((field_name, field_type));
                     }
                     self.match_token(&[TokenType::Comma]);
                     if self.check(&TokenType::RightBrace) || self.is_at_end() {

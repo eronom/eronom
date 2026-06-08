@@ -1780,10 +1780,11 @@ mod tests {
 
     #[test]
     fn test_struct_composition() {
-        let code = "struct Position {\n  x: int,\n  y: int,\n  fn printPos() {\n    return this.x\n  }\n}\nstruct Player {\n  Position,\n  name: string,\n  fn printPlayer() {\n    return this.name\n  }\n}\nlet p : Player = {\n  x: 10,\n  y: 20,\n  name: \"Vishnu\",\n}\nlet val_x = p.printPos()\nlet val_name = p.printPlayer()";
+        let code = "struct Position {\n  x: int,\n  y: int,\n  fn printPos() {\n    return this.x\n  }\n}\nstruct Parent {\n  fn getVal() {\n    return 100\n  }\n}\nstruct Player embed Position, Parent {\n  name: string,\n  fn printPlayer() {\n    return this.name\n  }\n  fn getVal() {\n    return super.getVal() + 5\n  }\n}\nlet p : Player = {\n  x: 10,\n  y: 20,\n  name: \"Vishnu\",\n}\nlet val_x = p.printPos()\nlet val_name = p.printPlayer()\nlet val_super = p.getVal()";
         let vm = run_code(code).unwrap();
         assert_eq!(vm.get_global("val_x").unwrap().as_number(), 10.0);
         assert_eq!(vm.get_global("val_name").unwrap().as_str().unwrap(), "Vishnu");
+        assert_eq!(vm.get_global("val_super").unwrap().as_number(), 105.0);
     }
 
     #[test]

@@ -6,20 +6,31 @@ struct Position {
     }
 }
 
-struct Player {
-    Position,
+struct AnoStr{
+    nameAno: string,
+    fn printPlayer() {
+        print("Player name from Anostr: {this.nameAno}")
+    }
+}
+
+struct Player embed AnoStr{
+    pos: Position,
     name: string,
     age: int,
     fn printPlayer() {
         print("Player name: {this.name}")
         print("Player age: {this.age}")
-        this.printPos()
+        super.printPlayer()
+        this.pos.printPos()
     }
 }
 
 let p : Player = {
-    x: 10,
-    y: 20,
+    pos: {
+        x: 10,
+        y: 20,
+    },
+    nameAno : "hey name",
     name: "vishnu",
     age: 25,
 }
