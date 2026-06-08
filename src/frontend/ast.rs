@@ -43,5 +43,5 @@ pub enum Stmt {
     Return(Option<Expr>),
     Import(Vec<String>, String), // imported names, source path
     Export(Box<Stmt>), // exported declaration statement
-    Struct(String, Vec<(String, String)>, SourceLocation), // name, fields (name, type), location
+    Struct(String, Vec<(String, String)>, Vec<(String, Vec<String>, Stmt)>, SourceLocation), // name, fields (name, type), methods (name, params, body), location
 }

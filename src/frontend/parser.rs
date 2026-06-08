@@ -127,16 +127,39 @@ impl Parser {
             let name = self.consume_ident("Expected struct name.")?;
             self.consume(TokenType::LeftBrace, "Expected '{' before struct body.")?;
             let mut fields = Vec::new();
+            let mut methods = Vec::new();
             if !self.check(&TokenType::RightBrace) {
                 loop {
-                    let field_name = self.consume_ident("Expected field name.")?;
-                    self.consume(TokenType::Colon, "Expected ':' after field name.")?;
-                    let field_type = self.consume_ident("Expected field type.")?;
-                    fields.push((field_name, field_type));
-                    if !self.match_token(&[TokenType::Comma]) {
-                        break;
+                    if self.match_token(&[TokenType::Function]) {
+                        let method_name = self.consume_ident("Expected method name.")?;
+                        self.consume(TokenType::LeftParen, "Expected '(' after method name.")?;
+                        let mut params = Vec::new();
+                        if !self.check(&TokenType::RightParen) {
+                            loop {
+                                let param = self.consume_ident("Expected parameter name.")?;
+                                params.push(param);
+                                if !self.match_token(&[TokenType::Comma]) {
+                                    break;
+                                }
+                            }
+                        }
+                        self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+                        self.consume(TokenType::LeftBrace, "Expected '{' before method body.")?;
+                        let mut stmts = Vec::new();
+                        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                            stmts.push(self.declaration()?);
+                        }
+                        self.consume(TokenType::RightBrace, "Expected '}' after method body.")?;
+                        let body = Stmt::Block(stmts);
+                        methods.push((method_name, params, body));
+                    } else {
+                        let field_name = self.consume_ident("Expected field name.")?;
+                        self.consume(TokenType::Colon, "Expected ':' after field name.")?;
+                        let field_type = self.consume_ident("Expected field type.")?;
+                        fields.push((field_name, field_type));
                     }
-                    if self.check(&TokenType::RightBrace) {
+                    self.match_token(&[TokenType::Comma]);
+                    if self.check(&TokenType::RightBrace) || self.is_at_end() {
                         break;
                     }
                 }
@@ -147,7 +170,7 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::Struct(name, fields, loc))
+            Ok(Stmt::Struct(name, fields, methods, loc))
         } else if self.match_token(&[TokenType::Let, TokenType::Const]) {
             let is_const = self.previous().ty == TokenType::Const;
             let name_tok = self.peek().clone();

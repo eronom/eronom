@@ -1,12 +1,17 @@
-struct Player{
+struct Player {
     name: string,
     age: int,
+    fn printPlayer() {
+        print(this.name)
+        print(this.age)
+    }
 }
 
-let p1 : Player = {
+let p : Player = {
     name: "vishnu",
     age: 25,
 }
 
-print(p1.name)
-print(p1.age)
+p.printPlayer()
+
+

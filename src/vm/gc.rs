@@ -43,6 +43,13 @@ pub struct GcPromise {
 pub struct StructDescriptor {
     pub name: Rc<str>,
     pub field_indices: FnvHashMap<super::value::MapKey, usize>,
+    pub methods: FnvHashMap<super::value::MapKey, Value>,
+}
+
+#[derive(Clone)]
+pub struct GcBoundMethod {
+    pub receiver: Value,
+    pub function: *mut GcObject,
 }
 
 #[derive(Clone)]
@@ -85,6 +92,7 @@ pub enum GcData {
     Function(Function),
     Promise(GcPromise),
     Struct(GcStruct),
+    BoundMethod(GcBoundMethod),
 }
 
 pub struct GcObject {
@@ -335,6 +343,10 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
                         gc_mark_value(&fn_val);
                     }
                 }
+            }
+            GcData::BoundMethod(bm) => {
+                gc_mark_value(&bm.receiver);
+                gc_mark_object(bm.function);
             }
         }
     }

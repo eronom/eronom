@@ -217,7 +217,7 @@ impl Compiler {
             Stmt::Export(inner) => {
                 self.compile_stmt(inner)?;
             }
-            Stmt::Struct(name, fields, _) => {
+            Stmt::Struct(name, fields, methods, _) => {
                 let name_val = Value::string(get_or_create_string(name.as_str()));
                 let name_idx = self.current_chunk().add_constant(name_val);
                 
@@ -230,10 +230,45 @@ impl Compiler {
                 let fields_val = Value::array(array_ptr);
                 let fields_idx = self.current_chunk().add_constant(fields_val);
 
+                let mut methods_map = crate::vm::gc::get_pooled_map(methods.len());
+                for (m_name, m_params, m_body) in methods {
+                    let mut method_params = vec!["this".to_string()];
+                    method_params.extend(m_params.clone());
+
+                    let mut compiler = Compiler::new();
+                    compiler.const_globals = self.const_globals.clone();
+                    compiler.structs = self.structs.clone();
+                    compiler.function.arity = method_params.len();
+                    compiler.function.is_async = false;
+                    compiler.next_reg = method_params.len();
+                    compiler.begin_scope();
+                    for param in &method_params {
+                        compiler.locals.push(Local {
+                            name: param.clone(),
+                            depth: compiler.scope_depth,
+                            is_const: false,
+                            loc: crate::frontend::SourceLocation::default(),
+                        });
+                    }
+                    compiler.compile_stmt(m_body)?;
+                    compiler.current_chunk().write_instruction(OpCode::LoadNull, 0, 0, 0, 0);
+                    compiler.current_chunk().write_instruction(OpCode::Return, 0, 0, 0, 0);
+
+                    let func = compiler.function;
+                    let func_ptr = gc_allocate(GcData::Function(func));
+                    let func_val = Value::function(func_ptr);
+
+                    let m_name_ptr = get_or_create_string(m_name.as_str());
+                    methods_map.insert(crate::vm::value::MapKey(Value::string(m_name_ptr)), func_val);
+                }
+                let methods_ptr = gc_allocate(GcData::Object(methods_map));
+                let methods_val = Value::object(methods_ptr);
+                let methods_idx = self.current_chunk().add_constant(methods_val);
+
                 self.current_chunk().write_instruction(
                     OpCode::DefineStruct,
                     fields_idx as u8,
-                    0,
+                    methods_idx as u8,
                     0,
                     name_idx as u32,
                 );
@@ -617,7 +652,7 @@ impl Compiler {
 fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, Vec<(String, String)>>) {
     for stmt in stmts {
         match stmt {
-            Stmt::Struct(name, fields, _) => {
+            Stmt::Struct(name, fields, _, _) => {
                 map.insert(name.clone(), fields.clone());
             }
             Stmt::Block(inner_stmts) => {

@@ -120,9 +120,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_array_push: proto i64, i64:arr, i64:arg\n");
     mir.push_str("p_array_pop: proto i64, i64:arr\n");
     mir.push_str("p_has_error: proto i64, p:vm\n");
-    mir.push_str("p_def_struct: proto i64, p:vm, i64:name, i64:fields\n");
+    mir.push_str("p_def_struct: proto i64, p:vm, i64:name, i64:fields, i64:methods\n");
 
-    mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter\n");
+    mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:tmp3, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter\n");
     mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr\n");
     mir.push_str("          local d:da, d:db, d:dres\n");
 
@@ -1036,9 +1036,11 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::DefineStruct => {
                 let name_idx = instruction.operand;
                 let fields_idx = instruction.ra as u32;
+                let methods_idx = instruction.rb as u32;
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", name_idx * 8));
                 mir.push_str(&format!("          mov tmp2, i64:{}(constants_ptr)\n", fields_idx * 8));
-                mir.push_str("          call p_def_struct, er_jit_define_struct, status, vm, tmp1, tmp2\n");
+                mir.push_str(&format!("          mov tmp3, i64:{}(constants_ptr)\n", methods_idx * 8));
+                mir.push_str("          call p_def_struct, er_jit_define_struct, status, vm, tmp1, tmp2, tmp3\n");
             }
             OpCode::GetGlobal => {
                 let c_idx = instruction.operand;
