@@ -1,0 +1,21 @@
+interface Barker {
+    name: string,
+    fn bark()
+}
+
+struct Dog {
+    name: string,
+    age: int,
+    fn bark() {
+        print("Woof! My name is {this.name} and I am {this.age} years old.")
+    }
+}
+
+// 1. Named struct instantiation (explicit syntax)
+let pet: Barker = Dog {
+    name: "Rex",
+    age: 3,
+}
+
+// 2. Call method bark through Barker
+pet.bark()

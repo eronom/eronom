@@ -22,6 +22,7 @@ pub enum Expr {
     Function(Vec<String>, Box<Stmt>), // params, body
     GetIndex(Box<Expr>, Box<Expr>),
     SetIndex(Box<Expr>, Box<Expr>, Box<Expr>),
+    StructInst(String, Vec<(String, Expr)>, SourceLocation),
 }
 
 #[derive(Debug, Clone)]
@@ -44,4 +45,5 @@ pub enum Stmt {
     Import(Vec<String>, String), // imported names, source path
     Export(Box<Stmt>), // exported declaration statement
     Struct(String, Vec<String>, Vec<(String, String)>, Vec<(String, Vec<String>, Stmt)>, SourceLocation), // name, composed, fields (name, type), methods (name, params, body), location
+    Interface(String, Vec<(String, String)>, Vec<(String, Vec<String>)>, SourceLocation), // name, fields (name, type), methods (name, params), location
 }

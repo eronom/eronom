@@ -17,6 +17,12 @@ pub struct RawStructInfo {
     pub methods: Vec<(String, Vec<String>, Stmt)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct InterfaceInfo {
+    pub fields: Vec<(String, String)>,
+    pub methods: Vec<(String, Vec<String>)>,
+}
+
 pub struct Compiler {
     function: Function,
     locals: Vec<Local>,
@@ -24,6 +30,8 @@ pub struct Compiler {
     next_reg: usize,
     const_globals: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, crate::frontend::SourceLocation>>>,
     structs: std::collections::HashMap<String, FlattenedStructInfo>,
+    interfaces: std::collections::HashMap<String, InterfaceInfo>,
+    global_types: std::collections::HashMap<String, String>,
     current_struct: Option<String>,
 }
 
@@ -32,6 +40,7 @@ struct Local {
     depth: usize,
     is_const: bool,
     loc: crate::frontend::SourceLocation,
+    ty: Option<String>,
 }
 
 impl Default for Compiler {
@@ -55,6 +64,8 @@ impl Compiler {
             next_reg: 0,
             const_globals: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             structs: std::collections::HashMap::new(),
+            interfaces: std::collections::HashMap::new(),
+            global_types: std::collections::HashMap::new(),
             current_struct: None,
         }
     }
@@ -74,6 +85,7 @@ impl Compiler {
         }
 
         self.structs = resolved;
+        collect_interfaces(stmts, &mut self.interfaces);
 
         for stmt in stmts {
             self.compile_stmt(stmt)?;
@@ -112,7 +124,7 @@ impl Compiler {
             }
             Stmt::VarDecl(name, type_annotation, is_const, expr, loc) => {
                 if let Some(t_name) = type_annotation {
-                    check_type(expr, t_name, &self.structs, loc)?;
+                    check_type(expr, t_name, &self.structs, &self.interfaces, &self.locals, &self.global_types, loc)?;
                 }
                 if self.scope_depth > 0 {
                     let local_reg = self.locals.len();
@@ -122,6 +134,7 @@ impl Compiler {
                         depth: self.scope_depth,
                         is_const: *is_const,
                         loc: loc.clone(),
+                        ty: type_annotation.clone(),
                     });
                 } else {
                     let temp_reg = self.next_reg;
@@ -136,6 +149,9 @@ impl Compiler {
                         0,
                         name_idx as u32,
                     );
+                    if let Some(t_name) = type_annotation {
+                        self.global_types.insert(name.clone(), t_name.clone());
+                    }
                     if *is_const {
                         self.const_globals.borrow_mut().insert(name.clone(), loc.clone());
                     }
@@ -172,6 +188,7 @@ impl Compiler {
                     depth: self.scope_depth,
                     is_const: false,
                     loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
                 });
 
                 let limit_reg = self.locals.len();
@@ -182,6 +199,7 @@ impl Compiler {
                     depth: self.scope_depth,
                     is_const: false,
                     loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
                 });
 
                 let one_reg = self.locals.len();
@@ -199,6 +217,7 @@ impl Compiler {
                     depth: self.scope_depth,
                     is_const: false,
                     loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
                 });
 
                 let loop_start = self.current_chunk().code.len();
@@ -269,6 +288,8 @@ impl Compiler {
                     let mut compiler = Compiler::new();
                     compiler.const_globals = self.const_globals.clone();
                     compiler.structs = self.structs.clone();
+                    compiler.interfaces = self.interfaces.clone();
+                    compiler.global_types = self.global_types.clone();
                     compiler.current_struct = Some(name.clone());
                     compiler.function.arity = method_params.len();
                     compiler.function.is_async = false;
@@ -280,6 +301,7 @@ impl Compiler {
                             depth: compiler.scope_depth,
                             is_const: false,
                             loc: crate::frontend::SourceLocation::default(),
+                            ty: None,
                         });
                     }
                     compiler.compile_stmt(m_body)?;
@@ -305,6 +327,7 @@ impl Compiler {
                     name_idx as u32,
                 );
             }
+            Stmt::Interface(_, _, _, _) => {}
         }
         Ok(())
     }
@@ -467,6 +490,8 @@ impl Compiler {
                                         let mut compiler = Compiler::new();
                                         compiler.const_globals = self.const_globals.clone();
                                         compiler.structs = self.structs.clone();
+                                        compiler.interfaces = self.interfaces.clone();
+                                        compiler.global_types = self.global_types.clone();
                                         compiler.current_struct = Some(parent_name);
                                         compiler.function.arity = method_params.len();
                                         compiler.function.is_async = false;
@@ -478,6 +503,7 @@ impl Compiler {
                                                 depth: compiler.scope_depth,
                                                 is_const: false,
                                                 loc: crate::frontend::SourceLocation::default(),
+                                                ty: None,
                                             });
                                         }
                                         compiler.compile_stmt(&m_body)?;
@@ -595,7 +621,7 @@ impl Compiler {
                     items.len() as u32,
                 );
             }
-            Expr::Object(pairs) => {
+            Expr::Object(pairs) | Expr::StructInst(_, pairs, _) => {
                 let start_reg = std::cmp::max(self.next_reg, dest);
                 for (i, (key, val)) in pairs.iter().enumerate() {
                     let k_idx = self
@@ -622,6 +648,8 @@ impl Compiler {
                 let mut compiler = Compiler::new();
                 compiler.const_globals = self.const_globals.clone();
                 compiler.structs = self.structs.clone();
+                compiler.interfaces = self.interfaces.clone();
+                compiler.global_types = self.global_types.clone();
                 compiler.current_struct = self.current_struct.clone();
                 compiler.function.arity = params.len();
                 compiler.function.is_async = false;
@@ -633,6 +661,7 @@ impl Compiler {
                         depth: compiler.scope_depth,
                         is_const: false,
                         loc: crate::frontend::SourceLocation::default(),
+                        ty: None,
                     });
                 }
                 compiler.compile_stmt(body)?;
@@ -801,6 +830,35 @@ fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, R
     }
 }
 
+fn collect_interfaces(stmts: &[Stmt], map: &mut std::collections::HashMap<String, InterfaceInfo>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Interface(name, fields, methods, _) => {
+                map.insert(name.clone(), InterfaceInfo {
+                    fields: fields.clone(),
+                    methods: methods.clone(),
+                });
+            }
+            Stmt::Block(inner_stmts) => {
+                collect_interfaces(inner_stmts, map);
+            }
+            Stmt::If(_, then_branch, else_branch) => {
+                collect_interfaces(std::slice::from_ref(then_branch), map);
+                if let Some(eb) = else_branch {
+                    collect_interfaces(std::slice::from_ref(eb), map);
+                }
+            }
+            Stmt::For(_, _, _, body) => {
+                collect_interfaces(std::slice::from_ref(body), map);
+            }
+            Stmt::Export(inner) => {
+                collect_interfaces(std::slice::from_ref(inner), map);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn flatten_struct(
     name: &str,
     structs: &std::collections::HashMap<String, RawStructInfo>,
@@ -852,12 +910,187 @@ fn flatten_struct(
     Ok(flat_info)
 }
 
+fn get_expr_type(
+    expr: &Expr,
+    locals: &[Local],
+    global_types: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    match expr {
+        Expr::Variable(name, _) => {
+            if let Some(local) = locals.iter().rev().find(|l| &l.name == name) {
+                return local.ty.clone();
+            }
+            if let Some(ty) = global_types.get(name) {
+                return Some(ty.clone());
+            }
+            None
+        }
+        Expr::StructInst(struct_name, _, _) => Some(struct_name.clone()),
+        _ => None,
+    }
+}
+
 fn check_type(
     expr: &Expr,
     expected_type: &str,
     structs: &std::collections::HashMap<String, FlattenedStructInfo>,
+    interfaces: &std::collections::HashMap<String, InterfaceInfo>,
+    locals: &[Local],
+    global_types: &std::collections::HashMap<String, String>,
     loc: &crate::frontend::SourceLocation,
 ) -> Result<(), String> {
+    if let Expr::StructInst(struct_name, pairs, loc) = expr {
+        if let Some(s_info) = structs.get(struct_name) {
+            let mut object_fields = std::collections::HashMap::new();
+            for (k, v) in pairs {
+                object_fields.insert(k.clone(), v);
+            }
+            for (field_name, field_type) in &s_info.fields {
+                if let Some(field_val_expr) = object_fields.remove(field_name) {
+                    check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
+                } else {
+                    return Err(format!(
+                        "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
+                        field_name, field_type, struct_name, loc.file_path, loc.line, loc.col
+                    ));
+                }
+            }
+            if !object_fields.is_empty() {
+                let extra_fields: Vec<String> = object_fields.keys().cloned().collect();
+                return Err(format!(
+                    "error: Extra fields {:?} not declared in struct \"{}\"\n    at {}:{}:{}",
+                    extra_fields, struct_name, loc.file_path, loc.line, loc.col
+                ));
+            }
+        } else {
+            return Err(format!(
+                "error: Unknown struct type \"{}\"\n    at {}:{}:{}",
+                struct_name, loc.file_path, loc.line, loc.col
+            ));
+        }
+    }
+
+    if let Some(interface_info) = interfaces.get(expected_type) {
+        if let Expr::Object(pairs) = expr {
+            if !interface_info.methods.is_empty() {
+                return Err(format!(
+                    "error: Object literal cannot satisfy interface \"{}\" because the interface requires methods: {:?}\n    at {}:{}:{}",
+                    expected_type,
+                    interface_info.methods.iter().map(|(m, _)| m).collect::<Vec<_>>(),
+                    loc.file_path, loc.line, loc.col
+                ));
+            }
+            let mut object_fields = std::collections::HashMap::new();
+            for (k, v) in pairs {
+                object_fields.insert(k.clone(), v);
+            }
+            for (field_name, field_type) in &interface_info.fields {
+                if let Some(field_val_expr) = object_fields.remove(field_name) {
+                    check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
+                } else {
+                    return Err(format!(
+                        "error: Missing field \"{}\" of type \"{}\" required by interface \"{}\"\n    at {}:{}:{}",
+                        field_name, field_type, expected_type, loc.file_path, loc.line, loc.col
+                    ));
+                }
+            }
+            return Ok(());
+        }
+
+        if let Some(src_type) = get_expr_type(expr, locals, global_types) {
+            if src_type == expected_type {
+                return Ok(());
+            }
+
+            if let Some(struct_info) = structs.get(&src_type) {
+                let struct_fields: std::collections::HashMap<String, String> = struct_info.fields.iter().cloned().collect();
+                for (field_name, field_type) in &interface_info.fields {
+                    if let Some(struct_field_type) = struct_fields.get(field_name) {
+                        if struct_field_type != field_type {
+                            return Err(format!(
+                                "error: Type mismatch for field \"{}\" in struct \"{}\" (expected \"{}\" from interface \"{}\" but got \"{}\")\n    at {}:{}:{}",
+                                field_name, src_type, field_type, expected_type, struct_field_type, loc.file_path, loc.line, loc.col
+                            ));
+                        }
+                    } else {
+                        return Err(format!(
+                            "error: Struct \"{}\" does not implement interface \"{}\" because it is missing field \"{}\"\n    at {}:{}:{}",
+                            src_type, expected_type, field_name, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                }
+
+                let struct_methods: std::collections::HashMap<String, Vec<String>> = struct_info.methods.iter().map(|(m_name, m_params, _)| (m_name.clone(), m_params.clone())).collect();
+                for (method_name, method_params) in &interface_info.methods {
+                    if let Some(struct_method_params) = struct_methods.get(method_name) {
+                        if struct_method_params.len() != method_params.len() {
+                            return Err(format!(
+                                "error: Method \"{}\" in struct \"{}\" has {} parameters, but interface \"{}\" expects {}\n    at {}:{}:{}",
+                                method_name, src_type, struct_method_params.len(), expected_type, method_params.len(), loc.file_path, loc.line, loc.col
+                            ));
+                        }
+                    } else {
+                        return Err(format!(
+                            "error: Struct \"{}\" does not implement interface \"{}\" because it is missing method \"{}\"\n    at {}:{}:{}",
+                            src_type, expected_type, method_name, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                }
+
+                return Ok(());
+            }
+
+            if let Some(src_interface_info) = interfaces.get(&src_type) {
+                let src_fields: std::collections::HashMap<String, String> = src_interface_info.fields.iter().cloned().collect();
+                for (field_name, field_type) in &interface_info.fields {
+                    if let Some(src_field_type) = src_fields.get(field_name) {
+                        if src_field_type != field_type {
+                            return Err(format!(
+                                "error: Type mismatch for field \"{}\" (expected \"{}\" but got \"{}\")\n    at {}:{}:{}",
+                                field_name, field_type, src_field_type, loc.file_path, loc.line, loc.col
+                            ));
+                        }
+                    } else {
+                        return Err(format!(
+                            "error: Interface \"{}\" does not satisfy interface \"{}\" because it is missing field \"{}\"\n    at {}:{}:{}",
+                            src_type, expected_type, field_name, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                }
+
+                let src_methods: std::collections::HashMap<String, Vec<String>> = src_interface_info.methods.iter().cloned().collect();
+                for (method_name, method_params) in &interface_info.methods {
+                    if let Some(src_method_params) = src_methods.get(method_name) {
+                        if src_method_params.len() != method_params.len() {
+                            return Err(format!(
+                                "error: Method \"{}\" has parameter count mismatch (expected {} but got {})\n    at {}:{}:{}",
+                                method_name, method_params.len(), src_method_params.len(), loc.file_path, loc.line, loc.col
+                            ));
+                        }
+                    } else {
+                        return Err(format!(
+                            "error: Interface \"{}\" does not satisfy interface \"{}\" because it is missing method \"{}\"\n    at {}:{}:{}",
+                            src_type, expected_type, method_name, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                }
+
+                return Ok(());
+            }
+
+            return Err(format!(
+                "error: Expected interface \"{}\" but got unknown type \"{}\"\n    at {}:{}:{}",
+                expected_type, src_type, loc.file_path, loc.line, loc.col
+            ));
+        }
+
+        if let Expr::Literal(LiteralValue::Null) = expr {
+            return Ok(());
+        }
+
+        return Ok(());
+    }
+
     if let Some(struct_info) = structs.get(expected_type) {
         let struct_fields = &struct_info.fields;
         match expr {
@@ -869,7 +1102,7 @@ fn check_type(
 
                 for (field_name, field_type) in struct_fields {
                     if let Some(field_val_expr) = object_fields.remove(field_name) {
-                        check_type(field_val_expr, field_type, structs, loc)?;
+                        check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
                     } else {
                         return Err(format!(
                             "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
@@ -883,6 +1116,14 @@ fn check_type(
                     return Err(format!(
                         "error: Extra fields {:?} not declared in struct \"{}\"\n    at {}:{}:{}",
                         extra_fields, expected_type, loc.file_path, loc.line, loc.col
+                    ));
+                }
+            }
+            Expr::StructInst(struct_name, _, loc) => {
+                if struct_name != expected_type {
+                    return Err(format!(
+                        "error: Expected struct \"{}\" but got struct \"{}\"\n    at {}:{}:{}",
+                        expected_type, struct_name, loc.file_path, loc.line, loc.col
                     ));
                 }
             }

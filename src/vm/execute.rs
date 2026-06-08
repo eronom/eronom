@@ -1788,6 +1788,21 @@ mod tests {
     }
 
     #[test]
+    fn test_interfaces() {
+        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Dog {\n  name: string,\n  age: int,\n  fn bark() {\n    return \"Woof! \" + this.name\n  }\n}\nlet pet: Barker = Dog {\n  name: \"Rex\",\n  age: 3,\n}\nlet message = pet.bark()";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("message").unwrap().as_str().unwrap(), "Woof! Rex");
+    }
+
+    #[test]
+    fn test_interfaces_invalid() {
+        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Cat {\n  name: string,\n  age: int\n}\nlet pet: Barker = Cat {\n  name: \"Whiskers\",\n  age: 2,\n}";
+        let result = run_code(code);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("does not implement interface"));
+    }
+
+    #[test]
     fn test_incremental_garbage_collector() {
         gc_free_all();
 

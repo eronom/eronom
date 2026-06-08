@@ -251,6 +251,7 @@ impl<'a> Lexer<'a> {
                     "fn" => TokenType::Function,
                     "struct" => TokenType::Struct,
                     "embed" => TokenType::Embed,
+                    "interface" => TokenType::Interface,
                     _ => TokenType::Identifier(ident),
                 }
             }

@@ -45,6 +45,7 @@ pub enum TokenType {
     Function,
     Struct,
     Embed,
+    Interface,
     Eof,
 }
 
