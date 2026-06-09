@@ -274,6 +274,23 @@ fn execute_api_route(
 
     let _guard = GcGuard;
     
+    // Load config.er if it exists
+    if let Some(parent_dir) = file_path.parent() {
+        let config_path = parent_dir.join("config.er");
+        if config_path.exists() {
+            if let Ok(config_content) = std::fs::read_to_string(&config_path) {
+                let config_tokens = crate::frontend::lex(&config_content);
+                let mut config_parser = crate::frontend::Parser::new(config_tokens);
+                if let Ok(config_stmts) = config_parser.parse() {
+                    let config_compiler = crate::vm::compiler::Compiler::new();
+                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
+                        let _ = vm.run(config_func);
+                    }
+                }
+            }
+        }
+    }
+
     if let Err(e) = vm.run(function) {
         anyhow::bail!("VM Runtime error: {}", e);
     }
@@ -352,6 +369,11 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
             }
         }
     };
+
+    let mut file_path = file_path;
+    if !file_path.exists() && default_file.is_some() {
+        file_path = default_file.clone().unwrap();
+    }
 
     if file_path.exists() && file_path.is_file() {
         if file_path.extension().map_or(false, |ext| ext == "erm") {
@@ -435,6 +457,22 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         default_file = Some(base_path.clone());
         if let Some(parent) = base_path.parent() {
             base_path = parent.to_path_buf();
+        }
+    } else {
+        let config_path = base_path.join("config.er");
+        if config_path.exists() {
+            if let Ok(content) = fs::read_to_string(&config_path) {
+                if let Ok(re) = regex::Regex::new(r#"(?s)server\s*:\s*\{[^}]*dev\s*:\s*["']([^"']+)["']"#) {
+                    if let Some(caps) = re.captures(&content) {
+                        if let Some(dev_val) = caps.get(1) {
+                            let dev_file = base_path.join(dev_val.as_str());
+                            if dev_file.exists() {
+                                default_file = Some(dev_file);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

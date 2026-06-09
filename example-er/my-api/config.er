@@ -1,5 +1,6 @@
 let config = {
     server: { 
         port: 3000 
+        dev: "todos.er"
     } 
 }

@@ -1,3 +1,13 @@
-const num = 5
+import { router } from "std/http"
 
-print(num)
+let app = router()
+let todos = [
+  { id: 1, text: "Learn Eronom - dynamic reload worked!ss for itzzzznewwvs", done: false }
+]
+
+
+// GET all todos
+app.get('/todos', (c) => {
+  return c.json(todos)
+})
+
