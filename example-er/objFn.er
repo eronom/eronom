@@ -1,0 +1,14 @@
+// Example demonstrating an object with function properties (methods) inside a function
+const createPlayer = (name, age) => {
+  let player = {
+    name: name,
+    age: age,
+    printInfo: (self) => {
+      print("{self.name} is {self.age} years old")
+    }
+  }
+  return player
+}
+
+let p = createPlayer("Vishnu", 25)
+p.printInfo(p)

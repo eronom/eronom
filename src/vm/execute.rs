@@ -561,12 +561,21 @@ impl VM {
                     // YieldCall: a Call instruction yielded to the JIT orchestrator.
                     let callee = *frame_slots.add(func_reg_out);
                     if callee.is_function() {
-                        let func_ptr = callee.as_gc_ptr();
+                        let mut func_ptr = callee.as_gc_ptr();
+                        let mut actual_arg_count = arg_count_out;
+                        if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
+                            for i in (0..arg_count_out).rev() {
+                                *frame_slots.add(func_reg_out + 2 + i) = *frame_slots.add(func_reg_out + 1 + i);
+                            }
+                            *frame_slots.add(func_reg_out + 1) = bound_method.receiver;
+                            func_ptr = bound_method.function;
+                            actual_arg_count = arg_count_out + 1;
+                        }
                         let func_val = get_func!(func_ptr);
-                        if arg_count_out != func_val.arity {
+                        if actual_arg_count != func_val.arity {
                             return Err(format!(
                                 "Expected {} args but got {}",
-                                func_val.arity, arg_count_out
+                                func_val.arity, actual_arg_count
                             ));
                         }
                         // Save current IP (resume position: ip_out)
@@ -623,7 +632,7 @@ impl VM {
                         *frame_slots.add(dest_reg_out) = result;
                         ip_val = ip_out;
                     } else {
-                        return Err("Can only call functions".into());
+                        return Err(format!("Can only call functions (callee: 0x{:x})", callee.0).into());
                     }
                 } else if status == 1 {
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.
@@ -1014,8 +1023,18 @@ impl VM {
                                         *frame_slots.add(dest) = val;
                                     }
                                     GcData::Struct(s) => {
-                                        let val = s.get_field(name_val).unwrap_or(Value::null());
-                                        *frame_slots.add(dest) = val;
+                                         if let Some(val) = s.get_field(name_val) {
+                                             *frame_slots.add(dest) = val;
+                                         } else if let Some(&method_val) = s.descriptor.methods.get(&super::value::MapKey(name_val)) {
+                                             let bound_method = super::gc::GcBoundMethod {
+                                                 receiver: obj,
+                                                 function: method_val.as_gc_ptr(),
+                                             };
+                                             let ptr = super::gc::gc_allocate(super::gc::GcData::BoundMethod(bound_method));
+                                             *frame_slots.add(dest) = Value::function(ptr);
+                                         } else {
+                                             *frame_slots.add(dest) = Value::null();
+                                         }
                                     }
                                     _ => unreachable!(),
                                 }
@@ -1241,12 +1260,21 @@ impl VM {
                         let arg_count = instruction.operand as usize;
                         let callee = *frame_slots.add(func_reg);
                         if callee.is_function() {
-                            let func_ptr = callee.as_gc_ptr();
+                            let mut func_ptr = callee.as_gc_ptr();
+                            let mut actual_arg_count = arg_count;
+                            if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
+                                for i in (0..arg_count).rev() {
+                                    *frame_slots.add(func_reg + 2 + i) = *frame_slots.add(func_reg + 1 + i);
+                                }
+                                *frame_slots.add(func_reg + 1) = bound_method.receiver;
+                                func_ptr = bound_method.function;
+                                actual_arg_count = arg_count + 1;
+                            }
                             let func_val = get_func!(func_ptr);
-                            if arg_count != func_val.arity {
+                            if actual_arg_count != func_val.arity {
                                 return Err(format!(
                                     "Expected {} args but got {}",
-                                    func_val.arity, arg_count
+                                    func_val.arity, actual_arg_count
                                 ));
                             }
                             frame.ip = ip.offset_from(code_ptr) as usize;
@@ -1362,7 +1390,7 @@ impl VM {
                             reload_stack!();
                             *frame_slots.add(dest) = result;
                         } else {
-                            return Err("Can only call functions".into());
+                            return Err(format!("Can only call functions (callee: 0x{:x})", callee.0).into());
                         }
                     }
                     OpCode::Await => {
@@ -1424,10 +1452,22 @@ impl VM {
                         for (idx, &f_val) in fields_vec.iter().enumerate() {
                             field_indices.insert(super::value::MapKey(f_val), idx);
                         }
+
+                        let methods_val = *constants_ptr.add(instruction.rb as usize);
+                        let mut methods = FnvHashMap::default();
+                        if methods_val.is_object() {
+                            let methods_ptr = methods_val.as_gc_ptr();
+                            if let GcData::Object(map) = &(*methods_ptr).data {
+                                for (k, &v) in map {
+                                    methods.insert(*k, v);
+                                }
+                            }
+                        }
                         
                         let descriptor = std::rc::Rc::new(super::gc::StructDescriptor {
                             name: name_rc.clone(),
                             field_indices,
+                            methods,
                         });
                         self.structs.insert(name_rc, descriptor);
                     }
@@ -1723,6 +1763,43 @@ mod tests {
     fn test_struct_mutation() {
         let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\np.age = 26\nlet val = p.age").unwrap();
         assert_eq!(vm.get_global("val").unwrap().as_number(), 26.0);
+    }
+
+    #[test]
+    fn test_struct_methods() {
+        let vm = run_code("struct Player {\n  name: string,\n  age: int,\n  fn printPlayer() {\n    return this.name\n  }\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\nlet val = p.printPlayer()").unwrap();
+        assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Vishnu");
+    }
+
+    #[test]
+    fn test_struct_nested_typecheck() {
+        let code = "struct Position {\n  x: int,\n  y: int,\n}\nstruct Player {\n  pos: Position,\n  name: string,\n}\nlet position : Position = {\n  x: 10,\n  y: 20,\n}\nlet p : Player = {\n  pos: position,\n  name: \"Vishnu\",\n}\nlet val = p.pos.x";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("val").unwrap().as_number(), 10.0);
+    }
+
+    #[test]
+    fn test_struct_composition() {
+        let code = "struct Position {\n  x: int,\n  y: int,\n  fn printPos() {\n    return this.x\n  }\n}\nstruct Parent {\n  fn getVal() {\n    return 100\n  }\n}\nstruct Player embed Position, Parent {\n  name: string,\n  fn printPlayer() {\n    return this.name\n  }\n  fn getVal() {\n    return super.getVal() + 5\n  }\n}\nlet p : Player = {\n  x: 10,\n  y: 20,\n  name: \"Vishnu\",\n}\nlet val_x = p.printPos()\nlet val_name = p.printPlayer()\nlet val_super = p.getVal()";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("val_x").unwrap().as_number(), 10.0);
+        assert_eq!(vm.get_global("val_name").unwrap().as_str().unwrap(), "Vishnu");
+        assert_eq!(vm.get_global("val_super").unwrap().as_number(), 105.0);
+    }
+
+    #[test]
+    fn test_interfaces() {
+        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Dog {\n  name: string,\n  age: int,\n  fn bark() {\n    return \"Woof! \" + this.name\n  }\n}\nlet pet: Barker = Dog {\n  name: \"Rex\",\n  age: 3,\n}\nlet message = pet.bark()";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("message").unwrap().as_str().unwrap(), "Woof! Rex");
+    }
+
+    #[test]
+    fn test_interfaces_invalid() {
+        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Cat {\n  name: string,\n  age: int\n}\nlet pet: Barker = Cat {\n  name: \"Whiskers\",\n  age: 2,\n}";
+        let result = run_code(code);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("does not implement interface"));
     }
 
     #[test]

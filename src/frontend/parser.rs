@@ -125,18 +125,51 @@ impl Parser {
         } else if self.match_token(&[TokenType::Struct]) {
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected struct name.")?;
-            self.consume(TokenType::LeftBrace, "Expected '{' before struct body.")?;
-            let mut fields = Vec::new();
-            if !self.check(&TokenType::RightBrace) {
+            let mut composed = Vec::new();
+            if self.match_token(&[TokenType::Embed]) {
                 loop {
-                    let field_name = self.consume_ident("Expected field name.")?;
-                    self.consume(TokenType::Colon, "Expected ':' after field name.")?;
-                    let field_type = self.consume_ident("Expected field type.")?;
-                    fields.push((field_name, field_type));
+                    let parent = self.consume_ident("Expected parent struct name after 'embed'.")?;
+                    composed.push(parent);
                     if !self.match_token(&[TokenType::Comma]) {
                         break;
                     }
-                    if self.check(&TokenType::RightBrace) {
+                }
+            }
+            self.consume(TokenType::LeftBrace, "Expected '{' before struct body.")?;
+            let mut fields = Vec::new();
+            let mut methods = Vec::new();
+            if !self.check(&TokenType::RightBrace) {
+                loop {
+                    if self.match_token(&[TokenType::Function]) {
+                        let method_name = self.consume_ident("Expected method name.")?;
+                        self.consume(TokenType::LeftParen, "Expected '(' after method name.")?;
+                        let mut params = Vec::new();
+                        if !self.check(&TokenType::RightParen) {
+                            loop {
+                                let param = self.consume_ident("Expected parameter name.")?;
+                                params.push(param);
+                                if !self.match_token(&[TokenType::Comma]) {
+                                    break;
+                                }
+                            }
+                        }
+                        self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+                        self.consume(TokenType::LeftBrace, "Expected '{' before method body.")?;
+                        let mut stmts = Vec::new();
+                        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                            stmts.push(self.declaration()?);
+                        }
+                        self.consume(TokenType::RightBrace, "Expected '}' after method body.")?;
+                        let body = Stmt::Block(stmts);
+                        methods.push((method_name, params, body));
+                    } else {
+                        let field_name = self.consume_ident("Expected field name.")?;
+                        self.consume(TokenType::Colon, "Expected ':' after field name.")?;
+                        let field_type = self.consume_ident("Expected field type.")?;
+                        fields.push((field_name, field_type));
+                    }
+                    self.match_token(&[TokenType::Comma]);
+                    if self.check(&TokenType::RightBrace) || self.is_at_end() {
                         break;
                     }
                 }
@@ -147,7 +180,49 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::Struct(name, fields, loc))
+            Ok(Stmt::Struct(name, composed, fields, methods, loc))
+        } else if self.match_token(&[TokenType::Interface]) {
+            let name_tok = self.peek().clone();
+            let name = self.consume_ident("Expected interface name.")?;
+            self.consume(TokenType::LeftBrace, "Expected '{' before interface body.")?;
+            let mut fields = Vec::new();
+            let mut methods = Vec::new();
+            if !self.check(&TokenType::RightBrace) {
+                loop {
+                    if self.match_token(&[TokenType::Function]) {
+                        let method_name = self.consume_ident("Expected method name.")?;
+                        self.consume(TokenType::LeftParen, "Expected '(' after method name.")?;
+                        let mut params = Vec::new();
+                        if !self.check(&TokenType::RightParen) {
+                            loop {
+                                let param = self.consume_ident("Expected parameter name.")?;
+                                params.push(param);
+                                if !self.match_token(&[TokenType::Comma]) {
+                                    break;
+                                }
+                            }
+                        }
+                        self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+                        methods.push((method_name, params));
+                    } else {
+                        let field_name = self.consume_ident("Expected field name.")?;
+                        self.consume(TokenType::Colon, "Expected ':' after field name.")?;
+                        let field_type = self.consume_ident("Expected field type.")?;
+                        fields.push((field_name, field_type));
+                    }
+                    self.match_token(&[TokenType::Comma]);
+                    if self.check(&TokenType::RightBrace) || self.is_at_end() {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after interface body.")?;
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::Interface(name, fields, methods, loc))
         } else if self.match_token(&[TokenType::Let, TokenType::Const]) {
             let is_const = self.previous().ty == TokenType::Const;
             let name_tok = self.peek().clone();
@@ -184,13 +259,21 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
-            self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
-            let mut stmts = Vec::new();
-            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
-                stmts.push(self.declaration()?);
-            }
-            self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
-            let body = Stmt::Block(stmts);
+            let body = if self.match_token(&[TokenType::Arrow]) {
+                let body_stmt = self.statement()?;
+                match body_stmt {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    other => other,
+                }
+            } else {
+                self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
+                let mut stmts = Vec::new();
+                while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                    stmts.push(self.declaration()?);
+                }
+                self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
+                Stmt::Block(stmts)
+            };
             let loc = SourceLocation {
                 file_path: self.file_path.clone(),
                 line: name_tok.line,
@@ -417,13 +500,21 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
-            self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
-            let mut stmts = Vec::new();
-            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
-                stmts.push(self.declaration()?);
-            }
-            self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
-            let body = Stmt::Block(stmts);
+            let body = if self.match_token(&[TokenType::Arrow]) {
+                let body_stmt = self.statement()?;
+                match body_stmt {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    other => other,
+                }
+            } else {
+                self.consume(TokenType::LeftBrace, "Expected '{' before function body.")?;
+                let mut stmts = Vec::new();
+                while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                    stmts.push(self.declaration()?);
+                }
+                self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
+                Stmt::Block(stmts)
+            };
             return Ok(Expr::Function(params, Box::new(body)));
         }
 
@@ -455,6 +546,28 @@ impl Parser {
                 line: tok.line,
                 col: tok.col,
             };
+            if self.match_token(&[TokenType::LeftBrace]) {
+                let mut pairs = Vec::new();
+                if !self.check(&TokenType::RightBrace) {
+                    loop {
+                        let key = self.consume_ident("Expected property key.")?;
+                        self.consume(TokenType::Colon, "Expected ':' after property key.")?;
+                        let value = self.expression()?;
+                        pairs.push((key, value));
+                        if !self.match_token(&[TokenType::Comma]) {
+                            break;
+                        }
+                        if self.check(&TokenType::RightBrace) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(
+                    TokenType::RightBrace,
+                    "Expected '}' after struct properties.",
+                )?;
+                return Ok(Expr::StructInst(name, pairs, loc));
+            }
             return Ok(Expr::Variable(name, loc));
         }
 
@@ -465,6 +578,10 @@ impl Parser {
                     self.advance(); // consume RightParen
                     self.advance(); // consume Arrow
                     let body = self.statement()?;
+                    let body = match body {
+                        Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                        other => other,
+                    };
                     return Ok(Expr::Function(Vec::new(), Box::new(body)));
                 }
             }
@@ -494,6 +611,10 @@ impl Parser {
 
                 if is_arrow {
                     let body = self.statement()?;
+                    let body = match body {
+                        Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                        other => other,
+                    };
                     return Ok(Expr::Function(params, Box::new(body)));
                 } else {
                     self.current = save_pos;
@@ -505,6 +626,10 @@ impl Parser {
 
             if self.match_token(&[TokenType::Arrow]) {
                 let body = self.statement()?;
+                let body = match body {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    other => other,
+                };
                 return Ok(Expr::Function(vec![], Box::new(body)));
             }
 

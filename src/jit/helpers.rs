@@ -256,7 +256,7 @@ pub extern "C" fn er_jit_make_array(_vm: *mut VM, start_reg: *const Value, count
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val: Value) -> i64 {
+pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val: Value, methods_val: Value) -> i64 {
     unsafe {
         let name_rc = match &(*name_val.as_gc_ptr()).data {
             GcData::String(s) => s.clone(),
@@ -271,10 +271,21 @@ pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val:
         for (idx, &f_val) in fields_vec.iter().enumerate() {
             field_indices.insert(MapKey(f_val), idx);
         }
+
+        let mut methods = FnvHashMap::default();
+        if methods_val.is_object() {
+            let methods_ptr = methods_val.as_gc_ptr();
+            if let GcData::Object(map) = &(*methods_ptr).data {
+                for (k, &v) in map {
+                    methods.insert(*k, v);
+                }
+            }
+        }
         
         let descriptor = std::rc::Rc::new(crate::vm::gc::StructDescriptor {
             name: name_rc.clone(),
             field_indices,
+            methods,
         });
         (*vm).structs.insert(name_rc, descriptor);
         0
@@ -369,7 +380,18 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
                         map.get(&MapKey(name_val)).cloned().unwrap_or(Value::null())
                     }
                     GcData::Struct(s) => {
-                        s.get_field(name_val).unwrap_or(Value::null())
+                        if let Some(val) = s.get_field(name_val) {
+                            val
+                        } else if let Some(&method_val) = s.descriptor.methods.get(&MapKey(name_val)) {
+                            let bound_method = crate::vm::gc::GcBoundMethod {
+                                receiver: obj,
+                                function: method_val.as_gc_ptr(),
+                            };
+                            let ptr = gc_allocate(GcData::BoundMethod(bound_method));
+                            Value::function(ptr)
+                        } else {
+                            Value::null()
+                        }
                     }
                     _ => unreachable!(),
                 }
