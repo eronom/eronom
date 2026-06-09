@@ -333,21 +333,27 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
 
     println!("Request: {} {}", method, target);
 
+    let app_dir = if base_path.join("app").exists() {
+        base_path.join("app")
+    } else {
+        base_path.clone()
+    };
+
     let mut params = HashMap::new();
     let file_path = if target == "/" {
         if let Some(ref def_file) = default_file {
             def_file.clone()
         } else {
-            let index_erm = base_path.join("pages").join("index.erm");
+            let index_erm = app_dir.join("pages").join("index.erm");
             if index_erm.exists() {
                 index_erm
             } else {
-                base_path.join("pages").join("index.html")
+                app_dir.join("pages").join("index.html")
             }
         }
     } else {
         let resolve_root = if !target.starts_with("/api/") {
-            base_path.join("pages")
+            app_dir.join("pages")
         } else {
             base_path.join("server")
         };
@@ -358,11 +364,16 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
         } else {
             let primary_fallback = resolve_root.join(&target[1..]);
             if !target.starts_with("/api/") && !primary_fallback.exists() {
-                let secondary_fallback = base_path.join(&target[1..]);
+                let secondary_fallback = app_dir.join(&target[1..]);
                 if secondary_fallback.exists() {
                     secondary_fallback
                 } else {
-                    primary_fallback
+                    let base_fallback = base_path.join(&target[1..]);
+                    if base_fallback.exists() {
+                        base_fallback
+                    } else {
+                        primary_fallback
+                    }
                 }
             } else {
                 primary_fallback

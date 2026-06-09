@@ -57,12 +57,7 @@ pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
         }
     }
 
-    if dir == "." {
-        let app_path = Path::new("app");
-        if app_path.join("pages").exists() {
-            dir = "app";
-        }
-    }
+
     if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
         dir = "app/build";
     }

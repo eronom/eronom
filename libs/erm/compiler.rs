@@ -236,6 +236,31 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
     let mut styles = Vec::new();
     let mut state_vars = Vec::new();
 
+    let mut component_imports = HashMap::new();
+    let re_import = regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
+
+    let mut search_idx = 0;
+    while let Some(start_idx) = content[search_idx..].find("<script") {
+        let script_start = search_idx + start_idx;
+        if let Some(end_idx) = content[script_start..].find("</script>") {
+            let script_end = script_start + end_idx;
+            let script_tag = &content[script_start..script_end + 9];
+            let content_start = script_tag.find('>').unwrap_or(0) + 1;
+            let script_content = &script_tag[content_start..script_tag.len() - 9];
+
+            for line in script_content.lines() {
+                if let Some(caps) = re_import.captures(line) {
+                    let comp_name = caps.get(1).unwrap().as_str().to_string();
+                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
+                    component_imports.insert(comp_name, comp_path_val);
+                }
+            }
+            search_idx = script_end + 9;
+        } else {
+            break;
+        }
+    }
+
     let mut hasher = FnvHasher::default();
     hasher.write(content.as_bytes());
     let scope_id = format!("data-e-{:x}", hasher.finish());
@@ -300,7 +325,15 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                 aj = call_pos + 9;
             }
 
-            scripts.push(script_content.to_string());
+            let mut cleaned_script = String::new();
+            for line in script_content.lines() {
+                if re_import.is_match(line) {
+                    continue;
+                }
+                cleaned_script.push_str(line);
+                cleaned_script.push('\n');
+            }
+            scripts.push(cleaned_script.trim().to_string());
             i += end + 9;
         } else if content[i..].starts_with("<style") {
             let end = match content[i..].find("</style>") {
@@ -334,7 +367,11 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                     }
                 } else {
                     let mut parts = tag_content.split_whitespace();
-                    let tag_name = parts.next().unwrap_or("");
+                    let mut tag_name_str = parts.next().unwrap_or("").to_string();
+                    if tag_name_str.ends_with('/') {
+                        tag_name_str.pop();
+                    }
+                    let tag_name = &tag_name_str;
                     if tag_name == "Link" {
                         let mut new_tag_content = tag_content.to_string();
                         new_tag_content = new_tag_content.replacen("Link", "a", 1);
@@ -349,13 +386,59 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                     }
                     if !tag_name.is_empty() && tag_name.chars().next().unwrap().is_ascii_uppercase() {
                         let comp_filename = format!("{}.erm", tag_name);
-                        let comp_path = std::path::Path::new(base_dir).join(&comp_filename);
-                        if comp_path.exists() {
-                            let comp_path_str = comp_path.to_string_lossy().into_owned();
+                        let mut comp_path = None;
+
+                        if let Some(import_path) = component_imports.get(tag_name) {
+                            let path_buf = std::path::PathBuf::from(base_dir).join(import_path);
+                            if path_buf.extension().map_or(true, |ext| ext != "erm") {
+                                if path_buf.exists() {
+                                    comp_path = Some(path_buf);
+                                } else {
+                                    let mut path_with_ext = path_buf.clone();
+                                    path_with_ext.set_extension("erm");
+                                    if path_with_ext.exists() {
+                                        comp_path = Some(path_with_ext);
+                                    }
+                                }
+                            } else {
+                                if path_buf.exists() {
+                                    comp_path = Some(path_buf);
+                                }
+                            }
+                        }
+
+                        if comp_path.is_none() {
+                            let mut curr = std::path::PathBuf::from(base_dir);
+                            loop {
+                                let p_comp = curr.join(&comp_filename);
+                                if p_comp.exists() {
+                                    comp_path = Some(p_comp);
+                                    break;
+                                }
+                                let p_comp_dir = curr.join("components").join(&comp_filename);
+                                if p_comp_dir.exists() {
+                                    comp_path = Some(p_comp_dir);
+                                    break;
+                                }
+                                if let Some(parent) = curr.parent() {
+                                    if curr.join("config.er").exists() || curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
+                                        break;
+                                    }
+                                    curr = parent.to_path_buf();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if let Some(comp_path) = comp_path {
+                            let canonical_comp_path = std::fs::canonicalize(&comp_path).unwrap_or(comp_path);
+                            let comp_path_str = canonical_comp_path.to_string_lossy().into_owned();
                             if !visited.contains_key(&comp_path_str) {
                                 visited.insert(comp_path_str.clone(), true);
-                                let comp_content = std::fs::read_to_string(&comp_path)?;
-                                let mut sub_res = process_component_tree(base_dir, &comp_content, visited, None)?;
+                                let comp_content = std::fs::read_to_string(&canonical_comp_path)?;
+                                let comp_dir = canonical_comp_path.parent().unwrap().to_string_lossy();
+                                let mut sub_res = process_component_tree(&comp_dir, &comp_content, visited, None)?;
                                 html_buf.push_str(&sub_res.html);
                                 scripts.append(&mut sub_res.scripts);
                                 styles.append(&mut sub_res.styles);
