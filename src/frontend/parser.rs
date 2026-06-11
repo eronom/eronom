@@ -281,6 +281,23 @@ impl Parser {
             };
             Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, Box::new(body)), loc))
         } else if self.check_ident() && {
+            // Check for short variable declaration: ident := expr
+            self.current + 2 < self.tokens.len()
+                && self.tokens[self.current + 1].ty == TokenType::Colon
+                && self.tokens[self.current + 2].ty == TokenType::Equal
+        } {
+            let name_tok = self.peek().clone();
+            let name = self.consume_ident("Expected variable name.")?;
+            self.advance(); // consume :
+            self.advance(); // consume =
+            let expr = self.expression()?;
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::VarDecl(name, None, false, expr, loc))
+        } else if self.check_ident() && {
             // Check for simple assignment without let/const: ident = expr
             self.current + 1 < self.tokens.len()
                 && self.tokens[self.current + 1].ty == TokenType::Equal
@@ -546,28 +563,6 @@ impl Parser {
                 line: tok.line,
                 col: tok.col,
             };
-            if self.match_token(&[TokenType::LeftBrace]) {
-                let mut pairs = Vec::new();
-                if !self.check(&TokenType::RightBrace) {
-                    loop {
-                        let key = self.consume_ident("Expected property key.")?;
-                        self.consume(TokenType::Colon, "Expected ':' after property key.")?;
-                        let value = self.expression()?;
-                        pairs.push((key, value));
-                        if !self.match_token(&[TokenType::Comma]) {
-                            break;
-                        }
-                        if self.check(&TokenType::RightBrace) {
-                            break;
-                        }
-                    }
-                }
-                self.consume(
-                    TokenType::RightBrace,
-                    "Expected '}' after struct properties.",
-                )?;
-                return Ok(Expr::StructInst(name, pairs, loc));
-            }
             return Ok(Expr::Variable(name, loc));
         }
 

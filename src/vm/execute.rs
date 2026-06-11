@@ -56,7 +56,12 @@ pub struct PendingAsync {
 }
 
 unsafe impl Send for PendingAsync {}
-unsafe impl Sync for PendingAsync {}
+pub fn format_undeclared_var_error(name: &str) -> String {
+    format!(
+        "Variable '{}' not declared. It needs to be declared with 'let', 'const', or ':='.",
+        name
+    )
+}
 
 pub struct VM {
     pub frames: Vec<CallFrame>,
@@ -906,10 +911,7 @@ impl VM {
                                 entry.insert(val);
                             }
                             std::collections::hash_map::Entry::Vacant(_) => {
-                                return Err(format!(
-                                    "Variable '{}' not declared. It needs to be declared with 'let' or 'const'.",
-                                    name
-                                ));
+                                return Err(format_undeclared_var_error(&name));
                             }
                         }
                     }
@@ -1389,6 +1391,21 @@ impl VM {
                             };
                             reload_stack!();
                             *frame_slots.add(dest) = result;
+                        } else if callee.is_object() && matches!(&(*callee.as_gc_ptr()).data, crate::vm::gc::GcData::StructConstructor(_)) {
+                            let ptr = callee.as_gc_ptr();
+                            let descriptor = match &(*ptr).data {
+                                crate::vm::gc::GcData::StructConstructor(desc) => desc.clone(),
+                                _ => unreachable!(),
+                            };
+                            let mut args = Vec::with_capacity(arg_count);
+                            for i in 0..arg_count {
+                                args.push(*frame_slots.add(func_reg + 1 + i));
+                            }
+                            sync_stack!();
+                            frame.ip = ip.offset_from(code_ptr) as usize - 1;
+                            let result = crate::jit::helpers::construct_struct_from_args_helper(&descriptor, args)?;
+                            reload_stack!();
+                            *frame_slots.add(dest) = result;
                         } else {
                             return Err(format!("Can only call functions (callee: 0x{:x})", callee.0).into());
                         }
@@ -1469,7 +1486,9 @@ impl VM {
                             field_indices,
                             methods,
                         });
-                        self.structs.insert(name_rc, descriptor);
+                        self.structs.insert(name_rc.clone(), descriptor.clone());
+                        let ptr = gc_allocate(GcData::StructConstructor(descriptor));
+                        self.globals.insert(name_rc, Value::object(ptr));
                     }
                     OpCode::Return => {
                         let result = *frame_slots.add(instruction.ra as usize);
@@ -1789,17 +1808,56 @@ mod tests {
 
     #[test]
     fn test_interfaces() {
-        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Dog {\n  name: string,\n  age: int,\n  fn bark() {\n    return \"Woof! \" + this.name\n  }\n}\nlet pet: Barker = Dog {\n  name: \"Rex\",\n  age: 3,\n}\nlet message = pet.bark()";
+        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Dog {\n  name: string,\n  age: int,\n  fn bark() {\n    return \"Woof! \" + this.name\n  }\n}\nlet pet: Barker = Dog({\n  name: \"Rex\",\n  age: 3,\n})\nlet message = pet.bark()";
         let vm = run_code(code).unwrap();
         assert_eq!(vm.get_global("message").unwrap().as_str().unwrap(), "Woof! Rex");
     }
 
     #[test]
     fn test_interfaces_invalid() {
-        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Cat {\n  name: string,\n  age: int\n}\nlet pet: Barker = Cat {\n  name: \"Whiskers\",\n  age: 2,\n}";
+        let code = "interface Barker {\n  name: string,\n  fn bark()\n}\nstruct Cat {\n  name: string,\n  age: int\n}\nlet pet: Barker = Cat({\n  name: \"Whiskers\",\n  age: 2,\n})";
         let result = run_code(code);
         assert!(result.is_err());
         assert!(result.err().unwrap().contains("does not implement interface"));
+    }
+
+    #[test]
+    fn test_struct_new_constructor_syntax() {
+        let code = r#"
+            struct Dog {
+                name: string,
+                age: int
+            }
+
+            const d = Dog()
+            let val_d_name = d.name
+
+            user1 := Dog("Vishnu")
+            let val_u1_name = user1.name
+            let val_u1_age = user1.age
+
+            const user2 = Dog({ name: "vishnu" })
+            let val_u2_name = user2.name
+
+            let user3 : Dog = []
+            let val_u3_name = user3.name
+
+            let user4 : Dog = [{}]
+            let val_u4_name = user4[0].name
+
+            user5 := Dog([ { name: "A" }, { name: "B" } ])
+            let val_u5_name0 = user5[0].name
+            let val_u5_name1 = user5[1].name
+        "#;
+        let vm = run_code(code).unwrap();
+        assert!(vm.get_global("val_d_name").unwrap().is_null());
+        assert_eq!(vm.get_global("val_u1_name").unwrap().as_str().unwrap(), "Vishnu");
+        assert!(vm.get_global("val_u1_age").unwrap().is_null());
+        assert_eq!(vm.get_global("val_u2_name").unwrap().as_str().unwrap(), "vishnu");
+        assert!(vm.get_global("val_u3_name").unwrap().is_null());
+        assert!(vm.get_global("val_u4_name").unwrap().is_null());
+        assert_eq!(vm.get_global("val_u5_name0").unwrap().as_str().unwrap(), "A");
+        assert_eq!(vm.get_global("val_u5_name1").unwrap().as_str().unwrap(), "B");
     }
 
     #[test]

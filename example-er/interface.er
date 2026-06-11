@@ -12,10 +12,10 @@ struct Dog {
 }
 
 // 1. Named struct instantiation (explicit syntax)
-let pet: Barker = Dog {
+let pet: Barker = Dog({
     name: "Rex",
     age: 2,
-}
+})
 
 // 2. Call method bark through Barker
 pet.bark()
