@@ -1,3 +1,5 @@
+
+
 const start = async () => {
   console.log("Starting sequential fetches (Bun)...")
   await fetch("https://jsonplaceholder.typicode.com/todos/1")

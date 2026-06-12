@@ -1,0 +1,65 @@
+struct Animal {
+fn Eat() {
+print("Eating...")
+}
+}
+
+interface IAnimal {
+fn Speak()
+}
+
+interface ISomething {
+fn DoSomething()
+}
+
+struct Dog embed Animal {
+
+fn Speak() {  
+    print("Woof")  
+}  
+
+fn DoSomething() {  
+    print("Doing something...")  
+}
+
+}
+
+const d = Dog()
+
+d.Eat()
+
+const a: IAnimal = d
+const s: ISomething = d
+
+a.Speak()
+s.DoSomething()
+
+struct User {
+name : string
+}
+
+const user : User = []
+
+user = User("Vishnu") 
+
+const user : User = [{}]
+
+
+//this syntax needed to be check
+
+user = User([
+    {
+   
+   }, 
+]) 
+
+
+
+const user = User({
+name: "vishnu"
+}) 
+
+
+user = User([
+{}
+]) 

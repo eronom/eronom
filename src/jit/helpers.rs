@@ -209,10 +209,7 @@ pub extern "C" fn er_jit_set_global(vm: *mut VM, val: Value, name_val: Value) ->
                 0
             }
             std::collections::hash_map::Entry::Vacant(_) => {
-                (*vm).error = Some(format!(
-                    "Variable '{}' not declared. It needs to be declared with 'let' or 'const'.",
-                    name
-                ));
+                (*vm).error = Some(crate::vm::execute::format_undeclared_var_error(&name));
                 -1
             }
         }
@@ -287,7 +284,9 @@ pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val:
             field_indices,
             methods,
         });
-        (*vm).structs.insert(name_rc, descriptor);
+        (*vm).structs.insert(name_rc.clone(), descriptor.clone());
+        let ptr = gc_allocate(GcData::StructConstructor(descriptor));
+        (*vm).globals.insert(name_rc, Value::object(ptr));
         0
     }
 }
@@ -639,6 +638,89 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
     }
 }
 
+pub fn construct_struct_from_args_helper(
+    descriptor: &std::rc::Rc<crate::vm::gc::StructDescriptor>,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.is_empty() {
+        let count = descriptor.field_indices.len();
+        let mut fields = get_pooled_vec(count);
+        fields.resize(count, Value::null());
+        let s_ptr = gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+            descriptor: descriptor.clone(),
+            fields,
+        }));
+        return Ok(Value::object(s_ptr));
+    }
+
+    if args.len() == 1 {
+        let arg = args[0];
+        if arg.is_object() {
+            let arg_ptr = arg.as_gc_ptr();
+            unsafe {
+                match &(*arg_ptr).data {
+                    GcData::Object(map) => {
+                        let count = descriptor.field_indices.len();
+                        let mut fields = get_pooled_vec(count);
+                        fields.resize(count, Value::null());
+                        for (map_key, &idx) in &descriptor.field_indices {
+                            if let Some(&val) = map.get(map_key) {
+                                fields[idx] = val;
+                            }
+                        }
+                        let s_ptr = gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                            descriptor: descriptor.clone(),
+                            fields,
+                        }));
+                        return Ok(Value::object(s_ptr));
+                    }
+                    GcData::Struct(s) => {
+                        let count = descriptor.field_indices.len();
+                        let mut fields = get_pooled_vec(count);
+                        fields.resize(count, Value::null());
+                        for (map_key, &idx) in &descriptor.field_indices {
+                            if let Some(val) = s.get_field(map_key.0) {
+                                fields[idx] = val;
+                            }
+                        }
+                        let s_ptr = gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                            descriptor: descriptor.clone(),
+                            fields,
+                        }));
+                        return Ok(Value::object(s_ptr));
+                    }
+                    _ => {}
+                }
+            }
+        } else if arg.is_array() {
+            let arg_ptr = arg.as_gc_ptr();
+            let mut mapped_elements = Vec::new();
+            unsafe {
+                if let GcData::Array(arr) = &(*arg_ptr).data {
+                    for &item in arr {
+                        let constructed = construct_struct_from_args_helper(descriptor, vec![item])?;
+                        mapped_elements.push(constructed);
+                    }
+                }
+            }
+            let array_ptr = gc_allocate(GcData::Array(mapped_elements));
+            return Ok(Value::array(array_ptr));
+        }
+    }
+
+    let count = descriptor.field_indices.len();
+    let mut fields = get_pooled_vec(count);
+    fields.resize(count, Value::null());
+    for i in 0..args.len().min(count) {
+        fields[i] = args[i];
+    }
+    let s_ptr = gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+        descriptor: descriptor.clone(),
+        fields,
+    }));
+    Ok(Value::object(s_ptr))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_call_non_vm(
     _vm: *mut VM,
@@ -662,6 +744,26 @@ pub extern "C" fn er_jit_call_non_vm(
             } else {
                 *dest = result;
                 0
+            }
+        } else if callee.is_object() && matches!(&(*callee.as_gc_ptr()).data, GcData::StructConstructor(_)) {
+            let ptr = callee.as_gc_ptr();
+            let descriptor = match &(*ptr).data {
+                GcData::StructConstructor(desc) => desc.clone(),
+                _ => unreachable!(),
+            };
+            let mut args = Vec::with_capacity(arg_count as usize);
+            for i in 0..arg_count {
+                args.push(*frame_slots.offset((func_reg + 1 + i) as isize));
+            }
+            match construct_struct_from_args_helper(&descriptor, args) {
+                Ok(result) => {
+                    *dest = result;
+                    0
+                }
+                Err(err) => {
+                    (*_vm).error = Some(err);
+                    -1
+                }
             }
         } else if callee.is_method_json() || callee.is_method_text() {
             let ptr = callee.as_gc_ptr();

@@ -93,6 +93,7 @@ pub enum GcData {
     Promise(GcPromise),
     Struct(GcStruct),
     BoundMethod(GcBoundMethod),
+    StructConstructor(Rc<StructDescriptor>),
 }
 
 pub struct GcObject {
@@ -348,6 +349,7 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
                 gc_mark_value(&bm.receiver);
                 gc_mark_object(bm.function);
             }
+            GcData::StructConstructor(_) => {}
         }
     }
 }

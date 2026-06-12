@@ -1,0 +1,8 @@
+import {User} from "./exportstruct"
+
+user = User({
+    name: "vishnu",
+    age:25,
+ })
+
+ print(user.name)

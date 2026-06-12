@@ -123,12 +123,36 @@ impl Compiler {
                 );
             }
             Stmt::VarDecl(name, type_annotation, is_const, expr, loc) => {
+                let mut expr = expr.clone();
                 if let Some(t_name) = type_annotation {
-                    check_type(expr, t_name, &self.structs, &self.interfaces, &self.locals, &self.global_types, loc)?;
+                    if self.structs.contains_key(t_name) {
+                        match &expr {
+                            Expr::Array(items) => {
+                                if items.is_empty() {
+                                    expr = Expr::Call(
+                                        Box::new(Expr::Variable(t_name.clone(), loc.clone())),
+                                        Vec::new(),
+                                    );
+                                } else {
+                                    let mut new_items = Vec::new();
+                                    for item in items {
+                                        let call_expr = Expr::Call(
+                                            Box::new(Expr::Variable(t_name.clone(), loc.clone())),
+                                            vec![item.clone()],
+                                        );
+                                        new_items.push(call_expr);
+                                    }
+                                    expr = Expr::Array(new_items);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    check_type(&expr, t_name, &self.structs, &self.interfaces, &self.locals, &self.global_types, loc)?;
                 }
                 if self.scope_depth > 0 {
                     let local_reg = self.locals.len();
-                    self.compile_expr(expr, local_reg)?;
+                    self.compile_expr(&expr, local_reg)?;
                     self.locals.push(Local {
                         name: name.clone(),
                         depth: self.scope_depth,
@@ -138,7 +162,7 @@ impl Compiler {
                     });
                 } else {
                     let temp_reg = self.next_reg;
-                    self.compile_expr(expr, temp_reg)?;
+                    self.compile_expr(&expr, temp_reg)?;
                     let name_idx = self
                         .current_chunk()
                         .add_constant(Value::string(get_or_create_string(name.as_str())));
@@ -914,6 +938,7 @@ fn get_expr_type(
     expr: &Expr,
     locals: &[Local],
     global_types: &std::collections::HashMap<String, String>,
+    structs: &std::collections::HashMap<String, FlattenedStructInfo>,
 ) -> Option<String> {
     match expr {
         Expr::Variable(name, _) => {
@@ -926,6 +951,14 @@ fn get_expr_type(
             None
         }
         Expr::StructInst(struct_name, _, _) => Some(struct_name.clone()),
+        Expr::Call(callee, _) => {
+            if let Expr::Variable(name, _) = &**callee {
+                if structs.contains_key(name) {
+                    return Some(name.clone());
+                }
+            }
+            None
+        }
         _ => None,
     }
 }
@@ -997,7 +1030,7 @@ fn check_type(
             return Ok(());
         }
 
-        if let Some(src_type) = get_expr_type(expr, locals, global_types) {
+        if let Some(src_type) = get_expr_type(expr, locals, global_types, structs) {
             if src_type == expected_type {
                 return Ok(());
             }

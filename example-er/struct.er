@@ -6,6 +6,7 @@ struct Position {
     }
 }
 
+
 struct AnoStr{
     nameAno: string,
     fn printPlayer() {
@@ -25,7 +26,7 @@ struct Player embed AnoStr{
     }
 }
 
-let p : Player = {
+let p: Player = {
     pos: {
         x: 10,
         y: 20,

@@ -1,0 +1,10 @@
+ export struct User{
+    name:string,
+    age:int
+ }
+
+
+export fn createFn() {
+    print(5+2)
+ }
+

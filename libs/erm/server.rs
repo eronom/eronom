@@ -274,6 +274,23 @@ fn execute_api_route(
 
     let _guard = GcGuard;
     
+    // Load config.er if it exists
+    if let Some(parent_dir) = file_path.parent() {
+        let config_path = parent_dir.join("config.er");
+        if config_path.exists() {
+            if let Ok(config_content) = std::fs::read_to_string(&config_path) {
+                let config_tokens = crate::frontend::lex(&config_content);
+                let mut config_parser = crate::frontend::Parser::new(config_tokens);
+                if let Ok(config_stmts) = config_parser.parse() {
+                    let config_compiler = crate::vm::compiler::Compiler::new();
+                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
+                        let _ = vm.run(config_func);
+                    }
+                }
+            }
+        }
+    }
+
     if let Err(e) = vm.run(function) {
         anyhow::bail!("VM Runtime error: {}", e);
     }
@@ -316,21 +333,27 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
 
     println!("Request: {} {}", method, target);
 
+    let app_dir = if base_path.join("app").exists() {
+        base_path.join("app")
+    } else {
+        base_path.clone()
+    };
+
     let mut params = HashMap::new();
     let file_path = if target == "/" {
         if let Some(ref def_file) = default_file {
             def_file.clone()
         } else {
-            let index_erm = base_path.join("pages").join("index.erm");
+            let index_erm = app_dir.join("pages").join("index.erm");
             if index_erm.exists() {
                 index_erm
             } else {
-                base_path.join("pages").join("index.html")
+                app_dir.join("pages").join("index.html")
             }
         }
     } else {
         let resolve_root = if !target.starts_with("/api/") {
-            base_path.join("pages")
+            app_dir.join("pages")
         } else {
             base_path.join("server")
         };
@@ -341,17 +364,27 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
         } else {
             let primary_fallback = resolve_root.join(&target[1..]);
             if !target.starts_with("/api/") && !primary_fallback.exists() {
-                let secondary_fallback = base_path.join(&target[1..]);
+                let secondary_fallback = app_dir.join(&target[1..]);
                 if secondary_fallback.exists() {
                     secondary_fallback
                 } else {
-                    primary_fallback
+                    let base_fallback = base_path.join(&target[1..]);
+                    if base_fallback.exists() {
+                        base_fallback
+                    } else {
+                        primary_fallback
+                    }
                 }
             } else {
                 primary_fallback
             }
         }
     };
+
+    let mut file_path = file_path;
+    if !file_path.exists() && default_file.is_some() {
+        file_path = default_file.clone().unwrap();
+    }
 
     if file_path.exists() && file_path.is_file() {
         if file_path.extension().map_or(false, |ext| ext == "erm") {
@@ -435,6 +468,22 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         default_file = Some(base_path.clone());
         if let Some(parent) = base_path.parent() {
             base_path = parent.to_path_buf();
+        }
+    } else {
+        let config_path = base_path.join("config.er");
+        if config_path.exists() {
+            if let Ok(content) = fs::read_to_string(&config_path) {
+                if let Ok(re) = regex::Regex::new(r#"(?s)server\s*:\s*\{[^}]*dev\s*:\s*["']([^"']+)["']"#) {
+                    if let Some(caps) = re.captures(&content) {
+                        if let Some(dev_val) = caps.get(1) {
+                            let dev_file = base_path.join(dev_val.as_str());
+                            if dev_file.exists() {
+                                default_file = Some(dev_file);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
