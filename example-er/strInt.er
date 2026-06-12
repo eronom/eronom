@@ -40,14 +40,14 @@ name : string
 
 const user : User = []
 
-user := User("Vishnu") 
+user = User("Vishnu") 
 
 const user : User = [{}]
 
 
 //this syntax needed to be check
 
-user := User([
+user = User([
     {
    
    }, 
@@ -60,6 +60,6 @@ name: "vishnu"
 }) 
 
 
-user := User([
+user = User([
 {}
 ]) 

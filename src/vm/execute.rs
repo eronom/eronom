@@ -58,7 +58,7 @@ pub struct PendingAsync {
 unsafe impl Send for PendingAsync {}
 pub fn format_undeclared_var_error(name: &str) -> String {
     format!(
-        "Variable '{}' not declared. It needs to be declared with 'let', 'const', or ':='.",
+        "Variable '{}' not declared. It needs to be declared with 'let' or 'const', or by assigning to it.",
         name
     )
 }
@@ -1832,7 +1832,7 @@ mod tests {
             const d = Dog()
             let val_d_name = d.name
 
-            user1 := Dog("Vishnu")
+            user1 = Dog("Vishnu")
             let val_u1_name = user1.name
             let val_u1_age = user1.age
 
@@ -1845,7 +1845,7 @@ mod tests {
             let user4 : Dog = [{}]
             let val_u4_name = user4[0].name
 
-            user5 := Dog([ { name: "A" }, { name: "B" } ])
+            user5 = Dog([ { name: "A" }, { name: "B" } ])
             let val_u5_name0 = user5[0].name
             let val_u5_name1 = user5[1].name
         "#;

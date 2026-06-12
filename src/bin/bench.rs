@@ -478,6 +478,185 @@ console.log((performance.now() - start) / 1000);
         }
     }
 
+    // --- Node.js benchmark ---
+    let run_node_file =
+        |args: &[&str], source: &str| -> Result<(String, Option<usize>), Box<dyn std::error::Error>> {
+            let temp_filename = "temp_bench_node.js";
+            std::fs::write(temp_filename, source)?;
+            
+            let mut full_args = args.to_vec();
+            full_args.push(temp_filename);
+            
+            let result = run_command_with_metrics("node", &full_args);
+            let _ = std::fs::remove_file(temp_filename);
+            
+            if let (Some(stdout), rss) = result {
+                Ok((stdout, rss))
+            } else {
+                Err("Command failed".into())
+            }
+        };
+
+    let node_source = r#"
+for (let i = 1; i < 50000; i++) {
+    let arr = [i, i + 1, i + 2];
+    arr.push(i + 3);
+    let pop_val = arr.pop();
+    let obj = { a: arr, b: i };
+    let s = `num: ${i}`;
+    let dummy = obj.a;
+}
+"#;
+
+    let node_pure_source = format!(
+        r#"
+const perf = typeof performance !== 'undefined' ? performance : require('perf_hooks').performance;
+const start = perf.now();
+for (let r = 0; r < {}; r++) {{
+    for (let i = 1; i < 50000; i++) {{
+        let arr = [i, i + 1, i + 2];
+        arr.push(i + 3);
+        let pop_val = arr.pop();
+        let obj = {{ a: arr, b: i }};
+        let s = `num: ${{i}}`;
+        let dummy = obj.a;
+    }}
+}}
+console.log((perf.now() - start) / 1000);
+"#,
+        iterations
+    );
+
+    let mut node_pure_avg = std::time::Duration::from_secs(0);
+    let mut node_pure_rss = None;
+    if let Ok((output, rss)) = run_node_file(&[], &node_pure_source) {
+        if let Ok(secs) = output.trim().parse::<f64>() {
+            node_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
+            node_pure_rss = rss;
+        }
+    }
+
+    let mut node_cli_avg = std::time::Duration::from_secs(0);
+    let mut node_cli_rss = None;
+    if std::process::Command::new("node")
+        .arg("-v")
+        .output()
+        .is_ok()
+    {
+        let temp_filename = "temp_bench_node_cli.js";
+        if std::fs::write(temp_filename, node_source).is_ok() {
+            let start = Instant::now();
+            let mut success = true;
+            for _ in 0..iterations {
+                if !std::process::Command::new("node")
+                    .arg(temp_filename)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                {
+                    success = false;
+                    break;
+                }
+            }
+            if success {
+                node_cli_avg = start.elapsed() / iterations;
+                let (_, rss) = run_command_with_metrics("node", &[temp_filename]);
+                node_cli_rss = rss;
+            }
+            let _ = std::fs::remove_file(temp_filename);
+        }
+    }
+
+    // --- Deno benchmark ---
+    let run_deno_file =
+        |args: &[&str], source: &str| -> Result<(String, Option<usize>), Box<dyn std::error::Error>> {
+            let temp_filename = "temp_bench_deno.js";
+            std::fs::write(temp_filename, source)?;
+            
+            let mut full_args = args.to_vec();
+            full_args.push("run");
+            full_args.push(temp_filename);
+            
+            let result = run_command_with_metrics("deno", &full_args);
+            let _ = std::fs::remove_file(temp_filename);
+            
+            if let (Some(stdout), rss) = result {
+                Ok((stdout, rss))
+            } else {
+                Err("Command failed".into())
+            }
+        };
+
+    let deno_source = r#"
+for (let i = 1; i < 50000; i++) {
+    let arr = [i, i + 1, i + 2];
+    arr.push(i + 3);
+    let pop_val = arr.pop();
+    let obj = { a: arr, b: i };
+    let s = `num: ${i}`;
+    let dummy = obj.a;
+}
+"#;
+
+    let deno_pure_source = format!(
+        r#"
+const start = performance.now();
+for (let r = 0; r < {}; r++) {{
+    for (let i = 1; i < 50000; i++) {{
+        let arr = [i, i + 1, i + 2];
+        arr.push(i + 3);
+        let pop_val = arr.pop();
+        let obj = {{ a: arr, b: i }};
+        let s = `num: ${{i}}`;
+        let dummy = obj.a;
+    }}
+}}
+console.log((performance.now() - start) / 1000);
+"#,
+        iterations
+    );
+
+    let mut deno_pure_avg = std::time::Duration::from_secs(0);
+    let mut deno_pure_rss = None;
+    if let Ok((output, rss)) = run_deno_file(&[], &deno_pure_source) {
+        if let Ok(secs) = output.trim().parse::<f64>() {
+            deno_pure_avg = std::time::Duration::from_secs_f64(secs / iterations as f64);
+            deno_pure_rss = rss;
+        }
+    }
+
+    let mut deno_cli_avg = std::time::Duration::from_secs(0);
+    let mut deno_cli_rss = None;
+    if std::process::Command::new("deno")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        let temp_filename = "temp_bench_deno_cli.js";
+        if std::fs::write(temp_filename, deno_source).is_ok() {
+            let start = Instant::now();
+            let mut success = true;
+            for _ in 0..iterations {
+                if !std::process::Command::new("deno")
+                    .arg("run")
+                    .arg(temp_filename)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                {
+                    success = false;
+                    break;
+                }
+            }
+            if success {
+                deno_cli_avg = start.elapsed() / iterations;
+                let (_, rss) = run_command_with_metrics("deno", &["run", temp_filename]);
+                deno_cli_rss = rss;
+            }
+            let _ = std::fs::remove_file(temp_filename);
+        }
+    }
+
     // --- Go benchmark ---
     let run_go_file =
         |args: &[&str], source: &str| -> Result<(String, Option<usize>), Box<dyn std::error::Error>> {
@@ -732,6 +911,18 @@ print(time.perf_counter() - start)
     if bun_cli_avg.as_nanos() > 0 {
         print_row("Bun (external CLI)", bun_cli_avg, bun_cli_rss, None);
     }
+    if node_pure_avg.as_nanos() > 0 {
+        print_row("Node (pure run)", node_pure_avg, node_pure_rss, None);
+    }
+    if node_cli_avg.as_nanos() > 0 {
+        print_row("Node (external CLI)", node_cli_avg, node_cli_rss, None);
+    }
+    if deno_pure_avg.as_nanos() > 0 {
+        print_row("Deno (pure run)", deno_pure_avg, deno_pure_rss, None);
+    }
+    if deno_cli_avg.as_nanos() > 0 {
+        print_row("Deno (external CLI)", deno_cli_avg, deno_cli_rss, None);
+    }
     if go_pure_avg.as_nanos() > 0 {
         print_row("Go (pure run)", go_pure_avg, go_pure_rss, None);
     }
@@ -787,6 +978,54 @@ print(time.perf_counter() - start)
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / bun_cli_avg.as_nanos() as f64;
             let text = format!("VM is {:.2}x SLOWER than Bun (CLI)", slowdown);
+            print_footer("⚠️", &text);
+        }
+    }
+
+    if node_pure_avg.as_nanos() > 0 {
+        if vm_avg < node_pure_avg {
+            let speedup = node_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Node (pure)", speedup);
+            print_footer("✅", &text);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Node (pure)", slowdown);
+            print_footer("⚠️", &text);
+        }
+    }
+
+    if node_cli_avg.as_nanos() > 0 {
+        if vm_avg < node_cli_avg {
+            let speedup = node_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Node (CLI)", speedup);
+            print_footer("✅", &text);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Node (CLI)", slowdown);
+            print_footer("⚠️", &text);
+        }
+    }
+
+    if deno_pure_avg.as_nanos() > 0 {
+        if vm_avg < deno_pure_avg {
+            let speedup = deno_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Deno (pure)", speedup);
+            print_footer("✅", &text);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / deno_pure_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Deno (pure)", slowdown);
+            print_footer("⚠️", &text);
+        }
+    }
+
+    if deno_cli_avg.as_nanos() > 0 {
+        if vm_avg < deno_cli_avg {
+            let speedup = deno_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x FASTER than Deno (CLI)", speedup);
+            print_footer("✅", &text);
+        } else {
+            let slowdown = vm_avg.as_nanos() as f64 / deno_cli_avg.as_nanos() as f64;
+            let text = format!("VM is {:.2}x SLOWER than Deno (CLI)", slowdown);
             print_footer("⚠️", &text);
         }
     }

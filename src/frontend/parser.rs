@@ -5,16 +5,45 @@ pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     pub file_path: String,
+    scopes: Vec<std::collections::HashSet<String>>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0, file_path: "".to_string() }
+        Self {
+            tokens,
+            current: 0,
+            file_path: "".to_string(),
+            scopes: vec![std::collections::HashSet::new()],
+        }
     }
 
     pub fn with_file_path(mut self, path: String) -> Self {
         self.file_path = path;
         self
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(std::collections::HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare_variable(&mut self, name: String) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name);
+        }
+    }
+
+    fn is_variable_declared(&self, name: &str) -> bool {
+        for scope in self.scopes.iter().rev() {
+            if scope.contains(name) {
+                return true;
+            }
+        }
+        false
     }
 
     fn peek(&self) -> &Token {
@@ -100,6 +129,9 @@ impl Parser {
                     }
                 }
                 self.consume(TokenType::RightBrace, "Expected '}' after import list.")?;
+                for name in &names {
+                    self.declare_variable(name.clone());
+                }
                 self.consume(TokenType::From, "Expected 'from' after import list.")?;
                 let path_token = self.peek().clone();
                 let path = if let TokenType::String(s) = path_token.ty {
@@ -125,6 +157,7 @@ impl Parser {
         } else if self.match_token(&[TokenType::Struct]) {
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected struct name.")?;
+            self.declare_variable(name.clone());
             let mut composed = Vec::new();
             if self.match_token(&[TokenType::Embed]) {
                 loop {
@@ -154,6 +187,11 @@ impl Parser {
                             }
                         }
                         self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+                        self.push_scope();
+                        self.declare_variable("this".to_string());
+                        for param in &params {
+                            self.declare_variable(param.clone());
+                        }
                         self.consume(TokenType::LeftBrace, "Expected '{' before method body.")?;
                         let mut stmts = Vec::new();
                         while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
@@ -161,6 +199,7 @@ impl Parser {
                         }
                         self.consume(TokenType::RightBrace, "Expected '}' after method body.")?;
                         let body = Stmt::Block(stmts);
+                        self.pop_scope();
                         methods.push((method_name, params, body));
                     } else {
                         let field_name = self.consume_ident("Expected field name.")?;
@@ -184,6 +223,7 @@ impl Parser {
         } else if self.match_token(&[TokenType::Interface]) {
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected interface name.")?;
+            self.declare_variable(name.clone());
             self.consume(TokenType::LeftBrace, "Expected '{' before interface body.")?;
             let mut fields = Vec::new();
             let mut methods = Vec::new();
@@ -243,10 +283,12 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
+            self.declare_variable(name.clone());
             Ok(Stmt::VarDecl(name, type_annotation, is_const, initializer, loc))
         } else if self.match_token(&[TokenType::Function]) {
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected function name.")?;
+            self.declare_variable(name.clone());
             self.consume(TokenType::LeftParen, "Expected '(' after function name.")?;
             let mut params = Vec::new();
             if !self.check(&TokenType::RightParen) {
@@ -259,6 +301,10 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+            self.push_scope();
+            for param in &params {
+                self.declare_variable(param.clone());
+            }
             let body = if self.match_token(&[TokenType::Arrow]) {
                 let body_stmt = self.statement()?;
                 match body_stmt {
@@ -274,6 +320,7 @@ impl Parser {
                 self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
                 Stmt::Block(stmts)
             };
+            self.pop_scope();
             let loc = SourceLocation {
                 file_path: self.file_path.clone(),
                 line: name_tok.line,
@@ -281,24 +328,7 @@ impl Parser {
             };
             Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, Box::new(body)), loc))
         } else if self.check_ident() && {
-            // Check for short variable declaration: ident := expr
-            self.current + 2 < self.tokens.len()
-                && self.tokens[self.current + 1].ty == TokenType::Colon
-                && self.tokens[self.current + 2].ty == TokenType::Equal
-        } {
-            let name_tok = self.peek().clone();
-            let name = self.consume_ident("Expected variable name.")?;
-            self.advance(); // consume :
-            self.advance(); // consume =
-            let expr = self.expression()?;
-            let loc = SourceLocation {
-                file_path: self.file_path.clone(),
-                line: name_tok.line,
-                col: name_tok.col,
-            };
-            Ok(Stmt::VarDecl(name, None, false, expr, loc))
-        } else if self.check_ident() && {
-            // Check for simple assignment without let/const: ident = expr
+            // Check for assignment or short variable declaration: ident = expr
             self.current + 1 < self.tokens.len()
                 && self.tokens[self.current + 1].ty == TokenType::Equal
         } {
@@ -311,7 +341,12 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::Expr(Expr::Assign(name, Box::new(expr), loc)))
+            if self.is_variable_declared(&name) {
+                Ok(Stmt::Expr(Expr::Assign(name, Box::new(expr), loc)))
+            } else {
+                self.declare_variable(name.clone());
+                Ok(Stmt::VarDecl(name, None, false, expr, loc))
+            }
         } else {
             self.statement()
         }
@@ -324,11 +359,13 @@ impl Parser {
             self.consume(TokenType::RightParen, "Expected ')' after value.")?;
             Ok(Stmt::Print(value))
         } else if self.match_token(&[TokenType::LeftBrace]) {
+            self.push_scope();
             let mut stmts = Vec::new();
             while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
                 stmts.push(self.declaration()?);
             }
             self.consume(TokenType::RightBrace, "Expected '}' after block.")?;
+            self.pop_scope();
             Ok(Stmt::Block(stmts))
         } else if self.match_token(&[TokenType::If]) {
             self.consume(TokenType::LeftParen, "Expected '(' after if.")?;
@@ -347,7 +384,10 @@ impl Parser {
             let start = self.expression()?;
             self.consume(TokenType::DotDot, "Expected '..' in for loop range.")?;
             let end = self.expression()?;
+            self.push_scope();
+            self.declare_variable(var_name.clone());
             let body = Box::new(self.statement()?);
+            self.pop_scope();
             Ok(Stmt::For(var_name, start, end, body))
         } else if self.match_token(&[TokenType::Return]) {
             let value = if !self.check(&TokenType::RightBrace) && !self.is_at_end() {
@@ -500,7 +540,7 @@ impl Parser {
 
     fn primary(&mut self) -> Result<Expr, String> {
         if self.match_token(&[TokenType::Function]) {
-            let _name = if self.check_ident() {
+            let name = if self.check_ident() {
                 Some(self.consume_ident("Expected function name.")?)
             } else {
                 None
@@ -517,6 +557,13 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+            self.push_scope();
+            if let Some(ref n) = name {
+                self.declare_variable(n.clone());
+            }
+            for param in &params {
+                self.declare_variable(param.clone());
+            }
             let body = if self.match_token(&[TokenType::Arrow]) {
                 let body_stmt = self.statement()?;
                 match body_stmt {
@@ -532,6 +579,7 @@ impl Parser {
                 self.consume(TokenType::RightBrace, "Expected '}' after function body.")?;
                 Stmt::Block(stmts)
             };
+            self.pop_scope();
             return Ok(Expr::Function(params, Box::new(body)));
         }
 
@@ -572,11 +620,13 @@ impl Parser {
                 if temp + 1 < self.tokens.len() && self.tokens[temp + 1].ty == TokenType::Arrow {
                     self.advance(); // consume RightParen
                     self.advance(); // consume Arrow
+                    self.push_scope();
                     let body = self.statement()?;
                     let body = match body {
                         Stmt::Expr(expr) => Stmt::Return(Some(expr)),
                         other => other,
                     };
+                    self.pop_scope();
                     return Ok(Expr::Function(Vec::new(), Box::new(body)));
                 }
             }
@@ -605,11 +655,16 @@ impl Parser {
                 }
 
                 if is_arrow {
+                    self.push_scope();
+                    for param in &params {
+                        self.declare_variable(param.clone());
+                    }
                     let body = self.statement()?;
                     let body = match body {
                         Stmt::Expr(expr) => Stmt::Return(Some(expr)),
                         other => other,
                     };
+                    self.pop_scope();
                     return Ok(Expr::Function(params, Box::new(body)));
                 } else {
                     self.current = save_pos;
@@ -620,11 +675,13 @@ impl Parser {
             self.consume(TokenType::RightParen, "Expected ')' after expression.")?;
 
             if self.match_token(&[TokenType::Arrow]) {
+                self.push_scope();
                 let body = self.statement()?;
                 let body = match body {
                     Stmt::Expr(expr) => Stmt::Return(Some(expr)),
                     other => other,
                 };
+                self.pop_scope();
                 return Ok(Expr::Function(vec![], Box::new(body)));
             }
 
@@ -685,8 +742,17 @@ fn get_exported_names(stmts: &[Stmt]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for stmt in stmts {
         if let Stmt::Export(inner) = stmt {
-            if let Stmt::VarDecl(name, _, _, _, _) = &**inner {
-                names.insert(name.clone());
+            match &**inner {
+                Stmt::VarDecl(name, _, _, _, _) => {
+                    names.insert(name.clone());
+                }
+                Stmt::Struct(name, _, _, _, _) => {
+                    names.insert(name.clone());
+                }
+                Stmt::Interface(name, _, _, _) => {
+                    names.insert(name.clone());
+                }
+                _ => {}
             }
         }
     }

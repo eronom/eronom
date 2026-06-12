@@ -1,1 +1,9 @@
-export const num = 5
+export num = 5
+
+name = "vishnu"
+
+print = "new"
+
+name = "vs"
+
+print(print)
