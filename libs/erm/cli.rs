@@ -1,93 +1,156 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use regex::Regex;
 use crate::compiler;
 use crate::server::start_server;
 use std::fs;
+use clap::{Parser, Subcommand};
+
+#[derive(Parser, Debug)]
+#[command(name = "eronom", version = "0.1.0")]
+#[command(about = "Eronom: A web framework and runtime", long_about = None)]
+pub struct Cli {
+    /// The script file to run (e.g. main.er)
+    pub file: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Initialize a fresh Eronom project
+    Init {
+        /// Target directory
+        #[arg(default_value = ".")]
+        dir: String,
+    },
+    /// Build the project
+    Build {
+        /// Source directory
+        #[arg(default_value = ".")]
+        dir: String,
+
+        /// Build for Server-Side Rendering (SSR) (default)
+        #[arg(long, conflicts_with = "ssg")]
+        ssr: bool,
+
+        /// Build for Static Site Generation (SSG)
+        #[arg(long)]
+        ssg: bool,
+    },
+    /// Start the server in production mode
+    Start {
+        /// Build directory or port
+        dir_or_port: Option<String>,
+
+        /// Port number if directory was also specified
+        port_pos: Option<u16>,
+
+        /// Port number
+        #[arg(short, long = "port")]
+        port: Option<u16>,
+    },
+    /// Start the server in development mode
+    Dev {
+        /// Source directory or port
+        dir_or_port: Option<String>,
+
+        /// Port number if directory was also specified
+        port_pos: Option<u16>,
+
+        /// Port number
+        #[arg(short, long = "port")]
+        port: Option<u16>,
+    },
+}
 
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
-    let mut cmd = "dev";
-    let mut dir = ".";
-    let mut port_val: Option<u16> = None;
-    let mut is_ssr = true;
-    let mut has_custom_port = false;
+    let cli = Cli::try_parse_from(args)?;
+    if let Some(cmd) = cli.command {
+        run_command(cmd)
+    } else if let Some(file_path) = cli.file {
+        anyhow::bail!("Running files is handled via the main entrypoint: {}", file_path.display())
+    } else {
+        anyhow::bail!("No command or file specified")
+    }
+}
 
-    if args.len() > 1 {
-        let first_arg = &args[1];
-        if matches!(first_arg.as_str(), "build" | "dev" | "start" | "init") {
-            cmd = first_arg;
-            
-            let mut pos_args = Vec::new();
-            for arg in args.iter().skip(2) {
-                if arg == "--ssg" || arg == "-ssg" {
-                    is_ssr = false;
-                } else if arg == "--ssr" || arg == "-ssr" {
-                    is_ssr = true;
-                } else if arg.starts_with('-') {
-                    // ignore unknown flags for now
-                } else {
-                    pos_args.push(arg);
-                }
-            }
-            
-            if cmd == "start" {
-                dir = "build";
-            }
-            if !pos_args.is_empty() {
-                if cmd == "start" && pos_args[0].parse::<u16>().is_ok() {
-                    let p = pos_args[0].parse::<u16>().unwrap();
-                    port_val = Some(p);
-                    has_custom_port = true;
-                } else {
-                    dir = pos_args[0];
-                    if pos_args.len() > 1 && cmd != "build" {
-                        match pos_args[1].parse::<u16>() {
-                            Ok(p) => {
-                                port_val = Some(p);
-                                has_custom_port = true;
-                            }
-                            Err(_) => {
-                                anyhow::bail!("Invalid port number: '{}'", pos_args[1]);
-                            }
-                        }
-                    }
-                }
+fn parse_dir_and_port(
+    dir_or_port: Option<String>,
+    port_pos: Option<u16>,
+    port_flag: Option<u16>,
+    default_dir: &str,
+) -> anyhow::Result<(String, Option<u16>)> {
+    let mut dir = default_dir.to_string();
+    let mut port_val = port_flag;
+
+    if let Some(arg) = dir_or_port {
+        if let Ok(p) = arg.parse::<u16>() {
+            if port_val.is_none() {
+                port_val = Some(p);
             }
         } else {
-            dir = first_arg;
+            dir = arg;
+            if port_val.is_none() {
+                port_val = port_pos;
+            }
         }
     }
+    Ok((dir, port_val))
+}
 
-
-    if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
-        dir = "app/build";
-    }
-
-    let port = if has_custom_port {
-        port_val.unwrap()
+fn resolve_port(dir: &str, port_val: Option<u16>, is_build_or_init: bool) -> anyhow::Result<u16> {
+    if let Some(p) = port_val {
+        Ok(p)
     } else if let Ok(port_str) = std::env::var("PORT") {
         if let Ok(p) = port_str.parse::<u16>() {
-            p
+            Ok(p)
         } else {
             anyhow::bail!("Invalid port in PORT environment variable: '{}'", port_str);
         }
     } else if let Some(config_port) = get_port_from_config_file(dir) {
-        config_port
-    } else if cmd == "build" || cmd == "init" {
-        0
+        Ok(config_port)
+    } else if is_build_or_init {
+        Ok(0)
     } else {
         anyhow::bail!("No port specified. Please provide a port in config.er or PORT environment variable.");
-    };
-
-    match cmd {
-        "init" => init_project(dir)?,
-        "build" => build_project(dir, is_ssr)?,
-        "start" => start_server(dir, true, port)?,
-        "dev" => start_server(dir, false, port)?,
-        _ => anyhow::bail!("Unknown command: {}", cmd),
     }
+}
 
+pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
+    match cmd {
+        Commands::Init { dir } => {
+            init_project(&dir)?;
+        }
+        Commands::Build { dir, ssr: _, ssg } => {
+            let is_ssr = if ssg { false } else { true };
+            build_project(&dir, is_ssr)?;
+        }
+        Commands::Start {
+            dir_or_port,
+            port_pos,
+            port,
+        } => {
+            let (mut dir, port_val) = parse_dir_and_port(dir_or_port, port_pos, port, "build")?;
+            if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
+                dir = "app/build".to_string();
+            }
+            let resolved_port = resolve_port(&dir, port_val, false)?;
+            start_server(&dir, true, resolved_port)?;
+        }
+        Commands::Dev {
+            dir_or_port,
+            port_pos,
+            port,
+        } => {
+            let (dir, port_val) = parse_dir_and_port(dir_or_port, port_pos, port, ".")?;
+            let resolved_port = resolve_port(&dir, port_val, false)?;
+            start_server(&dir, false, resolved_port)?;
+        }
+    }
     Ok(())
 }
+
 
 fn init_project(dir: &str) -> anyhow::Result<()> {
     println!("Initializing fresh Eronom project in {}", dir);
