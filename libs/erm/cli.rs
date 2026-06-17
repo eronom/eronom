@@ -20,9 +20,29 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a fresh Eronom project
     Init {
-        /// Target directory
+        /// The root directory of the new project
         #[arg(default_value = ".")]
         dir: String,
+
+        /// The template to start from
+        #[arg(long, short)]
+        template: Option<String>,
+
+        /// Branch argument that can only be used with template option
+        #[arg(long, short, requires = "template")]
+        branch: Option<String>,
+
+        /// Create the project even if the specified directory is not empty
+        #[arg(long)]
+        force: bool,
+
+        /// Do not initialize a git repository
+        #[arg(long)]
+        no_git: bool,
+
+        /// Do not create an initial commit
+        #[arg(long)]
+        no_commit: bool,
     },
     /// Build the project
     Build {
@@ -119,8 +139,15 @@ fn resolve_port(dir: &str, port_val: Option<u16>, is_build_or_init: bool) -> any
 
 pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
     match cmd {
-        Commands::Init { dir } => {
-            init_project(&dir)?;
+        Commands::Init {
+            dir,
+            template,
+            branch,
+            force,
+            no_git,
+            no_commit,
+        } => {
+            init_project(&dir, template, branch, force, no_git, no_commit)?;
         }
         Commands::Build { dir, ssr: _, ssg } => {
             let is_ssr = if ssg { false } else { true };
@@ -152,36 +179,118 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
 }
 
 
-fn init_project(dir: &str) -> anyhow::Result<()> {
-    println!("Initializing fresh Eronom project in {}", dir);
-    fs::create_dir_all(dir)?;
+fn is_dir_empty(path: &Path) -> bool {
+    if let Ok(mut entries) = fs::read_dir(path) {
+        entries.next().is_none()
+    } else {
+        true
+    }
+}
 
+fn init_project(
+    dir: &str,
+    template: Option<String>,
+    branch: Option<String>,
+    force: bool,
+    no_git: bool,
+    no_commit: bool,
+) -> anyhow::Result<()> {
     let dst_dir = Path::new(dir);
 
-    // Locate the template init directory
-    let mut src_init = std::path::PathBuf::from("libs/init");
-    if !src_init.exists() {
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let sibling_init = exe_dir.join("libs/init");
-                if sibling_init.exists() {
-                    src_init = sibling_init;
-                } else if let Some(parent_dir) = exe_dir.parent() {
-                    let parent_init = parent_dir.join("libs/init");
-                    if parent_init.exists() {
-                        src_init = parent_init;
+    if dst_dir.exists() && !is_dir_empty(dst_dir) && !force {
+        anyhow::bail!(
+            "Cannot run `init` on a non-empty directory.\n\
+             Run with the `--force` flag to initialize regardless."
+        );
+    }
+
+    fs::create_dir_all(dst_dir)?;
+
+    if let Some(template_str) = template.as_ref() {
+        let template_url = if template_str.contains("://") {
+            template_str.clone()
+        } else if template_str.starts_with("github.com/") {
+            format!("https://{}", template_str)
+        } else {
+            format!("https://github.com/{}", template_str)
+        };
+
+        let temp_dir_name = format!(
+            "eronom-template-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        let temp_dir = std::env::temp_dir().join(temp_dir_name);
+
+        println!("Cloning template from {}...", template_url);
+        let mut git_clone = std::process::Command::new("git");
+        git_clone.arg("clone").arg("--depth").arg("1");
+        if let Some(ref b) = branch {
+            git_clone.arg("-b").arg(b);
+        }
+        git_clone.arg(&template_url).arg(&temp_dir);
+
+        let status = git_clone.status()?;
+        if !status.success() {
+            anyhow::bail!("Failed to clone template from {}", template_url);
+        }
+
+        println!("Copying template files...");
+        copy_dir_all(&temp_dir, dst_dir)?;
+        let _ = fs::remove_dir_all(&temp_dir);
+    } else {
+        // Locate the template init directory
+        let mut src_init = std::path::PathBuf::from("libs/init");
+        if !src_init.exists() {
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    let sibling_init = exe_dir.join("libs/init");
+                    if sibling_init.exists() {
+                        src_init = sibling_init;
+                    } else if let Some(parent_dir) = exe_dir.parent() {
+                        let parent_init = parent_dir.join("libs/init");
+                        if parent_init.exists() {
+                            src_init = parent_init;
+                        }
                     }
                 }
             }
         }
+
+        if !src_init.exists() {
+            anyhow::bail!("Source 'libs/init' directory not found. Please run 'eronom init' from the directory containing the 'libs/init' template.");
+        }
+
+        println!("Copying template from {} to {}", src_init.display(), dst_dir.display());
+        copy_dir_all(&src_init, dst_dir)?;
     }
 
-    if !src_init.exists() {
-        anyhow::bail!("Source 'libs/init' directory not found. Please run 'eronom init' from the directory containing the 'libs/init' template.");
-    }
+    if !no_git {
+        // Initialize git repo if not already inside one, or if we want a fresh repo
+        println!("Initializing git repository...");
+        let mut git_init = std::process::Command::new("git");
+        git_init.arg("init").current_dir(dst_dir);
+        let init_status = git_init.status();
+        
+        if init_status.is_ok() && init_status.unwrap().success() {
+            if !no_commit {
+                let mut git_add = std::process::Command::new("git");
+                git_add.arg("add").arg("-A").current_dir(dst_dir);
+                let _ = git_add.status();
 
-    println!("Copying template from {} to {}", src_init.display(), dst_dir.display());
-    copy_dir_all(&src_init, dst_dir)?;
+                let mut git_commit = std::process::Command::new("git");
+                let commit_msg = if let Some(ref t) = template {
+                    format!("chore: init from {}", t)
+                } else {
+                    "chore: eronom init".to_string()
+                };
+                git_commit.arg("commit").arg("-m").arg(commit_msg).current_dir(dst_dir);
+                let _ = git_commit.status();
+            }
+        }
+    }
 
     println!("Fresh Eronom project initialized successfully under {}", dst_dir.display());
     Ok(())
@@ -194,8 +303,8 @@ fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
         let file_type = entry.file_type()?;
         let file_name = entry.file_name();
         
-        // Exclude the compiled eronom binary if it is in the source folder
-        if file_name == "eronom" {
+        // Exclude the compiled eronom binary and git directory if they are in the source folder
+        if file_name == "eronom" || file_name == ".git" {
             continue;
         }
 
