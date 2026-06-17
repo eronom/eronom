@@ -240,81 +240,51 @@ fn init_project(
         println!("Copying template files...");
         copy_dir_all(&temp_dir, dst_dir)?;
         let _ = fs::remove_dir_all(&temp_dir);
-    }
+    } else {
+        // Fetch the default template (libs/init) from GitHub main branch
+        let temp_dir_name = format!(
+            "eronom-repo-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        let temp_dir = std::env::temp_dir().join(temp_dir_name);
+        let mut git_clone = std::process::Command::new("git");
+        git_clone.arg("clone")
+            .arg("--depth").arg("1")
+            .arg("https://github.com/eronom/eronom.git")
+            .arg(&temp_dir);
+        
+        let mut cloned = false;
+        if let Ok(status) = git_clone.status() {
+            if status.success() && temp_dir.join("libs/init").exists() {
+                cloned = true;
+            }
+        }
 
-    // Copy the std library directory to dst_dir/std
-    let dest_std = dst_dir.join("std");
-    println!("Installing std in {} (url: https://github.com/eronom/eronom/tree/main/std)", dest_std.display());
-    println!("Cloning into '{}'...", dest_std.display());
-
-    let mut success = false;
-    let mut commit_hash = String::new();
-
-    let temp_dir_name = format!(
-        "eronom-std-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    );
-    let temp_dir = std::env::temp_dir().join(temp_dir_name);
-    let mut git_clone = std::process::Command::new("git");
-    git_clone.arg("clone")
-        .arg("--depth").arg("1")
-        .arg("https://github.com/eronom/eronom.git")
-        .arg(&temp_dir);
-    
-    if let Ok(status) = git_clone.status() {
-        if status.success() {
-            let repo_std = temp_dir.join("std");
-            if repo_std.exists() {
-                if copy_dir_all(&repo_std, &dest_std).is_ok() {
-                    success = true;
-                    // Get commit hash
-                    let mut git_rev = std::process::Command::new("git");
-                    git_rev.arg("rev-parse").arg("HEAD").current_dir(&temp_dir);
-                    if let Ok(output) = git_rev.output() {
-                        if output.status.success() {
-                            commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        }
-                    }
+        if cloned {
+            let repo_init = temp_dir.join("libs/init");
+            copy_dir_all(&repo_init, dst_dir)?;
+            
+            // Get commit hash
+            let mut commit_hash = String::new();
+            let mut git_rev = std::process::Command::new("git");
+            git_rev.arg("rev-parse").arg("HEAD").current_dir(&temp_dir);
+            if let Ok(output) = git_rev.output() {
+                if output.status.success() {
+                    commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 }
+            }
+            if !commit_hash.is_empty() {
+                println!("    Installed template commit={}", commit_hash);
+            } else {
+                println!("    Installed template");
             }
             let _ = fs::remove_dir_all(&temp_dir);
-        }
-    }
-
-    if success {
-        if !commit_hash.is_empty() {
-            println!("    Installed std commit={}", commit_hash);
         } else {
-            println!("    Installed std");
-        }
-    } else {
-        // Fallback to local copy if clone failed (e.g. offline)
-        let mut std_src = std::path::PathBuf::from("std");
-        if !std_src.exists() {
-            if let Ok(exe_path) = std::env::current_exe() {
-                if let Some(exe_dir) = exe_path.parent() {
-                    let sibling_std = exe_dir.join("std");
-                    if sibling_std.exists() {
-                        std_src = sibling_std;
-                    } else if let Some(parent_dir) = exe_dir.parent() {
-                        let parent_std = parent_dir.join("std");
-                        if parent_std.exists() {
-                            std_src = parent_std;
-                        }
-                    }
-                }
-            }
-        }
-
-        if std_src.exists() && std_src.is_dir() {
-            println!("GitHub clone failed or offline. Falling back to local standard library from {}...", std_src.display());
-            copy_dir_all(&std_src, &dest_std)?;
-            println!("    Installed std (local fallback)");
-        } else {
-            anyhow::bail!("Failed to clone std library from https://github.com/eronom/eronom.git and no local standard library found.");
+            let _ = fs::remove_dir_all(&temp_dir);
+            anyhow::bail!("Failed to clone template from https://github.com/eronom/eronom.git");
         }
     }
 
