@@ -240,44 +240,104 @@ fn init_project(
         println!("Copying template files...");
         copy_dir_all(&temp_dir, dst_dir)?;
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    // Copy the std library directory to dst_dir/std
+    let dest_std = dst_dir.join("std");
+    println!("Installing std in {} (url: https://github.com/eronom/eronom/tree/main/std)", dest_std.display());
+    println!("Cloning into '{}'...", dest_std.display());
+
+    let mut success = false;
+    let mut commit_hash = String::new();
+
+    let temp_dir_name = format!(
+        "eronom-std-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let temp_dir = std::env::temp_dir().join(temp_dir_name);
+    let mut git_clone = std::process::Command::new("git");
+    git_clone.arg("clone")
+        .arg("--depth").arg("1")
+        .arg("https://github.com/eronom/eronom.git")
+        .arg(&temp_dir);
+    
+    if let Ok(status) = git_clone.status() {
+        if status.success() {
+            let repo_std = temp_dir.join("std");
+            if repo_std.exists() {
+                if copy_dir_all(&repo_std, &dest_std).is_ok() {
+                    success = true;
+                    // Get commit hash
+                    let mut git_rev = std::process::Command::new("git");
+                    git_rev.arg("rev-parse").arg("HEAD").current_dir(&temp_dir);
+                    if let Ok(output) = git_rev.output() {
+                        if output.status.success() {
+                            commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        }
+                    }
+                }
+            }
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+    }
+
+    if success {
+        if !commit_hash.is_empty() {
+            println!("    Installed std commit={}", commit_hash);
+        } else {
+            println!("    Installed std");
+        }
     } else {
-        // Locate the template init directory
-        let mut src_init = std::path::PathBuf::from("libs/init");
-        if !src_init.exists() {
+        // Fallback to local copy if clone failed (e.g. offline)
+        let mut std_src = std::path::PathBuf::from("std");
+        if !std_src.exists() {
             if let Ok(exe_path) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_path.parent() {
-                    let sibling_init = exe_dir.join("libs/init");
-                    if sibling_init.exists() {
-                        src_init = sibling_init;
+                    let sibling_std = exe_dir.join("std");
+                    if sibling_std.exists() {
+                        std_src = sibling_std;
                     } else if let Some(parent_dir) = exe_dir.parent() {
-                        let parent_init = parent_dir.join("libs/init");
-                        if parent_init.exists() {
-                            src_init = parent_init;
+                        let parent_std = parent_dir.join("std");
+                        if parent_std.exists() {
+                            std_src = parent_std;
                         }
                     }
                 }
             }
         }
 
-        if !src_init.exists() {
-            anyhow::bail!("Source 'libs/init' directory not found. Please run 'eronom init' from the directory containing the 'libs/init' template.");
+        if std_src.exists() && std_src.is_dir() {
+            println!("GitHub clone failed or offline. Falling back to local standard library from {}...", std_src.display());
+            copy_dir_all(&std_src, &dest_std)?;
+            println!("    Installed std (local fallback)");
+        } else {
+            anyhow::bail!("Failed to clone std library from https://github.com/eronom/eronom.git and no local standard library found.");
         }
-
-        println!("Copying template from {} to {}", src_init.display(), dst_dir.display());
-        copy_dir_all(&src_init, dst_dir)?;
     }
+
+
 
     if !no_git {
         // Initialize git repo if not already inside one, or if we want a fresh repo
         println!("Initializing git repository...");
         let mut git_init = std::process::Command::new("git");
-        git_init.arg("init").current_dir(dst_dir);
+        git_init.arg("init")
+            .arg("-b").arg("main")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .current_dir(dst_dir);
         let init_status = git_init.status();
         
         if init_status.is_ok() && init_status.unwrap().success() {
             if !no_commit {
                 let mut git_add = std::process::Command::new("git");
-                git_add.arg("add").arg("-A").current_dir(dst_dir);
+                git_add.arg("add").arg("-A")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .current_dir(dst_dir);
                 let _ = git_add.status();
 
                 let mut git_commit = std::process::Command::new("git");
@@ -286,11 +346,15 @@ fn init_project(
                 } else {
                     "chore: eronom init".to_string()
                 };
-                git_commit.arg("commit").arg("-m").arg(commit_msg).current_dir(dst_dir);
+                git_commit.arg("commit").arg("-m").arg(commit_msg)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .current_dir(dst_dir);
                 let _ = git_commit.status();
             }
         }
     }
+
 
     println!("Fresh Eronom project initialized successfully under {}", dst_dir.display());
     Ok(())
