@@ -1,124 +1,360 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use regex::Regex;
 use crate::compiler;
 use crate::server::start_server;
 use std::fs;
+use clap::{Parser, Subcommand};
+
+#[derive(Parser, Debug)]
+#[command(name = "eronom", version = "0.1.0")]
+#[command(about = "Eronom: A web framework and runtime", long_about = None)]
+pub struct Cli {
+    /// The script file to run (e.g. main.er)
+    pub file: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Initialize a fresh Eronom project
+    Init {
+        /// The root directory of the new project
+        #[arg(default_value = ".")]
+        dir: String,
+
+        /// The template to start from
+        #[arg(long, short)]
+        template: Option<String>,
+
+        /// Branch argument that can only be used with template option
+        #[arg(long, short, requires = "template")]
+        branch: Option<String>,
+
+        /// Create the project even if the specified directory is not empty
+        #[arg(long)]
+        force: bool,
+
+        /// Do not initialize a git repository
+        #[arg(long)]
+        no_git: bool,
+
+        /// Do not create an initial commit
+        #[arg(long)]
+        no_commit: bool,
+    },
+    /// Build the project
+    Build {
+        /// Source directory
+        #[arg(default_value = ".")]
+        dir: String,
+
+        /// Build for Server-Side Rendering (SSR) (default)
+        #[arg(long, conflicts_with = "ssg")]
+        ssr: bool,
+
+        /// Build for Static Site Generation (SSG)
+        #[arg(long)]
+        ssg: bool,
+    },
+    /// Start the server in production mode
+    Start {
+        /// Build directory or port
+        dir_or_port: Option<String>,
+
+        /// Port number if directory was also specified
+        port_pos: Option<u16>,
+
+        /// Port number
+        #[arg(short, long = "port")]
+        port: Option<u16>,
+    },
+    /// Start the server in development mode
+    Dev {
+        /// Source directory or port
+        dir_or_port: Option<String>,
+
+        /// Port number if directory was also specified
+        port_pos: Option<u16>,
+
+        /// Port number
+        #[arg(short, long = "port")]
+        port: Option<u16>,
+    },
+}
 
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
-    let mut cmd = "dev";
-    let mut dir = ".";
-    let mut port_val: Option<u16> = None;
-    let mut is_ssr = true;
-    let mut has_custom_port = false;
+    let cli = Cli::try_parse_from(args)?;
+    if let Some(cmd) = cli.command {
+        run_command(cmd)
+    } else if let Some(file_path) = cli.file {
+        anyhow::bail!("Running files is handled via the main entrypoint: {}", file_path.display())
+    } else {
+        anyhow::bail!("No command or file specified")
+    }
+}
 
-    if args.len() > 1 {
-        let first_arg = &args[1];
-        if matches!(first_arg.as_str(), "build" | "dev" | "start" | "init") {
-            cmd = first_arg;
-            
-            let mut pos_args = Vec::new();
-            for arg in args.iter().skip(2) {
-                if arg == "--ssg" || arg == "-ssg" {
-                    is_ssr = false;
-                } else if arg == "--ssr" || arg == "-ssr" {
-                    is_ssr = true;
-                } else if arg.starts_with('-') {
-                    // ignore unknown flags for now
-                } else {
-                    pos_args.push(arg);
-                }
-            }
-            
-            if cmd == "start" {
-                dir = "build";
-            }
-            if !pos_args.is_empty() {
-                if cmd == "start" && pos_args[0].parse::<u16>().is_ok() {
-                    let p = pos_args[0].parse::<u16>().unwrap();
-                    port_val = Some(p);
-                    has_custom_port = true;
-                } else {
-                    dir = pos_args[0];
-                    if pos_args.len() > 1 && cmd != "build" {
-                        match pos_args[1].parse::<u16>() {
-                            Ok(p) => {
-                                port_val = Some(p);
-                                has_custom_port = true;
-                            }
-                            Err(_) => {
-                                anyhow::bail!("Invalid port number: '{}'", pos_args[1]);
-                            }
-                        }
-                    }
-                }
+fn parse_dir_and_port(
+    dir_or_port: Option<String>,
+    port_pos: Option<u16>,
+    port_flag: Option<u16>,
+    default_dir: &str,
+) -> anyhow::Result<(String, Option<u16>)> {
+    let mut dir = default_dir.to_string();
+    let mut port_val = port_flag;
+
+    if let Some(arg) = dir_or_port {
+        if let Ok(p) = arg.parse::<u16>() {
+            if port_val.is_none() {
+                port_val = Some(p);
             }
         } else {
-            dir = first_arg;
+            dir = arg;
+            if port_val.is_none() {
+                port_val = port_pos;
+            }
         }
     }
+    Ok((dir, port_val))
+}
 
-
-    if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
-        dir = "app/build";
-    }
-
-    let port = if has_custom_port {
-        port_val.unwrap()
+fn resolve_port(dir: &str, port_val: Option<u16>, is_build_or_init: bool) -> anyhow::Result<u16> {
+    if let Some(p) = port_val {
+        Ok(p)
     } else if let Ok(port_str) = std::env::var("PORT") {
         if let Ok(p) = port_str.parse::<u16>() {
-            p
+            Ok(p)
         } else {
             anyhow::bail!("Invalid port in PORT environment variable: '{}'", port_str);
         }
     } else if let Some(config_port) = get_port_from_config_file(dir) {
-        config_port
-    } else if cmd == "build" || cmd == "init" {
-        0
+        Ok(config_port)
+    } else if is_build_or_init {
+        Ok(0)
     } else {
         anyhow::bail!("No port specified. Please provide a port in config.er or PORT environment variable.");
-    };
-
-    match cmd {
-        "init" => init_project(dir)?,
-        "build" => build_project(dir, is_ssr)?,
-        "start" => start_server(dir, true, port)?,
-        "dev" => start_server(dir, false, port)?,
-        _ => anyhow::bail!("Unknown command: {}", cmd),
     }
+}
 
+pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
+    match cmd {
+        Commands::Init {
+            dir,
+            template,
+            branch,
+            force,
+            no_git,
+            no_commit,
+        } => {
+            init_project(&dir, template, branch, force, no_git, no_commit)?;
+        }
+        Commands::Build { dir, ssr: _, ssg } => {
+            let is_ssr = if ssg { false } else { true };
+            build_project(&dir, is_ssr)?;
+        }
+        Commands::Start {
+            dir_or_port,
+            port_pos,
+            port,
+        } => {
+            let (mut dir, port_val) = parse_dir_and_port(dir_or_port, port_pos, port, "build")?;
+            if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
+                dir = "app/build".to_string();
+            }
+            let resolved_port = resolve_port(&dir, port_val, false)?;
+            start_server(&dir, true, resolved_port)?;
+        }
+        Commands::Dev {
+            dir_or_port,
+            port_pos,
+            port,
+        } => {
+            let (dir, port_val) = parse_dir_and_port(dir_or_port, port_pos, port, ".")?;
+            let resolved_port = resolve_port(&dir, port_val, false)?;
+            start_server(&dir, false, resolved_port)?;
+        }
+    }
     Ok(())
 }
 
-fn init_project(dir: &str) -> anyhow::Result<()> {
-    println!("Initializing fresh Eronom project in {}", dir);
-    fs::create_dir_all(dir)?;
 
+fn is_dir_empty(path: &Path) -> bool {
+    if let Ok(mut entries) = fs::read_dir(path) {
+        entries.next().is_none()
+    } else {
+        true
+    }
+}
+
+fn init_project(
+    dir: &str,
+    template: Option<String>,
+    branch: Option<String>,
+    force: bool,
+    no_git: bool,
+    no_commit: bool,
+) -> anyhow::Result<()> {
     let dst_dir = Path::new(dir);
 
-    // Locate the template init directory
-    let mut src_init = std::path::PathBuf::from("libs/init");
-    if !src_init.exists() {
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let sibling_init = exe_dir.join("libs/init");
-                if sibling_init.exists() {
-                    src_init = sibling_init;
-                } else if let Some(parent_dir) = exe_dir.parent() {
-                    let parent_init = parent_dir.join("libs/init");
-                    if parent_init.exists() {
-                        src_init = parent_init;
+    if dst_dir.exists() && !is_dir_empty(dst_dir) && !force {
+        anyhow::bail!(
+            "Cannot run `init` on a non-empty directory.\n\
+             Run with the `--force` flag to initialize regardless."
+        );
+    }
+
+    fs::create_dir_all(dst_dir)?;
+
+    if let Some(template_str) = template.as_ref() {
+        let template_url = if template_str.contains("://") {
+            template_str.clone()
+        } else if template_str.starts_with("github.com/") {
+            format!("https://{}", template_str)
+        } else {
+            format!("https://github.com/{}", template_str)
+        };
+
+        let temp_dir_name = format!(
+            "eronom-template-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        let temp_dir = std::env::temp_dir().join(temp_dir_name);
+
+        println!("Cloning template from {}...", template_url);
+        let mut git_clone = std::process::Command::new("git");
+        git_clone.arg("clone").arg("--depth").arg("1");
+        if let Some(ref b) = branch {
+            git_clone.arg("-b").arg(b);
+        }
+        git_clone.arg(&template_url).arg(&temp_dir);
+
+        let status = git_clone.status()?;
+        if !status.success() {
+            anyhow::bail!("Failed to clone template from {}", template_url);
+        }
+
+        println!("Copying template files...");
+        copy_dir_all(&temp_dir, dst_dir)?;
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    // Copy the std library directory to dst_dir/std
+    let dest_std = dst_dir.join("std");
+    println!("Installing std in {} (url: https://github.com/eronom/eronom/tree/main/std)", dest_std.display());
+    println!("Cloning into '{}'...", dest_std.display());
+
+    let mut success = false;
+    let mut commit_hash = String::new();
+
+    let temp_dir_name = format!(
+        "eronom-std-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let temp_dir = std::env::temp_dir().join(temp_dir_name);
+    let mut git_clone = std::process::Command::new("git");
+    git_clone.arg("clone")
+        .arg("--depth").arg("1")
+        .arg("https://github.com/eronom/eronom.git")
+        .arg(&temp_dir);
+    
+    if let Ok(status) = git_clone.status() {
+        if status.success() {
+            let repo_std = temp_dir.join("std");
+            if repo_std.exists() {
+                if copy_dir_all(&repo_std, &dest_std).is_ok() {
+                    success = true;
+                    // Get commit hash
+                    let mut git_rev = std::process::Command::new("git");
+                    git_rev.arg("rev-parse").arg("HEAD").current_dir(&temp_dir);
+                    if let Ok(output) = git_rev.output() {
+                        if output.status.success() {
+                            commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        }
+                    }
+                }
+            }
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+    }
+
+    if success {
+        if !commit_hash.is_empty() {
+            println!("    Installed std commit={}", commit_hash);
+        } else {
+            println!("    Installed std");
+        }
+    } else {
+        // Fallback to local copy if clone failed (e.g. offline)
+        let mut std_src = std::path::PathBuf::from("std");
+        if !std_src.exists() {
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    let sibling_std = exe_dir.join("std");
+                    if sibling_std.exists() {
+                        std_src = sibling_std;
+                    } else if let Some(parent_dir) = exe_dir.parent() {
+                        let parent_std = parent_dir.join("std");
+                        if parent_std.exists() {
+                            std_src = parent_std;
+                        }
                     }
                 }
             }
         }
+
+        if std_src.exists() && std_src.is_dir() {
+            println!("GitHub clone failed or offline. Falling back to local standard library from {}...", std_src.display());
+            copy_dir_all(&std_src, &dest_std)?;
+            println!("    Installed std (local fallback)");
+        } else {
+            anyhow::bail!("Failed to clone std library from https://github.com/eronom/eronom.git and no local standard library found.");
+        }
     }
 
-    if !src_init.exists() {
-        anyhow::bail!("Source 'libs/init' directory not found. Please run 'eronom init' from the directory containing the 'libs/init' template.");
+
+
+    if !no_git {
+        // Initialize git repo if not already inside one, or if we want a fresh repo
+        println!("Initializing git repository...");
+        let mut git_init = std::process::Command::new("git");
+        git_init.arg("init")
+            .arg("-b").arg("main")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .current_dir(dst_dir);
+        let init_status = git_init.status();
+        
+        if init_status.is_ok() && init_status.unwrap().success() {
+            if !no_commit {
+                let mut git_add = std::process::Command::new("git");
+                git_add.arg("add").arg("-A")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .current_dir(dst_dir);
+                let _ = git_add.status();
+
+                let mut git_commit = std::process::Command::new("git");
+                let commit_msg = if let Some(ref t) = template {
+                    format!("chore: init from {}", t)
+                } else {
+                    "chore: eronom init".to_string()
+                };
+                git_commit.arg("commit").arg("-m").arg(commit_msg)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .current_dir(dst_dir);
+                let _ = git_commit.status();
+            }
+        }
     }
 
-    println!("Copying template from {} to {}", src_init.display(), dst_dir.display());
-    copy_dir_all(&src_init, dst_dir)?;
 
     println!("Fresh Eronom project initialized successfully under {}", dst_dir.display());
     Ok(())
@@ -131,8 +367,8 @@ fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
         let file_type = entry.file_type()?;
         let file_name = entry.file_name();
         
-        // Exclude the compiled eronom binary if it is in the source folder
-        if file_name == "eronom" {
+        // Exclude the compiled eronom binary and git directory if they are in the source folder
+        if file_name == "eronom" || file_name == ".git" {
             continue;
         }
 

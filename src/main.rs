@@ -193,24 +193,28 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <file.er> OR {} [dev|build|start|init] [options]", args[0], args[0]);
-        std::process::exit(1);
-    }
-    let first_arg = &args[1];
-    if matches!(first_arg.as_str(), "build" | "dev" | "start" | "init") {
-        if let Err(e) = eronom::cli::run_cli(args) {
+    use clap::Parser;
+    let cli = eronom::cli::Cli::parse();
+
+    if let Some(file_path) = cli.file {
+        if !file_path.to_string_lossy().ends_with(".er") && !file_path.exists() {
+            eprintln!("Error: Unknown command or file: {}", file_path.display());
+            std::process::exit(1);
+        }
+        if let Err(e) = run_file(file_path.to_str().unwrap_or("")) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
-    } else if first_arg.ends_with(".er") || std::path::Path::new(first_arg).exists() {
-        if let Err(e) = run_file(first_arg) {
+    } else if let Some(cmd) = cli.command {
+        if let Err(e) = eronom::cli::run_command(cmd) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
     } else {
-        eprintln!("Error: Unknown command: {}", first_arg);
+        use clap::CommandFactory;
+        let mut cmd = eronom::cli::Cli::command();
+        let _ = cmd.print_help();
+        println!();
         std::process::exit(1);
     }
 }
