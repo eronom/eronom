@@ -291,8 +291,8 @@ fn init_project(
     // Ensure core/runtime.js and core/hmr.js are written to the project's core folder
     let core_dir = dst_dir.join("core");
     fs::create_dir_all(&core_dir)?;
-    fs::write(core_dir.join("runtime.js"), include_str!("runtime.js"))?;
-    fs::write(core_dir.join("hmr.js"), include_str!("hmr.js"))?;
+    fs::write(core_dir.join("runtime.js"), include_str!("../init/core/runtime.js"))?;
+    fs::write(core_dir.join("hmr.js"), include_str!("../init/core/hmr.js"))?;
 
     if !no_git {
         // Initialize git repo if not already inside one, or if we want a fresh repo
