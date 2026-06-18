@@ -790,9 +790,6 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         assets.push_str("</style>\n");
     }
 
-    let runtime = include_str!("runtime.js");
-
-
     let mut params_js = String::from("window.__erm_params = {");
     for (k, v) in params {
         params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
@@ -803,9 +800,8 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     scripts_to_inject.insert(0, params_js);
 
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() || !block_logic.is_empty() {
+        assets.push_str("<script src=\"/core/runtime.js\" class=\"__erm_script\"></script>\n");
         assets.push_str("<script class=\"__erm_script\">\n");
-        assets.push_str(runtime);
-        assets.push('\n');
         assets.push_str("{\n");
         for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
         for s in &block_logic { assets.push_str(s); assets.push('\n'); }
@@ -816,14 +812,11 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     let mut output = res_html;
     
     if !is_prod {
-        let hmr_script = format!(
-            "<script>\n{}\n</script>",
-            include_str!("hmr.js")
-        );
+        let hmr_script = "<script src=\"/core/hmr.js\"></script>";
         if let Some(pos) = output.find("<head>") {
-            output.insert_str(pos + 6, &hmr_script);
+            output.insert_str(pos + 6, hmr_script);
         } else {
-            output.insert_str(0, &hmr_script);
+            output.insert_str(0, hmr_script);
         }
     }
 
