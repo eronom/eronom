@@ -995,13 +995,12 @@ pub fn native_set_timeout(args: Vec<Value>) -> Value {
 
 use std::sync::OnceLock;
 
-fn get_http_client() -> &'static reqwest::blocking::Client {
-    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::blocking::Client::builder()
+fn get_http_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
             .user_agent("Eronom/0.1.0")
             .build()
-            .unwrap()
     })
 }
 
@@ -1050,9 +1049,9 @@ pub fn native_fetch_async(args: Vec<Value>) -> Value {
     active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     std::thread::spawn(move || {
-        let client = get_http_client();
-        let res = match client.get(&url_str).send() {
-            Ok(resp) => resp.text().map_err(|e| e.to_string()),
+        let agent = get_http_agent();
+        let res = match agent.get(&url_str).call() {
+            Ok(resp) => resp.into_string().map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
         };
 
@@ -1090,10 +1089,10 @@ pub fn native_fetch_sync(args: Vec<Value>) -> Value {
         }
     };
 
-    let client = get_http_client();
-    match client.get(&url_str).send() {
+    let agent = get_http_agent();
+    match agent.get(&url_str).call() {
         Ok(resp) => {
-            match resp.text() {
+            match resp.into_string() {
                 Ok(body_str) => {
                     let mut map = crate::vm::gc::get_pooled_map(2);
                     let body_key = crate::vm::gc::get_or_create_string("_body");
@@ -1171,9 +1170,9 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
     // 4. Spawn background thread to fetch URL
     std::thread::spawn(move || {
         let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
-        let client = get_http_client();
-        let res = match client.get(&url_str).send() {
-            Ok(resp) => resp.text().map_err(|e| e.to_string()),
+        let agent = get_http_agent();
+        let res = match agent.get(&url_str).call() {
+            Ok(resp) => resp.into_string().map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
         };
 
@@ -1190,6 +1189,7 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
 
     Value::null()
 }
+
 
 pub fn native_future_await(args: Vec<Value>) -> Value {
     if args.is_empty() {
