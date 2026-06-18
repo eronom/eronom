@@ -719,33 +719,10 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         }
         let body_b64 = general_purpose::STANDARD.encode(body);
         let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
-        let logic = format!(r#"
-            window.__erm_bindings.push({{
-                update: () => {{
-                    let __erm_anchor = document.getElementById("{}");
-                    if (__erm_anchor) {{
-                        let __erm_items = [];
-                        try {{ __erm_items = ({}); }} catch(e) {{}}
-                        if (!Array.isArray(__erm_items)) __erm_items = [];
-                        let __erm_itemsJson = JSON.stringify(__erm_items);
-                        if (__erm_anchor.__erm_last_items !== __erm_itemsJson) {{
-                            __erm_anchor.__erm_last_items = __erm_itemsJson;
-                            let __erm_template = __erm_b64utf8("{}");
-                            let __erm_html = "";
-                            __erm_items.forEach(({}) => {{
-                                let __erm_iter_html = __erm_template.replace(/\{{([^{{}}#/:][^{{}}]*)\}}/g, (m, expr) => {{
-                                    try {{ 
-                                        let val = eval(expr); 
-                                        return val === undefined ? "" : val;
-                                    }} catch(e) {{ return ""; }}
-                                }});
-                                __erm_html += __erm_iter_html;
-                            }});
-                            __erm_anchor.innerHTML = __erm_html;
-                        }}
-                    }}
-                }}
-            }});"#, anchor_id, collection_expr, body_b64, js_params);
+        let logic = format!(
+            r#"window.__erm_register_for("{}", () => ({}), "{}", ({}) => window.__erm_render_template(window.__erm_b64utf8("{}"), expr => eval(expr)));"#,
+            anchor_id, collection_expr, body_b64, js_params, body_b64
+        );
         block_logic.push(logic);
         let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
         res_html = res_html.replace(&res_html[start_idx..full_end_idx], &anchor_html);
@@ -797,21 +774,10 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
             rem = &rem[body_start + next_else..];
             if rem.starts_with("{/if}") { break; }
         }
-        let logic = format!(r#"
-            window.__erm_bindings.push({{
-                update: () => {{
-                    let __erm_anchor = document.getElementById("{}");
-                    if (__erm_anchor) {{
-                        let __erm_new = "";
-                        {}
-                        if (__erm_anchor.__erm_last !== __erm_new) {{
-                            __erm_anchor.__erm_last = __erm_new;
-                            __erm_anchor.innerHTML = __erm_new;
-                            if (window.__erm_update) window.__erm_update();
-                        }}
-                    }}
-                }}
-            }});"#, anchor_id, branches_js);
+        let logic = format!(
+            r#"window.__erm_register_if("{}", () => {{ let __erm_new = ""; {}; return __erm_new; }});"#,
+            anchor_id, branches_js
+        );
         block_logic.push(logic);
         let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
         res_html = res_html.replace(full_block, &anchor_html);
@@ -824,93 +790,8 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         assets.push_str("</style>\n");
     }
 
-    let runtime = r#"
-(() => {
-  window.__hmr_data = window.__hmr_data || { states: {} };
-  if (!window.__hmr_data.states) window.__hmr_data.states = {};
-  window.__erm_b64utf8 = function(str) {
-      return decodeURIComponent(escape(window.atob(str)));
-    };
-  window.useState = function(val, name) {
-    if (name && window.__hmr_data.states[name] !== undefined) {
-      val = window.__hmr_data.states[name];
-    }
-    if (typeof val === 'function') {
-      return {
-        _getter: val,
-        get value() { return this._getter(); },
-        toString() { return this.value; },
-        valueOf() { return this.value; },
-        [Symbol.toPrimitive]() { return this.value; }
-      };
-    }
-    const container = { 
-      _val: val,
-      toString() { return this._val; },
-      valueOf() { return this._val; },
-      [Symbol.toPrimitive]() { return this._val; }
-    };
-    return new Proxy(container, {
-      get(target, prop) {
-        if (prop === 'value') return target._val;
-        let res = target[prop];
-        if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
-           const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
-           if (methods.includes(prop)) {
-             return (...args) => {
-               const result = target._val[prop].apply(target._val, args);
-               if (window.__erm_update) window.__erm_update();
-               return result;
-             };
-           }
-        }
-        return res !== undefined ? res : target._val[prop];
-      },
-      set(target, prop, newVal) {
-        if (prop === 'value') {
-          target._val = newVal;
-          if (name) window.__hmr_data.states[name] = newVal;
-          if (window.__erm_update) window.__erm_update();
-          return true;
-        }
-        target[prop] = newVal;
-        return true;
-      }
-    });
-  };
-  window.useParams = function() { return window.__erm_params || {}; };
-  window.__erm_bindings = [];
-  window.__erm_events = [];
-  let _updateQueued = false;
-  window.__erm_update = function() {
-    if (_updateQueued) return;
-    _updateQueued = true;
-    requestAnimationFrame(() => {
-      window.__erm_bindings.forEach(b => {
-        try {
-          if (typeof b.update === 'function') { b.update(); } 
-          else {
-            let val = b.get();
-            if (b.last !== val) { b.last = val; let el = document.getElementById(b.id); if (el) el.innerText = val === undefined ? '' : val; }
-          }
-        } catch(e) {}
-      });
-      if (typeof _initReactivity === 'function') _initReactivity();
-      _updateQueued = false;
-    });
-  };
-  function _initReactivity() {
-    window.__erm_events.forEach(ev => {
-      let el = document.getElementById(ev.id);
-      if (el && !el.__erm_listener_added) { el.addEventListener(ev.event, ev.handler); el.__erm_listener_added = true; }
-    });
-    window.__erm_update();
-  }
-  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _initReactivity); } 
-  else { _initReactivity(); }
-  setTimeout(_initReactivity, 10);
-})();
-"#;
+    let runtime = include_str!("runtime.js");
+
 
     let mut params_js = String::from("window.__erm_params = {");
     for (k, v) in params {
@@ -935,171 +816,14 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     let mut output = res_html;
     
     if !is_prod {
-        let hmr_script = r#"<script>
-(function() {
-  if (window.__hmr_initialized) return;
-  window.__hmr_initialized = true;
-  console.log("[HMR] Initialized");
-
-  window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
-  window.hmr = {
-    data: window.__hmr_data || {},
-    accept: (cb) => window.__hmr_hooks.accept.push(cb),
-    dispose: (cb) => window.__hmr_hooks.dispose.push(cb),
-    invalidate: () => location.reload()
-  };
-  window.__hmr_data = window.hmr.data;
-
-  window.__hmr_intervals = window.__hmr_intervals || [];
-  const originalSetInterval = window.setInterval;
-  window.setInterval = function(fn, t) {
-    let id = originalSetInterval(fn, t);
-    window.__hmr_intervals.push(id);
-    return id;
-  };
-
-  window.__hmr_listeners = window.__hmr_listeners || [];
-  const originalDocAddEventListener = document.addEventListener;
-  document.addEventListener = function(type, listener, options) {
-    window.__hmr_listeners.push({ target: document, type, listener, options });
-    return originalDocAddEventListener.call(document, type, listener, options);
-  };
-
-  const originalWinAddEventListener = window.addEventListener;
-  window.addEventListener = function(type, listener, options) {
-    window.__hmr_listeners.push({ target: window, type, listener, options });
-    return originalWinAddEventListener.call(window, type, listener, options);
-  };
-
-  const originalElementAddEventListener = Element.prototype.addEventListener;
-  Element.prototype.addEventListener = function(type, listener, options) {
-    window.__hmr_listeners.push({ target: this, type, listener, options });
-    return originalElementAddEventListener.call(this, type, listener, options);
-  };
-
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(protocol + '//' + location.host + '/__hmr');
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'reload') {
-      location.reload();
-    } else if (data.type === 'update') {
-      const path = data.path || 'unknown';
-      console.log("[HMR] Update received for: " + path);
-
-      if (path.endsWith('.css')) {
-          let links = document.querySelectorAll('link[rel="stylesheet"]');
-          let found = false;
-          links.forEach(link => {
-              if (link.href.includes(path)) {
-                  link.href = path + '?t=' + new Date().getTime();
-                  found = true;
-              }
-          });
-          if (found) return;
-      }
-
-      fetch(location.href)
-        .then(r => r.text())
-        .then(html => {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(html, 'text/html');
-          document.title = doc.title;
-
-          function morph(oldNode, newNode) {
-            if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
-              oldNode.replaceWith(newNode.cloneNode(true));
-              return;
-            }
-            if (oldNode.nodeType === Node.TEXT_NODE) {
-              if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
-              return;
-            }
-            const oldAttrs = oldNode.attributes;
-            const newAttrs = newNode.attributes;
-            if (oldAttrs && newAttrs) {
-              for (let i = 0; i < newAttrs.length; i++) {
-                const attr = newAttrs[i];
-                if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
-              }
-              for (let i = 0; i < oldAttrs.length; i++) {
-                const attr = oldAttrs[i];
-                if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
-              }
-            }
-            const oldChildren = Array.from(oldNode.childNodes);
-            const newChildren = Array.from(newNode.childNodes);
-            const max = Math.max(oldChildren.length, newChildren.length);
-            for (let i = 0; i < max; i++) {
-              if (i >= oldChildren.length) {
-                oldNode.appendChild(newChildren[i].cloneNode(true));
-              } else if (i >= newChildren.length) {
-                oldNode.removeChild(oldChildren[i]);
-              } else {
-                morph(oldChildren[i], newChildren[i]);
-              }
-            }
-          }
-
-          const newStyles = doc.querySelectorAll('style');
-          if (newStyles.length > 0) {
-              let styleContainer = document.getElementById('__erm_styles');
-              if (!styleContainer) {
-                  styleContainer = document.createElement('div');
-                  styleContainer.id = '__erm_styles';
-                  document.head.appendChild(styleContainer);
-              }
-              styleContainer.innerHTML = '';
-              newStyles.forEach(s => styleContainer.appendChild(s.cloneNode(true)));
-          }
-
-          window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
-          window.__hmr_hooks.dispose = [];
-          
-          const oldAccepts = window.__hmr_hooks.accept;
-          window.__hmr_hooks.accept = [];
-
-          window.__hmr_intervals.forEach(clearInterval);
-          window.__hmr_intervals = [];
-          window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
-            target.removeEventListener(type, listener, options);
-            if (target.__erm_listener_added) delete target.__erm_listener_added;
-          });
-          window.__hmr_listeners = [];
-
-          // Clean up old erm scripts
-          document.querySelectorAll('script.__erm_script').forEach(s => s.remove());
-
-          morph(document.body, doc.body);
-
-          const newScripts = doc.querySelectorAll('script');
-          newScripts.forEach(s => {
-            if (s.textContent.includes("__hmr_initialized")) return;
-            const newScript = document.createElement('script');
-            newScript.text = s.innerHTML;
-            if (s.className) newScript.className = s.className;
-            if (s.src) {
-               let sUrl = new URL(s.src, location.href);
-               sUrl.searchParams.set('t', new Date().getTime());
-               newScript.src = sUrl.href;
-            }
-            document.head.appendChild(newScript);
-          });
-          document.dispatchEvent(new Event('DOMContentLoaded'));
-          window.dispatchEvent(new Event('load'));
-          
-          oldAccepts.forEach(cb => { try { cb(); } catch(err) {} });
-          
-          if (window.__erm_update) window.__erm_update();
-        });
-    }
-  };
-})();
-</script>"#;
+        let hmr_script = format!(
+            "<script>\n{}\n</script>",
+            include_str!("hmr.js")
+        );
         if let Some(pos) = output.find("<head>") {
-            output.insert_str(pos + 6, hmr_script);
+            output.insert_str(pos + 6, &hmr_script);
         } else {
-            output.insert_str(0, hmr_script);
+            output.insert_str(0, &hmr_script);
         }
     }
 
