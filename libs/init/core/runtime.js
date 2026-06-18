@@ -85,7 +85,7 @@
 
   // Helper functions for template rendering, conditional branches, and loops
   window.__erm_render_template = function(template, evalFn) {
-    return template.replace(/\{{([^{}#/:][^{}]*)\}}/g, (m, expr) => {
+    return template.replace(/\{([^{}#/:][^{}]*)\}/g, (m, expr) => {
       try { 
         let val = evalFn(expr); 
         return val === undefined ? "" : val;
