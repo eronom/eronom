@@ -446,6 +446,11 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
                     let content_type_key = CString::new("Content-Type").unwrap();
                     er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
                 }
+                if is_prod {
+                    let cache_key = CString::new("Cache-Control").unwrap();
+                    let cache_val = CString::new("public, max-age=31536000").unwrap();
+                    er_http_response_write_header(res, cache_key.as_ptr(), cache_key.as_bytes().len(), cache_val.as_ptr(), cache_val.as_bytes().len());
+                }
                 er_http_response_end(res, content.as_ptr() as *const c_char, content.len());
             }
         }
