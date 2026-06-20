@@ -107,7 +107,7 @@ impl ErmEval {
                     }
                     if j < script.len() && script.as_bytes()[j] == b'=' {
                         j += 1;
-                        let (val, next_pos) = parse_js_value(&script[j..])?;
+                        let (val, next_pos) = parse_js_value(&script[j..], Some(&self.vars))?;
                         if let Some(v) = val {
                             self.set(name, v);
                             i = j + next_pos;
@@ -346,7 +346,7 @@ impl<'a> ExprParser<'a> {
     }
 }
 
-pub fn parse_js_value(s: &str) -> anyhow::Result<(Option<Value>, usize)> {
+pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow::Result<(Option<Value>, usize)> {
     let mut p = 0;
     while p < s.len() && s.as_bytes()[p].is_ascii_whitespace() {
         p += 1;
@@ -355,7 +355,7 @@ pub fn parse_js_value(s: &str) -> anyhow::Result<(Option<Value>, usize)> {
 
     if s[p..].starts_with("useState(") {
         p += 9;
-        let (inner, next_p) = parse_js_value(&s[p..])?;
+        let (inner, next_p) = parse_js_value(&s[p..], vars)?;
         p += next_p;
         while p < s.len() && s.as_bytes()[p] != b')' { p += 1; }
         if p < s.len() { p += 1; }
@@ -363,6 +363,38 @@ pub fn parse_js_value(s: &str) -> anyhow::Result<(Option<Value>, usize)> {
         if let Some(v) = inner {
             m.insert("value".to_string(), v);
         }
+        return Ok((Some(Value::Map(m)), p));
+    }
+
+    if s[p..].starts_with("createContext(") {
+        p += 14;
+        let (inner, next_p) = parse_js_value(&s[p..], vars)?;
+        p += next_p;
+        while p < s.len() && s.as_bytes()[p] != b')' { p += 1; }
+        if p < s.len() { p += 1; }
+        let mut m = HashMap::new();
+        if let Some(v) = inner {
+            m.insert("defaultValue".to_string(), v);
+        }
+        return Ok((Some(Value::Map(m)), p));
+    }
+
+    if s[p..].starts_with("useContext(") {
+        p += 11;
+        let start = p;
+        while p < s.len() && s.as_bytes()[p] != b')' { p += 1; }
+        let arg = s[start..p].trim();
+        if p < s.len() { p += 1; }
+        let mut default_val = Value::Null;
+        if let Some(v_map) = vars {
+            if let Some(Value::Map(ctx_map)) = v_map.get(arg) {
+                if let Some(def) = ctx_map.get("defaultValue") {
+                    default_val = def.clone();
+                }
+            }
+        }
+        let mut m = HashMap::new();
+        m.insert("value".to_string(), default_val);
         return Ok((Some(Value::Map(m)), p));
     }
 
@@ -388,7 +420,7 @@ pub fn parse_js_value(s: &str) -> anyhow::Result<(Option<Value>, usize)> {
         p += 1;
         let mut list = Vec::new();
         while p < s.len() && s.as_bytes()[p] != b']' {
-            let (inner, next_p) = parse_js_value(&s[p..])?;
+            let (inner, next_p) = parse_js_value(&s[p..], vars)?;
             if let Some(v) = inner {
                 list.push(v);
             }
@@ -408,7 +440,7 @@ pub fn parse_js_value(s: &str) -> anyhow::Result<(Option<Value>, usize)> {
             while p < s.len() && (s.as_bytes()[p].is_ascii_alphanumeric() || s.as_bytes()[p] == b'_' || s.as_bytes()[p] == b'$') { p += 1; }
             let key = s[start..p].to_string();
             while p < s.len() && (s.as_bytes()[p].is_ascii_whitespace() || s.as_bytes()[p] == b':') { p += 1; }
-            let (inner, next_p) = parse_js_value(&s[p..])?;
+            let (inner, next_p) = parse_js_value(&s[p..], vars)?;
             if let Some(v) = inner {
                 map.insert(key, v);
             }

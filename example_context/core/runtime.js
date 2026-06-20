@@ -52,76 +52,26 @@
     });
   };
   window.useParams = function() { return window.__erm_params || {}; };
-
-  let contextIdCounter = 0;
-  window.createContext = function(defaultValue) {
-    return {
-      id: 'ctx-' + (++contextIdCounter),
-      defaultValue: defaultValue
-    };
-  };
-
-  window.ThemeContext = window.ThemeContext || window.createContext("light");
-
-  window.useContext = function(context) {
-    return {
-      get value() {
-        let evalId = window.__current_eval_id;
-        let el = document.getElementById(evalId);
-        while (el) {
-          if (el.__erm_providers && el.__erm_providers[context.id] !== undefined) {
-            return el.__erm_providers[context.id];
-          }
-          el = el.parentElement;
-        }
-        return context.defaultValue;
-      },
-      toString() { return this.value; },
-      valueOf() { return this.value; },
-      [Symbol.toPrimitive]() { return this.value; }
-    };
-  };
-
   window.__erm_bindings = [];
   window.__erm_events = [];
   let _updateQueued = false;
-  window.__current_eval_id = null;
-
   window.__erm_update = function() {
     if (_updateQueued) return;
     _updateQueued = true;
     requestAnimationFrame(() => {
-      // First update all providers to ensure child bindings get fresh values
       window.__erm_bindings.forEach(b => {
-        if (b.isProvider) {
-          try { b.update(); } catch(e) {}
-        }
-      });
-      // Then update all other bindings
-      window.__erm_bindings.forEach(b => {
-        if (!b.isProvider) {
-          try {
-            window.__current_eval_id = b.id;
-            if (typeof b.update === 'function') { b.update(); } 
-            else {
-              let val = b.get();
-              if (b.last !== val) { 
-                b.last = val; 
-                let el = document.getElementById(b.id); 
-                if (el) el.innerText = val === undefined ? '' : val; 
-              }
-            }
-          } catch(e) {}
-          finally {
-            window.__current_eval_id = null;
+        try {
+          if (typeof b.update === 'function') { b.update(); } 
+          else {
+            let val = b.get();
+            if (b.last !== val) { b.last = val; let el = document.getElementById(b.id); if (el) el.innerText = val === undefined ? '' : val; }
           }
-        }
+        } catch(e) {}
       });
       if (typeof _initReactivity === 'function') _initReactivity();
       _updateQueued = false;
     });
   };
-
   function _initReactivity() {
     window.__erm_events.forEach(ev => {
       let el = document.getElementById(ev.id);
@@ -157,12 +107,7 @@
             let template = window.__erm_b64utf8(templateB64);
             let html = "";
             items.forEach((item, index) => {
-              window.__current_eval_id = anchorId;
-              try {
-                html += renderItem(item, index, template);
-              } finally {
-                window.__current_eval_id = null;
-              }
+              html += renderItem(item, index, template);
             });
             anchor.innerHTML = html;
           }
@@ -177,13 +122,7 @@
         let anchor = document.getElementById(anchorId);
         if (anchor) {
           let newHtml = "";
-          try { 
-            window.__current_eval_id = anchorId;
-            newHtml = getHtml(); 
-          } catch(e) {}
-          finally {
-            window.__current_eval_id = null;
-          }
+          try { newHtml = getHtml(); } catch(e) {}
           if (anchor.__erm_last !== newHtml) {
             anchor.__erm_last = newHtml;
             anchor.innerHTML = newHtml;

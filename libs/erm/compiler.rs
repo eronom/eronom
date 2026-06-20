@@ -231,6 +231,95 @@ pub fn inject_state_name(input: &str, name: &str) -> String {
     res
 }
 
+pub fn find_state_variables(script_content: &str, init_fn: &str, state_vars: &mut Vec<String>) {
+    let mut aj = 0;
+    while let Some(idx) = script_content[aj..].find(init_fn) {
+        let call_pos = aj + idx;
+        let mut k = call_pos;
+        let mut eq_pos = None;
+        while k > aj {
+            k -= 1;
+            if script_content.as_bytes()[k] == b'=' {
+                eq_pos = Some(k);
+                break;
+            }
+            if matches!(script_content.as_bytes()[k], b';' | b'{' | b'}') { break; }
+        }
+        if let Some(ep) = eq_pos {
+            let mut m = ep;
+            let mut name_end = None;
+            while m > aj {
+                m -= 1;
+                if script_content.as_bytes()[m].is_ascii_whitespace() { continue; }
+                if script_content.as_bytes()[m].is_ascii_alphanumeric() || script_content.as_bytes()[m] == b'_' || script_content.as_bytes()[m] == b'$' {
+                    name_end = Some(m + 1);
+                    break;
+                }
+                break;
+            }
+            if let Some(ne) = name_end {
+                let mut m_start = ne;
+                while m_start > aj {
+                    m_start -= 1;
+                    if !(script_content.as_bytes()[m_start].is_ascii_alphanumeric() || script_content.as_bytes()[m_start] == b'_' || script_content.as_bytes()[m_start] == b'$') {
+                        m_start += 1;
+                        break;
+                    }
+                }
+                let name = &script_content[m_start..ne];
+                if !state_vars.contains(&name.to_string()) {
+                    state_vars.push(name.to_string());
+                }
+            }
+        }
+        aj = call_pos + init_fn.len();
+    }
+}
+
+pub fn extract_attribute(tag_content: &str, attr_name: &str) -> Option<String> {
+    if let Some(start) = tag_content.find(attr_name) {
+        let before_ok = start == 0 || tag_content[start-1..start].chars().next().unwrap().is_whitespace();
+        let after_pos = start + attr_name.len();
+        if before_ok && after_pos < tag_content.len() {
+            let remaining = &tag_content[after_pos..];
+            if let Some(eq_pos) = remaining.find('=') {
+                if remaining[..eq_pos].trim().is_empty() {
+                    let val_part = remaining[eq_pos + 1..].trim_start();
+                    if val_part.starts_with('{') {
+                        let mut depth = 0;
+                        let mut end_idx = None;
+                        for (idx, c) in val_part.char_indices() {
+                            if c == '{' { depth += 1; }
+                            else if c == '}' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    end_idx = Some(idx);
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(e) = end_idx {
+                            return Some(val_part[1..e].trim().to_string());
+                        }
+                    } else if val_part.starts_with('"') {
+                        if let Some(end) = val_part[1..].find('"') {
+                            return Some(val_part[1..end + 1].to_string());
+                        }
+                    } else if val_part.starts_with('\'') {
+                        if let Some(end) = val_part[1..].find('\'') {
+                            return Some(val_part[1..end + 1].to_string());
+                        }
+                    } else {
+                        let end = val_part.find(char::is_whitespace).unwrap_or(val_part.len());
+                        return Some(val_part[..end].to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashMap<String, bool>, slot_html: Option<&str>) -> anyhow::Result<ProcessResult> {
     let mut scripts = Vec::new();
     let mut styles = Vec::new();
@@ -280,50 +369,9 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = script_tag[content_start..script_tag.len() - 9].trim();
 
-            // Find state vars in script
-            let mut aj = 0;
-            while let Some(idx) = script_content[aj..].find("useState(") {
-                let call_pos = aj + idx;
-                // find variable name
-                let mut k = call_pos;
-                let mut eq_pos = None;
-                while k > aj {
-                    k -= 1;
-                    if script_content.as_bytes()[k] == b'=' {
-                        eq_pos = Some(k);
-                        break;
-                    }
-                    if matches!(script_content.as_bytes()[k], b';' | b'{' | b'}') { break; }
-                }
-                if let Some(ep) = eq_pos {
-                    let mut m = ep;
-                    let mut name_end = None;
-                    while m > aj {
-                        m -= 1;
-                        if script_content.as_bytes()[m].is_ascii_whitespace() { continue; }
-                        if script_content.as_bytes()[m].is_ascii_alphanumeric() || script_content.as_bytes()[m] == b'_' || script_content.as_bytes()[m] == b'$' {
-                            name_end = Some(m + 1);
-                            break;
-                        }
-                        break;
-                    }
-                    if let Some(ne) = name_end {
-                        let mut m_start = ne;
-                        while m_start > aj {
-                            m_start -= 1;
-                            if !(script_content.as_bytes()[m_start].is_ascii_alphanumeric() || script_content.as_bytes()[m_start] == b'_' || script_content.as_bytes()[m_start] == b'$') {
-                                m_start += 1;
-                                break;
-                            }
-                        }
-                        let name = &script_content[m_start..ne];
-                        if !state_vars.contains(&name.to_string()) {
-                            state_vars.push(name.to_string());
-                        }
-                    }
-                }
-                aj = call_pos + 9;
-            }
+            // Find state vars (useState and useContext) in script
+            find_state_variables(script_content, "useState(", &mut state_vars);
+            find_state_variables(script_content, "useContext(", &mut state_vars);
 
             let mut cleaned_script = String::new();
             for line in script_content.lines() {
@@ -364,6 +412,10 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                         html_buf.push_str("</a>");
                         i += tag_end + 1;
                         continue;
+                    } else if closing_tag_name == "ContextProvider" || closing_tag_name.ends_with(".Provider") {
+                        html_buf.push_str("</span>");
+                        i += tag_end + 1;
+                        continue;
                     }
                 } else {
                     let mut parts = tag_content.split_whitespace();
@@ -381,6 +433,26 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                         html_buf.push('<');
                         html_buf.push_str(&new_tag_content);
                         html_buf.push('>');
+                        i += tag_end + 1;
+                        continue;
+                    }
+                    let is_context_provider = tag_name == "ContextProvider" || tag_name.ends_with(".Provider");
+                    if is_context_provider {
+                        let context_var = if tag_name.ends_with(".Provider") {
+                            tag_name[..tag_name.len() - 9].to_string()
+                        } else {
+                            extract_attribute(tag_content, "context").unwrap_or_default()
+                        };
+                        let value_expr = extract_attribute(tag_content, "value").unwrap_or_else(|| "null".to_string());
+                        
+                        let provider_id = format!("erm-prov-{}", i);
+                        html_buf.push_str(&format!("<span id=\"{}\" style=\"display:contents;\">", provider_id));
+                        
+                        let logic = format!(
+                            "window.__erm_bindings.push({{ id: \"{}\", isProvider: true, get: () => ({}), update() {{ let el = document.getElementById(this.id); if (el) {{ if (!el.__erm_providers) el.__erm_providers = {{}}; el.__erm_providers[{}.id] = this.get(); }} }} }});",
+                            provider_id, value_expr, context_var
+                        );
+                        scripts.push(logic);
                         i += tag_end + 1;
                         continue;
                     }
@@ -867,6 +939,28 @@ mod tests {
         let combined = res.scripts.join("\n");
         assert!(combined.contains("useState(0, \"count\")"));
         assert!(combined.contains("count.value++"));
+    }
+
+    #[test]
+    fn test_context_api_compilation() {
+        let content = r#"
+        <script>
+            const MyCtx = createContext("defaultVal");
+            let theme = useContext(MyCtx);
+        </script>
+        <ContextProvider context={MyCtx} value={"dark"}>
+            <div>{theme}</div>
+        </ContextProvider>
+        "#;
+        let mut visited = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None).unwrap();
+        let combined = res.scripts.join("\n");
+        assert!(res.state_vars.contains(&"theme".to_string()));
+        assert!(combined.contains("useContext(MyCtx)"));
+        assert!(combined.contains("theme.value"));
+        assert!(combined.contains("isProvider: true"));
+        assert!(combined.contains("MyCtx.id"));
+        assert!(res.html.contains("id=\"erm-prov-"));
     }
 }
 

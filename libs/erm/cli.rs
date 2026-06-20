@@ -36,12 +36,12 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Do not initialize a git repository
+        /// Initialize a git repository
         #[arg(long)]
-        no_git: bool,
+        git: bool,
 
         /// Do not create an initial commit
-        #[arg(long)]
+        #[arg(long, requires = "git")]
         no_commit: bool,
     },
     /// Build the project
@@ -144,10 +144,10 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             template,
             branch,
             force,
-            no_git,
+            git,
             no_commit,
         } => {
-            init_project(&dir, template, branch, force, no_git, no_commit)?;
+            init_project(&dir, template, branch, force, git, no_commit)?;
         }
         Commands::Build { dir, ssr: _, ssg } => {
             let is_ssr = if ssg { false } else { true };
@@ -192,7 +192,7 @@ fn init_project(
     template: Option<String>,
     branch: Option<String>,
     force: bool,
-    no_git: bool,
+    git: bool,
     no_commit: bool,
 ) -> anyhow::Result<()> {
     let dst_dir = Path::new(dir);
@@ -290,7 +290,7 @@ fn init_project(
 
 
 
-    if !no_git {
+    if git {
         // Initialize git repo if not already inside one, or if we want a fresh repo
         println!("Initializing git repository...");
         let mut git_init = std::process::Command::new("git");
