@@ -105,11 +105,10 @@
             if (typeof b.update === 'function') { b.update(); } 
             else {
               let val = b.get();
-              let el = document.getElementById(b.id);
-              let strVal = val === undefined ? '' : String(val);
-              if (el && el.innerText !== strVal) {
-                b.last = val;
-                el.innerText = strVal;
+              if (b.last !== val) { 
+                b.last = val; 
+                let el = document.getElementById(b.id); 
+                if (el) el.innerText = val === undefined ? '' : val; 
               }
             }
           } catch(e) {}
