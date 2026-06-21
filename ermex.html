@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="/core/hmr.js"></script>
+    <meta data-e-91030222d917abb6 charset="UTF-8">
+    <meta data-e-91030222d917abb6 name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-e-91030222d917abb6>Erm Dev Server with HMR</title>
+    
+
+<style id="__erm_styles">
+body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }h1[data-e-91030222d917abb6] {
+            color: #42b983;
+        }code[data-e-91030222d917abb6] {
+            background-color: #4b3a27b2;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+.header-box[data-e-2d8cedfa94f6f5aa] {
+        border: 2px solid #42b983;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        text-align: center;
+        transition: all 0.3s ease;
+    }.theme-display-dark[data-e-2d8cedfa94f6f5aa] {
+        background-color: #1a1a24;
+        color: #ffffff;
+        border-color: #9b5de5;
+    }.theme-display-light[data-e-2d8cedfa94f6f5aa] {
+        background-color: #f7f9fc;
+        color: #1a1a24;
+        border-color: #00bbf9;
+    }
+</style>
+<script src="/core/runtime.js" class="__erm_script"></script>
+<script class="__erm_script">
+{
+window.__erm_params = {};
+let count = useState(0, "count");
+    let double = useState(() => count.value * 2, "double");
+    let todoText = useState('', "todoText");
+    let todos = useState([], "todos");
+    
+    async function fetchTodos() {
+        try {
+            const res = await fetch('/api/todo');
+            todos.value = await res.json();
+        } catch (e) {
+            console.error("Failed to fetch todos:", e);
+        }
+    }
+    fetchTodos();
+    
+    let showExtraContent = useState(true, "showExtraContent");
+    let porridge = useState({ temperature: 100 }, "porridge");
+    
+
+
+
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const app = document.getElementById('app');
+        if (app) {
+            const timeDisplay = document.createElement('h3');
+            app.appendChild(timeDisplay);
+            setInterval(() => {
+                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
+            }, 1);
+        }
+    
+    });
+
+    // TEST: Background updates now work automatically!
+    let timer = useState(0, "timer");
+    setInterval(() => {
+        timer.value++;
+    }, 1000);
+
+    let randomNum = Math.floor(Math.random() * 1000);
+    let items = useState([1, 2, 3, 4, 5], "items");
+let headerText = "Hello Header from component script!";
+    console.log("Header component loaded!");
+    let theme = useContext(ThemeContext);
+window.__erm_bindings.push({ id: "erm-bind-189", get: () => (theme.value) });
+window.__erm_bindings.push({ id: "erm-bind-529", get: () => (theme.value) });
+window.__erm_bindings.push({ id: "erm-bind-367", get: () => (count.value) });
+window.__erm_bindings.push({ id: "erm-bind-420", get: () => (double.value) });
+window.__erm_bindings.push({ id: "erm-bind-474", get: () => (timer.value) });
+window.__erm_bindings.push({ id: "erm-bind-653", get: () => (randomNum) });
+window.__erm_events.push({ id: "erm-evt-353", event: "click", handler: (event) => { (()=>{count.value++})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-1058", event: "click", handler: (event) => { (()=>{items.value.push(items.value.length + 1)})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-1120", event: "click", handler: (event) => { (()=>{items.value.pop()})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-1457", event: "click", handler: (event) => { (fetchTodos)(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-3367", event: "click", handler: (event) => { (()=>{showExtraContent.value=false})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-3495", event: "click", handler: (event) => { (()=>{showExtraContent.value=true})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_register_for("erm-for-0", () => (items.value), "CiAgICAgICAgPHAgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjk+SXRlbSBrZXkgYXMge2l9IDoge2l0ZW19PC9wPgogICAg", (item, i) => window.__erm_render_template(window.__erm_b64utf8("CiAgICAgICAgPHAgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjk+SXRlbSBrZXkgYXMge2l9IDoge2l0ZW19PC9wPgogICAg"), expr => eval(expr)));
+window.__erm_register_for("erm-for-1", () => (todos.value), "CiAgICAgICAgICAgIDxkaXYgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjkgc3R5bGU9InBhZGRpbmc6IDEwcHg7IGJhY2tncm91bmQ6ICMyYzNlNTA7IGJvcmRlci1yYWRpdXM6IDVweDsgbWFyZ2luLWJvdHRvbTogNXB4OyBjb2xvcjogd2hpdGU7Ij4KICAgICAgICAgICAgICAgIDxzdHJvbmcgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjk+e3RvZG8udGV4dH08L3N0cm9uZz4gLSB7dG9kby5kb25lID8gJ+KchScgOiAn4p2MJ30KICAgICAgICAgICAgPC9kaXY+CiAgICAgICAg", (todo) => window.__erm_render_template(window.__erm_b64utf8("CiAgICAgICAgICAgIDxkaXYgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjkgc3R5bGU9InBhZGRpbmc6IDEwcHg7IGJhY2tncm91bmQ6ICMyYzNlNTA7IGJvcmRlci1yYWRpdXM6IDVweDsgbWFyZ2luLWJvdHRvbTogNXB4OyBjb2xvcjogd2hpdGU7Ij4KICAgICAgICAgICAgICAgIDxzdHJvbmcgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjk+e3RvZG8udGV4dH08L3N0cm9uZz4gLSB7dG9kby5kb25lID8gJ+KchScgOiAn4p2MJ30KICAgICAgICAgICAgPC9kaXY+CiAgICAgICAg"), expr => eval(expr)));
+window.__erm_register_if("erm-if-0", () => { let __erm_new = ""; if (porridge.value.temperature > 100) { __erm_new = __erm_b64utf8("CiAgICA8cCBkYXRhLWUtOTEwMzAyMjJkOTE3YWJiNiBkYXRhLWUtZDRmOWU1NTgyOTRkY2Y2OT50b28gaG90ITwvcD4K"); } else if (80 > porridge.value.temperature) { __erm_new = __erm_b64utf8("CiAgICA8cCBkYXRhLWUtOTEwMzAyMjJkOTE3YWJiNiBkYXRhLWUtZDRmOWU1NTgyOTRkY2Y2OT50b28gY29sZCE8L3A+Cg=="); } else { __erm_new = __erm_b64utf8("CiAgICA8cCBkYXRhLWUtOTEwMzAyMjJkOTE3YWJiNiBkYXRhLWUtZDRmOWU1NTgyOTRkY2Y2OT5qdXN0IHJpZ2h0ITwvcD4K"); }; return __erm_new; });
+window.__erm_register_if("erm-if-1", () => { let __erm_new = ""; if (theme.value == "dark") { __erm_new = __erm_b64utf8("CiAgICA8ZGl2IGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGRhdGEtZS0yZDhjZWRmYTk0ZjZmNWFhIGNsYXNzPSJoZWFkZXItYm94IHRoZW1lLWRpc3BsYXktZGFyayI+CiAgICAgICAgPGgxIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGRhdGEtZS0yZDhjZWRmYTk0ZjZmNWFhPkVyb25vbSBDb250ZXh0IEFQSSBEZW1vIChIZWFkZXIgQ29tcG9uZW50KTwvaDE+CiAgICAgICAgPHAgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjkgZGF0YS1lLTJkOGNlZGZhOTRmNmY1YWE+SGVhZGVyIGNvbnN1bWVkIFRoZW1lIENvbnRleHQ6IDxzdHJvbmcgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjkgZGF0YS1lLTJkOGNlZGZhOTRmNmY1YWE+PHNwYW4gZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjkgZGF0YS1lLTJkOGNlZGZhOTRmNmY1YWEgaWQ9ImVybS1iaW5kLTE4OSI+PC9zcGFuPjwvc3Ryb25nPjwvcD4KICAgICAgICA8ZGl2IGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGRhdGEtZS0yZDhjZWRmYTk0ZjZmNWFhIHN0eWxlPSJwYWRkaW5nOiAxMHB4OyBib3JkZXItcmFkaXVzOiA1cHg7IG1hcmdpbi10b3A6IDEwcHg7Ij4KICAgICAgICAgICAg8J+MjCBEYXJrIE1vZGUgVGhlbWUgQ29udGV4dCBpcyBBY3RpdmUKICAgICAgICA8L2Rpdj4KICAgIDwvZGl2Pgo="); } else { __erm_new = __erm_b64utf8("CiAgICA8ZGl2IGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGRhdGEtZS0yZDhjZWRmYTk0ZjZmNWFhIGNsYXNzPSJoZWFkZXItYm94IHRoZW1lLWRpc3BsYXktbGlnaHQiPgogICAgICAgIDxoMSBkYXRhLWUtOTEwMzAyMjJkOTE3YWJiNiBkYXRhLWUtZDRmOWU1NTgyOTRkY2Y2OSBkYXRhLWUtMmQ4Y2VkZmE5NGY2ZjVhYT5Fcm9ub20gQ29udGV4dCBBUEkgRGVtbyAoSGVhZGVyIENvbXBvbmVudCk8L2gxPgogICAgICAgIDxwIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGRhdGEtZS0yZDhjZWRmYTk0ZjZmNWFhPkhlYWRlciBjb25zdW1lZCBUaGVtZSBDb250ZXh0OiA8c3Ryb25nIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGRhdGEtZS0yZDhjZWRmYTk0ZjZmNWFhPjxzcGFuIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGRhdGEtZS0yZDhjZWRmYTk0ZjZmNWFhIGlkPSJlcm0tYmluZC01MjkiPjwvc3Bhbj48L3N0cm9uZz48L3A+CiAgICAgICAgPGRpdiBkYXRhLWUtOTEwMzAyMjJkOTE3YWJiNiBkYXRhLWUtZDRmOWU1NTgyOTRkY2Y2OSBkYXRhLWUtMmQ4Y2VkZmE5NGY2ZjVhYSBzdHlsZT0icGFkZGluZzogMTBweDsgYm9yZGVyLXJhZGl1czogNXB4OyBtYXJnaW4tdG9wOiAxMHB4OyI+CiAgICAgICAgICAgIOKYgO+4jyBMaWdodCBNb2RlIFRoZW1lIENvbnRleHQgaXMgQWN0aXZlCiAgICAgICAgPC9kaXY+CiAgICA8L2Rpdj4K"); }; return __erm_new; });
+window.__erm_register_if("erm-if-2", () => { let __erm_new = ""; if (showExtraContent.value) { __erm_new = __erm_b64utf8("CiAgICA8ZGl2IGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGlkPSJleHRyYS1jb250ZW50IiBzdHlsZT0ibWFyZ2luLXRvcDogMjBweDsgcGFkZGluZzogMTVweDsgYm9yZGVyOiAycHggZGFzaGVkICM0MmI5ODM7Ij4KICAgICAgICA8aDMgZGF0YS1lLTkxMDMwMjIyZDkxN2FiYjYgZGF0YS1lLWQ0ZjllNTU4Mjk0ZGNmNjk+8J+OiSBDb25kc2Zzc2l0c2lvbmFsc3Nzc3Nzc3MgUmVuZGVyZWQgQm94eHh4eHNzYWFhPC9oMz4KICAgICAgICA8cCBkYXRhLWUtOTEwMzAyMjJkOTE3YWJiNiBkYXRhLWUtZDRmOWU1NTgyOTRkY2Y2OT5UaGlzIGJsb2NrIG9ubHkgbG9hZHMgYmVjYXVzZSA8Y29kZSBkYXRhLWUtOTEwMzAyMjJkOTE3YWJiNiBkYXRhLWUtZDRmOWU1NTgyOTRkY2Y2OT5zaG93RXh0cmFDb250ZW50PC9jb2RlPiBpcyA8c3Ryb25nIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5PnRydWU8L3N0cm9uZz4uPC9wPgogICAgPC9kaXY+CiAgICA8YnV0dG9uIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGlkPSJlcm0tZXZ0LTMzNjciID5IaWRlIENvbnRlbnQ8L2J1dHRvbj4K"); } else { __erm_new = __erm_b64utf8("CiAgICA8ZGl2IGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5PjxwIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5PnNob3dFeHRyYUNvbnRlbnQgaXMgZmFsc2U8L3A+PC9kaXY+CiAgICA8YnV0dG9uIGRhdGEtZS05MTAzMDIyMmQ5MTdhYmI2IGRhdGEtZS1kNGY5ZTU1ODI5NGRjZjY5IGlkPSJlcm0tZXZ0LTM0OTUiID5TaG93IENvbnRlbnQ8L2J1dHRvbj4K"); }; return __erm_new; });
+}
+</script>
+</head>
+<body>
+    
+
+
+<h1 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>HMRssssvvvvvssssvs is now running from a dedicated server module!</h1>
+<h2 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>hello</h2>
+<p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>vcbc fdh scvxhhhhhhhhhhhhhh
+fdvchgvyufdnb
+gvfcjb hyun</p>
+<p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>helloo DHBVYUCBHNFDBVH BHYU</p>
+<div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
+    <h3 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Reactive Signal Demo</h3>
+    <button data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-evt-353" >Count <span data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-bind-367"></span></button>
+    <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Double (Count * 2): <strong data-e-91030222d917abb6 data-e-d4f9e558294dcf69><span data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-bind-420"></span></strong></p>
+    <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Background Timer: <strong data-e-91030222d917abb6 data-e-d4f9e558294dcf69><span data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-bind-474"></span>s</strong></p>
+</div>
+
+<p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>HMRsss is now EFddFIaaCIENTss and CLEAN! Edited <code data-e-91030222d917abb6 data-e-d4f9e558294dcf69>index.erm</code>.</p>
+<div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="app"></div>
+<h2 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Hellloo web added h2 tag</h2>
+<p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Random: <span data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-bind-653"></span></p>
+<h2 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Hwwwssselaaaaaallsvvsssssssvvvvsssssssssssooooooovvvv wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
+<h2 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Hellsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+
+<div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 style="padding: 20px; border: 2px solid #3498db; border-radius: 10px; margin-bottom: 20px;">
+    <h3 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>For Loop Demo</h3>
+    <div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 style="margin-bottom: 10px;">
+        <button data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-evt-1058" >Add Item</button>
+        <button data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-evt-1120" >Remove Item</button>
+    </div>
+
+    <span id="erm-for-0" style="display:contents;">
+        <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Item key as 0 : 1</p>
+    
+        <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Item key as 1 : 2</p>
+    
+        <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Item key as 2 : 3</p>
+    
+        <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Item key as 3 : 4</p>
+    
+        <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>Item key as 4 : 5</p>
+    </span>
+</div>
+
+<h1 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>hello api todos </h1>
+
+<div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 style="padding: 20px; border: 2px solid #e67e22; border-radius: 10px; margin-bottom: 20px;">
+    <h3 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>API Todo Demosss (from <code data-e-91030222d917abb6 data-e-d4f9e558294dcf69>/api/todo</code>)</h3>
+    <button data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-evt-1457" >Refresh API Todos</button>
+    <div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 style="margin-top: 10px;">
+        <span id="erm-for-1" style="display:contents;"></span>
+    </div>
+</div>
+
+<span id="erm-if-0" style="display:contents;">
+    <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>just right!</p>
+</span>
+
+<a data-e-91030222d917abb6 data-e-d4f9e558294dcf69 href="/contact">Contact</a>
+
+
+
+<span id="erm-if-1" style="display:contents;">
+    <div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 data-e-2d8cedfa94f6f5aa class="header-box theme-display-light">
+        <h1 data-e-91030222d917abb6 data-e-d4f9e558294dcf69 data-e-2d8cedfa94f6f5aa>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69 data-e-2d8cedfa94f6f5aa>Header consumed Theme Context: <strong data-e-91030222d917abb6 data-e-d4f9e558294dcf69 data-e-2d8cedfa94f6f5aa><span data-e-91030222d917abb6 data-e-d4f9e558294dcf69 data-e-2d8cedfa94f6f5aa id="erm-bind-529"></span></strong></p>
+        <div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 data-e-2d8cedfa94f6f5aa style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+</span>
+<span id="erm-if-2" style="display:contents;">
+    <div data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
+        <h3 data-e-91030222d917abb6 data-e-d4f9e558294dcf69>🎉 Condsfssitsionalssssssss Rendered Boxxxxxssaaa</h3>
+        <p data-e-91030222d917abb6 data-e-d4f9e558294dcf69>This block only loads because <code data-e-91030222d917abb6 data-e-d4f9e558294dcf69>showExtraContent</code> is <strong data-e-91030222d917abb6 data-e-d4f9e558294dcf69>true</strong>.</p>
+    </div>
+    <button data-e-91030222d917abb6 data-e-d4f9e558294dcf69 id="erm-evt-3367" >Hide Content</button>
+</span>
+
+
+
+
+<h1 data-e-91030222d917abb6 data-e-d4f9e558294dcf69 data-e-1671d977afc46790>hello footer erm componentssssssss</h1>
+
+</body>
+</html>
