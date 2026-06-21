@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use crate::eval::{self, ErmEval};
 use fnv::FnvHasher;
 use std::hash::Hasher;
-use base64::{Engine as _, engine::general_purpose};
+
 
 pub fn scope_css(css: &str, scope_id: &str) -> anyhow::Result<String> {
     let mut result = String::new();
@@ -657,7 +657,38 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
     out
 }
 
-
+pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
+    let mut js_expr = String::new();
+    js_expr.push('`');
+    let mut i = 0;
+    while i < body.len() {
+        let c = body[i..].chars().next().unwrap();
+        if c == '`' || c == '$' || c == '\\' {
+            js_expr.push('\\');
+            js_expr.push(c);
+            i += c.len_utf8();
+        } else if c == '{' && !body[i..].starts_with("{#") && !body[i..].starts_with("{/") && !body[i..].starts_with("{:") {
+            if let Some(brace_end) = body[i..].find('}') {
+                let mut sub_expr = body[i + 1..i + brace_end].to_string();
+                for sig in state_vars {
+                    sub_expr = replace_word(&sub_expr, sig, ".value");
+                }
+                js_expr.push_str("${window.__erm_escape(");
+                js_expr.push_str(&sub_expr);
+                js_expr.push_str(")}");
+                i += brace_end + 1;
+            } else {
+                js_expr.push(c);
+                i += c.len_utf8();
+            }
+        } else {
+            js_expr.push(c);
+            i += c.len_utf8();
+        }
+    }
+    js_expr.push('`');
+    js_expr
+}
 
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let mut visited = HashMap::new();
@@ -789,11 +820,11 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                 }
             }
         }
-        let body_b64 = general_purpose::STANDARD.encode(body);
         let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
+        let compiled_body = compile_template_to_js(body, &result.state_vars);
         let logic = format!(
-            r#"window.__erm_register_for("{}", () => ({}), "{}", ({}) => window.__erm_render_template(window.__erm_b64utf8("{}"), expr => eval(expr)));"#,
-            anchor_id, collection_expr, body_b64, js_params, body_b64
+            r#"window.__erm_register_for("{}", () => ({}), "", ({}) => {});"#,
+            anchor_id, collection_expr, js_params, compiled_body
         );
         block_logic.push(logic);
         let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
@@ -835,14 +866,14 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
             }
             let next_else = rem[body_start..].find("{:else").unwrap_or_else(|| rem[body_start..].find("{/if}").unwrap_or(0));
             let body = &rem[body_start..body_start + next_else];
-            let body_b64 = general_purpose::STANDARD.encode(body);
+            let compiled_body = compile_template_to_js(body, &result.state_vars);
             if !ssr_found {
                 let cond_val = if is_else { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
                 if cond_val { ssr_html_res = body.to_string(); ssr_found = true; }
             }
-            if branches_js.is_empty() { branches_js.push_str(&format!("if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64)); }
-            else if is_else { branches_js.push_str(&format!(" else {{ __erm_new = __erm_b64utf8(\"{}\"); }}", body_b64)); }
-            else { branches_js.push_str(&format!(" else if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64)); }
+            if branches_js.is_empty() { branches_js.push_str(&format!("if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body)); }
+            else if is_else { branches_js.push_str(&format!(" else {{ __erm_new = {}; }}", compiled_body)); }
+            else { branches_js.push_str(&format!(" else if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body)); }
             rem = &rem[body_start + next_else..];
             if rem.starts_with("{/if}") { break; }
         }

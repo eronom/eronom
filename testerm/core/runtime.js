@@ -3,8 +3,20 @@
   if (!window.__hmr_data.states) window.__hmr_data.states = {};
   
   window.__erm_b64utf8 = function(str) {
+    if (!str) return '';
     return decodeURIComponent(escape(window.atob(str)));
   };
+
+  window.__erm_escape = function(val) {
+    if (val === null || val === undefined) return '';
+    return String(val)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
 
   // Fine-grained Reactivity Core
   let activeListener = null;
