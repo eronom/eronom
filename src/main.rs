@@ -21,6 +21,110 @@ fn native_print(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+#[repr(C)]
+struct Tm {
+    tm_sec: std::ffi::c_int,
+    tm_min: std::ffi::c_int,
+    tm_hour: std::ffi::c_int,
+    tm_mday: std::ffi::c_int,
+    tm_mon: std::ffi::c_int,
+    tm_year: std::ffi::c_int,
+    tm_wday: std::ffi::c_int,
+    tm_yday: std::ffi::c_int,
+    tm_isdst: std::ffi::c_int,
+    tm_gmtoff: std::ffi::c_long,
+    tm_zone: *const std::ffi::c_char,
+}
+
+unsafe extern "C" {
+    fn time(time: *mut std::ffi::c_long) -> std::ffi::c_long;
+    fn localtime_r(timep: *const std::ffi::c_long, result: *mut Tm) -> *mut Tm;
+}
+
+fn get_local_time_string() -> String {
+    unsafe {
+        let mut t: std::ffi::c_long = 0;
+        time(&mut t);
+        let mut tm_val = std::mem::zeroed::<Tm>();
+        localtime_r(&t, &mut tm_val);
+        let hour = tm_val.tm_hour;
+        let min = tm_val.tm_min;
+        let sec = tm_val.tm_sec;
+        let am_pm = if hour >= 12 { "PM" } else { "AM" };
+        let display_hour = if hour == 0 {
+            12
+        } else if hour > 12 {
+            hour - 12
+        } else {
+            hour
+        };
+        format!("{:02}:{:02}:{:02} {}", display_hour, min, sec, am_pm)
+    }
+}
+
+fn native_now(_args: Vec<Value>) -> Value {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    Value::number(now as f64)
+}
+
+fn native_local_time_string(_args: Vec<Value>) -> Value {
+    let time_str = get_local_time_string();
+    let ptr = backend::gc::get_or_create_string(&time_str);
+    Value::string(ptr)
+}
+
+fn value_to_json(val: Value) -> String {
+    if val.is_null() {
+        "null".to_string()
+    } else if val.is_boolean() {
+        val.as_boolean().to_string()
+    } else if val.is_number() {
+        val.as_number().to_string()
+    } else if val.is_string() {
+        format!("\"{}\"", val.as_str().unwrap_or("").replace("\"", "\\\""))
+    } else if val.is_array() {
+        unsafe {
+            match &(*val.as_gc_ptr()).data {
+                backend::GcData::Array(arr) => {
+                    let items: Vec<String> = arr.iter().map(|&v| value_to_json(v)).collect();
+                    format!("[{}]", items.join(","))
+                }
+                _ => "[]".to_string(),
+            }
+        }
+    } else if val.is_object() {
+        unsafe {
+            match &(*val.as_gc_ptr()).data {
+                backend::GcData::Object(obj) => {
+                    let mut items = Vec::new();
+                    for (k, &v) in obj {
+                        let s = match &(*k.0.as_gc_ptr()).data {
+                            backend::GcData::String(s) => s.as_ref(),
+                            _ => continue,
+                        };
+                        items.push(format!("\"{}\":{}", s, value_to_json(v)));
+                    }
+                    format!("{{{}}}", items.join(","))
+                }
+                backend::GcData::Struct(s) => {
+                    let mut items = Vec::new();
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        let name = map_key.0.as_str().unwrap_or("");
+                        items.push(format!("\"{}\":{}", name, value_to_json(s.fields[idx])));
+                    }
+                    format!("{{{}}}", items.join(","))
+                }
+                _ => "{}".to_string(),
+            }
+        }
+    } else {
+        "null".to_string()
+    }
+}
+
 fn native_render(args: Vec<Value>) -> Value {
     if args.len() < 2 {
         return Value::null();
@@ -40,8 +144,10 @@ fn native_render(args: Vec<Value>) -> Value {
                 backend::GcData::Object(map) => {
                     for (k, v) in map {
                         if let Some(key_str) = k.0.as_str() {
-                            let val_str = if let Some(s) = v.as_str() {
-                                s.to_string()
+                            let val_str = if v.is_string() {
+                                v.as_str().unwrap_or("").to_string()
+                            } else if v.is_array() || v.is_object() {
+                                value_to_json(*v)
                             } else {
                                 v.to_string()
                             };
@@ -53,8 +159,10 @@ fn native_render(args: Vec<Value>) -> Value {
                     for (map_key, &idx) in &s.descriptor.field_indices {
                         let name = map_key.0.as_str().unwrap_or("");
                         let v = s.fields[idx];
-                        let val_str = if let Some(s) = v.as_str() {
-                            s.to_string()
+                        let val_str = if v.is_string() {
+                            v.as_str().unwrap_or("").to_string()
+                        } else if v.is_array() || v.is_object() {
+                            value_to_json(v)
                         } else {
                             v.to_string()
                         };
@@ -67,7 +175,7 @@ fn native_render(args: Vec<Value>) -> Value {
     }
     
     let path = std::path::Path::new(file_path);
-    let resolved_path = if path.is_relative() {
+    let mut resolved_path = if path.is_relative() {
         if let Some(script_path) = backend::er_http::get_target_script_path() {
             if let Some(parent) = std::path::Path::new(&script_path).parent() {
                 parent.join(path)
@@ -80,6 +188,29 @@ fn native_render(args: Vec<Value>) -> Value {
     } else {
         path.to_path_buf()
     };
+    
+    if !resolved_path.exists() {
+        if let Some(first_part) = path.iter().next().and_then(|p| p.to_str()) {
+            if let Ok(stripped) = path.strip_prefix(first_part) {
+                let fallback = if stripped.is_relative() {
+                    if let Some(script_path) = backend::er_http::get_target_script_path() {
+                        if let Some(parent) = std::path::Path::new(&script_path).parent() {
+                            parent.join(stripped)
+                        } else {
+                            stripped.to_path_buf()
+                        }
+                    } else {
+                        stripped.to_path_buf()
+                    }
+                } else {
+                    stripped.to_path_buf()
+                };
+                if fallback.exists() {
+                    resolved_path = fallback;
+                }
+            }
+        }
+    }
     
     if !resolved_path.exists() {
         return Value::null();
@@ -158,6 +289,8 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("createPromisePair", Value::native_function(backend::er_http::native_create_promise_pair));
     vm.register_global("setIoMode", Value::native_function(backend::er_http::native_set_io_mode));
     vm.register_global("getIoMode", Value::native_function(backend::er_http::native_get_io_mode));
+    vm.register_global("now", Value::native_function(native_now));
+    vm.register_global("localTimeString", Value::native_function(native_local_time_string));
     backend::er_http::set_target_script_path(path);
 
     let main_path = std::path::Path::new(path);

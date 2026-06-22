@@ -690,6 +690,34 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
     js_expr
 }
 
+fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &[String]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < html.len() {
+        let c = html[i..].chars().next().unwrap();
+        if c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
+            if let Some(brace_end) = html[i..].find('}') {
+                let mut sub_expr = html[i + 1..i + brace_end].to_string();
+                for sig in state_vars {
+                    sub_expr = replace_word(&sub_expr, sig, ".value");
+                }
+                let val = ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
+                if val != eval::Value::Null {
+                    out.push_str(&val.to_string());
+                }
+                i += brace_end + 1;
+            } else {
+                out.push(c);
+                i += c.len_utf8();
+            }
+        } else {
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    out
+}
+
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let mut visited = HashMap::new();
     
@@ -742,7 +770,11 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();
     for (k, v) in params {
-        params_map.insert(k.clone(), eval::Value::String(v.clone()));
+        if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
+            params_map.insert(k.clone(), parsed_val);
+        } else {
+            params_map.insert(k.clone(), eval::Value::String(v.clone()));
+        }
     }
     ev.set("__erm_params", eval::Value::Map(params_map));
 
@@ -755,6 +787,36 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     ev.parse_script_vars(&script_for_eval)?;
 
     let mut res_html = result.html.clone();
+    
+    // Extract bindings and evaluate them on the server to pre-populate spans
+    for s in &result.scripts {
+        if s.starts_with("window.__erm_bindings.push(") {
+            if let Some(id_start) = s.find("id: \"") {
+                let id_end = s[id_start + 5..].find('"').unwrap_or(0);
+                let id = &s[id_start + 5..id_start + 5 + id_end];
+                if let Some(get_start) = s.find("get: () => (") {
+                    if let Some(get_end) = s[get_start + 12..].rfind(')') {
+                        let expr = &s[get_start + 12..get_start + 12 + get_end];
+                        if let Ok(val) = ev.eval(expr) {
+                            if val != eval::Value::Null {
+                                let val_str = val.to_string();
+                                let id_pattern = format!("id=\"{}\"", id);
+                                if let Some(pos) = res_html.find(&id_pattern) {
+                                    if let Some(close_tag) = res_html[pos..].find('>') {
+                                        let insert_pos = pos + close_tag + 1;
+                                        res_html.insert_str(insert_pos, &val_str);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    res_html = evaluate_braces_in_html(&res_html, &mut ev, &result.state_vars);
+
     let mut block_logic = Vec::new();
     let mut for_counter = 0;
     let mut if_counter = 0;
@@ -800,24 +862,8 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                 if !index_name.is_empty() {
                     sub_ev.set(index_name, eval::Value::Number(idx as f64));
                 }
-                let mut bit = 0;
-                while bit < body.len() {
-                    let c = body[bit..].chars().next().unwrap();
-                    if c == '{' && !body[bit..].starts_with("{#") && !body[bit..].starts_with("{/") && !body[bit..].starts_with("{:") {
-                        if let Some(brace_end) = body[bit..].find('}') {
-                            let mut sub_expr = body[bit + 1..bit + brace_end].to_string();
-                            for sig in &result.state_vars {
-                                sub_expr = replace_word(&sub_expr, sig, ".value");
-                            }
-                            let val = sub_ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
-                            ssr_html.push_str(&val.to_string());
-                            bit += brace_end + 1;
-                            continue;
-                        }
-                    }
-                    ssr_html.push(c);
-                    bit += c.len_utf8();
-                }
+                let ssr_item = evaluate_braces_in_html(body, &mut sub_ev, &result.state_vars);
+                ssr_html.push_str(&ssr_item);
             }
         }
         let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
@@ -869,7 +915,10 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
             let compiled_body = compile_template_to_js(body, &result.state_vars);
             if !ssr_found {
                 let cond_val = if is_else { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
-                if cond_val { ssr_html_res = body.to_string(); ssr_found = true; }
+                if cond_val {
+                    ssr_html_res = evaluate_braces_in_html(body, &mut ev, &result.state_vars);
+                    ssr_found = true;
+                }
             }
             if branches_js.is_empty() { branches_js.push_str(&format!("if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body)); }
             else if is_else { branches_js.push_str(&format!(" else {{ __erm_new = {}; }}", compiled_body)); }
@@ -895,7 +944,18 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
 
     let mut params_js = String::from("window.__erm_params = {");
     for (k, v) in params {
-        params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+        let is_json_literal = (v.starts_with('{') && v.ends_with('}'))
+            || (v.starts_with('[') && v.ends_with(']'))
+            || v == "true"
+            || v == "false"
+            || v == "null"
+            || v.parse::<f64>().is_ok();
+            
+        if is_json_literal {
+            params_js.push_str(&format!("{}: {},", k, v));
+        } else {
+            params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+        }
     }
     params_js.push_str("};");
     

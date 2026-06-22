@@ -1,0 +1,21 @@
+import "./server/api/routes.er"
+
+import { router } from "std/http"
+
+let app = router()
+
+app.get("/", (c) => {
+  let template = render("app/pages/index.erm", c.req.params)
+  return c.html(template)
+})
+
+app.get("/contact", (c) => {
+  let template = render("app/pages/contact.erm", c.req.params)
+  return c.html(template)
+})
+
+app.get("/testjson", (c) => {
+  let template = render("app/pages/testjson.erm", c.req.params)
+  return c.html(template)
+})
+

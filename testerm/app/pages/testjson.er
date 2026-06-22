@@ -2,19 +2,7 @@ import { router } from "std/http"
 
 let app = router()
 
-let todos = [
-  { id: 1, text: "Learn Eronomss", done: false },
-  { id: 2, text: "Learn Er", done: false },
-  { id: 3, text: "Learn Erm", done: false },
-  { id: 4, text: "Learn E", done: false },
-  { id: 5, text: "Learn Eronom", done: false }
-]
-
-app.get('/todo', (c) => {
-  return c.json(todos)
-})
-
-app.get('/user', (c) => {
+app.get('/testjson', (c) => {
   let startTime = now()
   
   let user = null
@@ -36,11 +24,12 @@ app.get('/user', (c) => {
   let duration = endTime - startTime
   let renderedAt = localTimeString()
   
-  return c.json({
+  let html = render("testerm/app/pages/testjson.erm", {
     user: user,
     error: errorMsg,
     serverRenderedAt: renderedAt,
     fetchDurationMs: duration
   })
+  
+  return c.html(html)
 })
-

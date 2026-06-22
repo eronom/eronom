@@ -107,13 +107,23 @@ impl ErmEval {
                     }
                     if j < script.len() && script.as_bytes()[j] == b'=' {
                         j += 1;
-                        let (val, next_pos) = parse_js_value(&script[j..], Some(&self.vars))?;
+                        let mut end_pos = j;
+                        while end_pos < script.len() && script.as_bytes()[end_pos] != b';' && script.as_bytes()[end_pos] != b'\n' {
+                            end_pos += 1;
+                        }
+                        let expr_str = script[j..end_pos].trim();
+                        let (val, _) = parse_js_value(expr_str, Some(&self.vars))?;
                         if let Some(v) = val {
                             self.set(name, v);
-                            i = j + next_pos;
-                            found = true;
-                            break;
+                        } else if let Ok(v) = self.eval(expr_str) {
+                            self.set(name, v);
                         }
+                        i = end_pos;
+                        if i < script.len() && script.as_bytes()[i] == b';' {
+                            i += 1;
+                        }
+                        found = true;
+                        break;
                     }
                 }
             }
@@ -355,10 +365,20 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
 
     if s[p..].starts_with("useState(") {
         p += 9;
-        let (inner, next_p) = parse_js_value(&s[p..], vars)?;
-        p += next_p;
-        while p < s.len() && s.as_bytes()[p] != b')' { p += 1; }
-        if p < s.len() { p += 1; }
+        let mut depth = 1;
+        let start = p;
+        while p < s.len() && depth > 0 {
+            let c = s.as_bytes()[p];
+            if c == b'(' { depth += 1; }
+            else if c == b')' { depth -= 1; }
+            p += 1;
+        }
+        let arg_expr = s[start..p-1].trim();
+        let mut ev_temp = ErmEval::new();
+        if let Some(v_map) = vars {
+            ev_temp.vars = v_map.clone();
+        }
+        let inner = ev_temp.eval(arg_expr).ok();
         let mut m = HashMap::new();
         if let Some(v) = inner {
             m.insert("value".to_string(), v);
@@ -436,9 +456,19 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
         let mut map = HashMap::new();
         while p < s.len() && s.as_bytes()[p] != b'}' {
             while p < s.len() && s.as_bytes()[p].is_ascii_whitespace() { p += 1; }
-            let start = p;
-            while p < s.len() && (s.as_bytes()[p].is_ascii_alphanumeric() || s.as_bytes()[p] == b'_' || s.as_bytes()[p] == b'$') { p += 1; }
-            let key = s[start..p].to_string();
+            let key = if s.as_bytes()[p] == b'"' || s.as_bytes()[p] == b'\'' {
+                let quote = s.as_bytes()[p];
+                p += 1;
+                let start = p;
+                while p < s.len() && s.as_bytes()[p] != quote { p += 1; }
+                let k_val = s[start..p].to_string();
+                if p < s.len() { p += 1; }
+                k_val
+            } else {
+                let start = p;
+                while p < s.len() && (s.as_bytes()[p].is_ascii_alphanumeric() || s.as_bytes()[p] == b'_' || s.as_bytes()[p] == b'$') { p += 1; }
+                s[start..p].to_string()
+            };
             while p < s.len() && (s.as_bytes()[p].is_ascii_whitespace() || s.as_bytes()[p] == b':') { p += 1; }
             let (inner, next_p) = parse_js_value(&s[p..], vars)?;
             if let Some(v) = inner {
