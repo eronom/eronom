@@ -326,7 +326,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
     let mut state_vars = Vec::new();
 
     let mut component_imports = HashMap::new();
-    let re_import = regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
+    let re_import = regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
 
     let mut search_idx = 0;
     while let Some(start_idx) = content[search_idx..].find("<script") {
@@ -373,12 +373,26 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             find_state_variables(script_content, "useState(", &mut state_vars);
             find_state_variables(script_content, "useContext(", &mut state_vars);
 
+            // Also check imported variables that are lowercased (state imports)
+            for line in script_content.lines() {
+                if let Some(caps) = re_import.captures(line) {
+                    let comp_name = caps.get(1).unwrap().as_str().to_string();
+                    if comp_name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                        if !state_vars.contains(&comp_name) {
+                            state_vars.push(comp_name);
+                        }
+                    }
+                }
+            }
+
             let mut cleaned_script = String::new();
+            let re_export = regex::Regex::new(r#"^(\s*)export\s+"#).unwrap();
             for line in script_content.lines() {
                 if re_import.is_match(line) {
                     continue;
                 }
-                cleaned_script.push_str(line);
+                let processed_line = re_export.replace(line, "$1");
+                cleaned_script.push_str(&processed_line);
                 cleaned_script.push('\n');
             }
             scripts.push(cleaned_script.trim().to_string());
@@ -961,6 +975,31 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     
     let mut scripts_to_inject = result.scripts.clone();
     scripts_to_inject.insert(0, params_js);
+
+    let combined_scripts = scripts_to_inject.join("\n");
+    let mut declarations = String::new();
+    for v in &result.state_vars {
+        if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+{}\b"#, v)) {
+            if !re_decl.is_match(&combined_scripts) {
+                let fallback_val = match v.as_str() {
+                    "activeTheme" => "'light'",
+                    "count" => "0",
+                    "timer" => "0",
+                    "todos" => "[]",
+                    "showExtraContent" => "true",
+                    "submitted" => "false",
+                    _ => "null",
+                };
+                declarations.push_str(&format!(
+                    "let {} = window.{} || useState({}, \"{}\");\n",
+                    v, v, fallback_val, v
+                ));
+            }
+        }
+    }
+    if !declarations.is_empty() {
+        scripts_to_inject.insert(0, declarations);
+    }
 
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() || !block_logic.is_empty() {
         assets.push_str("<script src=\"/core/runtime.js\" class=\"__erm_script\"></script>\n");

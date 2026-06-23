@@ -1,7 +1,7 @@
 <script>
+    import activeTheme from ""
     let headerText = "Hello Header from component script!";
     console.log("Header component loaded!");
-    let theme = useContext(ThemeContext);
 </script>
 <style>
     .header-box {
@@ -23,10 +23,10 @@
         border-color: #00bbf9;
     }
 </style>
-{#if theme == "dark"}
+{#if activeTheme == "dark"}
     <div class="header-box theme-display-dark">
         <h1>Eronom Context API Demo (Header Component)</h1>
-        <p>Header consumed Theme Context: <strong>{theme}</strong></p>
+        <p>Header consumed Theme Context: <strong>{activeTheme}</strong></p>
         <div style="padding: 10px; border-radius: 5px; margin-top: 10px;">
             🌌 Dark Mode Theme Context is Active
         </div>
@@ -34,7 +34,7 @@
 {:else}
     <div class="header-box theme-display-light">
         <h1>Eronom Context API Demo (Header Component)</h1>
-        <p>Header consumed Theme Context: <strong>{theme}</strong></p>
+        <p>Header consumed Theme Context: <strong>{activeTheme}</strong></p>
         <div style="padding: 10px; border-radius: 5px; margin-top: 10px;">
             ☀️ Light Mode Theme Context is Active
         </div>

@@ -43,8 +43,19 @@
   }
 
   function flushUpdates() {
-    // Sort queued bindings by their index in window.__erm_bindings to process providers/contexts first
+    // Sort queued bindings to process structural elements (providers, conditional, loop blocks) before text/attribute bindings
+    const getPriority = (b) => {
+      if (!b.id) return 99;
+      if (b.isProvider || b.id.startsWith("erm-prov-")) return 0;
+      if (b.id.startsWith("erm-if-")) return 1;
+      if (b.id.startsWith("erm-for-")) return 2;
+      return 10;
+    };
+
     const bindingsToRun = Array.from(queuedBindings).sort((a, b) => {
+      const priA = getPriority(a);
+      const priB = getPriority(b);
+      if (priA !== priB) return priA - priB;
       return window.__erm_bindings.indexOf(a) - window.__erm_bindings.indexOf(b);
     });
 
@@ -125,8 +136,10 @@
     }
 
     if (typeof val === 'function') {
-      return {
+      const stateObj = {
         _getter: val,
+        id: name,
+        defaultValue: undefined,
         get value() {
           if (activeListener) {
             subscribers.add(activeListener);
@@ -139,16 +152,22 @@
         valueOf() { return this.value; },
         [Symbol.toPrimitive]() { return this.value; }
       };
+      if (name) {
+        window[name] = stateObj;
+      }
+      return stateObj;
     }
 
     const container = {
       _val: val,
+      id: name,
+      defaultValue: val,
       toString() { return this._val; },
       valueOf() { return this._val; },
       [Symbol.toPrimitive]() { return this._val; }
     };
 
-    return new Proxy(container, {
+    const stateProxy = new Proxy(container, {
       get(target, prop) {
         if (prop === 'value') {
           if (activeListener) {
@@ -160,6 +179,12 @@
             return makeArrayProxy(target._val);
           }
           return target._val;
+        }
+        if (prop === 'id') {
+          return target.id;
+        }
+        if (prop === 'defaultValue') {
+          return target.defaultValue;
         }
         let res = target[prop];
         if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
@@ -187,6 +212,11 @@
         return true;
       }
     });
+
+    if (name) {
+      window[name] = stateProxy;
+    }
+    return stateProxy;
   };
 
   window.useParams = function() { return window.__erm_params || {}; };
@@ -199,15 +229,15 @@
     };
   };
 
-  window.ThemeContext = window.ThemeContext || window.createContext("light");
-
   window.useContext = function(context) {
     return {
       get value() {
         let evalId = window.__current_eval_id;
         let el = document.getElementById(evalId);
+        const contextId = (context && typeof context === 'object') ? context.id : context;
+        const defaultValue = (context && typeof context === 'object') ? context.defaultValue : undefined;
         while (el) {
-          if (el.__erm_providers && el.__erm_providers[context.id] !== undefined) {
+          if (el.__erm_providers && el.__erm_providers[contextId] !== undefined) {
             let providerBinding = el.__erm_provider_binding;
             if (providerBinding && activeListener) {
               providerBinding.subscribers = providerBinding.subscribers || new Set();
@@ -215,11 +245,15 @@
               activeListener.deps = activeListener.deps || new Set();
               activeListener.deps.add(providerBinding.subscribers);
             }
-            return el.__erm_providers[context.id];
+            let val = el.__erm_providers[contextId];
+            if (val && typeof val === 'object' && 'value' in val) {
+              return val.value;
+            }
+            return val;
           }
           el = el.parentElement;
         }
-        return context.defaultValue;
+        return defaultValue;
       },
       toString() { return this.value; },
       valueOf() { return this.value; },

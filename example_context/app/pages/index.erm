@@ -1,5 +1,5 @@
 <script>
-    let activeTheme = useState('light');
+    export let activeTheme = useState('light');
 
     let count = useState(0);
     let double = useState(() => count * 2);
@@ -153,10 +153,10 @@ gvfcjb hyun</p>
     }
 </style>
 
-<ContextProvider context={ThemeContext} value={activeTheme}>
+<ContextProvider context={activeTheme} value={activeTheme}>
     <div class="demo-box context-demo">
         <h3>🌐 Context API Demo</h3>
-        <p class="demo-desc">Changing the state below propagates the value to child components via <code>ThemeContext</code>.</p>
+        <p class="demo-desc">Changing the state below propagates the value to child components via <code>activeTheme</code>.</p>
         <div class="control-row">
             <button class="btn theme-btn" onClick={()=>{activeTheme = activeTheme == 'light' ? 'dark' : 'light'}}>
                 Toggle Theme (Current: {activeTheme})
