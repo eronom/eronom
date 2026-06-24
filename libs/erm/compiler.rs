@@ -652,6 +652,30 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
                 i += 1;
                 continue;
             }
+            
+            // Wrap attribute brace values like value={name} or placeholder={desc} in double quotes
+            let re_attr_brace = regex::Regex::new(r#"^([A-Za-z0-9_-]+)=\{"#).unwrap();
+            if i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && !html[i..].starts_with("on") {
+                if let Some(caps) = re_attr_brace.captures(&html[i..]) {
+                    let attr_name = caps.get(1).unwrap().as_str();
+                    let start_expr = i + attr_name.len() + 2;
+                    let mut depth = 1;
+                    let mut j = start_expr;
+                    while j < html.len() && depth > 0 {
+                        let cur_c = html[j..].chars().next().unwrap();
+                        if cur_c == '{' { depth += 1; }
+                        else if cur_c == '}' { depth -= 1; }
+                        j += cur_c.len_utf8();
+                    }
+                    if depth == 0 {
+                        let expr = &html[start_expr..j-1];
+                        out.push_str(&format!("{}=\"{{{}}}\" ", attr_name, expr));
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+
             if i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && html[i..].starts_with("on") {
                 let mut k = i + 2;
                 while k < html.len() && html[k..k+1].chars().next().unwrap().is_ascii_alphabetic() { k += 1; }
@@ -672,8 +696,36 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
                                 expr = replace_word(&expr, sig, ".value");
                             }
                             let event_type = attr_name[2..].to_lowercase();
-                            let id = format!("erm-evt-{}", j);
-                            out.push_str(&format!("id=\"{}\" ", id));
+                            
+                            // Check for existing ID attribute to avoid duplicate IDs
+                            let last_lt = out.rfind('<').unwrap_or(0);
+                            let tag_so_far = &out[last_lt..];
+                            let tag_end_pos = html[i..].find('>').unwrap_or(0);
+                            let tag_rest = &html[i..i+tag_end_pos];
+                            let full_tag = format!("{}{}", tag_so_far, tag_rest);
+                            
+                            let mut existing_id = None;
+                            if let Some(id_pos) = full_tag.find("id=\"") {
+                                let id_val_start = id_pos + 4;
+                                if let Some(id_val_end) = full_tag[id_val_start..].find('"') {
+                                    existing_id = Some(full_tag[id_val_start..id_val_start + id_val_end].to_string());
+                                }
+                            } else if let Some(id_pos) = full_tag.find("id='") {
+                                let id_val_start = id_pos + 4;
+                                if let Some(id_val_end) = full_tag[id_val_start..].find('\'') {
+                                    existing_id = Some(full_tag[id_val_start..id_val_start + id_val_end].to_string());
+                                }
+                            }
+
+                            let id = match existing_id {
+                                Some(eid) => eid,
+                                None => {
+                                    let new_id = format!("erm-evt-{}", j);
+                                    out.push_str(&format!("id=\"{}\" ", new_id));
+                                    new_id
+                                }
+                            };
+
                             events.push(format!("window.__erm_events.push({{ id: \"{}\", event: \"{}\", handler: (event) => {{ ({})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); }} }});", id, event_type, expr));
                             i = j;
                             continue;

@@ -386,4 +386,75 @@
       }
     });
   };
+
+  // Client-side Router / Navigation Interceptor
+  async function navigate(path, push = true) {
+    try {
+      const res = await fetch(path);
+      const html = await res.text();
+      
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      
+      document.title = doc.title;
+      
+      // Update style block
+      const newStyle = doc.getElementById('__erm_styles');
+      const oldStyle = document.getElementById('__erm_styles');
+      if (newStyle && oldStyle) {
+        oldStyle.innerHTML = newStyle.innerHTML;
+      } else if (newStyle) {
+        document.head.appendChild(newStyle.cloneNode(true));
+      }
+      
+      // Reconcile body children
+      reconcileNodes(document.body, Array.from(doc.body.childNodes));
+      
+      // Reset bindings and events for the new page
+      window.__erm_bindings = [];
+      window.__erm_bindings.push = function(binding) {
+        return Array.prototype.push.call(this, binding);
+      };
+      window.__erm_events = [];
+      
+      // Execute page scripts
+      const scripts = doc.querySelectorAll('script.__erm_script');
+      scripts.forEach(script => {
+        const newScript = document.createElement('script');
+        newScript.className = '__erm_script';
+        newScript.text = script.text;
+        document.head.appendChild(newScript);
+        newScript.remove();
+      });
+      
+      if (push) {
+        history.pushState(null, '', path);
+      }
+      
+      _initReactivity();
+      window.__erm_update();
+    } catch (err) {
+      console.error("Navigation failed:", err);
+      window.location.href = path;
+    }
+  }
+
+  document.addEventListener('click', e => {
+    const link = e.target.closest('a');
+    if (link && 
+        link.href && 
+        !link.target && 
+        !link.hasAttribute('download') &&
+        new URL(link.href).origin === window.location.origin) {
+      const targetPath = new URL(link.href).pathname;
+      if (targetPath.startsWith('/api/')) return;
+      
+      e.preventDefault();
+      navigate(targetPath);
+    }
+  });
+
+  window.addEventListener('popstate', () => {
+    navigate(window.location.pathname, false);
+  });
 })();
