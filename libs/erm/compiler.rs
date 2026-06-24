@@ -326,7 +326,8 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
     let mut state_vars = Vec::new();
 
     let mut component_imports = HashMap::new();
-    let re_import = regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
+    let re_import_default = regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
+    let re_import_named = regex::Regex::new(r#"import\s*\{\s*([A-Za-z0-9_,\s]+)\s*\}\s*from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
 
     let mut search_idx = 0;
     while let Some(start_idx) = content[search_idx..].find("<script") {
@@ -338,10 +339,22 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             let script_content = &script_tag[content_start..script_tag.len() - 9];
 
             for line in script_content.lines() {
-                if let Some(caps) = re_import.captures(line) {
+                let line_trimmed = line.trim();
+                if let Some(caps) = re_import_default.captures(line_trimmed) {
                     let comp_name = caps.get(1).unwrap().as_str().to_string();
                     let comp_path_val = caps.get(2).unwrap().as_str().to_string();
-                    component_imports.insert(comp_name, comp_path_val);
+                    if comp_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                        component_imports.insert(comp_name, comp_path_val);
+                    }
+                } else if let Some(caps) = re_import_named.captures(line_trimmed) {
+                    let names_str = caps.get(1).unwrap().as_str();
+                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
+                    for name in names_str.split(',') {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                            component_imports.insert(name, comp_path_val.clone());
+                        }
+                    }
                 }
             }
             search_idx = script_end + 9;
@@ -369,17 +382,20 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = script_tag[content_start..script_tag.len() - 9].trim();
 
-            // Find state vars (useState and useContext) in script
+            // Find state vars (useState) in script
             find_state_variables(script_content, "useState(", &mut state_vars);
-            find_state_variables(script_content, "useContext(", &mut state_vars);
 
             // Also check imported variables that are lowercased (state imports)
             for line in script_content.lines() {
-                if let Some(caps) = re_import.captures(line) {
-                    let comp_name = caps.get(1).unwrap().as_str().to_string();
-                    if comp_name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
-                        if !state_vars.contains(&comp_name) {
-                            state_vars.push(comp_name);
+                let line_trimmed = line.trim();
+                if let Some(caps) = re_import_named.captures(line_trimmed) {
+                    let names_str = caps.get(1).unwrap().as_str();
+                    for name in names_str.split(',') {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                            if !state_vars.contains(&name) {
+                                state_vars.push(name);
+                            }
                         }
                     }
                 }
@@ -388,7 +404,8 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             let mut cleaned_script = String::new();
             let re_export = regex::Regex::new(r#"^(\s*)export\s+"#).unwrap();
             for line in script_content.lines() {
-                if re_import.is_match(line) {
+                let line_trimmed = line.trim();
+                if re_import_default.is_match(line_trimmed) || re_import_named.is_match(line_trimmed) {
                     continue;
                 }
                 let processed_line = re_export.replace(line, "$1");
@@ -1071,26 +1088,5 @@ mod tests {
         assert!(combined.contains("count.value++"));
     }
 
-    #[test]
-    fn test_context_api_compilation() {
-        let content = r#"
-        <script>
-            const MyCtx = createContext("defaultVal");
-            let theme = useContext(MyCtx);
-        </script>
-        <ContextProvider context={MyCtx} value={"dark"}>
-            <div>{theme}</div>
-        </ContextProvider>
-        "#;
-        let mut visited = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None).unwrap();
-        let combined = res.scripts.join("\n");
-        assert!(res.state_vars.contains(&"theme".to_string()));
-        assert!(combined.contains("useContext(MyCtx)"));
-        assert!(combined.contains("theme.value"));
-        assert!(combined.contains("isProvider: true"));
-        assert!(combined.contains("MyCtx.id"));
-        assert!(res.html.contains("id=\"erm-prov-"));
-    }
 }
 

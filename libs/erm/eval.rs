@@ -386,38 +386,6 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
         return Ok((Some(Value::Map(m)), p));
     }
 
-    if s[p..].starts_with("createContext(") {
-        p += 14;
-        let (inner, next_p) = parse_js_value(&s[p..], vars)?;
-        p += next_p;
-        while p < s.len() && s.as_bytes()[p] != b')' { p += 1; }
-        if p < s.len() { p += 1; }
-        let mut m = HashMap::new();
-        if let Some(v) = inner {
-            m.insert("defaultValue".to_string(), v);
-        }
-        return Ok((Some(Value::Map(m)), p));
-    }
-
-    if s[p..].starts_with("useContext(") {
-        p += 11;
-        let start = p;
-        while p < s.len() && s.as_bytes()[p] != b')' { p += 1; }
-        let arg = s[start..p].trim();
-        if p < s.len() { p += 1; }
-        let mut default_val = Value::Null;
-        if let Some(v_map) = vars {
-            if let Some(Value::Map(ctx_map)) = v_map.get(arg) {
-                if let Some(def) = ctx_map.get("defaultValue") {
-                    default_val = def.clone();
-                }
-            }
-        }
-        let mut m = HashMap::new();
-        m.insert("value".to_string(), default_val);
-        return Ok((Some(Value::Map(m)), p));
-    }
-
     if s.as_bytes()[p] == b'"' || s.as_bytes()[p] == b'\'' || s.as_bytes()[p] == b'`' {
         let quote = s.as_bytes()[p];
         p += 1;

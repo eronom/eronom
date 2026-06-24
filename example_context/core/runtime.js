@@ -221,65 +221,9 @@
 
   window.useParams = function() { return window.__erm_params || {}; };
 
-  let contextIdCounter = 0;
-  window.createContext = function(defaultValue) {
-    return {
-      id: 'ctx-' + (++contextIdCounter),
-      defaultValue: defaultValue
-    };
-  };
-
-  window.useContext = function(context) {
-    return {
-      get value() {
-        let evalId = window.__current_eval_id;
-        let el = document.getElementById(evalId);
-        const contextId = (context && typeof context === 'object') ? context.id : context;
-        const defaultValue = (context && typeof context === 'object') ? context.defaultValue : undefined;
-        while (el) {
-          if (el.__erm_providers && el.__erm_providers[contextId] !== undefined) {
-            let providerBinding = el.__erm_provider_binding;
-            if (providerBinding && activeListener) {
-              providerBinding.subscribers = providerBinding.subscribers || new Set();
-              providerBinding.subscribers.add(activeListener);
-              activeListener.deps = activeListener.deps || new Set();
-              activeListener.deps.add(providerBinding.subscribers);
-            }
-            let val = el.__erm_providers[contextId];
-            if (val && typeof val === 'object' && 'value' in val) {
-              return val.value;
-            }
-            return val;
-          }
-          el = el.parentElement;
-        }
-        return defaultValue;
-      },
-      toString() { return this.value; },
-      valueOf() { return this.value; },
-      [Symbol.toPrimitive]() { return this.value; }
-    };
-  };
-
   window.__erm_bindings = [];
-  const originalPush = window.__erm_bindings.push;
   window.__erm_bindings.push = function(binding) {
-    if (binding.isProvider) {
-      const originalUpdate = binding.update;
-      binding.update = function() {
-        let el = document.getElementById(this.id);
-        if (el) {
-          el.__erm_provider_binding = this;
-        }
-        if (typeof originalUpdate === 'function') {
-          originalUpdate.call(this);
-        }
-        if (this.subscribers) {
-          this.subscribers.forEach(b => queueUpdate(b));
-        }
-      };
-    }
-    return originalPush.call(this, binding);
+    return Array.prototype.push.call(this, binding);
   };
 
   window.__erm_events = [];

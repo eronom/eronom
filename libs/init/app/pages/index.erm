@@ -1,5 +1,5 @@
 <script>
-    let activeTheme = useState('light');
+    export let activeTheme = useState('light');
 
     let count = useState(0);
     let double = useState(() => count * 2);
@@ -153,7 +153,6 @@ gvfcjb hyun</p>
     }
 </style>
 
-<ContextProvider context={activeTheme} value={activeTheme}>
     <div class="demo-box context-demo">
         <h3>🌐 Context API Demo</h3>
         <p class="demo-desc">Changing the state below propagates the value to child components via <code>activeTheme</code>.</p>
@@ -164,7 +163,6 @@ gvfcjb hyun</p>
         </div>
         <Header />
     </div>
-</ContextProvider>
 
 {#if showExtraContent}
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">

@@ -1,5 +1,5 @@
 <script>
-    import activeTheme from ""
+    import {activeTheme} from "@pages/index.erm"
     let headerText = "Hello Header from component script!";
     console.log("Header component loaded!");
 </script>
