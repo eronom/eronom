@@ -96,6 +96,27 @@
     if (typeof _initReactivity === 'function') {
       _initReactivity();
     }
+
+    // Update any text/attribute bindings whose elements are now in the DOM
+    window.__erm_bindings.forEach(b => {
+      if (typeof b.update !== 'function' && b.id) {
+        let el = document.getElementById(b.id);
+        if (el) {
+          pushListener(b);
+          try {
+            let val = b.get();
+            let strVal = val === undefined ? '' : String(val);
+            if (el.innerText !== strVal) {
+              el.innerText = strVal;
+            }
+          } catch(e) {
+            console.error("Delayed binding update failed:", e);
+          } finally {
+            popListener();
+          }
+        }
+      }
+    });
   }
 
   window.useState = function(val, name) {
@@ -287,8 +308,12 @@
           }
           // Sync input/textarea properties
           if (existing.tagName === 'INPUT' || existing.tagName === 'TEXTAREA') {
-            if (existing.value !== incoming.value) {
-              existing.value = incoming.value;
+            let incomingVal = incoming.value;
+            if (existing.tagName === 'TEXTAREA' && incoming.hasAttribute('value')) {
+              incomingVal = incoming.getAttribute('value');
+            }
+            if (existing.value !== incomingVal) {
+              existing.value = incomingVal;
             }
             if (existing.checked !== incoming.checked) {
               existing.checked = incoming.checked;

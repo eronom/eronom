@@ -1164,5 +1164,16 @@ mod tests {
         println!("{}", res);
         assert!(res.contains("Item key as 0 : 1"));
     }
+
+    #[test]
+    fn test_contact_page_id() {
+        let content = std::fs::read_to_string("example_context/app/pages/contact.erm").unwrap();
+        let mut visited = std::collections::HashMap::new();
+        let tree_res = process_component_tree("example_context/app/pages", &content, &mut visited, None).unwrap();
+        assert!(!tree_res.html.is_empty());
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component("example_context/app/pages", &content, true, &params).unwrap();
+        assert!(!res.is_empty());
+    }
 }
 
