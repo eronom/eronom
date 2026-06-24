@@ -294,6 +294,12 @@ impl<'a> ExprParser<'a> {
             return Ok(val);
         }
 
+        if c == '[' || c == '{' {
+            let (val, next_p) = parse_js_value(&self.input[self.pos..], Some(&self.ev.vars))?;
+            self.pos += next_p;
+            return Ok(val.unwrap_or(Value::Null));
+        }
+
         if c.is_ascii_digit() || c == '.' {
             let start = self.pos;
             while self.pos < self.input.len() && (self.input.as_bytes()[self.pos].is_ascii_digit() || self.input.as_bytes()[self.pos] == b'.') {

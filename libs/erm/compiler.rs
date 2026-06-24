@@ -724,9 +724,18 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
 fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &[String]) -> String {
     let mut out = String::new();
     let mut i = 0;
+    let mut block_depth = 0;
     while i < html.len() {
+        if html[i..].starts_with("{#for ") || html[i..].starts_with("{#if ") {
+            block_depth += 1;
+        } else if html[i..].starts_with("{/for}") || html[i..].starts_with("{/if}") {
+            if block_depth > 0 {
+                block_depth -= 1;
+            }
+        }
+
         let c = html[i..].chars().next().unwrap();
-        if c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
+        if block_depth == 0 && c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
             if let Some(brace_end) = html[i..].find('}') {
                 let mut sub_expr = html[i + 1..i + brace_end].to_string();
                 for sig in state_vars {
@@ -1088,5 +1097,20 @@ mod tests {
         assert!(combined.contains("count.value++"));
     }
 
+    #[test]
+    fn test_for_loop_compilation() {
+        let content = r#"
+        <script>
+            let items = useState([1, 2, 3]);
+        </script>
+        {#for item, i in items}
+            <p>Item key as {i} : {item}</p>
+        {/for}
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, true, &params).unwrap();
+        println!("{}", res);
+        assert!(res.contains("Item key as 0 : 1"));
+    }
 }
 
