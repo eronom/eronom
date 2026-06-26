@@ -2,6 +2,33 @@ use std::collections::HashMap;
 use crate::eval::{self, ErmEval};
 use fnv::FnvHasher;
 use std::hash::Hasher;
+use std::sync::OnceLock;
+
+fn get_re_attr_brace() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"^([A-Za-z0-9_-]+)=\{"#).unwrap())
+}
+
+fn get_re_state() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"let\s+([A-Za-z0-9_]+)\s*=\s*useState\("#).unwrap())
+}
+
+fn get_re_import_named() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"import\s*\{\s*([A-Za-z0-9_,\s]+)\s*\}\s*from\s+['"]([^'"]*)['"]\s*;?"#).unwrap())
+}
+
+fn get_re_import_default() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]*)['"]\s*;?"#).unwrap())
+}
+
+fn get_re_export() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"^(\s*)export\s+"#).unwrap())
+}
+
 
 
 pub fn scope_css(css: &str, scope_id: &str) -> anyhow::Result<String> {
@@ -488,8 +515,6 @@ pub fn process_component_tree(
 
     // 2. Scan and extract all state variable names (so replace_word knows what to convert to .value)
     let mut local_state_vars = Vec::new();
-    let re_state = regex::Regex::new(r#"let\s+([A-Za-z0-9_]+)\s*=\s*useState\("#).unwrap();
-    let re_import_named = regex::Regex::new(r#"import\s*\{\s*([A-Za-z0-9_,\s]+)\s*\}\s*from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
     let mut temp_search2 = 0;
     while let Some(start_idx) = content[temp_search2..].find("<script") {
         let script_start = temp_search2 + start_idx;
@@ -498,7 +523,7 @@ pub fn process_component_tree(
             let script_tag = &content[script_start..script_end + 9];
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = &script_tag[content_start..script_tag.len() - 9];
-            for cap in re_state.captures_iter(script_content) {
+            for cap in get_re_state().captures_iter(script_content) {
                 let var_name = cap.get(1).unwrap().as_str().to_string();
                 if !local_state_vars.contains(&var_name) {
                     local_state_vars.push(var_name);
@@ -506,7 +531,7 @@ pub fn process_component_tree(
             }
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if let Some(caps) = re_import_named.captures(line_trimmed) {
+                if let Some(caps) = get_re_import_named().captures(line_trimmed) {
                     let names_str = caps.get(1).unwrap().as_str();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
@@ -559,8 +584,6 @@ pub fn process_component_tree(
     let mut state_vars = Vec::new();
 
     let mut component_imports = HashMap::new();
-    let re_import_default = regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
-    let re_import_named = regex::Regex::new(r#"import\s*\{\s*([A-Za-z0-9_,\s]+)\s*\}\s*from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
 
     let mut search_idx = 0;
     while let Some(start_idx) = content[search_idx..].find("<script") {
@@ -573,13 +596,13 @@ pub fn process_component_tree(
 
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if let Some(caps) = re_import_default.captures(line_trimmed) {
+                if let Some(caps) = get_re_import_default().captures(line_trimmed) {
                     let comp_name = caps.get(1).unwrap().as_str().to_string();
                     let comp_path_val = caps.get(2).unwrap().as_str().to_string();
                     if comp_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
                         component_imports.insert(comp_name, comp_path_val);
                     }
-                } else if let Some(caps) = re_import_named.captures(line_trimmed) {
+                } else if let Some(caps) = get_re_import_named().captures(line_trimmed) {
                     let names_str = caps.get(1).unwrap().as_str();
                     let comp_path_val = caps.get(2).unwrap().as_str().to_string();
                     for name in names_str.split(',') {
@@ -619,7 +642,7 @@ pub fn process_component_tree(
             // Also check imported variables that are lowercased (state imports)
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if let Some(caps) = re_import_named.captures(line_trimmed) {
+                if let Some(caps) = get_re_import_named().captures(line_trimmed) {
                     let names_str = caps.get(1).unwrap().as_str();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
@@ -633,13 +656,12 @@ pub fn process_component_tree(
             }
 
             let mut cleaned_script = String::new();
-            let re_export = regex::Regex::new(r#"^(\s*)export\s+"#).unwrap();
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if re_import_default.is_match(line_trimmed) || re_import_named.is_match(line_trimmed) {
+                if get_re_import_default().is_match(line_trimmed) || get_re_import_named().is_match(line_trimmed) {
                     continue;
                 }
-                let processed_line = re_export.replace(line, "$1");
+                let processed_line = get_re_export().replace(line, "$1");
                 cleaned_script.push_str(&processed_line);
                 cleaned_script.push('\n');
             }
@@ -885,9 +907,8 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
             }
             
             // Wrap attribute brace values like value={name} or placeholder={desc} in double quotes
-            let re_attr_brace = regex::Regex::new(r#"^([A-Za-z0-9_-]+)=\{"#).unwrap();
             if i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && !html[i..].starts_with("on") {
-                if let Some(caps) = re_attr_brace.captures(&html[i..]) {
+                if let Some(caps) = get_re_attr_brace().captures(&html[i..]) {
                     let attr_name = caps.get(1).unwrap().as_str();
                     let start_expr = i + attr_name.len() + 2;
                     let mut depth = 1;
@@ -1112,27 +1133,51 @@ fn find_matching_close_brace(s: &str) -> Option<usize> {
     None
 }
 
-fn is_inside_script_or_style(content: &str, pos: usize) -> bool {
-    let prefix = &content[..pos];
-    if let Some(last_script_open) = prefix.rfind("<script") {
-        if let Some(last_script_close) = prefix.rfind("</script>") {
-            if last_script_close < last_script_open {
-                return true;
+struct ScriptStyleRanges {
+    ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl ScriptStyleRanges {
+    fn new(content: &str) -> Self {
+        let mut ranges = Vec::new();
+        
+        let mut start_search = 0;
+        while let Some(open_pos) = content[start_search..].find("<script") {
+            let open_idx = start_search + open_pos;
+            if let Some(close_pos) = content[open_idx..].find("</script>") {
+                let close_idx = open_idx + close_pos + "</script>".len();
+                ranges.push(open_idx..close_idx);
+                start_search = close_idx;
+            } else {
+                ranges.push(open_idx..content.len());
+                break;
             }
-        } else {
-            return true;
         }
-    }
-    if let Some(last_style_open) = prefix.rfind("<style") {
-        if let Some(last_style_close) = prefix.rfind("</style>") {
-            if last_style_close < last_style_open {
-                return true;
+        
+        let mut start_search = 0;
+        while let Some(open_pos) = content[start_search..].find("<style") {
+            let open_idx = start_search + open_pos;
+            if let Some(close_pos) = content[open_idx..].find("</style>") {
+                let close_idx = open_idx + close_pos + "</style>".len();
+                ranges.push(open_idx..close_idx);
+                start_search = close_idx;
+            } else {
+                ranges.push(open_idx..content.len());
+                break;
             }
-        } else {
-            return true;
         }
+        
+        Self { ranges }
     }
-    false
+
+    fn get_skip_pos(&self, pos: usize) -> Option<usize> {
+        for range in &self.ranges {
+            if range.contains(&pos) {
+                return Some(range.end);
+            }
+        }
+        None
+    }
 }
 
 fn try_parse_for_header(content: &str, start_pos: usize) -> Option<(String, usize)> {
@@ -1176,12 +1221,12 @@ fn try_parse_for_header(content: &str, start_pos: usize) -> Option<(String, usiz
 }
 
 fn find_last_for_block(res_html: &str) -> Option<(usize, String, usize)> {
+    let ranges = ScriptStyleRanges::new(res_html);
     let mut last = None;
     let mut i = 0;
     while i < res_html.len() {
-        if is_inside_script_or_style(res_html, i) {
-            let c = res_html[i..].chars().next().unwrap();
-            i += c.len_utf8();
+        if let Some(skip_to) = ranges.get_skip_pos(i) {
+            i = skip_to;
             continue;
         }
         if let Some((header, next_pos)) = try_parse_for_header(res_html, i) {
@@ -1194,12 +1239,12 @@ fn find_last_for_block(res_html: &str) -> Option<(usize, String, usize)> {
 }
 
 fn find_last_if_block(res_html: &str) -> Option<(usize, String, usize)> {
+    let ranges = ScriptStyleRanges::new(res_html);
     let mut last = None;
     let mut i = 0;
     while i < res_html.len() {
-        if is_inside_script_or_style(res_html, i) {
-            let c = res_html[i..].chars().next().unwrap();
-            i += c.len_utf8();
+        if let Some(skip_to) = ranges.get_skip_pos(i) {
+            i = skip_to;
             continue;
         }
         if let Some((cond, next_pos)) = try_parse_if_header(res_html, i) {
@@ -1390,6 +1435,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
 
     let mut if_counter = 0;
     let mut for_counter = 0;
+    
     let result = if let Some(lp) = layout_path {
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
             let layout_content = std::fs::read_to_string(&lp)?;
@@ -1434,6 +1480,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         script_all.push('\n');
     }
     let script_for_eval = script_all.replace("useParams()", "__erm_params");
+
     ev.parse_script_vars(&script_for_eval)?;
 
     let mut res_html = result.html.clone();

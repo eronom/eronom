@@ -17,7 +17,7 @@
     fetchTodos();
     
     let showExtraContent = useState(true);
-    let porridge = useState({ temperature: 100 });
+    let porridge = useState({ temperature: 180 });
     
 
 
