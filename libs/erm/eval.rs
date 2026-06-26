@@ -127,7 +127,10 @@ impl ErmEval {
                     }
                 }
             }
-            if !found { i += 1; }
+            if !found {
+                let c = script[i..].chars().next().unwrap();
+                i += c.len_utf8();
+            }
         }
         Ok(())
     }

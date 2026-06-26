@@ -92,13 +92,13 @@ gvfcjb hyun</p>
     </div>
 </div>
 
-{#if porridge.temperature > 100}
+if porridge.temperature > 100 {
     <p>too hot!</p>
-{:else if 80 > porridge.temperature}
+} else if 80 > porridge.temperature {
     <p>too cold!</p>
-{:else}
+} else {
     <p>just right!</p>
-{/if}
+}
 
 <Link to="/contact">Contact</Link>
 
@@ -164,16 +164,16 @@ gvfcjb hyun</p>
         <Header />
     </div>
 
-{#if showExtraContent}
+if showExtraContent {
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
         <h3>🎉 Condsfssitsionalssssssss Rendered Boxxxxxssaaa</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
     <button onclick={()=>{showExtraContent=false}}>Hide Content</button>
-{:else}
+} else {
     <div><p>showExtraContent is false</p></div>
     <button onclick={()=>{showExtraContent=true}}>Show Content</button>
-{/if}
+}
 
 
 

@@ -320,8 +320,241 @@ pub fn extract_attribute(tag_content: &str, attr_name: &str) -> Option<String> {
     None
 }
 
-pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashMap<String, bool>, slot_html: Option<&str>) -> anyhow::Result<ProcessResult> {
+enum ElseTransition {
+    ElseIf(String, usize),
+    Else(usize),
+}
+
+fn try_parse_if_header(content: &str, start_pos: usize) -> Option<(String, usize)> {
+    if !content[start_pos..].starts_with("if") {
+        return None;
+    }
+    // Verify word boundary before 'if' and ensure it's not preceded by 'else'
+    if start_pos > 0 {
+        let prev_c = content[..start_pos].chars().next_back().unwrap();
+        if prev_c.is_alphanumeric() || prev_c == '_' {
+            return None;
+        }
+        let mut check = start_pos;
+        while check > 0 {
+            let c = content[..check].chars().next_back().unwrap();
+            if c.is_whitespace() {
+                check -= c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if check >= 4 && &content[check - 4..check] == "else" {
+            if check - 4 == 0 || {
+                let prev_else = content[..check - 4].chars().next_back().unwrap();
+                !prev_else.is_alphanumeric() && prev_else != '_'
+            } {
+                return None;
+            }
+        }
+    }
+    let after_if = start_pos + 2;
+    if after_if < content.len() {
+        let next_c = content[after_if..].chars().next().unwrap();
+        if next_c.is_alphanumeric() || next_c == '_' {
+            return None;
+        }
+    }
+    // Scan forward to find '{'
+    let mut scan = after_if;
+    while scan < content.len() {
+        let c = content[scan..].chars().next().unwrap();
+        if c == '{' {
+            let cond = content[after_if..scan].trim().to_string();
+            return Some((cond, scan + 1));
+        } else if c == '<' {
+            if scan + 1 < content.len() {
+                let next_c = content[scan + 1..].chars().next().unwrap();
+                if next_c == '/' || next_c.is_ascii_alphabetic() {
+                    return None;
+                }
+            }
+        }
+        scan += c.len_utf8();
+    }
+    None
+}
+
+fn find_else_transition(content: &str, start_pos: usize) -> Option<ElseTransition> {
+    let mut j = start_pos;
+    while j < content.len() {
+        let c = content[j..].chars().next().unwrap();
+        if c.is_whitespace() {
+            j += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if content[j..].starts_with("else") {
+        let after_else = j + 4;
+        if after_else < content.len() {
+            let next_c = content[after_else..].chars().next().unwrap();
+            if next_c.is_alphanumeric() || next_c == '_' {
+                return None;
+            }
+        }
+        let mut k = after_else;
+        while k < content.len() {
+            let c = content[k..].chars().next().unwrap();
+            if c.is_whitespace() {
+                k += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if content[k..].starts_with("if") {
+            let after_if = k + 2;
+            if after_if < content.len() {
+                let next_c = content[after_if..].chars().next().unwrap();
+                if next_c.is_alphanumeric() || next_c == '_' {
+                    return None;
+                }
+            }
+            let mut scan = after_if;
+            while scan < content.len() {
+                let c = content[scan..].chars().next().unwrap();
+                if c == '{' {
+                    let cond = content[after_if..scan].trim().to_string();
+                    return Some(ElseTransition::ElseIf(cond, scan + 1));
+                } else if c == '<' {
+                    if scan + 1 < content.len() {
+                        let next_c = content[scan + 1..].chars().next().unwrap();
+                        if next_c == '/' || next_c.is_ascii_alphabetic() {
+                            return None;
+                        }
+                    }
+                }
+                scan += c.len_utf8();
+            }
+        } else {
+            let mut scan = after_else;
+            while scan < content.len() {
+                let c = content[scan..].chars().next().unwrap();
+                if c == '{' {
+                    return Some(ElseTransition::Else(scan + 1));
+                } else if !c.is_whitespace() {
+                    return None;
+                }
+                scan += c.len_utf8();
+            }
+        }
+    }
+    None
+}
+
+
+
+pub fn process_component_tree(
+    base_dir: &str,
+    content: &str,
+    visited: &mut HashMap<String, bool>,
+    slot_html: Option<&str>,
+    params: &HashMap<String, String>,
+    if_counter: &mut usize,
+    for_counter: &mut usize,
+) -> anyhow::Result<ProcessResult> {
+    // 1. Initialize local ErmEval and parse parameters/scripts for SSR block evaluation
+    let mut ev = ErmEval::new();
+    let mut params_map = HashMap::new();
+    for (k, v) in params {
+        if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
+            params_map.insert(k.clone(), parsed_val);
+        } else {
+            params_map.insert(k.clone(), eval::Value::String(v.clone()));
+        }
+    }
+    ev.set("__erm_params", eval::Value::Map(params_map));
+
+    let mut temp_search = 0;
+    while let Some(start_idx) = content[temp_search..].find("<script") {
+        let script_start = temp_search + start_idx;
+        if let Some(end_idx) = content[script_start..].find("</script>") {
+            let script_end = script_start + end_idx;
+            let script_tag = &content[script_start..script_end + 9];
+            let content_start = script_tag.find('>').unwrap_or(0) + 1;
+            let script_content = &script_tag[content_start..script_tag.len() - 9];
+            let script_for_eval = script_content.replace("useParams()", "__erm_params");
+            let _ = ev.parse_script_vars(&script_for_eval);
+            temp_search = script_end + 9;
+        } else {
+            break;
+        }
+    }
+
+    // 2. Scan and extract all state variable names (so replace_word knows what to convert to .value)
+    let mut local_state_vars = Vec::new();
+    let re_state = regex::Regex::new(r#"let\s+([A-Za-z0-9_]+)\s*=\s*useState\("#).unwrap();
+    let re_import_named = regex::Regex::new(r#"import\s*\{\s*([A-Za-z0-9_,\s]+)\s*\}\s*from\s+['"]([^'"]*)['"]\s*;?"#).unwrap();
+    let mut temp_search2 = 0;
+    while let Some(start_idx) = content[temp_search2..].find("<script") {
+        let script_start = temp_search2 + start_idx;
+        if let Some(end_idx) = content[script_start..].find("</script>") {
+            let script_end = script_start + end_idx;
+            let script_tag = &content[script_start..script_end + 9];
+            let content_start = script_tag.find('>').unwrap_or(0) + 1;
+            let script_content = &script_tag[content_start..script_tag.len() - 9];
+            for cap in re_state.captures_iter(script_content) {
+                let var_name = cap.get(1).unwrap().as_str().to_string();
+                if !local_state_vars.contains(&var_name) {
+                    local_state_vars.push(var_name);
+                }
+            }
+            for line in script_content.lines() {
+                let line_trimmed = line.trim();
+                if let Some(caps) = re_import_named.captures(line_trimmed) {
+                    let names_str = caps.get(1).unwrap().as_str();
+                    for name in names_str.split(',') {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                            if !local_state_vars.contains(&name) {
+                                local_state_vars.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+            temp_search2 = script_end + 9;
+        } else {
+            break;
+        }
+    }
+    let mut hasher = FnvHasher::default();
+    hasher.write(content.as_bytes());
+    let scope_id = format!("data-e-{:x}", hasher.finish());
+
+    // 3. Compile all blocks (new if syntax and new for syntax) from inside out
+    let mut compiled_content = content.to_string();
+    let mut block_logic = Vec::new();
+    loop {
+        let last_if = find_last_if_block(&compiled_content);
+        let last_for = find_last_for_block(&compiled_content);
+        match (last_if, last_for) {
+            (Some((if_idx, cond, body_start)), Some((for_idx, header, for_body_start))) => {
+                if if_idx > for_idx {
+                    process_if_block_at(if_idx, &mut compiled_content, if_counter, &mut block_logic, &local_state_vars, &mut ev, cond, body_start, &scope_id)?;
+                } else {
+                    process_for_block_at(for_idx, &mut compiled_content, for_counter, &mut block_logic, &local_state_vars, &mut ev, header, for_body_start, &scope_id)?;
+                }
+            }
+            (Some((if_idx, cond, body_start)), None) => {
+                process_if_block_at(if_idx, &mut compiled_content, if_counter, &mut block_logic, &local_state_vars, &mut ev, cond, body_start, &scope_id)?;
+            }
+            (None, Some((for_idx, header, for_body_start))) => {
+                process_for_block_at(for_idx, &mut compiled_content, for_counter, &mut block_logic, &local_state_vars, &mut ev, header, for_body_start, &scope_id)?;
+            }
+            (None, None) => break,
+        }
+    }
+
+    let content = &compiled_content;
+
     let mut scripts = Vec::new();
+    scripts.extend(block_logic);
     let mut styles = Vec::new();
     let mut state_vars = Vec::new();
 
@@ -363,9 +596,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
         }
     }
 
-    let mut hasher = FnvHasher::default();
-    hasher.write(content.as_bytes());
-    let scope_id = format!("data-e-{:x}", hasher.finish());
+
 
     let mut html_buf = String::new();
     let mut i = 0;
@@ -541,7 +772,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                                 visited.insert(comp_path_str.clone(), true);
                                 let comp_content = std::fs::read_to_string(&canonical_comp_path)?;
                                 let comp_dir = canonical_comp_path.parent().unwrap().to_string_lossy();
-                                let mut sub_res = process_component_tree(&comp_dir, &comp_content, visited, None)?;
+                                let mut sub_res = process_component_tree(&comp_dir, &comp_content, visited, None, params, if_counter, for_counter)?;
                                 html_buf.push_str(&sub_res.html);
                                 scripts.append(&mut sub_res.scripts);
                                 styles.append(&mut sub_res.styles);
@@ -740,6 +971,20 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
     out
 }
 
+fn get_event_attribute_name(prefix: &str) -> Option<String> {
+    let trimmed = prefix.trim_end();
+    if trimmed.ends_with('=') {
+        let name_part = trimmed[..trimmed.len() - 1].trim_end();
+        if let Some(last_word) = name_part.split(|c: char| c.is_ascii_whitespace() || c == '<' || c == '>').last() {
+            if last_word.starts_with("on") && last_word.len() > 2 {
+                let event_name = last_word[2..].to_lowercase();
+                return Some(event_name);
+            }
+        }
+    }
+    None
+}
+
 pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
     let mut js_expr = String::new();
     js_expr.push('`');
@@ -751,15 +996,38 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
             js_expr.push(c);
             i += c.len_utf8();
         } else if c == '{' && !body[i..].starts_with("{#") && !body[i..].starts_with("{/") && !body[i..].starts_with("{:") {
-            if let Some(brace_end) = body[i..].find('}') {
-                let mut sub_expr = body[i + 1..i + brace_end].to_string();
+            if let Some(close_idx) = find_matching_close_brace(&body[i + 1..]) {
+                let brace_end = i + 1 + close_idx;
+                let mut sub_expr = body[i + 1..brace_end].to_string();
                 for sig in state_vars {
                     sub_expr = replace_word(&sub_expr, sig, ".value");
                 }
-                js_expr.push_str("${window.__erm_escape(");
-                js_expr.push_str(&sub_expr);
-                js_expr.push_str(")}");
-                i += brace_end + 1;
+                
+                let prefix = &body[..i];
+                if let Some(event_type) = get_event_attribute_name(prefix) {
+                    let mut temp_js = js_expr.trim_end().to_string();
+                    if temp_js.ends_with('=') {
+                        temp_js.pop();
+                        let temp_js_trimmed = temp_js.trim_end().to_string();
+                        let trimmed_prefix = prefix.trim_end();
+                        let name_part = &trimmed_prefix[..trimmed_prefix.len() - 1].trim_end();
+                        if let Some(last_word) = name_part.split(|c: char| c.is_ascii_whitespace() || c == '<' || c == '>').last() {
+                            if temp_js_trimmed.ends_with(last_word) {
+                                js_expr = temp_js_trimmed[..temp_js_trimmed.len() - last_word.len()].to_string();
+                            } else {
+                                js_expr = temp_js_trimmed;
+                            }
+                        } else {
+                            js_expr = temp_js_trimmed;
+                        }
+                    }
+                    js_expr.push_str(&format!("${{window.__erm_register_event('{}', (event) => {{ ({})(event); }})}}", event_type, sub_expr));
+                } else {
+                    js_expr.push_str("${window.__erm_escape(");
+                    js_expr.push_str(&sub_expr);
+                    js_expr.push_str(")}");
+                }
+                i = brace_end + 1;
             } else {
                 js_expr.push(c);
                 i += c.len_utf8();
@@ -776,28 +1044,41 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
 fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &[String]) -> String {
     let mut out = String::new();
     let mut i = 0;
-    let mut block_depth = 0;
     while i < html.len() {
-        if html[i..].starts_with("{#for ") || html[i..].starts_with("{#if ") {
-            block_depth += 1;
-        } else if html[i..].starts_with("{/for}") || html[i..].starts_with("{/if}") {
-            if block_depth > 0 {
-                block_depth -= 1;
-            }
-        }
-
         let c = html[i..].chars().next().unwrap();
-        if block_depth == 0 && c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
-            if let Some(brace_end) = html[i..].find('}') {
-                let mut sub_expr = html[i + 1..i + brace_end].to_string();
+        if c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
+            if let Some(close_idx) = find_matching_close_brace(&html[i + 1..]) {
+                let brace_end = i + 1 + close_idx;
+                let mut sub_expr = html[i + 1..brace_end].to_string();
                 for sig in state_vars {
                     sub_expr = replace_word(&sub_expr, sig, ".value");
                 }
-                let val = ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
-                if val != eval::Value::Null {
-                    out.push_str(&val.to_string());
+                
+                let prefix = &html[..i];
+                if let Some(_event_type) = get_event_attribute_name(prefix) {
+                    let mut temp_out = out.trim_end().to_string();
+                    if temp_out.ends_with('=') {
+                        temp_out.pop();
+                        let temp_out_trimmed = temp_out.trim_end().to_string();
+                        let trimmed_prefix = prefix.trim_end();
+                        let name_part = &trimmed_prefix[..trimmed_prefix.len() - 1].trim_end();
+                        if let Some(last_word) = name_part.split(|c: char| c.is_ascii_whitespace() || c == '<' || c == '>').last() {
+                            if temp_out_trimmed.ends_with(last_word) {
+                                out = temp_out_trimmed[..temp_out_trimmed.len() - last_word.len()].to_string();
+                            } else {
+                                out = temp_out_trimmed;
+                            }
+                        } else {
+                            out = temp_out_trimmed;
+                        }
+                    }
+                } else {
+                    let val = ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
+                    if val != eval::Value::Null {
+                        out.push_str(&val.to_string());
+                    }
                 }
-                i += brace_end + 1;
+                i = brace_end + 1;
             } else {
                 out.push(c);
                 i += c.len_utf8();
@@ -808,6 +1089,281 @@ fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &[Str
         }
     }
     out
+}
+
+fn find_matching_close_brace(s: &str) -> Option<usize> {
+    let mut depth = 1;
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i..].chars().next().unwrap();
+        if c == '{' {
+            depth += 1;
+            i += 1;
+        } else if c == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+            i += 1;
+        } else {
+            i += c.len_utf8();
+        }
+    }
+    None
+}
+
+fn is_inside_script_or_style(content: &str, pos: usize) -> bool {
+    let prefix = &content[..pos];
+    if let Some(last_script_open) = prefix.rfind("<script") {
+        if let Some(last_script_close) = prefix.rfind("</script>") {
+            if last_script_close < last_script_open {
+                return true;
+            }
+        } else {
+            return true;
+        }
+    }
+    if let Some(last_style_open) = prefix.rfind("<style") {
+        if let Some(last_style_close) = prefix.rfind("</style>") {
+            if last_style_close < last_style_open {
+                return true;
+            }
+        } else {
+            return true;
+        }
+    }
+    false
+}
+
+fn try_parse_for_header(content: &str, start_pos: usize) -> Option<(String, usize)> {
+    if !content[start_pos..].starts_with("for") {
+        return None;
+    }
+    if start_pos > 0 {
+        let prev_c = content[..start_pos].chars().next_back().unwrap();
+        if prev_c.is_alphanumeric() || prev_c == '_' {
+            return None;
+        }
+    }
+    let after_for = start_pos + 3;
+    if after_for < content.len() {
+        let next_c = content[after_for..].chars().next().unwrap();
+        if next_c.is_alphanumeric() || next_c == '_' {
+            return None;
+        }
+    }
+    let mut scan = after_for;
+    while scan < content.len() {
+        let c = content[scan..].chars().next().unwrap();
+        if c == '{' {
+            let header = content[after_for..scan].trim().to_string();
+            if header.contains(" in ") {
+                return Some((header, scan + 1));
+            } else {
+                return None;
+            }
+        } else if c == '<' {
+            if scan + 1 < content.len() {
+                let next_c = content[scan + 1..].chars().next().unwrap();
+                if next_c == '/' || next_c.is_ascii_alphabetic() {
+                    return None;
+                }
+            }
+        }
+        scan += c.len_utf8();
+    }
+    None
+}
+
+fn find_last_for_block(res_html: &str) -> Option<(usize, String, usize)> {
+    let mut last = None;
+    let mut i = 0;
+    while i < res_html.len() {
+        if is_inside_script_or_style(res_html, i) {
+            let c = res_html[i..].chars().next().unwrap();
+            i += c.len_utf8();
+            continue;
+        }
+        if let Some((header, next_pos)) = try_parse_for_header(res_html, i) {
+            last = Some((i, header, next_pos));
+        }
+        let c = res_html[i..].chars().next().unwrap();
+        i += c.len_utf8();
+    }
+    last
+}
+
+fn find_last_if_block(res_html: &str) -> Option<(usize, String, usize)> {
+    let mut last = None;
+    let mut i = 0;
+    while i < res_html.len() {
+        if is_inside_script_or_style(res_html, i) {
+            let c = res_html[i..].chars().next().unwrap();
+            i += c.len_utf8();
+            continue;
+        }
+        if let Some((cond, next_pos)) = try_parse_if_header(res_html, i) {
+            last = Some((i, cond, next_pos));
+        }
+        let c = res_html[i..].chars().next().unwrap();
+        i += c.len_utf8();
+    }
+    last
+}
+
+fn process_for_block_at(
+    start_idx: usize,
+    res_html: &mut String,
+    for_counter: &mut usize,
+    block_logic: &mut Vec<String>,
+    state_vars: &[String],
+    ev: &mut eval::ErmEval,
+    header: String,
+    body_start_idx: usize,
+    scope_id: &str,
+) -> anyhow::Result<()> {
+    let remaining = &res_html[body_start_idx..];
+    let close_idx = match find_matching_close_brace(remaining) {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+    let absolute_close_idx = body_start_idx + close_idx;
+    let body = remaining[..close_idx].to_string();
+
+    let in_idx = match header.find(" in ") {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+    let vars_part = header[0..in_idx].trim();
+    let vars_part = if vars_part.starts_with('(') && vars_part.ends_with(')') {
+        vars_part[1..vars_part.len() - 1].trim()
+    } else {
+        vars_part
+    };
+    let collection_expr_raw = header[in_idx + 4..].trim();
+    let collection_expr_raw = if collection_expr_raw.starts_with('(') && collection_expr_raw.ends_with(')') {
+        collection_expr_raw[1..collection_expr_raw.len() - 1].trim()
+    } else {
+        collection_expr_raw
+    };
+
+    let mut collection_expr = collection_expr_raw.to_string();
+    for sig in state_vars {
+        collection_expr = replace_word(&collection_expr, sig, ".value");
+    }
+    let (item_name, index_name) = if let Some(comma_idx) = vars_part.find(',') {
+        (vars_part[0..comma_idx].trim(), vars_part[comma_idx + 1..].trim())
+    } else {
+        (vars_part, "")
+    };
+    let anchor_id = format!("erm-for-{}", for_counter);
+    *for_counter += 1;
+    let mut ssr_html = String::new();
+    let collection_val = ev.eval(&collection_expr).unwrap_or(eval::Value::Null);
+    if let eval::Value::List(items) = collection_val {
+        for (idx, item) in items.iter().enumerate() {
+            let mut sub_ev = ev.clone();
+            sub_ev.set(item_name, item.clone());
+            if !index_name.is_empty() {
+                sub_ev.set(index_name, eval::Value::Number(idx as f64));
+            }
+            let ssr_item = evaluate_braces_in_html(&body, &mut sub_ev, state_vars);
+            ssr_html.push_str(&ssr_item);
+        }
+    }
+    let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
+    let scoped_body = scope_html(&body, scope_id)?;
+    let compiled_body = compile_template_to_js(&scoped_body, state_vars);
+    let logic = format!(
+        r#"window.__erm_register_for("{}", () => ({}), "", ({}) => {});"#,
+        anchor_id, collection_expr, js_params, compiled_body
+    );
+    block_logic.push(logic);
+    let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
+    res_html.replace_range(start_idx..absolute_close_idx + 1, &anchor_html);
+    Ok(())
+}
+
+fn process_if_block_at(
+    start_idx: usize,
+    res_html: &mut String,
+    if_counter: &mut usize,
+    block_logic: &mut Vec<String>,
+    state_vars: &[String],
+    ev: &mut eval::ErmEval,
+    initial_cond: String,
+    body_start_idx: usize,
+    scope_id: &str,
+) -> anyhow::Result<()> {
+    let mut branches = Vec::new();
+    let mut current_cond = initial_cond;
+    let mut current_body_start = body_start_idx;
+    let block_end_idx;
+
+    loop {
+        let remaining = &res_html[current_body_start..];
+        if let Some(close_idx) = find_matching_close_brace(remaining) {
+            let body = remaining[..close_idx].to_string();
+            branches.push((current_cond.clone(), body));
+            let absolute_close_idx = current_body_start + close_idx;
+            if let Some(transition) = find_else_transition(res_html, absolute_close_idx + 1) {
+                match transition {
+                    ElseTransition::ElseIf(new_cond, next_body_start) => {
+                        current_cond = new_cond;
+                        current_body_start = next_body_start;
+                    }
+                    ElseTransition::Else(next_body_start) => {
+                        current_cond = "true".to_string();
+                        current_body_start = next_body_start;
+                    }
+                }
+            } else {
+                block_end_idx = absolute_close_idx + 1;
+                break;
+            }
+        } else {
+            branches.push((current_cond.clone(), remaining.to_string()));
+            block_end_idx = res_html.len();
+            break;
+        }
+    }
+
+    let anchor_id = format!("erm-if-{}", if_counter);
+    *if_counter += 1;
+    let mut branches_js = String::new();
+    let mut ssr_html_res = String::new();
+    let mut ssr_found = false;
+
+    for (mut cond_expr, body) in branches {
+        for sig in state_vars {
+            cond_expr = replace_word(&cond_expr, sig, ".value");
+        }
+        let scoped_body = scope_html(&body, scope_id)?;
+        let compiled_body = compile_template_to_js(&scoped_body, state_vars);
+        if !ssr_found {
+            let cond_val = if cond_expr == "true" { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
+            if cond_val {
+                ssr_html_res = evaluate_braces_in_html(&body, ev, state_vars);
+                ssr_found = true;
+            }
+        }
+        if branches_js.is_empty() {
+            branches_js.push_str(&format!("if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body));
+        } else if cond_expr == "true" {
+            branches_js.push_str(&format!(" else {{ __erm_new = {}; }}", compiled_body));
+        } else {
+            branches_js.push_str(&format!(" else if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body));
+        }
+    }
+
+    let logic = format!(
+        r#"window.__erm_register_if("{}", () => {{ let __erm_new = ""; {}; return __erm_new; }});"#,
+        anchor_id, branches_js
+    );
+    block_logic.push(logic);
+    let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
+    res_html.replace_range(start_idx..block_end_idx, &anchor_html);
+    Ok(())
 }
 
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
@@ -832,12 +1388,14 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         }
     }
 
+    let mut if_counter = 0;
+    let mut for_counter = 0;
     let result = if let Some(lp) = layout_path {
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
             let layout_content = std::fs::read_to_string(&lp)?;
             if content.trim() != layout_content.trim() {
-                let page_res = process_component_tree(base_dir, content, &mut visited, None)?;
-                let mut layout_res = process_component_tree(&lp.parent().unwrap().to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html))?;
+                let page_res = process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?;
+                let mut layout_res = process_component_tree(&lp.parent().unwrap().to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html), params, &mut if_counter, &mut for_counter)?;
                 
                 for s in page_res.scripts {
                     if !layout_res.scripts.contains(&s) { layout_res.scripts.push(s); }
@@ -850,13 +1408,13 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                 }
                 layout_res
             } else {
-                process_component_tree(base_dir, content, &mut visited, None)?
+                process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
             }
         } else {
-            process_component_tree(base_dir, content, &mut visited, None)?
+            process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
         }
     } else {
-        process_component_tree(base_dir, content, &mut visited, None)?
+        process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
     };
 
     let mut ev = ErmEval::new();
@@ -908,124 +1466,6 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     }
 
     res_html = evaluate_braces_in_html(&res_html, &mut ev, &result.state_vars);
-
-    let mut block_logic = Vec::new();
-    let mut for_counter = 0;
-    let mut if_counter = 0;
-
-    // Process {#for}
-    while let Some(start_idx) = res_html.find("{#for ") {
-        let end_for_idx = match res_html[start_idx..].find("{/for}") {
-            Some(idx) => idx,
-            None => break,
-        };
-        let full_end_idx = start_idx + end_for_idx + 6;
-        let header_start = start_idx + 6;
-        let header_end = match res_html[header_start..].find('}') {
-            Some(idx) => idx,
-            None => break,
-        };
-        let full_header_end = header_start + header_end;
-        let header = &res_html[header_start..full_header_end];
-        let body = &res_html[full_header_end + 1..start_idx + end_for_idx];
-        let in_idx = match header.find(" in ") {
-            Some(idx) => idx,
-            None => break,
-        };
-        let vars_part = header[0..in_idx].trim();
-        let collection_expr_raw = header[in_idx + 4..].trim();
-        let mut collection_expr = collection_expr_raw.to_string();
-        for sig in &result.state_vars {
-            collection_expr = replace_word(&collection_expr, sig, ".value");
-        }
-        let (item_name, index_name) = if let Some(comma_idx) = vars_part.find(',') {
-            (vars_part[0..comma_idx].trim(), vars_part[comma_idx + 1..].trim())
-        } else {
-            (vars_part, "")
-        };
-        let anchor_id = format!("erm-for-{}", for_counter);
-        for_counter += 1;
-        let mut ssr_html = String::new();
-        let collection_val = ev.eval(&collection_expr).unwrap_or(eval::Value::Null);
-        if let eval::Value::List(items) = collection_val {
-            for (idx, item) in items.iter().enumerate() {
-                let mut sub_ev = ev.clone();
-                sub_ev.set(item_name, item.clone());
-                if !index_name.is_empty() {
-                    sub_ev.set(index_name, eval::Value::Number(idx as f64));
-                }
-                let ssr_item = evaluate_braces_in_html(body, &mut sub_ev, &result.state_vars);
-                ssr_html.push_str(&ssr_item);
-            }
-        }
-        let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
-        let compiled_body = compile_template_to_js(body, &result.state_vars);
-        let logic = format!(
-            r#"window.__erm_register_for("{}", () => ({}), "", ({}) => {});"#,
-            anchor_id, collection_expr, js_params, compiled_body
-        );
-        block_logic.push(logic);
-        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
-        res_html = res_html.replace(&res_html[start_idx..full_end_idx], &anchor_html);
-    }
-
-    // Process {#if}
-    while let Some(start_idx) = res_html.find("{#if ") {
-        let mut end_if_idx = None;
-        let mut depth = 1;
-        let mut j = start_idx + 5;
-        while j < res_html.len() {
-            if res_html[j..].starts_with("{#if ") { depth += 1; j += 5; }
-            else if res_html[j..].starts_with("{/if}") { depth -= 1; if depth == 0 { end_if_idx = Some(j); break; } j += 5; }
-            else { let c = res_html[j..].chars().next().unwrap(); j += c.len_utf8(); }
-        }
-        let eidx = match end_if_idx { Some(idx) => idx, None => break };
-        let full_block = &res_html[start_idx..eidx + 5];
-        let anchor_id = format!("erm-if-{}", if_counter);
-        if_counter += 1;
-        let mut branches_js = String::new();
-        let mut ssr_html_res = String::new();
-        let mut ssr_found = false;
-        let mut rem = full_block;
-        while !rem.is_empty() {
-            let (mut cond_expr, body_start, is_else) = if rem.starts_with("{#if ") {
-                let end_brace = rem.find('}').unwrap_or(0);
-                (rem[5..end_brace].trim().to_string(), end_brace + 1, false)
-            } else if rem.starts_with("{:else if ") {
-                let end_brace = rem.find('}').unwrap_or(0);
-                (rem[10..end_brace].trim().to_string(), end_brace + 1, false)
-            } else if rem.starts_with("{:else}") {
-                ("true".to_string(), 7, true)
-            } else {
-                break;
-            };
-            for sig in &result.state_vars {
-                cond_expr = replace_word(&cond_expr, sig, ".value");
-            }
-            let next_else = rem[body_start..].find("{:else").unwrap_or_else(|| rem[body_start..].find("{/if}").unwrap_or(0));
-            let body = &rem[body_start..body_start + next_else];
-            let compiled_body = compile_template_to_js(body, &result.state_vars);
-            if !ssr_found {
-                let cond_val = if is_else { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
-                if cond_val {
-                    ssr_html_res = evaluate_braces_in_html(body, &mut ev, &result.state_vars);
-                    ssr_found = true;
-                }
-            }
-            if branches_js.is_empty() { branches_js.push_str(&format!("if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body)); }
-            else if is_else { branches_js.push_str(&format!(" else {{ __erm_new = {}; }}", compiled_body)); }
-            else { branches_js.push_str(&format!(" else if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body)); }
-            rem = &rem[body_start + next_else..];
-            if rem.starts_with("{/if}") { break; }
-        }
-        let logic = format!(
-            r#"window.__erm_register_if("{}", () => {{ let __erm_new = ""; {}; return __erm_new; }});"#,
-            anchor_id, branches_js
-        );
-        block_logic.push(logic);
-        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
-        res_html = res_html.replace(full_block, &anchor_html);
-    }
 
     let mut assets = String::new();
     if !result.styles.is_empty() {
@@ -1079,12 +1519,11 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         scripts_to_inject.insert(0, declarations);
     }
 
-    if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() || !block_logic.is_empty() {
+    if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
         assets.push_str("<script src=\"/core/runtime.js\" class=\"__erm_script\"></script>\n");
         assets.push_str("<script class=\"__erm_script\">\n");
         assets.push_str("{\n");
         for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
-        for s in &block_logic { assets.push_str(s); assets.push('\n'); }
         assets.push_str("}\n");
         assets.push_str("</script>\n");
     }
@@ -1127,7 +1566,10 @@ mod tests {
     fn test_link_compilation() {
         let content = "<Link to=\"/contact\">Contact</Link>";
         let mut visited = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None).unwrap();
+        let mut if_counter = 0;
+        let mut for_counter = 0;
+        let params = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
         assert!(res.html.contains("<a"));
         assert!(res.html.contains("href=\"/contact\""));
         assert!(res.html.contains(">Contact</a>"));
@@ -1142,7 +1584,10 @@ mod tests {
         <button onClick={()=>{count++}}>Count {count}</button>
         "#;
         let mut visited = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None).unwrap();
+        let mut if_counter = 0;
+        let mut for_counter = 0;
+        let params = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
         assert!(res.state_vars.contains(&"count".to_string()));
         let combined = res.scripts.join("\n");
         assert!(combined.contains("useState(0, \"count\")"));
@@ -1155,9 +1600,9 @@ mod tests {
         <script>
             let items = useState([1, 2, 3]);
         </script>
-        {#for item, i in items}
+        for item, i in items {
             <p>Item key as {i} : {item}</p>
-        {/for}
+        }
         "#;
         let params = std::collections::HashMap::new();
         let res = process_erm_component(".", content, true, &params).unwrap();
@@ -1169,11 +1614,63 @@ mod tests {
     fn test_contact_page_id() {
         let content = std::fs::read_to_string("example_context/app/pages/contact.erm").unwrap();
         let mut visited = std::collections::HashMap::new();
-        let tree_res = process_component_tree("example_context/app/pages", &content, &mut visited, None).unwrap();
+        let mut if_counter = 0;
+        let mut for_counter = 0;
+        let params = std::collections::HashMap::new();
+        let tree_res = process_component_tree("example_context/app/pages", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
         assert!(!tree_res.html.is_empty());
         let params = std::collections::HashMap::new();
         let res = process_erm_component("example_context/app/pages", &content, true, &params).unwrap();
         assert!(!res.is_empty());
+    }
+
+    #[test]
+    fn test_new_if_syntax_compiler() {
+        let content = r#"
+        <script>
+            let porridge = { temperature: 90 };
+        </script>
+        if porridge.temperature > 100 {
+            <p>too hot!</p>
+        } else if 80 > porridge.temperature {
+            <p>too cold!</p>
+        } else {
+            <p>just right!</p>
+        }
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, false, &params).unwrap();
+        println!("RES HTML:\n{}", res);
+        let html_part = res.split("<script class=\"__erm_script\">").next().unwrap();
+        assert!(html_part.contains("just right!"));
+        assert!(!html_part.contains("too hot!"));
+        assert!(!html_part.contains("too cold!"));
+        assert!(res.contains("erm-if-0"));
+    }
+
+    #[test]
+    fn test_nested_if_syntax_compiler() {
+        let content = r#"
+        <script>
+            let outer = true;
+            let inner = false;
+        </script>
+        if outer {
+            if inner {
+                <p>Inner True</p>
+            } else {
+                <p>Inner False</p>
+            }
+        }
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, false, &params).unwrap();
+        println!("NESTED RES:\n{}", res);
+        let html_part = res.split("<script class=\"__erm_script\">").next().unwrap();
+        assert!(html_part.contains("Inner False"));
+        assert!(!html_part.contains("Inner True"));
+        assert!(res.contains("erm-if-0"));
+        assert!(res.contains("erm-if-1"));
     }
 }
 

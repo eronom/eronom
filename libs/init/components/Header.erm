@@ -23,7 +23,7 @@
         border-color: #00bbf9;
     }
 </style>
-{#if activeTheme == "dark"}
+if activeTheme == "dark" {
     <div class="header-box theme-display-dark">
         <h1>Eronom Context API Demo (Header Component)</h1>
         <p>Header consumed Theme Context: <strong>{activeTheme}</strong></p>
@@ -31,7 +31,7 @@
             🌌 Dark Mode Theme Context is Active
         </div>
     </div>
-{:else}
+} else {
     <div class="header-box theme-display-light">
         <h1>Eronom Context API Demo (Header Component)</h1>
         <p>Header consumed Theme Context: <strong>{activeTheme}</strong></p>
@@ -39,4 +39,4 @@
             ☀️ Light Mode Theme Context is Active
         </div>
     </div>
-{/if}
+}
