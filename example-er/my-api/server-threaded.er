@@ -1,9 +1,12 @@
 import { router } from "std/http"
+import { Io } from "std/io"
 
 let app = router()
 let todos = [
   { id: 1, text: "Learn Eronom - dynamic reload worked!ss for itzzzz", done: false }
 ]
+
+Io.setMode("threaded")
 
 const getTodos = () => {
   const todo = fetch('https://jsonplaceholder.typicode.com/todos/1')

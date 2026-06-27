@@ -5,9 +5,13 @@ let todos = [
   { id: 1, text: "Learn Eronom - dynamic reload worked!ss for itzzzz", done: false }
 ]
 
+let fetchedTodo = null
+
 const getTodos = () => {
-  const todo = fetch('https://jsonplaceholder.typicode.com/todos/1')
-  print(todo)
+  fetch('https://jsonplaceholder.typicode.com/todos/1', (todo) => {
+    fetchedTodo = todo.json()
+    print(fetchedTodo)
+  })
 }
 
 getTodos()
