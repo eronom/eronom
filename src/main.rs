@@ -3,7 +3,7 @@ pub use eronom::frontend;
 pub use eronom::jit;
 
 use backend::{Compiler, VM, Value};
-use frontend::{Parser, lex};
+use frontend::{Parser, lex, Expr, LiteralValue, Stmt};
 
 struct GcGuard;
 impl Drop for GcGuard {
@@ -253,6 +253,195 @@ fn native_render(args: Vec<Value>) -> Value {
 }
 
 
+fn has_http_import(stmts: &[Stmt]) -> bool {
+    for stmt in stmts {
+        if has_http_import_in_stmt(stmt) {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_http_import_in_stmt(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::VarDecl(_, _, _, _, loc) => {
+            if loc.file_path.ends_with("std/http.er") {
+                return true;
+            }
+        }
+        Stmt::Struct(_, _, _, _, loc) => {
+            if loc.file_path.ends_with("std/http.er") {
+                return true;
+            }
+        }
+        Stmt::Interface(_, _, _, loc) => {
+            if loc.file_path.ends_with("std/http.er") {
+                return true;
+            }
+        }
+        Stmt::Block(inner) => {
+            if has_http_import(inner) {
+                return true;
+            }
+        }
+        Stmt::If(_, then_stmt, else_stmt) => {
+            if has_http_import_in_stmt(then_stmt) {
+                return true;
+            }
+            if let Some(e) = else_stmt {
+                if has_http_import_in_stmt(e) {
+                    return true;
+                }
+            }
+        }
+        Stmt::Export(inner) => {
+            if has_http_import_in_stmt(inner) {
+                return true;
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+fn find_listen_port_in_expr(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::Call(callee, args) => {
+            if let Expr::Get(_, method) = callee.as_ref() {
+                if method == "listen" && !args.is_empty() {
+                    if let Expr::Literal(LiteralValue::Number(n)) = &args[0] {
+                        return Some(*n as i32);
+                    }
+                }
+            }
+            for arg in args {
+                if let Some(port) = find_listen_port_in_expr(arg) {
+                    return Some(port);
+                }
+            }
+        }
+        Expr::Assign(_, val, _) => return find_listen_port_in_expr(val),
+        Expr::Binary(left, _, right) => {
+            if let Some(p) = find_listen_port_in_expr(left) {
+                return Some(p);
+            }
+            return find_listen_port_in_expr(right);
+        }
+        Expr::Logical(left, _, right) => {
+            if let Some(p) = find_listen_port_in_expr(left) {
+                return Some(p);
+            }
+            return find_listen_port_in_expr(right);
+        }
+        Expr::Get(obj, _) => return find_listen_port_in_expr(obj),
+        Expr::Set(obj, _, val) => {
+            if let Some(p) = find_listen_port_in_expr(obj) {
+                return Some(p);
+            }
+            return find_listen_port_in_expr(val);
+        }
+        Expr::Array(items) => {
+            for item in items {
+                if let Some(port) = find_listen_port_in_expr(item) {
+                    return Some(port);
+                }
+            }
+        }
+        Expr::Object(pairs) => {
+            for (_, val) in pairs {
+                if let Some(port) = find_listen_port_in_expr(val) {
+                    return Some(port);
+                }
+            }
+        }
+        Expr::Function(_, body) => return find_listen_port_in_stmt(body),
+        Expr::GetIndex(obj, idx) => {
+            if let Some(p) = find_listen_port_in_expr(obj) {
+                return Some(p);
+            }
+            return find_listen_port_in_expr(idx);
+        }
+        Expr::SetIndex(obj, idx, val) => {
+            if let Some(p) = find_listen_port_in_expr(obj) {
+                return Some(p);
+            }
+            if let Some(p) = find_listen_port_in_expr(idx) {
+                return Some(p);
+            }
+            return find_listen_port_in_expr(val);
+        }
+        Expr::StructInst(_, fields, _) => {
+            for (_, val) in fields {
+                if let Some(port) = find_listen_port_in_expr(val) {
+                    return Some(port);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+fn find_listen_port_in_stmt(stmt: &Stmt) -> Option<i32> {
+    match stmt {
+        Stmt::Expr(expr) => find_listen_port_in_expr(expr),
+        Stmt::Print(expr) => find_listen_port_in_expr(expr),
+        Stmt::VarDecl(_, _, _, init, _) => find_listen_port_in_expr(init),
+        Stmt::Block(stmts) => {
+            for s in stmts {
+                if let Some(port) = find_listen_port_in_stmt(s) {
+                    return Some(port);
+                }
+            }
+            None
+        }
+        Stmt::If(cond, then_stmt, else_stmt) => {
+            if let Some(p) = find_listen_port_in_expr(cond) {
+                return Some(p);
+            }
+            if let Some(p) = find_listen_port_in_stmt(then_stmt) {
+                return Some(p);
+            }
+            if let Some(e) = else_stmt {
+                if let Some(p) = find_listen_port_in_stmt(e) {
+                    return Some(p);
+                }
+            }
+            None
+        }
+        Stmt::For(_, start, end, body) => {
+            if let Some(p) = find_listen_port_in_expr(start) {
+                return Some(p);
+            }
+            if let Some(p) = find_listen_port_in_expr(end) {
+                return Some(p);
+            }
+            if let Some(p) = find_listen_port_in_stmt(body) {
+                return Some(p);
+            }
+            None
+        }
+        Stmt::Return(expr_opt) => {
+            if let Some(expr) = expr_opt {
+                find_listen_port_in_expr(expr)
+            } else {
+                None
+            }
+        }
+        Stmt::Export(inner) => find_listen_port_in_stmt(inner),
+        _ => None,
+    }
+}
+
+fn find_listen_port(stmts: &[Stmt]) -> Option<i32> {
+    for s in stmts {
+        if let Some(port) = find_listen_port_in_stmt(s) {
+            return Some(port);
+        }
+    }
+    None
+}
+
 pub fn run_file(path: &str) -> anyhow::Result<()> {
     let _guard = GcGuard;
     let path_buf = std::path::PathBuf::from(path);
@@ -264,6 +453,11 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         Ok(s) => s,
         Err(e) => anyhow::bail!("Compile/Import error: {}", e),
     };
+
+    if has_http_import(&stmts) {
+        let port = find_listen_port(&stmts).unwrap_or(3000);
+        backend::er_http::LISTEN_PORT.with(|p| p.set(Some(port)));
+    }
 
     let compiler = Compiler::new();
     let function = match compiler.compile(&stmts) {

@@ -36,6 +36,7 @@ thread_local! {
     static LAST_CHECK_TIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
     pub static LISTEN_PORT: Cell<Option<i32>> = const { Cell::new(None) };
     pub static LISTEN_CALLBACK: RefCell<Option<Value>> = const { RefCell::new(None) };
+    pub static SERVER_RUNNING: Cell<bool> = const { Cell::new(false) };
 }
 
 unsafe extern "C" {
@@ -79,8 +80,9 @@ pub fn native_route(_args: Vec<Value>) -> Value {
 }
 
 pub fn native_router_listen(args: Vec<Value>) -> Value {
+    let mut port_val = Value::null();
     if args.len() >= 1 {
-        let port_val = args[0];
+        port_val = args[0];
         if port_val.is_number() {
             LISTEN_PORT.with(|port| {
                 port.set(Some(port_val.as_number() as i32));
@@ -89,10 +91,24 @@ pub fn native_router_listen(args: Vec<Value>) -> Value {
     }
     if args.len() >= 2 {
         let callback_val = args[1];
-        if callback_val.is_function() {
+        if callback_val.is_function() || callback_val.is_native_function() {
             LISTEN_CALLBACK.with(|cb| {
                 *cb.borrow_mut() = Some(callback_val);
             });
+            let is_running = SERVER_RUNNING.with(|r| r.get());
+            if is_running {
+                let vm_ptr = ACTIVE_VM.with(|active| active.get());
+                if !vm_ptr.is_null() {
+                    let vm = unsafe { &mut *vm_ptr };
+                    let mut cb_args = Vec::new();
+                    if !port_val.is_null() {
+                        cb_args.push(port_val);
+                    }
+                    if let Err(e) = vm.call_function_reentrant(callback_val, cb_args) {
+                        eprintln!("[HTTP] Error running listen callback: {}", e);
+                    }
+                }
+            }
         }
     }
     Value::null()
@@ -505,6 +521,7 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
         active.set(vm as *mut VM);
     });
     
+    SERVER_RUNNING.with(|r| r.set(true));
     unsafe {
         er_http_create_timer(1, er_http_on_timer);
         er_http_listen_and_run(port);
