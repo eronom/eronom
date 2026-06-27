@@ -49,9 +49,8 @@ export const createServer = (handler) => {
   app.post("/*", dispatch)
   
   return {
-    listen: (port) => {
-      // Eronom server starts automatically when the VM finishes executing 
-      // if any routes are registered.
+    listen: (port, callback) => {
+      app.listen(port, callback)
     }
   }
 }

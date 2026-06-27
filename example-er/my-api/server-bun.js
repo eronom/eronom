@@ -9,6 +9,15 @@ const middlewares = [
   }
 ];
 
+const getTodos = async () => {
+  const response = await fetch('https://jsonplaceholder.typicode.com/todos/1');
+  const todo = await response.json();
+  console.log(todo);
+};
+
+
+getTodos();
+
 Bun.serve({
   port: 3002,
   fetch(req) {

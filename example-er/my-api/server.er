@@ -6,8 +6,9 @@ let todos = [
 ]
 
 const getTodos = () => {
-  const todo = fetch('https://jsonplaceholder.typicode.com/todos/1')
-  print(todo)
+  fetch('https://jsonplaceholder.typicode.com/todos/1', (todo) => {
+    print(todo)
+  })
 }
 
 getTodos()
@@ -17,3 +18,6 @@ app.get('/todos', (c) => {
   return c.json(todos)
 })
 
+app.listen(3000, () => {
+  print('Server running on port 3000')
+})

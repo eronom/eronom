@@ -10,6 +10,7 @@ extern "C" {
     void er_ws_on_open(void* ws, const char* path, size_t path_len);
     void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
     void er_ws_on_close(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
+    void er_http_on_listening();
 }
 
 typedef void (*HttpRequestCallback)(void* res, const char* method, size_t method_len, const char* path, size_t path_len);
@@ -164,6 +165,7 @@ extern "C" void er_http_listen_and_run(int port) {
     g_app->listen(port, [port](auto* listen_socket) {
         if (listen_socket) {
             std::cout << "[uWebSockets] Server listening on port " << port << std::endl;
+            er_http_on_listening();
         } else {
             std::cerr << "[uWebSockets] Failed to listen on port " << port << std::endl;
         }
