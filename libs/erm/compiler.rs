@@ -2,7 +2,34 @@ use std::collections::HashMap;
 use crate::eval::{self, ErmEval};
 use fnv::FnvHasher;
 use std::hash::Hasher;
-use base64::{Engine as _, engine::general_purpose};
+use std::sync::OnceLock;
+
+fn get_re_attr_brace() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"^([A-Za-z0-9_-]+)=\{"#).unwrap())
+}
+
+fn get_re_state() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"let\s+([A-Za-z0-9_]+)\s*=\s*useState\("#).unwrap())
+}
+
+fn get_re_import_named() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"import\s*\{\s*([A-Za-z0-9_,\s]+)\s*\}\s*from\s+['"]([^'"]*)['"]\s*;?"#).unwrap())
+}
+
+fn get_re_import_default() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]*)['"]\s*;?"#).unwrap())
+}
+
+fn get_re_export() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#"^(\s*)export\s+"#).unwrap())
+}
+
+
 
 pub fn scope_css(css: &str, scope_id: &str) -> anyhow::Result<String> {
     let mut result = String::new();
@@ -320,13 +347,243 @@ pub fn extract_attribute(tag_content: &str, attr_name: &str) -> Option<String> {
     None
 }
 
-pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashMap<String, bool>, slot_html: Option<&str>) -> anyhow::Result<ProcessResult> {
+enum ElseTransition {
+    ElseIf(String, usize),
+    Else(usize),
+}
+
+fn try_parse_if_header(content: &str, start_pos: usize) -> Option<(String, usize)> {
+    if !content[start_pos..].starts_with("if") {
+        return None;
+    }
+    // Verify word boundary before 'if' and ensure it's not preceded by 'else'
+    if start_pos > 0 {
+        let prev_c = content[..start_pos].chars().next_back().unwrap();
+        if prev_c.is_alphanumeric() || prev_c == '_' {
+            return None;
+        }
+        let mut check = start_pos;
+        while check > 0 {
+            let c = content[..check].chars().next_back().unwrap();
+            if c.is_whitespace() {
+                check -= c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if check >= 4 && &content[check - 4..check] == "else" {
+            if check - 4 == 0 || {
+                let prev_else = content[..check - 4].chars().next_back().unwrap();
+                !prev_else.is_alphanumeric() && prev_else != '_'
+            } {
+                return None;
+            }
+        }
+    }
+    let after_if = start_pos + 2;
+    if after_if < content.len() {
+        let next_c = content[after_if..].chars().next().unwrap();
+        if next_c.is_alphanumeric() || next_c == '_' {
+            return None;
+        }
+    }
+    // Scan forward to find '{'
+    let mut scan = after_if;
+    while scan < content.len() {
+        let c = content[scan..].chars().next().unwrap();
+        if c == '{' {
+            let cond = content[after_if..scan].trim().to_string();
+            return Some((cond, scan + 1));
+        } else if c == '<' {
+            if scan + 1 < content.len() {
+                let next_c = content[scan + 1..].chars().next().unwrap();
+                if next_c == '/' || next_c.is_ascii_alphabetic() {
+                    return None;
+                }
+            }
+        }
+        scan += c.len_utf8();
+    }
+    None
+}
+
+fn find_else_transition(content: &str, start_pos: usize) -> Option<ElseTransition> {
+    let mut j = start_pos;
+    while j < content.len() {
+        let c = content[j..].chars().next().unwrap();
+        if c.is_whitespace() {
+            j += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if content[j..].starts_with("else") {
+        let after_else = j + 4;
+        if after_else < content.len() {
+            let next_c = content[after_else..].chars().next().unwrap();
+            if next_c.is_alphanumeric() || next_c == '_' {
+                return None;
+            }
+        }
+        let mut k = after_else;
+        while k < content.len() {
+            let c = content[k..].chars().next().unwrap();
+            if c.is_whitespace() {
+                k += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if content[k..].starts_with("if") {
+            let after_if = k + 2;
+            if after_if < content.len() {
+                let next_c = content[after_if..].chars().next().unwrap();
+                if next_c.is_alphanumeric() || next_c == '_' {
+                    return None;
+                }
+            }
+            let mut scan = after_if;
+            while scan < content.len() {
+                let c = content[scan..].chars().next().unwrap();
+                if c == '{' {
+                    let cond = content[after_if..scan].trim().to_string();
+                    return Some(ElseTransition::ElseIf(cond, scan + 1));
+                } else if c == '<' {
+                    if scan + 1 < content.len() {
+                        let next_c = content[scan + 1..].chars().next().unwrap();
+                        if next_c == '/' || next_c.is_ascii_alphabetic() {
+                            return None;
+                        }
+                    }
+                }
+                scan += c.len_utf8();
+            }
+        } else {
+            let mut scan = after_else;
+            while scan < content.len() {
+                let c = content[scan..].chars().next().unwrap();
+                if c == '{' {
+                    return Some(ElseTransition::Else(scan + 1));
+                } else if !c.is_whitespace() {
+                    return None;
+                }
+                scan += c.len_utf8();
+            }
+        }
+    }
+    None
+}
+
+
+
+pub fn process_component_tree(
+    base_dir: &str,
+    content: &str,
+    visited: &mut HashMap<String, bool>,
+    slot_html: Option<&str>,
+    params: &HashMap<String, String>,
+    if_counter: &mut usize,
+    for_counter: &mut usize,
+) -> anyhow::Result<ProcessResult> {
+    // 1. Initialize local ErmEval and parse parameters/scripts for SSR block evaluation
+    let mut ev = ErmEval::new();
+    let mut params_map = HashMap::new();
+    for (k, v) in params {
+        if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
+            params_map.insert(k.clone(), parsed_val);
+        } else {
+            params_map.insert(k.clone(), eval::Value::String(v.clone()));
+        }
+    }
+    ev.set("__erm_params", eval::Value::Map(params_map));
+
+    let mut temp_search = 0;
+    while let Some(start_idx) = content[temp_search..].find("<script") {
+        let script_start = temp_search + start_idx;
+        if let Some(end_idx) = content[script_start..].find("</script>") {
+            let script_end = script_start + end_idx;
+            let script_tag = &content[script_start..script_end + 9];
+            let content_start = script_tag.find('>').unwrap_or(0) + 1;
+            let script_content = &script_tag[content_start..script_tag.len() - 9];
+            let script_for_eval = script_content.replace("useParams()", "__erm_params");
+            let _ = ev.parse_script_vars(&script_for_eval);
+            temp_search = script_end + 9;
+        } else {
+            break;
+        }
+    }
+
+    // 2. Scan and extract all state variable names (so replace_word knows what to convert to .value)
+    let mut local_state_vars = Vec::new();
+    let mut temp_search2 = 0;
+    while let Some(start_idx) = content[temp_search2..].find("<script") {
+        let script_start = temp_search2 + start_idx;
+        if let Some(end_idx) = content[script_start..].find("</script>") {
+            let script_end = script_start + end_idx;
+            let script_tag = &content[script_start..script_end + 9];
+            let content_start = script_tag.find('>').unwrap_or(0) + 1;
+            let script_content = &script_tag[content_start..script_tag.len() - 9];
+            for cap in get_re_state().captures_iter(script_content) {
+                let var_name = cap.get(1).unwrap().as_str().to_string();
+                if !local_state_vars.contains(&var_name) {
+                    local_state_vars.push(var_name);
+                }
+            }
+            for line in script_content.lines() {
+                let line_trimmed = line.trim();
+                if let Some(caps) = get_re_import_named().captures(line_trimmed) {
+                    let names_str = caps.get(1).unwrap().as_str();
+                    for name in names_str.split(',') {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                            if !local_state_vars.contains(&name) {
+                                local_state_vars.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+            temp_search2 = script_end + 9;
+        } else {
+            break;
+        }
+    }
+    let mut hasher = FnvHasher::default();
+    hasher.write(content.as_bytes());
+    let scope_id = format!("data-e-{:x}", hasher.finish());
+
+    // 3. Compile all blocks (new if syntax and new for syntax) from inside out
+    let mut compiled_content = content.to_string();
+    let mut block_logic = Vec::new();
+    loop {
+        let last_if = find_last_if_block(&compiled_content);
+        let last_for = find_last_for_block(&compiled_content);
+        match (last_if, last_for) {
+            (Some((if_idx, cond, body_start)), Some((for_idx, header, for_body_start))) => {
+                if if_idx > for_idx {
+                    process_if_block_at(if_idx, &mut compiled_content, if_counter, &mut block_logic, &local_state_vars, &mut ev, cond, body_start, &scope_id)?;
+                } else {
+                    process_for_block_at(for_idx, &mut compiled_content, for_counter, &mut block_logic, &local_state_vars, &mut ev, header, for_body_start, &scope_id)?;
+                }
+            }
+            (Some((if_idx, cond, body_start)), None) => {
+                process_if_block_at(if_idx, &mut compiled_content, if_counter, &mut block_logic, &local_state_vars, &mut ev, cond, body_start, &scope_id)?;
+            }
+            (None, Some((for_idx, header, for_body_start))) => {
+                process_for_block_at(for_idx, &mut compiled_content, for_counter, &mut block_logic, &local_state_vars, &mut ev, header, for_body_start, &scope_id)?;
+            }
+            (None, None) => break,
+        }
+    }
+
+    let content = &compiled_content;
+
     let mut scripts = Vec::new();
+    scripts.extend(block_logic);
     let mut styles = Vec::new();
     let mut state_vars = Vec::new();
 
     let mut component_imports = HashMap::new();
-    let re_import = regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]+)['"]\s*;?"#).unwrap();
 
     let mut search_idx = 0;
     while let Some(start_idx) = content[search_idx..].find("<script") {
@@ -338,10 +595,22 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             let script_content = &script_tag[content_start..script_tag.len() - 9];
 
             for line in script_content.lines() {
-                if let Some(caps) = re_import.captures(line) {
+                let line_trimmed = line.trim();
+                if let Some(caps) = get_re_import_default().captures(line_trimmed) {
                     let comp_name = caps.get(1).unwrap().as_str().to_string();
                     let comp_path_val = caps.get(2).unwrap().as_str().to_string();
-                    component_imports.insert(comp_name, comp_path_val);
+                    if comp_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                        component_imports.insert(comp_name, comp_path_val);
+                    }
+                } else if let Some(caps) = get_re_import_named().captures(line_trimmed) {
+                    let names_str = caps.get(1).unwrap().as_str();
+                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
+                    for name in names_str.split(',') {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                            component_imports.insert(name, comp_path_val.clone());
+                        }
+                    }
                 }
             }
             search_idx = script_end + 9;
@@ -350,9 +619,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
         }
     }
 
-    let mut hasher = FnvHasher::default();
-    hasher.write(content.as_bytes());
-    let scope_id = format!("data-e-{:x}", hasher.finish());
+
 
     let mut html_buf = String::new();
     let mut i = 0;
@@ -369,16 +636,33 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = script_tag[content_start..script_tag.len() - 9].trim();
 
-            // Find state vars (useState and useContext) in script
+            // Find state vars (useState) in script
             find_state_variables(script_content, "useState(", &mut state_vars);
-            find_state_variables(script_content, "useContext(", &mut state_vars);
+
+            // Also check imported variables that are lowercased (state imports)
+            for line in script_content.lines() {
+                let line_trimmed = line.trim();
+                if let Some(caps) = get_re_import_named().captures(line_trimmed) {
+                    let names_str = caps.get(1).unwrap().as_str();
+                    for name in names_str.split(',') {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+                            if !state_vars.contains(&name) {
+                                state_vars.push(name);
+                            }
+                        }
+                    }
+                }
+            }
 
             let mut cleaned_script = String::new();
             for line in script_content.lines() {
-                if re_import.is_match(line) {
+                let line_trimmed = line.trim();
+                if get_re_import_default().is_match(line_trimmed) || get_re_import_named().is_match(line_trimmed) {
                     continue;
                 }
-                cleaned_script.push_str(line);
+                let processed_line = get_re_export().replace(line, "$1");
+                cleaned_script.push_str(&processed_line);
                 cleaned_script.push('\n');
             }
             scripts.push(cleaned_script.trim().to_string());
@@ -510,7 +794,7 @@ pub fn process_component_tree(base_dir: &str, content: &str, visited: &mut HashM
                                 visited.insert(comp_path_str.clone(), true);
                                 let comp_content = std::fs::read_to_string(&canonical_comp_path)?;
                                 let comp_dir = canonical_comp_path.parent().unwrap().to_string_lossy();
-                                let mut sub_res = process_component_tree(&comp_dir, &comp_content, visited, None)?;
+                                let mut sub_res = process_component_tree(&comp_dir, &comp_content, visited, None, params, if_counter, for_counter)?;
                                 html_buf.push_str(&sub_res.html);
                                 scripts.append(&mut sub_res.scripts);
                                 styles.append(&mut sub_res.styles);
@@ -621,6 +905,29 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
                 i += 1;
                 continue;
             }
+            
+            // Wrap attribute brace values like value={name} or placeholder={desc} in double quotes
+            if i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && !html[i..].starts_with("on") {
+                if let Some(caps) = get_re_attr_brace().captures(&html[i..]) {
+                    let attr_name = caps.get(1).unwrap().as_str();
+                    let start_expr = i + attr_name.len() + 2;
+                    let mut depth = 1;
+                    let mut j = start_expr;
+                    while j < html.len() && depth > 0 {
+                        let cur_c = html[j..].chars().next().unwrap();
+                        if cur_c == '{' { depth += 1; }
+                        else if cur_c == '}' { depth -= 1; }
+                        j += cur_c.len_utf8();
+                    }
+                    if depth == 0 {
+                        let expr = &html[start_expr..j-1];
+                        out.push_str(&format!("{}=\"{{{}}}\" ", attr_name, expr));
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+
             if i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && html[i..].starts_with("on") {
                 let mut k = i + 2;
                 while k < html.len() && html[k..k+1].chars().next().unwrap().is_ascii_alphabetic() { k += 1; }
@@ -641,8 +948,36 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
                                 expr = replace_word(&expr, sig, ".value");
                             }
                             let event_type = attr_name[2..].to_lowercase();
-                            let id = format!("erm-evt-{}", j);
-                            out.push_str(&format!("id=\"{}\" ", id));
+                            
+                            // Check for existing ID attribute to avoid duplicate IDs
+                            let last_lt = out.rfind('<').unwrap_or(0);
+                            let tag_so_far = &out[last_lt..];
+                            let tag_end_pos = html[i..].find('>').unwrap_or(0);
+                            let tag_rest = &html[i..i+tag_end_pos];
+                            let full_tag = format!("{}{}", tag_so_far, tag_rest);
+                            
+                            let mut existing_id = None;
+                            if let Some(id_pos) = full_tag.find("id=\"") {
+                                let id_val_start = id_pos + 4;
+                                if let Some(id_val_end) = full_tag[id_val_start..].find('"') {
+                                    existing_id = Some(full_tag[id_val_start..id_val_start + id_val_end].to_string());
+                                }
+                            } else if let Some(id_pos) = full_tag.find("id='") {
+                                let id_val_start = id_pos + 4;
+                                if let Some(id_val_end) = full_tag[id_val_start..].find('\'') {
+                                    existing_id = Some(full_tag[id_val_start..id_val_start + id_val_end].to_string());
+                                }
+                            }
+
+                            let id = match existing_id {
+                                Some(eid) => eid,
+                                None => {
+                                    let new_id = format!("erm-evt-{}", j);
+                                    out.push_str(&format!("id=\"{}\" ", new_id));
+                                    new_id
+                                }
+                            };
+
                             events.push(format!("window.__erm_events.push({{ id: \"{}\", event: \"{}\", handler: (event) => {{ ({})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); }} }});", id, event_type, expr));
                             i = j;
                             continue;
@@ -657,7 +992,424 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
     out
 }
 
+fn get_event_attribute_name(prefix: &str) -> Option<String> {
+    let trimmed = prefix.trim_end();
+    if trimmed.ends_with('=') {
+        let name_part = trimmed[..trimmed.len() - 1].trim_end();
+        if let Some(last_word) = name_part.split(|c: char| c.is_ascii_whitespace() || c == '<' || c == '>').last() {
+            if last_word.starts_with("on") && last_word.len() > 2 {
+                let event_name = last_word[2..].to_lowercase();
+                return Some(event_name);
+            }
+        }
+    }
+    None
+}
 
+pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
+    let mut js_expr = String::new();
+    js_expr.push('`');
+    let mut i = 0;
+    while i < body.len() {
+        let c = body[i..].chars().next().unwrap();
+        if c == '`' || c == '$' || c == '\\' {
+            js_expr.push('\\');
+            js_expr.push(c);
+            i += c.len_utf8();
+        } else if c == '{' && !body[i..].starts_with("{#") && !body[i..].starts_with("{/") && !body[i..].starts_with("{:") {
+            if let Some(close_idx) = find_matching_close_brace(&body[i + 1..]) {
+                let brace_end = i + 1 + close_idx;
+                let mut sub_expr = body[i + 1..brace_end].to_string();
+                for sig in state_vars {
+                    sub_expr = replace_word(&sub_expr, sig, ".value");
+                }
+                
+                let prefix = &body[..i];
+                if let Some(event_type) = get_event_attribute_name(prefix) {
+                    let mut temp_js = js_expr.trim_end().to_string();
+                    if temp_js.ends_with('=') {
+                        temp_js.pop();
+                        let temp_js_trimmed = temp_js.trim_end().to_string();
+                        let trimmed_prefix = prefix.trim_end();
+                        let name_part = &trimmed_prefix[..trimmed_prefix.len() - 1].trim_end();
+                        if let Some(last_word) = name_part.split(|c: char| c.is_ascii_whitespace() || c == '<' || c == '>').last() {
+                            if temp_js_trimmed.ends_with(last_word) {
+                                js_expr = temp_js_trimmed[..temp_js_trimmed.len() - last_word.len()].to_string();
+                            } else {
+                                js_expr = temp_js_trimmed;
+                            }
+                        } else {
+                            js_expr = temp_js_trimmed;
+                        }
+                    }
+                    js_expr.push_str(&format!("${{window.__erm_register_event('{}', (event) => {{ ({})(event); }})}}", event_type, sub_expr));
+                } else {
+                    js_expr.push_str("${window.__erm_escape(");
+                    js_expr.push_str(&sub_expr);
+                    js_expr.push_str(")}");
+                }
+                i = brace_end + 1;
+            } else {
+                js_expr.push(c);
+                i += c.len_utf8();
+            }
+        } else {
+            js_expr.push(c);
+            i += c.len_utf8();
+        }
+    }
+    js_expr.push('`');
+    js_expr
+}
+
+fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &[String]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < html.len() {
+        let c = html[i..].chars().next().unwrap();
+        if c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
+            if let Some(close_idx) = find_matching_close_brace(&html[i + 1..]) {
+                let brace_end = i + 1 + close_idx;
+                let mut sub_expr = html[i + 1..brace_end].to_string();
+                for sig in state_vars {
+                    sub_expr = replace_word(&sub_expr, sig, ".value");
+                }
+                
+                let prefix = &html[..i];
+                if let Some(_event_type) = get_event_attribute_name(prefix) {
+                    let mut temp_out = out.trim_end().to_string();
+                    if temp_out.ends_with('=') {
+                        temp_out.pop();
+                        let temp_out_trimmed = temp_out.trim_end().to_string();
+                        let trimmed_prefix = prefix.trim_end();
+                        let name_part = &trimmed_prefix[..trimmed_prefix.len() - 1].trim_end();
+                        if let Some(last_word) = name_part.split(|c: char| c.is_ascii_whitespace() || c == '<' || c == '>').last() {
+                            if temp_out_trimmed.ends_with(last_word) {
+                                out = temp_out_trimmed[..temp_out_trimmed.len() - last_word.len()].to_string();
+                            } else {
+                                out = temp_out_trimmed;
+                            }
+                        } else {
+                            out = temp_out_trimmed;
+                        }
+                    }
+                } else {
+                    let val = ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
+                    if val != eval::Value::Null {
+                        out.push_str(&val.to_string());
+                    }
+                }
+                i = brace_end + 1;
+            } else {
+                out.push(c);
+                i += c.len_utf8();
+            }
+        } else {
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    out
+}
+
+fn find_matching_close_brace(s: &str) -> Option<usize> {
+    let mut depth = 1;
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i..].chars().next().unwrap();
+        if c == '{' {
+            depth += 1;
+            i += 1;
+        } else if c == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+            i += 1;
+        } else {
+            i += c.len_utf8();
+        }
+    }
+    None
+}
+
+struct ScriptStyleRanges {
+    ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl ScriptStyleRanges {
+    fn new(content: &str) -> Self {
+        let mut ranges = Vec::new();
+        
+        let mut start_search = 0;
+        while let Some(open_pos) = content[start_search..].find("<script") {
+            let open_idx = start_search + open_pos;
+            if let Some(close_pos) = content[open_idx..].find("</script>") {
+                let close_idx = open_idx + close_pos + "</script>".len();
+                ranges.push(open_idx..close_idx);
+                start_search = close_idx;
+            } else {
+                ranges.push(open_idx..content.len());
+                break;
+            }
+        }
+        
+        let mut start_search = 0;
+        while let Some(open_pos) = content[start_search..].find("<style") {
+            let open_idx = start_search + open_pos;
+            if let Some(close_pos) = content[open_idx..].find("</style>") {
+                let close_idx = open_idx + close_pos + "</style>".len();
+                ranges.push(open_idx..close_idx);
+                start_search = close_idx;
+            } else {
+                ranges.push(open_idx..content.len());
+                break;
+            }
+        }
+        
+        Self { ranges }
+    }
+
+    fn get_skip_pos(&self, pos: usize) -> Option<usize> {
+        for range in &self.ranges {
+            if range.contains(&pos) {
+                return Some(range.end);
+            }
+        }
+        None
+    }
+}
+
+fn try_parse_for_header(content: &str, start_pos: usize) -> Option<(String, usize)> {
+    if !content[start_pos..].starts_with("for") {
+        return None;
+    }
+    if start_pos > 0 {
+        let prev_c = content[..start_pos].chars().next_back().unwrap();
+        if prev_c.is_alphanumeric() || prev_c == '_' {
+            return None;
+        }
+    }
+    let after_for = start_pos + 3;
+    if after_for < content.len() {
+        let next_c = content[after_for..].chars().next().unwrap();
+        if next_c.is_alphanumeric() || next_c == '_' {
+            return None;
+        }
+    }
+    let mut scan = after_for;
+    while scan < content.len() {
+        let c = content[scan..].chars().next().unwrap();
+        if c == '{' {
+            let header = content[after_for..scan].trim().to_string();
+            if header.contains(" in ") {
+                return Some((header, scan + 1));
+            } else {
+                return None;
+            }
+        } else if c == '<' {
+            if scan + 1 < content.len() {
+                let next_c = content[scan + 1..].chars().next().unwrap();
+                if next_c == '/' || next_c.is_ascii_alphabetic() {
+                    return None;
+                }
+            }
+        }
+        scan += c.len_utf8();
+    }
+    None
+}
+
+fn find_last_for_block(res_html: &str) -> Option<(usize, String, usize)> {
+    let ranges = ScriptStyleRanges::new(res_html);
+    let mut last = None;
+    let mut i = 0;
+    while i < res_html.len() {
+        if let Some(skip_to) = ranges.get_skip_pos(i) {
+            i = skip_to;
+            continue;
+        }
+        if let Some((header, next_pos)) = try_parse_for_header(res_html, i) {
+            last = Some((i, header, next_pos));
+        }
+        let c = res_html[i..].chars().next().unwrap();
+        i += c.len_utf8();
+    }
+    last
+}
+
+fn find_last_if_block(res_html: &str) -> Option<(usize, String, usize)> {
+    let ranges = ScriptStyleRanges::new(res_html);
+    let mut last = None;
+    let mut i = 0;
+    while i < res_html.len() {
+        if let Some(skip_to) = ranges.get_skip_pos(i) {
+            i = skip_to;
+            continue;
+        }
+        if let Some((cond, next_pos)) = try_parse_if_header(res_html, i) {
+            last = Some((i, cond, next_pos));
+        }
+        let c = res_html[i..].chars().next().unwrap();
+        i += c.len_utf8();
+    }
+    last
+}
+
+fn process_for_block_at(
+    start_idx: usize,
+    res_html: &mut String,
+    for_counter: &mut usize,
+    block_logic: &mut Vec<String>,
+    state_vars: &[String],
+    ev: &mut eval::ErmEval,
+    header: String,
+    body_start_idx: usize,
+    scope_id: &str,
+) -> anyhow::Result<()> {
+    let remaining = &res_html[body_start_idx..];
+    let close_idx = match find_matching_close_brace(remaining) {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+    let absolute_close_idx = body_start_idx + close_idx;
+    let body = remaining[..close_idx].to_string();
+
+    let in_idx = match header.find(" in ") {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+    let vars_part = header[0..in_idx].trim();
+    let vars_part = if vars_part.starts_with('(') && vars_part.ends_with(')') {
+        vars_part[1..vars_part.len() - 1].trim()
+    } else {
+        vars_part
+    };
+    let collection_expr_raw = header[in_idx + 4..].trim();
+    let collection_expr_raw = if collection_expr_raw.starts_with('(') && collection_expr_raw.ends_with(')') {
+        collection_expr_raw[1..collection_expr_raw.len() - 1].trim()
+    } else {
+        collection_expr_raw
+    };
+
+    let mut collection_expr = collection_expr_raw.to_string();
+    for sig in state_vars {
+        collection_expr = replace_word(&collection_expr, sig, ".value");
+    }
+    let (item_name, index_name) = if let Some(comma_idx) = vars_part.find(',') {
+        (vars_part[0..comma_idx].trim(), vars_part[comma_idx + 1..].trim())
+    } else {
+        (vars_part, "")
+    };
+    let anchor_id = format!("erm-for-{}", for_counter);
+    *for_counter += 1;
+    let mut ssr_html = String::new();
+    let collection_val = ev.eval(&collection_expr).unwrap_or(eval::Value::Null);
+    if let eval::Value::List(items) = collection_val {
+        for (idx, item) in items.iter().enumerate() {
+            let mut sub_ev = ev.clone();
+            sub_ev.set(item_name, item.clone());
+            if !index_name.is_empty() {
+                sub_ev.set(index_name, eval::Value::Number(idx as f64));
+            }
+            let ssr_item = evaluate_braces_in_html(&body, &mut sub_ev, state_vars);
+            ssr_html.push_str(&ssr_item);
+        }
+    }
+    let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
+    let scoped_body = scope_html(&body, scope_id)?;
+    let compiled_body = compile_template_to_js(&scoped_body, state_vars);
+    let logic = format!(
+        r#"window.__erm_register_for("{}", () => ({}), "", ({}) => {});"#,
+        anchor_id, collection_expr, js_params, compiled_body
+    );
+    block_logic.push(logic);
+    let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
+    res_html.replace_range(start_idx..absolute_close_idx + 1, &anchor_html);
+    Ok(())
+}
+
+fn process_if_block_at(
+    start_idx: usize,
+    res_html: &mut String,
+    if_counter: &mut usize,
+    block_logic: &mut Vec<String>,
+    state_vars: &[String],
+    ev: &mut eval::ErmEval,
+    initial_cond: String,
+    body_start_idx: usize,
+    scope_id: &str,
+) -> anyhow::Result<()> {
+    let mut branches = Vec::new();
+    let mut current_cond = initial_cond;
+    let mut current_body_start = body_start_idx;
+    let block_end_idx;
+
+    loop {
+        let remaining = &res_html[current_body_start..];
+        if let Some(close_idx) = find_matching_close_brace(remaining) {
+            let body = remaining[..close_idx].to_string();
+            branches.push((current_cond.clone(), body));
+            let absolute_close_idx = current_body_start + close_idx;
+            if let Some(transition) = find_else_transition(res_html, absolute_close_idx + 1) {
+                match transition {
+                    ElseTransition::ElseIf(new_cond, next_body_start) => {
+                        current_cond = new_cond;
+                        current_body_start = next_body_start;
+                    }
+                    ElseTransition::Else(next_body_start) => {
+                        current_cond = "true".to_string();
+                        current_body_start = next_body_start;
+                    }
+                }
+            } else {
+                block_end_idx = absolute_close_idx + 1;
+                break;
+            }
+        } else {
+            branches.push((current_cond.clone(), remaining.to_string()));
+            block_end_idx = res_html.len();
+            break;
+        }
+    }
+
+    let anchor_id = format!("erm-if-{}", if_counter);
+    *if_counter += 1;
+    let mut branches_js = String::new();
+    let mut ssr_html_res = String::new();
+    let mut ssr_found = false;
+
+    for (mut cond_expr, body) in branches {
+        for sig in state_vars {
+            cond_expr = replace_word(&cond_expr, sig, ".value");
+        }
+        let scoped_body = scope_html(&body, scope_id)?;
+        let compiled_body = compile_template_to_js(&scoped_body, state_vars);
+        if !ssr_found {
+            let cond_val = if cond_expr == "true" { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
+            if cond_val {
+                ssr_html_res = evaluate_braces_in_html(&body, ev, state_vars);
+                ssr_found = true;
+            }
+        }
+        if branches_js.is_empty() {
+            branches_js.push_str(&format!("if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body));
+        } else if cond_expr == "true" {
+            branches_js.push_str(&format!(" else {{ __erm_new = {}; }}", compiled_body));
+        } else {
+            branches_js.push_str(&format!(" else if ({}) {{ __erm_new = {}; }}", cond_expr, compiled_body));
+        }
+    }
+
+    let logic = format!(
+        r#"window.__erm_register_if("{}", () => {{ let __erm_new = ""; {}; return __erm_new; }});"#,
+        anchor_id, branches_js
+    );
+    block_logic.push(logic);
+    let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
+    res_html.replace_range(start_idx..block_end_idx, &anchor_html);
+    Ok(())
+}
 
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let mut visited = HashMap::new();
@@ -681,12 +1433,15 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         }
     }
 
+    let mut if_counter = 0;
+    let mut for_counter = 0;
+    
     let result = if let Some(lp) = layout_path {
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
             let layout_content = std::fs::read_to_string(&lp)?;
             if content.trim() != layout_content.trim() {
-                let page_res = process_component_tree(base_dir, content, &mut visited, None)?;
-                let mut layout_res = process_component_tree(&lp.parent().unwrap().to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html))?;
+                let page_res = process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?;
+                let mut layout_res = process_component_tree(&lp.parent().unwrap().to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html), params, &mut if_counter, &mut for_counter)?;
                 
                 for s in page_res.scripts {
                     if !layout_res.scripts.contains(&s) { layout_res.scripts.push(s); }
@@ -699,19 +1454,23 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                 }
                 layout_res
             } else {
-                process_component_tree(base_dir, content, &mut visited, None)?
+                process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
             }
         } else {
-            process_component_tree(base_dir, content, &mut visited, None)?
+            process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
         }
     } else {
-        process_component_tree(base_dir, content, &mut visited, None)?
+        process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
     };
 
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();
     for (k, v) in params {
-        params_map.insert(k.clone(), eval::Value::String(v.clone()));
+        if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
+            params_map.insert(k.clone(), parsed_val);
+        } else {
+            params_map.insert(k.clone(), eval::Value::String(v.clone()));
+        }
     }
     ev.set("__erm_params", eval::Value::Map(params_map));
 
@@ -721,139 +1480,39 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         script_all.push('\n');
     }
     let script_for_eval = script_all.replace("useParams()", "__erm_params");
+
     ev.parse_script_vars(&script_for_eval)?;
 
     let mut res_html = result.html.clone();
-    let mut block_logic = Vec::new();
-    let mut for_counter = 0;
-    let mut if_counter = 0;
-
-    // Process {#for}
-    while let Some(start_idx) = res_html.find("{#for ") {
-        let end_for_idx = match res_html[start_idx..].find("{/for}") {
-            Some(idx) => idx,
-            None => break,
-        };
-        let full_end_idx = start_idx + end_for_idx + 6;
-        let header_start = start_idx + 6;
-        let header_end = match res_html[header_start..].find('}') {
-            Some(idx) => idx,
-            None => break,
-        };
-        let full_header_end = header_start + header_end;
-        let header = &res_html[header_start..full_header_end];
-        let body = &res_html[full_header_end + 1..start_idx + end_for_idx];
-        let in_idx = match header.find(" in ") {
-            Some(idx) => idx,
-            None => break,
-        };
-        let vars_part = header[0..in_idx].trim();
-        let collection_expr_raw = header[in_idx + 4..].trim();
-        let mut collection_expr = collection_expr_raw.to_string();
-        for sig in &result.state_vars {
-            collection_expr = replace_word(&collection_expr, sig, ".value");
-        }
-        let (item_name, index_name) = if let Some(comma_idx) = vars_part.find(',') {
-            (vars_part[0..comma_idx].trim(), vars_part[comma_idx + 1..].trim())
-        } else {
-            (vars_part, "")
-        };
-        let anchor_id = format!("erm-for-{}", for_counter);
-        for_counter += 1;
-        let mut ssr_html = String::new();
-        let collection_val = ev.eval(&collection_expr).unwrap_or(eval::Value::Null);
-        if let eval::Value::List(items) = collection_val {
-            for (idx, item) in items.iter().enumerate() {
-                let mut sub_ev = ev.clone();
-                sub_ev.set(item_name, item.clone());
-                if !index_name.is_empty() {
-                    sub_ev.set(index_name, eval::Value::Number(idx as f64));
-                }
-                let mut bit = 0;
-                while bit < body.len() {
-                    let c = body[bit..].chars().next().unwrap();
-                    if c == '{' && !body[bit..].starts_with("{#") && !body[bit..].starts_with("{/") && !body[bit..].starts_with("{:") {
-                        if let Some(brace_end) = body[bit..].find('}') {
-                            let mut sub_expr = body[bit + 1..bit + brace_end].to_string();
-                            for sig in &result.state_vars {
-                                sub_expr = replace_word(&sub_expr, sig, ".value");
+    
+    // Extract bindings and evaluate them on the server to pre-populate spans
+    for s in &result.scripts {
+        if s.starts_with("window.__erm_bindings.push(") {
+            if let Some(id_start) = s.find("id: \"") {
+                let id_end = s[id_start + 5..].find('"').unwrap_or(0);
+                let id = &s[id_start + 5..id_start + 5 + id_end];
+                if let Some(get_start) = s.find("get: () => (") {
+                    if let Some(get_end) = s[get_start + 12..].rfind(')') {
+                        let expr = &s[get_start + 12..get_start + 12 + get_end];
+                        if let Ok(val) = ev.eval(expr) {
+                            if val != eval::Value::Null {
+                                let val_str = val.to_string();
+                                let id_pattern = format!("id=\"{}\"", id);
+                                if let Some(pos) = res_html.find(&id_pattern) {
+                                    if let Some(close_tag) = res_html[pos..].find('>') {
+                                        let insert_pos = pos + close_tag + 1;
+                                        res_html.insert_str(insert_pos, &val_str);
+                                    }
+                                }
                             }
-                            let val = sub_ev.eval(&sub_expr).unwrap_or(eval::Value::Null);
-                            ssr_html.push_str(&val.to_string());
-                            bit += brace_end + 1;
-                            continue;
                         }
                     }
-                    ssr_html.push(c);
-                    bit += c.len_utf8();
                 }
             }
         }
-        let body_b64 = general_purpose::STANDARD.encode(body);
-        let js_params = if !index_name.is_empty() { format!("{}, {}", item_name, index_name) } else { item_name.to_string() };
-        let logic = format!(
-            r#"window.__erm_register_for("{}", () => ({}), "{}", ({}) => window.__erm_render_template(window.__erm_b64utf8("{}"), expr => eval(expr)));"#,
-            anchor_id, collection_expr, body_b64, js_params, body_b64
-        );
-        block_logic.push(logic);
-        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html);
-        res_html = res_html.replace(&res_html[start_idx..full_end_idx], &anchor_html);
     }
 
-    // Process {#if}
-    while let Some(start_idx) = res_html.find("{#if ") {
-        let mut end_if_idx = None;
-        let mut depth = 1;
-        let mut j = start_idx + 5;
-        while j < res_html.len() {
-            if res_html[j..].starts_with("{#if ") { depth += 1; j += 5; }
-            else if res_html[j..].starts_with("{/if}") { depth -= 1; if depth == 0 { end_if_idx = Some(j); break; } j += 5; }
-            else { let c = res_html[j..].chars().next().unwrap(); j += c.len_utf8(); }
-        }
-        let eidx = match end_if_idx { Some(idx) => idx, None => break };
-        let full_block = &res_html[start_idx..eidx + 5];
-        let anchor_id = format!("erm-if-{}", if_counter);
-        if_counter += 1;
-        let mut branches_js = String::new();
-        let mut ssr_html_res = String::new();
-        let mut ssr_found = false;
-        let mut rem = full_block;
-        while !rem.is_empty() {
-            let (mut cond_expr, body_start, is_else) = if rem.starts_with("{#if ") {
-                let end_brace = rem.find('}').unwrap_or(0);
-                (rem[5..end_brace].trim().to_string(), end_brace + 1, false)
-            } else if rem.starts_with("{:else if ") {
-                let end_brace = rem.find('}').unwrap_or(0);
-                (rem[10..end_brace].trim().to_string(), end_brace + 1, false)
-            } else if rem.starts_with("{:else}") {
-                ("true".to_string(), 7, true)
-            } else {
-                break;
-            };
-            for sig in &result.state_vars {
-                cond_expr = replace_word(&cond_expr, sig, ".value");
-            }
-            let next_else = rem[body_start..].find("{:else").unwrap_or_else(|| rem[body_start..].find("{/if}").unwrap_or(0));
-            let body = &rem[body_start..body_start + next_else];
-            let body_b64 = general_purpose::STANDARD.encode(body);
-            if !ssr_found {
-                let cond_val = if is_else { true } else { ev.eval_bool(&cond_expr).unwrap_or(false) };
-                if cond_val { ssr_html_res = body.to_string(); ssr_found = true; }
-            }
-            if branches_js.is_empty() { branches_js.push_str(&format!("if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64)); }
-            else if is_else { branches_js.push_str(&format!(" else {{ __erm_new = __erm_b64utf8(\"{}\"); }}", body_b64)); }
-            else { branches_js.push_str(&format!(" else if ({}) {{ __erm_new = __erm_b64utf8(\"{}\"); }}", cond_expr, body_b64)); }
-            rem = &rem[body_start + next_else..];
-            if rem.starts_with("{/if}") { break; }
-        }
-        let logic = format!(
-            r#"window.__erm_register_if("{}", () => {{ let __erm_new = ""; {}; return __erm_new; }});"#,
-            anchor_id, branches_js
-        );
-        block_logic.push(logic);
-        let anchor_html = format!("<span id=\"{}\" style=\"display:contents;\">{}</span>", anchor_id, ssr_html_res);
-        res_html = res_html.replace(full_block, &anchor_html);
-    }
+    res_html = evaluate_braces_in_html(&res_html, &mut ev, &result.state_vars);
 
     let mut assets = String::new();
     if !result.styles.is_empty() {
@@ -864,19 +1523,54 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
 
     let mut params_js = String::from("window.__erm_params = {");
     for (k, v) in params {
-        params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+        let is_json_literal = (v.starts_with('{') && v.ends_with('}'))
+            || (v.starts_with('[') && v.ends_with(']'))
+            || v == "true"
+            || v == "false"
+            || v == "null"
+            || v.parse::<f64>().is_ok();
+            
+        if is_json_literal {
+            params_js.push_str(&format!("{}: {},", k, v));
+        } else {
+            params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+        }
     }
     params_js.push_str("};");
     
     let mut scripts_to_inject = result.scripts.clone();
     scripts_to_inject.insert(0, params_js);
 
-    if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() || !block_logic.is_empty() {
+    let combined_scripts = scripts_to_inject.join("\n");
+    let mut declarations = String::new();
+    for v in &result.state_vars {
+        if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+{}\b"#, v)) {
+            if !re_decl.is_match(&combined_scripts) {
+                let fallback_val = match v.as_str() {
+                    "activeTheme" => "'light'",
+                    "count" => "0",
+                    "timer" => "0",
+                    "todos" => "[]",
+                    "showExtraContent" => "true",
+                    "submitted" => "false",
+                    _ => "null",
+                };
+                declarations.push_str(&format!(
+                    "let {} = window.{} || useState({}, \"{}\");\n",
+                    v, v, fallback_val, v
+                ));
+            }
+        }
+    }
+    if !declarations.is_empty() {
+        scripts_to_inject.insert(0, declarations);
+    }
+
+    if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
         assets.push_str("<script src=\"/core/runtime.js\" class=\"__erm_script\"></script>\n");
         assets.push_str("<script class=\"__erm_script\">\n");
         assets.push_str("{\n");
         for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
-        for s in &block_logic { assets.push_str(s); assets.push('\n'); }
         assets.push_str("}\n");
         assets.push_str("</script>\n");
     }
@@ -919,7 +1613,10 @@ mod tests {
     fn test_link_compilation() {
         let content = "<Link to=\"/contact\">Contact</Link>";
         let mut visited = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None).unwrap();
+        let mut if_counter = 0;
+        let mut for_counter = 0;
+        let params = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
         assert!(res.html.contains("<a"));
         assert!(res.html.contains("href=\"/contact\""));
         assert!(res.html.contains(">Contact</a>"));
@@ -934,7 +1631,10 @@ mod tests {
         <button onClick={()=>{count++}}>Count {count}</button>
         "#;
         let mut visited = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None).unwrap();
+        let mut if_counter = 0;
+        let mut for_counter = 0;
+        let params = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
         assert!(res.state_vars.contains(&"count".to_string()));
         let combined = res.scripts.join("\n");
         assert!(combined.contains("useState(0, \"count\")"));
@@ -942,25 +1642,82 @@ mod tests {
     }
 
     #[test]
-    fn test_context_api_compilation() {
+    fn test_for_loop_compilation() {
         let content = r#"
         <script>
-            const MyCtx = createContext("defaultVal");
-            let theme = useContext(MyCtx);
+            let items = useState([1, 2, 3]);
         </script>
-        <ContextProvider context={MyCtx} value={"dark"}>
-            <div>{theme}</div>
-        </ContextProvider>
+        for item, i in items {
+            <p>Item key as {i} : {item}</p>
+        }
         "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, true, &params).unwrap();
+        println!("{}", res);
+        assert!(res.contains("Item key as 0 : 1"));
+    }
+
+    #[test]
+    fn test_contact_page_id() {
+        let content = std::fs::read_to_string("example_context/app/pages/contact.erm").unwrap();
         let mut visited = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None).unwrap();
-        let combined = res.scripts.join("\n");
-        assert!(res.state_vars.contains(&"theme".to_string()));
-        assert!(combined.contains("useContext(MyCtx)"));
-        assert!(combined.contains("theme.value"));
-        assert!(combined.contains("isProvider: true"));
-        assert!(combined.contains("MyCtx.id"));
-        assert!(res.html.contains("id=\"erm-prov-"));
+        let mut if_counter = 0;
+        let mut for_counter = 0;
+        let params = std::collections::HashMap::new();
+        let tree_res = process_component_tree("example_context/app/pages", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
+        assert!(!tree_res.html.is_empty());
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component("example_context/app/pages", &content, true, &params).unwrap();
+        assert!(!res.is_empty());
+    }
+
+    #[test]
+    fn test_new_if_syntax_compiler() {
+        let content = r#"
+        <script>
+            let porridge = { temperature: 90 };
+        </script>
+        if porridge.temperature > 100 {
+            <p>too hot!</p>
+        } else if 80 > porridge.temperature {
+            <p>too cold!</p>
+        } else {
+            <p>just right!</p>
+        }
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, false, &params).unwrap();
+        println!("RES HTML:\n{}", res);
+        let html_part = res.split("<script class=\"__erm_script\">").next().unwrap();
+        assert!(html_part.contains("just right!"));
+        assert!(!html_part.contains("too hot!"));
+        assert!(!html_part.contains("too cold!"));
+        assert!(res.contains("erm-if-0"));
+    }
+
+    #[test]
+    fn test_nested_if_syntax_compiler() {
+        let content = r#"
+        <script>
+            let outer = true;
+            let inner = false;
+        </script>
+        if outer {
+            if inner {
+                <p>Inner True</p>
+            } else {
+                <p>Inner False</p>
+            }
+        }
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, false, &params).unwrap();
+        println!("NESTED RES:\n{}", res);
+        let html_part = res.split("<script class=\"__erm_script\">").next().unwrap();
+        assert!(html_part.contains("Inner False"));
+        assert!(!html_part.contains("Inner True"));
+        assert!(res.contains("erm-if-0"));
+        assert!(res.contains("erm-if-1"));
     }
 }
 

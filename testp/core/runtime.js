@@ -1,13 +1,13 @@
 (() => {
   window.__hmr_data = window.__hmr_data || { states: {} };
   if (!window.__hmr_data.states) window.__hmr_data.states = {};
-  
-  window.__erm_b64utf8 = function(str) {
+
+  window.__erm_b64utf8 = function (str) {
     if (!str) return '';
     return decodeURIComponent(escape(window.atob(str)));
   };
 
-  window.__erm_escape = function(val) {
+  window.__erm_escape = function (val) {
     if (val === null || val === undefined) return '';
     return String(val)
       .replace(/&/g, '&amp;')
@@ -85,7 +85,7 @@
             el.innerText = strVal;
           }
         }
-      } catch(e) {
+      } catch (e) {
         console.error("Binding update failed:", e);
       } finally {
         window.__current_eval_id = null;
@@ -109,7 +109,7 @@
             if (el.innerText !== strVal) {
               el.innerText = strVal;
             }
-          } catch(e) {
+          } catch (e) {
             console.error("Delayed binding update failed:", e);
           } finally {
             popListener();
@@ -119,7 +119,7 @@
     });
   }
 
-  window.useState = function(val, name) {
+  window.useState = function (val, name) {
     if (name && window.__hmr_data.states[name] !== undefined) {
       val = window.__hmr_data.states[name];
     }
@@ -240,17 +240,26 @@
     return stateProxy;
   };
 
-  window.useParams = function() { return window.__erm_params || {}; };
+  window.useParams = function () { return window.__erm_params || {}; };
 
   window.__erm_bindings = [];
-  window.__erm_bindings.push = function(binding) {
+  window.__erm_bindings.push = function (binding) {
     return Array.prototype.push.call(this, binding);
   };
 
   window.__erm_events = [];
+  window.__erm_dynamic_events = {};
+  let nextDynamicEventId = 0;
+
+  window.__erm_register_event = function (event, handler) {
+    const id = ++nextDynamicEventId;
+    window.__erm_dynamic_events[id] = { event, handler };
+    return `data-erm-evt-id="${id}"`;
+  };
+
   window.__current_eval_id = null;
 
-  window.__erm_update = function() {
+  window.__erm_update = function () {
     window.__erm_bindings.forEach(b => {
       if (!b.initialized) {
         queuedBindings.add(b);
@@ -268,6 +277,25 @@
       if (el && !el.__erm_listener_added) {
         el.addEventListener(ev.event, ev.handler);
         el.__erm_listener_added = true;
+      }
+    });
+    document.querySelectorAll('[data-erm-evt-id]').forEach(el => {
+      const id = el.getAttribute('data-erm-evt-id');
+      if (el.__erm_evt_id !== id) {
+        if (el.__erm_evt_listener && el.__erm_evt_type) {
+          el.removeEventListener(el.__erm_evt_type, el.__erm_evt_listener);
+        }
+        const ev = window.__erm_dynamic_events[id];
+        if (ev) {
+          const wrapper = (event) => {
+            ev.handler(event);
+            if (typeof window.__erm_update === 'function') window.__erm_update();
+          };
+          el.addEventListener(ev.event, wrapper);
+          el.__erm_evt_id = id;
+          el.__erm_evt_type = ev.event;
+          el.__erm_evt_listener = wrapper;
+        }
       }
     });
   }
@@ -299,6 +327,14 @@
           for (let attr of Array.from(existing.attributes)) {
             if (!incoming.hasAttribute(attr.name)) {
               existing.removeAttribute(attr.name);
+              if (attr.name === 'data-erm-evt-id') {
+                if (existing.__erm_evt_listener && existing.__erm_evt_type) {
+                  existing.removeEventListener(existing.__erm_evt_type, existing.__erm_evt_listener);
+                  existing.__erm_evt_id = undefined;
+                  existing.__erm_evt_type = undefined;
+                  existing.__erm_evt_listener = undefined;
+                }
+              }
             }
           }
           for (let attr of Array.from(incoming.attributes)) {
@@ -341,29 +377,29 @@
   }, 10);
 
   // Helper functions for template rendering, conditional branches, and loops
-  window.__erm_render_template = function(template, evalFn) {
+  window.__erm_render_template = function (template, evalFn) {
     return template.replace(/\{([^{}#/:][^{}]*)\}/g, (m, expr) => {
       try {
         let val = evalFn(expr);
         return val === undefined ? "" : val;
-      } catch(e) { return ""; }
+      } catch (e) { return ""; }
     });
   };
 
-  window.__erm_register_for = function(anchorId, getCollection, templateB64, renderItem) {
+  window.__erm_register_for = function (anchorId, getCollection, templateB64, renderItem) {
     window.__erm_bindings.push({
       id: anchorId,
       update: () => {
         let anchor = document.getElementById(anchorId);
         if (anchor) {
           let items = [];
-          try { items = getCollection(); } catch(e) {}
+          try { items = getCollection(); } catch (e) { }
           if (!Array.isArray(items)) items = [];
           let itemsJson = JSON.stringify(items);
           if (anchor.__erm_last_items !== itemsJson) {
             anchor.__erm_last_items = itemsJson;
             let template = window.__erm_b64utf8(templateB64);
-            
+
             // Build new nodes
             let temp = document.createElement('div');
             let html = "";
@@ -376,7 +412,7 @@
               }
             });
             temp.innerHTML = html;
-            
+
             // Reconcile instead of innerHTML overwrite
             reconcileNodes(anchor, Array.from(temp.childNodes));
           }
@@ -385,7 +421,7 @@
     });
   };
 
-  window.__erm_register_if = function(anchorId, getHtml) {
+  window.__erm_register_if = function (anchorId, getHtml) {
     window.__erm_bindings.push({
       id: anchorId,
       update: () => {
@@ -395,13 +431,13 @@
           try {
             window.__current_eval_id = anchorId;
             newHtml = getHtml();
-          } catch(e) {}
+          } catch (e) { }
           finally {
             window.__current_eval_id = null;
           }
           if (anchor.__erm_last !== newHtml) {
             anchor.__erm_last = newHtml;
-            
+
             // Reconcile instead of innerHTML overwrite
             let temp = document.createElement('div');
             temp.innerHTML = newHtml;
@@ -417,12 +453,12 @@
     try {
       const res = await fetch(path);
       const html = await res.text();
-      
+
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
-      
+
       document.title = doc.title;
-      
+
       // Update style block
       const newStyle = doc.getElementById('__erm_styles');
       const oldStyle = document.getElementById('__erm_styles');
@@ -431,17 +467,19 @@
       } else if (newStyle) {
         document.head.appendChild(newStyle.cloneNode(true));
       }
-      
+
       // Reconcile body children
       reconcileNodes(document.body, Array.from(doc.body.childNodes));
-      
+
       // Reset bindings and events for the new page
       window.__erm_bindings = [];
-      window.__erm_bindings.push = function(binding) {
+      window.__erm_bindings.push = function (binding) {
         return Array.prototype.push.call(this, binding);
       };
       window.__erm_events = [];
-      
+      window.__erm_dynamic_events = {};
+      nextDynamicEventId = 0;
+
       // Execute page scripts
       const scripts = doc.querySelectorAll('script.__erm_script');
       scripts.forEach(script => {
@@ -451,11 +489,11 @@
         document.head.appendChild(newScript);
         newScript.remove();
       });
-      
+
       if (push) {
         history.pushState(null, '', path);
       }
-      
+
       _initReactivity();
       window.__erm_update();
     } catch (err) {
@@ -466,14 +504,14 @@
 
   document.addEventListener('click', e => {
     const link = e.target.closest('a');
-    if (link && 
-        link.href && 
-        !link.target && 
-        !link.hasAttribute('download') &&
-        new URL(link.href).origin === window.location.origin) {
+    if (link &&
+      link.href &&
+      !link.target &&
+      !link.hasAttribute('download') &&
+      new URL(link.href).origin === window.location.origin) {
       const targetPath = new URL(link.href).pathname;
       if (targetPath.startsWith('/api/')) return;
-      
+
       e.preventDefault();
       navigate(targetPath);
     }

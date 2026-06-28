@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="/core/hmr.js"></script>
+    <meta data-e-91030222d917abb6 charset="UTF-8">
+    <meta data-e-91030222d917abb6 name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-e-91030222d917abb6>Erm Dev Server with HMR</title>
+    
+
+<style id="__erm_styles">
+body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }h1[data-e-91030222d917abb6] {
+            color: #42b983;
+        }code[data-e-91030222d917abb6] {
+            background-color: #4b3a27b2;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+.demo-box[data-e-9976c864339d7d7a] {
+        padding: 24px;
+        border-radius: 16px;
+        margin-top: 20px;
+        margin-bottom: 24px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(4px);
+        transition: all 0.3s ease;
+    }.context-demo[data-e-9976c864339d7d7a] {
+        border-color: rgba(155, 93, 229, 0.3);
+    }.context-demo[data-e-9976c864339d7d7a]:hover {
+        border-color: rgba(155, 93, 229, 0.6);
+        box-shadow: 0 12px 40px 0 rgba(155, 93, 229, 0.15);
+    }.demo-desc[data-e-9976c864339d7d7a] {
+        color: #a0aec0;
+        font-size: 0.95rem;
+        margin-top: 4px;
+        margin-bottom: 16px;
+    }.control-row[data-e-9976c864339d7d7a] {
+        margin-bottom: 20px;
+    }.btn[data-e-9976c864339d7d7a] {
+        padding: 10px 20px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }.theme-btn[data-e-9976c864339d7d7a] {
+        background: linear-gradient(135deg, #9b5de5, #f15bb5);
+        color: white;
+        box-shadow: 0 4px 14px rgba(155, 93, 229, 0.4);
+    }.theme-btn[data-e-9976c864339d7d7a]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(155, 93, 229, 0.6);
+    }.theme-btn[data-e-9976c864339d7d7a]:active {
+        transform: translateY(0);
+    }
+.header-box[data-e-2d8cedfa94f6f5aa] {
+        border: 2px solid #42b983;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        text-align: center;
+        transition: all 0.3s ease;
+    }.theme-display-dark[data-e-2d8cedfa94f6f5aa] {
+        background-color: #1a1a24;
+        color: #ffffff;
+        border-color: #9b5de5;
+    }.theme-display-light[data-e-2d8cedfa94f6f5aa] {
+        background-color: #f7f9fc;
+        color: #1a1a24;
+        border-color: #00bbf9;
+    }
+</style>
+<script src="/core/runtime.js" class="__erm_script"></script>
+<script class="__erm_script">
+{
+window.__erm_params = {};
+window.__erm_register_if("erm-if-0", () => { let __erm_new = ""; if (showExtraContent.value) { __erm_new = `
+    <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
+        <h3>🎉 Condsfssitsionalssssssss Rendered Boxxxxxssaaa</h3>
+        <p>This block only loads because <code>showExtraContent.value</code> is <strong>true</strong>.</p>
+    </div>
+    <button onclick=${window.__erm_escape(()=>{showExtraContent.value=false})}>Hide Content</button>
+`; } else { __erm_new = `
+    <div><p>showExtraContent.value is false</p></div>
+    <button onclick=${window.__erm_escape(()=>{showExtraContent.value=true})}>Show Content</button>
+`; }; return __erm_new; });
+window.__erm_register_if("erm-if-1", () => { let __erm_new = ""; if (porridge.value.temperature < 40) { __erm_new = `
+        <p>Extremely cold! (under 40)</p>
+    `; } else { __erm_new = `
+        <p>Moderately cold. (between 40 and 80)</p>
+    `; }; return __erm_new; });
+window.__erm_register_if("erm-if-2", () => { let __erm_new = ""; if (porridge.value.temperature > 150) { __erm_new = `
+        <p>Extremely hot! (over 150)</p>
+    `; } else { __erm_new = `
+        <p>Moderately hot. (between 100 and 150)</p>
+    `; }; return __erm_new; });
+window.__erm_register_if("erm-if-3", () => { let __erm_new = ""; if (porridge.value.temperature > 100) { __erm_new = `
+    <p>too hot!</p>
+    <span id="erm-if-2" style="display:contents;">
+        <p>Moderately hot. (between 100 and 150)</p>
+    </span>
+`; } else if (80 > porridge.value.temperature) { __erm_new = `
+    <p>too cold!</p>
+    <span id="erm-if-1" style="display:contents;">
+        <p>Moderately cold. (between 40 and 80)</p>
+    </span>
+`; } else { __erm_new = `
+    <p>just right!</p>
+`; }; return __erm_new; });
+window.__erm_register_if("erm-if-4", () => { let __erm_new = ""; if ((app)) { __erm_new = `
+            const timeDisplay = document.createElement('h3');
+            app.appendChild(timeDisplay);
+            setInterval(() => ${window.__erm_escape(
+                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
+            )}, 1);
+        `; }; return __erm_new; });
+let activeTheme = useState('light', "activeTheme");
+
+    let count = useState(0, "count");
+    let double = useState(() => count.value * 2, "double");
+    let todoText = useState('', "todoText");
+    let todos = useState([], "todos");
+    
+    async function fetchTodos() {
+        try {
+            const res = await fetch('/api/todo');
+            todos.value = await res.json();
+        } catch (e) {
+            console.error("Failed to fetch todos:", e);
+        }
+    }
+    fetchTodos();
+    
+    let showExtraContent = useState(true, "showExtraContent");
+    let porridge = useState({ temperature: 100 }, "porridge");
+    
+
+
+
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const app = document.getElementById('app');
+        <span id="erm-if-4" style="display:contents;"></span>
+    
+    });
+
+    // TEST: Background updates now work automatically!
+    let timer = useState(0, "timer");
+    setInterval(() => {
+        timer.value++;
+    }, 1000);
+
+    let randomNum = Math.floor(Math.random() * 1000);
+    let items = useState([1, 2, 3, 4, 5], "items");
+let headerText = "Hello Header from component script!";
+    console.log("Header component loaded!");
+    let theme = useContext(ThemeContext);
+window.__erm_bindings.push({ id: "erm-bind-189", get: () => (theme) });
+window.__erm_bindings.push({ id: "erm-bind-529", get: () => (theme) });
+window.__erm_bindings.push({ id: "erm-bind-372", get: () => (count.value) });
+window.__erm_bindings.push({ id: "erm-bind-425", get: () => (double.value) });
+window.__erm_bindings.push({ id: "erm-bind-479", get: () => (timer.value) });
+window.__erm_bindings.push({ id: "erm-bind-658", get: () => (randomNum) });
+window.__erm_bindings.push({ id: "erm-bind-1231", get: () => (
+        <p>Item key as {i} : {item}</p>
+    ) });
+window.__erm_bindings.push({ id: "erm-bind-1768", get: () => (
+            <div style="padding: 10px; background: #2c3e50; border-radius: 5px; margin-bottom: 5px; color: white;">
+                <strong>{todo.text}</strong> - {todo.done ? '✅' : '❌'}
+            </div>
+        ) });
+window.__erm_bindings.push({ id: "erm-bind-2310", get: () => (activeTheme.value) });
+window.__erm_events.push({ id: "erm-evt-358", event: "click", handler: (event) => { (()=>{count.value++})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-1065", event: "click", handler: (event) => { (()=>{items.value.push(items.value.length + 1)})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-1127", event: "click", handler: (event) => { (()=>{items.value.pop()})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-1457", event: "click", handler: (event) => { (fetchTodos)(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+window.__erm_events.push({ id: "erm-evt-2256", event: "click", handler: (event) => { (()=>{activeTheme.value = activeTheme.value == 'light' ? 'dark' : 'light'})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } });
+}
+</script>
+</head>
+<body>
+    
+
+
+<h1 data-e-91030222d917abb6 data-e-9976c864339d7d7a>HMRssssvvvvvssssvssssss is now running from a dedicated server module!</h1>
+<h2 data-e-91030222d917abb6 data-e-9976c864339d7d7a>hello</h2>
+<p data-e-91030222d917abb6 data-e-9976c864339d7d7a>vcbc fdh scvxhhhhhhhhhhhhhh
+fdvchgvyufdnb
+gvfcjb hyun</p>
+<p data-e-91030222d917abb6 data-e-9976c864339d7d7a>helloo DHBVYUCBHNFDBVH BHYU</p>
+<div data-e-91030222d917abb6 data-e-9976c864339d7d7a style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
+    <h3 data-e-91030222d917abb6 data-e-9976c864339d7d7a>Reactive Signal Demo</h3>
+    <button data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-evt-358" >Count <span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-bind-372">0</span></button>
+    <p data-e-91030222d917abb6 data-e-9976c864339d7d7a>Double (Count * 2): <strong data-e-91030222d917abb6 data-e-9976c864339d7d7a><span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-bind-425"></span></strong></p>
+    <p data-e-91030222d917abb6 data-e-9976c864339d7d7a>Background Timer: <strong data-e-91030222d917abb6 data-e-9976c864339d7d7a><span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-bind-479">0</span>s</strong></p>
+</div>
+
+<p data-e-91030222d917abb6 data-e-9976c864339d7d7a>HMRsss is now EFddFIaaCIENTss and CLEAN! Edited <code data-e-91030222d917abb6 data-e-9976c864339d7d7a>index.erm</code>.</p>
+<div data-e-91030222d917abb6 data-e-9976c864339d7d7a id="app"></div>
+<h2 data-e-91030222d917abb6 data-e-9976c864339d7d7a>Hellloo web added h2 tag</h2>
+<p data-e-91030222d917abb6 data-e-9976c864339d7d7a>Random: <span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-bind-658"></span></p>
+<h2 data-e-91030222d917abb6 data-e-9976c864339d7d7a>Hwwwssselaaaaaallsvvsssssssvvvvsssssssssssooooooovvvvaa wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
+<h2 data-e-91030222d917abb6 data-e-9976c864339d7d7a>Hellsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+
+<div data-e-91030222d917abb6 data-e-9976c864339d7d7a style="padding: 20px; border: 2px solid #3498db; border-radius: 10px; margin-bottom: 20px;">
+    <h3 data-e-91030222d917abb6 data-e-9976c864339d7d7a>For Loop Demo</h3>
+    <div data-e-91030222d917abb6 data-e-9976c864339d7d7a style="margin-bottom: 10px;">
+        <button data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-evt-1065" >Add Item</button>
+        <button data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-evt-1127" >Remove Item</button>
+    </div>
+
+    for item,i in items<span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-bind-1231"></span>
+</div>
+
+<h1 data-e-91030222d917abb6 data-e-9976c864339d7d7a>hello api todos </h1>
+
+<div data-e-91030222d917abb6 data-e-9976c864339d7d7a style="padding: 20px; border: 2px solid #e67e22; border-radius: 10px; margin-bottom: 20px;">
+    <h3 data-e-91030222d917abb6 data-e-9976c864339d7d7a>API Todo Demosss (from <code data-e-91030222d917abb6 data-e-9976c864339d7d7a>/api/todo</code>)</h3>
+    <button data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-evt-1457" >Refresh API Todos</button>
+    <div data-e-91030222d917abb6 data-e-9976c864339d7d7a style="margin-top: 10px;">
+        for todo in todos <span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-bind-1768"></span>
+    </div>
+</div>
+
+<span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-if-3" style="display:contents;">
+    <p data-e-91030222d917abb6 data-e-9976c864339d7d7a>just right!</p>
+</span>
+
+<a data-e-91030222d917abb6 data-e-9976c864339d7d7a href="/contact">Contact</a>
+
+
+
+    <div data-e-91030222d917abb6 data-e-9976c864339d7d7a class="demo-box context-demo">
+        <h3 data-e-91030222d917abb6 data-e-9976c864339d7d7a>🌐 Context API Demo</h3>
+        <p data-e-91030222d917abb6 data-e-9976c864339d7d7a class="demo-desc">Changing the state below propagates the value to child components via <code data-e-91030222d917abb6 data-e-9976c864339d7d7a>activeTheme</code>.</p>
+        <div data-e-91030222d917abb6 data-e-9976c864339d7d7a class="control-row">
+            <button data-e-91030222d917abb6 data-e-9976c864339d7d7a class="btn theme-btn" id="erm-evt-2256" >
+                Toggle Theme (Current: <span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-bind-2310">light</span>)
+            </button>
+        </div>
+        
+
+{#if theme == "dark"}
+    <div data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa class="header-box theme-display-dark">
+        <h1 data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa>Header consumed Theme Context: <strong data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa><span data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa id="erm-bind-189"></span></strong></p>
+        <div data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            🌌 Dark Mode Theme Context is Active
+        </div>
+    </div>
+{:else}
+    <div data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa class="header-box theme-display-light">
+        <h1 data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa>Header consumed Theme Context: <strong data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa><span data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa id="erm-bind-529"></span></strong></p>
+        <div data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-2d8cedfa94f6f5aa style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+{/if}
+    </div>
+
+<span data-e-91030222d917abb6 data-e-9976c864339d7d7a id="erm-if-0" style="display:contents;">
+    <div data-e-91030222d917abb6 data-e-9976c864339d7d7a id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
+        <h3 data-e-91030222d917abb6 data-e-9976c864339d7d7a>🎉 Condsfssitsionalssssssss Rendered Boxxxxxssaaa</h3>
+        <p data-e-91030222d917abb6 data-e-9976c864339d7d7a>This block only loads because <code data-e-91030222d917abb6 data-e-9976c864339d7d7a>showExtraContent</code> is <strong data-e-91030222d917abb6 data-e-9976c864339d7d7a>true</strong>.</p>
+    </div>
+    <button data-e-91030222d917abb6 data-e-9976c864339d7d7a onclick=>Hide Content</button>
+</span>
+
+
+
+
+<h1 data-e-91030222d917abb6 data-e-9976c864339d7d7a data-e-1671d977afc46790>hello footer erm componentssssssss</h1>
+
+</body>
+</html>

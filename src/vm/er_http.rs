@@ -34,6 +34,9 @@ thread_local! {
     static TARGET_SCRIPT_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
     static LAST_MTIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
     static LAST_CHECK_TIME: Cell<Option<SystemTime>> = const { Cell::new(None) };
+    pub static LISTEN_PORT: Cell<Option<i32>> = const { Cell::new(None) };
+    pub static LISTEN_CALLBACK: RefCell<Option<Value>> = const { RefCell::new(None) };
+    pub static SERVER_RUNNING: Cell<bool> = const { Cell::new(false) };
 }
 
 unsafe extern "C" {
@@ -46,29 +49,69 @@ unsafe extern "C" {
     fn er_ws_register_route(path: *const c_char);
     fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
     fn er_ws_close(ws: *mut c_void);
+
+    fn er_http_create_timer(ms: i32, cb: extern "C" fn(*mut c_void));
 }
 
 pub fn native_route(_args: Vec<Value>) -> Value {
-    let router_obj = crate::vm::gc::get_pooled_map(4);
+    let router_obj = crate::vm::gc::get_pooled_map(5);
     
     let get_name = get_or_create_string("get");
     let post_name = get_or_create_string("post");
     let ws_name = get_or_create_string("ws");
     let use_name = get_or_create_string("use");
+    let listen_name = get_or_create_string("listen");
     
     let get_fn = Value::native_function(native_router_get);
     let post_fn = Value::native_function(native_router_post);
     let ws_fn = Value::native_function(native_router_ws);
     let use_fn = Value::native_function(native_router_use);
+    let listen_fn = Value::native_function(native_router_listen);
     
     let mut map = router_obj;
     map.insert(crate::vm::value::MapKey(Value::string(get_name)), get_fn);
     map.insert(crate::vm::value::MapKey(Value::string(post_name)), post_fn);
     map.insert(crate::vm::value::MapKey(Value::string(ws_name)), ws_fn);
     map.insert(crate::vm::value::MapKey(Value::string(use_name)), use_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(listen_name)), listen_fn);
     
     let ptr = gc_allocate(GcData::Object(map));
     Value::object(ptr)
+}
+
+pub fn native_router_listen(args: Vec<Value>) -> Value {
+    let mut port_val = Value::null();
+    if args.len() >= 1 {
+        port_val = args[0];
+        if port_val.is_number() {
+            LISTEN_PORT.with(|port| {
+                port.set(Some(port_val.as_number() as i32));
+            });
+        }
+    }
+    if args.len() >= 2 {
+        let callback_val = args[1];
+        if callback_val.is_function() || callback_val.is_native_function() {
+            LISTEN_CALLBACK.with(|cb| {
+                *cb.borrow_mut() = Some(callback_val);
+            });
+            let is_running = SERVER_RUNNING.with(|r| r.get());
+            if is_running {
+                let vm_ptr = ACTIVE_VM.with(|active| active.get());
+                if !vm_ptr.is_null() {
+                    let vm = unsafe { &mut *vm_ptr };
+                    let mut cb_args = Vec::new();
+                    if !port_val.is_null() {
+                        cb_args.push(port_val);
+                    }
+                    if let Err(e) = vm.call_function_reentrant(callback_val, cb_args) {
+                        eprintln!("[HTTP] Error running listen callback: {}", e);
+                    }
+                }
+            }
+        }
+    }
+    Value::null()
 }
 
 pub fn native_router_use(args: Vec<Value>) -> Value {
@@ -405,11 +448,12 @@ fn get_port_from_config(vm: &VM) -> i32 {
 pub fn start_http_server_if_needed(vm: &mut VM) {
     let has_http_routes = ROUTES.with(|r| !r.borrow().is_empty());
     let has_ws_routes = WS_ROUTES.with(|r| !r.borrow().is_empty());
-    if !has_http_routes && !has_ws_routes {
+    let has_listen = LISTEN_PORT.with(|p| p.get().is_some());
+    if !has_http_routes && !has_ws_routes && !has_listen {
         return;
     }
     
-    let port = get_port_from_config(vm);
+    let port = LISTEN_PORT.with(|p| p.get()).unwrap_or_else(|| get_port_from_config(vm));
     println!("[HTTP] Starting uWebSockets HTTP server on port {}...", port);
     
     unsafe {
@@ -465,6 +509,11 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
                     crate::vm::gc::mark_value(&ws_obj);
                 }
             });
+            LISTEN_CALLBACK.with(|cb| {
+                if let Some(callback) = &*cb.borrow() {
+                    crate::vm::gc::mark_value(callback);
+                }
+            });
         }));
     });
     
@@ -472,13 +521,24 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
         active.set(vm as *mut VM);
     });
     
+    SERVER_RUNNING.with(|r| r.set(true));
     unsafe {
+        er_http_create_timer(1, er_http_on_timer);
         er_http_listen_and_run(port);
     }
     
     ACTIVE_VM.with(|active| {
         active.set(std::ptr::null_mut());
     });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_http_on_timer(_timer: *mut c_void) {
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if !vm_ptr.is_null() {
+        let vm = unsafe { &mut *vm_ptr };
+        let _ = vm.run_event_loop();
+    }
 }
 
 pub fn set_target_script_path(path: &str) {
@@ -549,6 +609,8 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     let old_routes = ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_ws_routes = WS_ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_mws = MIDDLEWARES.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    let old_listen_port = LISTEN_PORT.with(|p| p.replace(None));
+    let old_listen_callback = LISTEN_CALLBACK.with(|cb| cb.replace(None));
     
     let path_buf = Path::new(&path);
     let stmts = match crate::frontend::parse_and_resolve_imports(path_buf) {
@@ -558,6 +620,8 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
             ROUTES.with(|r| *r.borrow_mut() = old_routes);
             WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
             MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
+            LISTEN_PORT.with(|p| p.set(old_listen_port));
+            LISTEN_CALLBACK.with(|cb| *cb.borrow_mut() = old_listen_callback);
             return;
         }
     };
@@ -570,6 +634,8 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
             ROUTES.with(|r| *r.borrow_mut() = old_routes);
             WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
             MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
+            LISTEN_PORT.with(|p| p.set(old_listen_port));
+            LISTEN_CALLBACK.with(|cb| *cb.borrow_mut() = old_listen_callback);
             return;
         }
     };
@@ -597,6 +663,8 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
         ROUTES.with(|r| *r.borrow_mut() = old_routes);
         WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
         MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
+        LISTEN_PORT.with(|p| p.set(old_listen_port));
+        LISTEN_CALLBACK.with(|cb| *cb.borrow_mut() = old_listen_callback);
         return;
     }
     
@@ -623,6 +691,25 @@ fn match_route_path(pattern: &str, path: &str) -> Option<HashMap<String, String>
     }
     
     Some(params)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_http_on_listening() {
+    let cb_opt = LISTEN_CALLBACK.with(|cb| cb.borrow().clone());
+    if let Some(callback) = cb_opt {
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                if let Err(e) = vm.call_function_reentrant(callback, vec![]) {
+                    eprintln!("[HTTP] Error executing listen callback: {}", e);
+                }
+                if let Err(e) = vm.run_event_loop() {
+                    eprintln!("[HTTP] Event loop error in listen callback: {}", e);
+                }
+            }
+        });
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -920,6 +1007,9 @@ pub extern "C" fn er_ws_on_close(
 }
 
 pub fn native_fetch(args: Vec<Value>) -> Value {
+    if args.len() >= 2 && (args[1].is_function() || args[1].is_native_function()) {
+        return native_fetch_async(args);
+    }
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     if vm_ptr.is_null() {
         eprintln!("[Fetch] Error: ACTIVE_VM is null");

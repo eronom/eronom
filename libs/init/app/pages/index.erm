@@ -1,4 +1,5 @@
 <script>
+    export let activeTheme = useState('light');
 
     let count = useState(0);
     let double = useState(() => count * 2);
@@ -91,27 +92,88 @@ gvfcjb hyun</p>
     </div>
 </div>
 
-{#if porridge.temperature > 100}
+if porridge.temperature > 100 {
     <p>too hot!</p>
-{:else if 80 > porridge.temperature}
+} else if 80 > porridge.temperature {
     <p>too cold!</p>
-{:else}
+} else {
     <p>just right!</p>
-{/if}
+}
 
 <Link to="/contact">Contact</Link>
 
-<Header />
-{#if showExtraContent}
+<style>
+    .demo-box {
+        padding: 24px;
+        border-radius: 16px;
+        margin-top: 20px;
+        margin-bottom: 24px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(4px);
+        transition: all 0.3s ease;
+    }
+    .context-demo {
+        border-color: rgba(155, 93, 229, 0.3);
+    }
+    .context-demo:hover {
+        border-color: rgba(155, 93, 229, 0.6);
+        box-shadow: 0 12px 40px 0 rgba(155, 93, 229, 0.15);
+    }
+    .demo-desc {
+        color: #a0aec0;
+        font-size: 0.95rem;
+        margin-top: 4px;
+        margin-bottom: 16px;
+    }
+    .control-row {
+        margin-bottom: 20px;
+    }
+    .btn {
+        padding: 10px 20px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .theme-btn {
+        background: linear-gradient(135deg, #9b5de5, #f15bb5);
+        color: white;
+        box-shadow: 0 4px 14px rgba(155, 93, 229, 0.4);
+    }
+    .theme-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(155, 93, 229, 0.6);
+    }
+    .theme-btn:active {
+        transform: translateY(0);
+    }
+</style>
+
+    <div class="demo-box context-demo">
+        <h3>🌐 Context API Demo</h3>
+        <p class="demo-desc">Changing the state below propagates the value to child components via <code>activeTheme</code>.</p>
+        <div class="control-row">
+            <button class="btn theme-btn" onClick={()=>{activeTheme = activeTheme == 'light' ? 'dark' : 'light'}}>
+                Toggle Theme (Current: {activeTheme})
+            </button>
+        </div>
+        <Header />
+    </div>
+
+if showExtraContent {
     <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
         <h3>🎉 Condsfssitsionalssssssss Rendered Boxxxxxssaaa</h3>
         <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
     </div>
     <button onclick={()=>{showExtraContent=false}}>Hide Content</button>
-{:else}
+} else {
     <div><p>showExtraContent is false</p></div>
     <button onclick={()=>{showExtraContent=true}}>Show Content</button>
-{/if}
+}
 
 
 

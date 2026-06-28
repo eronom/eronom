@@ -162,6 +162,77 @@ fn native_print(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+#[repr(C)]
+struct Tm {
+    tm_sec: std::ffi::c_int,
+    tm_min: std::ffi::c_int,
+    tm_hour: std::ffi::c_int,
+    tm_mday: std::ffi::c_int,
+    tm_mon: std::ffi::c_int,
+    tm_year: std::ffi::c_int,
+    tm_wday: std::ffi::c_int,
+    tm_yday: std::ffi::c_int,
+    tm_isdst: std::ffi::c_int,
+    tm_gmtoff: std::ffi::c_long,
+    tm_zone: *const std::ffi::c_char,
+}
+
+unsafe extern "C" {
+    fn time(time: *mut std::ffi::c_long) -> std::ffi::c_long;
+    fn localtime_r(timep: *const std::ffi::c_long, result: *mut Tm) -> *mut Tm;
+}
+
+fn get_local_time_string() -> String {
+    unsafe {
+        let mut t: std::ffi::c_long = 0;
+        time(&mut t);
+        let mut tm_val = std::mem::zeroed::<Tm>();
+        localtime_r(&t, &mut tm_val);
+        let hour = tm_val.tm_hour;
+        let min = tm_val.tm_min;
+        let sec = tm_val.tm_sec;
+        let am_pm = if hour >= 12 { "PM" } else { "AM" };
+        let display_hour = if hour == 0 {
+            12
+        } else if hour > 12 {
+            hour - 12
+        } else {
+            hour
+        };
+        format!("{:02}:{:02}:{:02} {}", display_hour, min, sec, am_pm)
+    }
+}
+
+fn native_now(_args: Vec<Value>) -> Value {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    Value::number(now as f64)
+}
+
+fn native_local_time_string(_args: Vec<Value>) -> Value {
+    let time_str = get_local_time_string();
+    let ptr = crate::vm::gc::get_or_create_string(&time_str);
+    Value::string(ptr)
+}
+
+
+fn value_to_string_for_render(v: Value) -> String {
+    if let Some(s) = v.as_str() {
+        s.to_string()
+    } else if v.is_null() {
+        "null".to_string()
+    } else if v.is_boolean() {
+        v.as_boolean().to_string()
+    } else if v.is_number() {
+        v.as_number().to_string()
+    } else {
+        let json_val = crate::vm::er_http::value_to_json(v);
+        serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string())
+    }
+}
+
 fn native_render(args: Vec<Value>) -> Value {
     if args.len() < 2 {
         return Value::null();
@@ -177,23 +248,40 @@ fn native_render(args: Vec<Value>) -> Value {
     let mut params_map = std::collections::HashMap::new();
     if params_val.is_object() {
         unsafe {
-            if let crate::vm::gc::GcData::Object(map) = &(*params_val.as_gc_ptr()).data {
-                for (k, v) in map {
-                    if let Some(key_str) = k.0.as_str() {
-                        let val_str = if let Some(s) = v.as_str() {
-                            s.to_string()
-                        } else {
-                            v.to_string()
-                        };
-                        params_map.insert(key_str.to_string(), val_str);
+            match &(*params_val.as_gc_ptr()).data {
+                crate::vm::gc::GcData::Object(map) => {
+                    for (k, v) in map {
+                        if let Some(key_str) = k.0.as_str() {
+                            let val_str = value_to_string_for_render(*v);
+                            params_map.insert(key_str.to_string(), val_str);
+                        }
                     }
                 }
+                crate::vm::gc::GcData::Struct(s) => {
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        if let Some(key_str) = map_key.0.as_str() {
+                            let val_str = value_to_string_for_render(s.fields[idx]);
+                            params_map.insert(key_str.to_string(), val_str);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
     
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let path = base_path.join(file_path);
+    let mut path = base_path.join(file_path);
+    if !path.exists() {
+        if let Some(folder_name) = base_path.file_name().and_then(|n| n.to_str()) {
+            let fp = Path::new(file_path);
+            if fp.starts_with(folder_name) {
+                if let Ok(stripped) = fp.strip_prefix(folder_name) {
+                    path = base_path.join(stripped);
+                }
+            }
+        }
+    }
     if !path.exists() {
         return Value::null();
     }
@@ -234,6 +322,9 @@ fn execute_api_route(
     if prefix.starts_with("/server/") {
         prefix = prefix["/server".len()..].to_string();
     }
+    if prefix.contains("/pages") || prefix.starts_with("/pages") || prefix.ends_with("/pages") {
+        prefix = String::new();
+    }
 
     let stmts = match crate::frontend::parse_and_resolve_imports(file_path) {
         Ok(s) => s,
@@ -269,6 +360,8 @@ fn execute_api_route(
     vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
     vm.register_global("setIoMode", Value::native_function(crate::vm::er_http::native_set_io_mode));
     vm.register_global("getIoMode", Value::native_function(crate::vm::er_http::native_get_io_mode));
+    vm.register_global("now", Value::native_function(native_now));
+    vm.register_global("localTimeString", Value::native_function(native_local_time_string));
 
     crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
 
@@ -604,14 +697,14 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
             current_path = exact;
             found = true;
         } else {
-            let erm = current_path.join(format!("{}.erm", part));
-            if erm.exists() {
-                current_path = erm;
+            let er = current_path.join(format!("{}.er", part));
+            if er.exists() {
+                current_path = er;
                 found = true;
             } else {
-                let er = current_path.join(format!("{}.er", part));
-                if er.exists() {
-                    current_path = er;
+                let erm = current_path.join(format!("{}.erm", part));
+                if erm.exists() {
+                    current_path = erm;
                     found = true;
                 } else {
                     if let Ok(entries) = fs::read_dir(&current_path) {
@@ -624,14 +717,14 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
                                     current_path.push(name);
                                     found = true;
                                     break;
-                                } else if name.ends_with("].erm") {
-                                    let param_name = &name[1..name.len() - 5];
+                                } else if name.ends_with("].er") {
+                                    let param_name = &name[1..name.len() - 4];
                                     params.insert(param_name.to_string(), part.to_string());
                                     current_path.push(name);
                                     found = true;
                                     break;
-                                } else if name.ends_with("].er") {
-                                    let param_name = &name[1..name.len() - 4];
+                                } else if name.ends_with("].erm") {
+                                    let param_name = &name[1..name.len() - 5];
                                     params.insert(param_name.to_string(), part.to_string());
                                     current_path.push(name);
                                     found = true;
@@ -658,6 +751,8 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
     }
 
     if current_path.is_dir() {
+        let routes_er = current_path.join("routes.er");
+        if routes_er.exists() { return Some((routes_er, params)); }
         let index_erm = current_path.join("index.erm");
         if index_erm.exists() { return Some((index_erm, params)); }
         let page_erm = current_path.join("page.erm");
@@ -666,8 +761,6 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
         if index_html.exists() { return Some((index_html, params)); }
         let page_html = current_path.join("page.html");
         if page_html.exists() { return Some((page_html, params)); }
-        let routes_er = current_path.join("routes.er");
-        if routes_er.exists() { return Some((routes_er, params)); }
     }
 
     Some((current_path, params))

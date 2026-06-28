@@ -1,143 +1,386 @@
 (() => {
   window.__hmr_data = window.__hmr_data || { states: {} };
   if (!window.__hmr_data.states) window.__hmr_data.states = {};
+  
   window.__erm_b64utf8 = function(str) {
-      return decodeURIComponent(escape(window.atob(str)));
+    if (!str) return '';
+    return decodeURIComponent(escape(window.atob(str)));
+  };
+
+  window.__erm_escape = function(val) {
+    if (val === null || val === undefined) return '';
+    return String(val)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+
+  // Fine-grained Reactivity Core
+  let activeListener = null;
+  const listenerStack = [];
+
+  function pushListener(listener) {
+    listenerStack.push(activeListener);
+    activeListener = listener;
+  }
+
+  function popListener() {
+    activeListener = listenerStack.pop();
+  }
+
+  const queuedBindings = new Set();
+  let updateScheduled = false;
+
+  function queueUpdate(binding) {
+    queuedBindings.add(binding);
+    if (!updateScheduled) {
+      updateScheduled = true;
+      queueMicrotask(flushUpdates);
+    }
+  }
+
+  function flushUpdates() {
+    // Sort queued bindings to process structural elements (providers, conditional, loop blocks) before text/attribute bindings
+    const getPriority = (b) => {
+      if (!b.id) return 99;
+      if (b.isProvider || b.id.startsWith("erm-prov-")) return 0;
+      if (b.id.startsWith("erm-if-")) return 1;
+      if (b.id.startsWith("erm-for-")) return 2;
+      return 10;
     };
+
+    const bindingsToRun = Array.from(queuedBindings).sort((a, b) => {
+      const priA = getPriority(a);
+      const priB = getPriority(b);
+      if (priA !== priB) return priA - priB;
+      return window.__erm_bindings.indexOf(a) - window.__erm_bindings.indexOf(b);
+    });
+
+    queuedBindings.clear();
+    updateScheduled = false;
+
+    bindingsToRun.forEach(b => {
+      // Clear old dependencies before re-evaluation (supports dynamic conditional branching)
+      if (b.deps) {
+        b.deps.forEach(subscribersSet => {
+          subscribersSet.delete(b);
+        });
+        b.deps.clear();
+      }
+
+      pushListener(b);
+      try {
+        window.__current_eval_id = b.id;
+        if (typeof b.update === 'function') {
+          b.update();
+        } else {
+          let val = b.get();
+          let el = document.getElementById(b.id);
+          let strVal = val === undefined ? '' : String(val);
+          if (el && el.innerText !== strVal) {
+            b.last = val;
+            el.innerText = strVal;
+          }
+        }
+      } catch(e) {
+        console.error("Binding update failed:", e);
+      } finally {
+        window.__current_eval_id = null;
+        popListener();
+      }
+    });
+
+    if (typeof _initReactivity === 'function') {
+      _initReactivity();
+    }
+
+    // Update any text/attribute bindings whose elements are now in the DOM
+    window.__erm_bindings.forEach(b => {
+      if (typeof b.update !== 'function' && b.id) {
+        let el = document.getElementById(b.id);
+        if (el) {
+          pushListener(b);
+          try {
+            let val = b.get();
+            let strVal = val === undefined ? '' : String(val);
+            if (el.innerText !== strVal) {
+              el.innerText = strVal;
+            }
+          } catch(e) {
+            console.error("Delayed binding update failed:", e);
+          } finally {
+            popListener();
+          }
+        }
+      }
+    });
+  }
+
   window.useState = function(val, name) {
     if (name && window.__hmr_data.states[name] !== undefined) {
       val = window.__hmr_data.states[name];
     }
+
+    const subscribers = new Set();
+
+    function notify() {
+      subscribers.forEach(b => queueUpdate(b));
+    }
+
+    // Helper to proxy array mutations
+    function makeArrayProxy(arr) {
+      return new Proxy(arr, {
+        get(target, prop) {
+          let res = target[prop];
+          if (typeof res === 'function') {
+            const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
+            if (methods.includes(prop)) {
+              return (...args) => {
+                const result = target[prop].apply(target, args);
+                notify();
+                return result;
+              };
+            }
+            return res.bind(target);
+          }
+          return res;
+        },
+        set(target, prop, newVal) {
+          target[prop] = newVal;
+          notify();
+          return true;
+        }
+      });
+    }
+
     if (typeof val === 'function') {
-      return {
+      const stateObj = {
         _getter: val,
-        get value() { return this._getter(); },
+        id: name,
+        defaultValue: undefined,
+        get value() {
+          if (activeListener) {
+            subscribers.add(activeListener);
+            activeListener.deps = activeListener.deps || new Set();
+            activeListener.deps.add(subscribers);
+          }
+          return this._getter();
+        },
         toString() { return this.value; },
         valueOf() { return this.value; },
         [Symbol.toPrimitive]() { return this.value; }
       };
+      if (name) {
+        window[name] = stateObj;
+      }
+      return stateObj;
     }
-    const container = { 
+
+    const container = {
       _val: val,
+      id: name,
+      defaultValue: val,
       toString() { return this._val; },
       valueOf() { return this._val; },
       [Symbol.toPrimitive]() { return this._val; }
     };
-    return new Proxy(container, {
+
+    const stateProxy = new Proxy(container, {
       get(target, prop) {
-        if (prop === 'value') return target._val;
+        if (prop === 'value') {
+          if (activeListener) {
+            subscribers.add(activeListener);
+            activeListener.deps = activeListener.deps || new Set();
+            activeListener.deps.add(subscribers);
+          }
+          if (Array.isArray(target._val)) {
+            return makeArrayProxy(target._val);
+          }
+          return target._val;
+        }
+        if (prop === 'id') {
+          return target.id;
+        }
+        if (prop === 'defaultValue') {
+          return target.defaultValue;
+        }
         let res = target[prop];
         if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
-           const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
-           if (methods.includes(prop)) {
-             return (...args) => {
-               const result = target._val[prop].apply(target._val, args);
-               if (window.__erm_update) window.__erm_update();
-               return result;
-             };
-           }
+          const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
+          if (methods.includes(prop)) {
+            return (...args) => {
+              const result = target._val[prop].apply(target._val, args);
+              notify();
+              return result;
+            };
+          }
         }
         return res !== undefined ? res : target._val[prop];
       },
       set(target, prop, newVal) {
         if (prop === 'value') {
-          target._val = newVal;
-          if (name) window.__hmr_data.states[name] = newVal;
-          if (window.__erm_update) window.__erm_update();
+          if (target._val !== newVal) {
+            target._val = newVal;
+            if (name) window.__hmr_data.states[name] = newVal;
+            notify();
+          }
           return true;
         }
         target[prop] = newVal;
         return true;
       }
     });
+
+    if (name) {
+      window[name] = stateProxy;
+    }
+    return stateProxy;
   };
+
   window.useParams = function() { return window.__erm_params || {}; };
 
-  let contextIdCounter = 0;
-  window.createContext = function(defaultValue) {
-    return {
-      id: 'ctx-' + (++contextIdCounter),
-      defaultValue: defaultValue
-    };
-  };
-
-  window.ThemeContext = window.ThemeContext || window.createContext("light");
-
-  window.useContext = function(context) {
-    return {
-      get value() {
-        let evalId = window.__current_eval_id;
-        let el = document.getElementById(evalId);
-        while (el) {
-          if (el.__erm_providers && el.__erm_providers[context.id] !== undefined) {
-            return el.__erm_providers[context.id];
-          }
-          el = el.parentElement;
-        }
-        return context.defaultValue;
-      },
-      toString() { return this.value; },
-      valueOf() { return this.value; },
-      [Symbol.toPrimitive]() { return this.value; }
-    };
-  };
-
   window.__erm_bindings = [];
+  window.__erm_bindings.push = function(binding) {
+    return Array.prototype.push.call(this, binding);
+  };
+
   window.__erm_events = [];
-  let _updateQueued = false;
+  window.__erm_dynamic_events = {};
+  let nextDynamicEventId = 0;
+
+  window.__erm_register_event = function(event, handler) {
+    const id = ++nextDynamicEventId;
+    window.__erm_dynamic_events[id] = { event, handler };
+    return `data-erm-evt-id="${id}"`;
+  };
+
   window.__current_eval_id = null;
 
   window.__erm_update = function() {
-    if (_updateQueued) return;
-    _updateQueued = true;
-    requestAnimationFrame(() => {
-      // First update all providers to ensure child bindings get fresh values
-      window.__erm_bindings.forEach(b => {
-        if (b.isProvider) {
-          try { b.update(); } catch(e) {}
-        }
-      });
-      // Then update all other bindings
-      window.__erm_bindings.forEach(b => {
-        if (!b.isProvider) {
-          try {
-            window.__current_eval_id = b.id;
-            if (typeof b.update === 'function') { b.update(); } 
-            else {
-              let val = b.get();
-              if (b.last !== val) { 
-                b.last = val; 
-                let el = document.getElementById(b.id); 
-                if (el) el.innerText = val === undefined ? '' : val; 
-              }
-            }
-          } catch(e) {}
-          finally {
-            window.__current_eval_id = null;
-          }
-        }
-      });
-      if (typeof _initReactivity === 'function') _initReactivity();
-      _updateQueued = false;
+    window.__erm_bindings.forEach(b => {
+      if (!b.initialized) {
+        queuedBindings.add(b);
+      }
     });
+    if (!updateScheduled) {
+      updateScheduled = true;
+      queueMicrotask(flushUpdates);
+    }
   };
 
   function _initReactivity() {
     window.__erm_events.forEach(ev => {
       let el = document.getElementById(ev.id);
-      if (el && !el.__erm_listener_added) { el.addEventListener(ev.event, ev.handler); el.__erm_listener_added = true; }
+      if (el && !el.__erm_listener_added) {
+        el.addEventListener(ev.event, ev.handler);
+        el.__erm_listener_added = true;
+      }
     });
+    document.querySelectorAll('[data-erm-evt-id]').forEach(el => {
+      const id = el.getAttribute('data-erm-evt-id');
+      if (el.__erm_evt_id !== id) {
+        if (el.__erm_evt_listener && el.__erm_evt_type) {
+          el.removeEventListener(el.__erm_evt_type, el.__erm_evt_listener);
+        }
+        const ev = window.__erm_dynamic_events[id];
+        if (ev) {
+          const wrapper = (event) => {
+            ev.handler(event);
+            if (typeof window.__erm_update === 'function') window.__erm_update();
+          };
+          el.addEventListener(ev.event, wrapper);
+          el.__erm_evt_id = id;
+          el.__erm_evt_type = ev.event;
+          el.__erm_evt_listener = wrapper;
+        }
+      }
+    });
+  }
+
+  // DOM Reconciliation/Diffing Helper
+  function reconcileNodes(parent, newNodes) {
+    const childNodes = Array.from(parent.childNodes);
+    // Remove extra nodes
+    for (let k = newNodes.length; k < childNodes.length; k++) {
+      parent.removeChild(childNodes[k]);
+    }
+    // Update or append
+    for (let k = 0; k < newNodes.length; k++) {
+      let existing = parent.childNodes[k];
+      let incoming = newNodes[k];
+      if (!existing) {
+        parent.appendChild(incoming);
+      } else if (existing.nodeType !== incoming.nodeType) {
+        parent.replaceChild(incoming, existing);
+      } else if (existing.nodeType === Node.TEXT_NODE) {
+        if (existing.nodeValue !== incoming.nodeValue) {
+          existing.nodeValue = incoming.nodeValue;
+        }
+      } else if (existing.nodeType === Node.ELEMENT_NODE) {
+        if (existing.tagName !== incoming.tagName || existing.id !== incoming.id) {
+          parent.replaceChild(incoming, existing);
+        } else {
+          // Reconcile attributes
+          for (let attr of Array.from(existing.attributes)) {
+            if (!incoming.hasAttribute(attr.name)) {
+              existing.removeAttribute(attr.name);
+              if (attr.name === 'data-erm-evt-id') {
+                if (existing.__erm_evt_listener && existing.__erm_evt_type) {
+                  existing.removeEventListener(existing.__erm_evt_type, existing.__erm_evt_listener);
+                  existing.__erm_evt_id = undefined;
+                  existing.__erm_evt_type = undefined;
+                  existing.__erm_evt_listener = undefined;
+                }
+              }
+            }
+          }
+          for (let attr of Array.from(incoming.attributes)) {
+            if (existing.getAttribute(attr.name) !== attr.value) {
+              existing.setAttribute(attr.name, attr.value);
+            }
+          }
+          // Sync input/textarea properties
+          if (existing.tagName === 'INPUT' || existing.tagName === 'TEXTAREA') {
+            let incomingVal = incoming.value;
+            if (existing.tagName === 'TEXTAREA' && incoming.hasAttribute('value')) {
+              incomingVal = incoming.getAttribute('value');
+            }
+            if (existing.value !== incomingVal) {
+              existing.value = incomingVal;
+            }
+            if (existing.checked !== incoming.checked) {
+              existing.checked = incoming.checked;
+            }
+          }
+          // Recursively reconcile children
+          reconcileNodes(existing, Array.from(incoming.childNodes));
+        }
+      }
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      _initReactivity();
+      window.__erm_update();
+    });
+  } else {
+    _initReactivity();
     window.__erm_update();
   }
-  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _initReactivity); } 
-  else { _initReactivity(); }
-  setTimeout(_initReactivity, 10);
+  setTimeout(() => {
+    _initReactivity();
+    window.__erm_update();
+  }, 10);
 
   // Helper functions for template rendering, conditional branches, and loops
   window.__erm_render_template = function(template, evalFn) {
     return template.replace(/\{([^{}#/:][^{}]*)\}/g, (m, expr) => {
-      try { 
-        let val = evalFn(expr); 
+      try {
+        let val = evalFn(expr);
         return val === undefined ? "" : val;
       } catch(e) { return ""; }
     });
@@ -145,6 +388,7 @@
 
   window.__erm_register_for = function(anchorId, getCollection, templateB64, renderItem) {
     window.__erm_bindings.push({
+      id: anchorId,
       update: () => {
         let anchor = document.getElementById(anchorId);
         if (anchor) {
@@ -155,6 +399,9 @@
           if (anchor.__erm_last_items !== itemsJson) {
             anchor.__erm_last_items = itemsJson;
             let template = window.__erm_b64utf8(templateB64);
+            
+            // Build new nodes
+            let temp = document.createElement('div');
             let html = "";
             items.forEach((item, index) => {
               window.__current_eval_id = anchorId;
@@ -164,7 +411,10 @@
                 window.__current_eval_id = null;
               }
             });
-            anchor.innerHTML = html;
+            temp.innerHTML = html;
+            
+            // Reconcile instead of innerHTML overwrite
+            reconcileNodes(anchor, Array.from(temp.childNodes));
           }
         }
       }
@@ -173,24 +423,101 @@
 
   window.__erm_register_if = function(anchorId, getHtml) {
     window.__erm_bindings.push({
+      id: anchorId,
       update: () => {
         let anchor = document.getElementById(anchorId);
         if (anchor) {
           let newHtml = "";
-          try { 
+          try {
             window.__current_eval_id = anchorId;
-            newHtml = getHtml(); 
+            newHtml = getHtml();
           } catch(e) {}
           finally {
             window.__current_eval_id = null;
           }
           if (anchor.__erm_last !== newHtml) {
             anchor.__erm_last = newHtml;
-            anchor.innerHTML = newHtml;
-            if (window.__erm_update) window.__erm_update();
+            
+            // Reconcile instead of innerHTML overwrite
+            let temp = document.createElement('div');
+            temp.innerHTML = newHtml;
+            reconcileNodes(anchor, Array.from(temp.childNodes));
           }
         }
       }
     });
   };
+
+  // Client-side Router / Navigation Interceptor
+  async function navigate(path, push = true) {
+    try {
+      const res = await fetch(path);
+      const html = await res.text();
+      
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      
+      document.title = doc.title;
+      
+      // Update style block
+      const newStyle = doc.getElementById('__erm_styles');
+      const oldStyle = document.getElementById('__erm_styles');
+      if (newStyle && oldStyle) {
+        oldStyle.innerHTML = newStyle.innerHTML;
+      } else if (newStyle) {
+        document.head.appendChild(newStyle.cloneNode(true));
+      }
+      
+      // Reconcile body children
+      reconcileNodes(document.body, Array.from(doc.body.childNodes));
+      
+      // Reset bindings and events for the new page
+      window.__erm_bindings = [];
+      window.__erm_bindings.push = function(binding) {
+        return Array.prototype.push.call(this, binding);
+      };
+      window.__erm_events = [];
+      window.__erm_dynamic_events = {};
+      nextDynamicEventId = 0;
+      
+      // Execute page scripts
+      const scripts = doc.querySelectorAll('script.__erm_script');
+      scripts.forEach(script => {
+        const newScript = document.createElement('script');
+        newScript.className = '__erm_script';
+        newScript.text = script.text;
+        document.head.appendChild(newScript);
+        newScript.remove();
+      });
+      
+      if (push) {
+        history.pushState(null, '', path);
+      }
+      
+      _initReactivity();
+      window.__erm_update();
+    } catch (err) {
+      console.error("Navigation failed:", err);
+      window.location.href = path;
+    }
+  }
+
+  document.addEventListener('click', e => {
+    const link = e.target.closest('a');
+    if (link && 
+        link.href && 
+        !link.target && 
+        !link.hasAttribute('download') &&
+        new URL(link.href).origin === window.location.origin) {
+      const targetPath = new URL(link.href).pathname;
+      if (targetPath.startsWith('/api/')) return;
+      
+      e.preventDefault();
+      navigate(targetPath);
+    }
+  });
+
+  window.addEventListener('popstate', () => {
+    navigate(window.location.pathname, false);
+  });
 })();

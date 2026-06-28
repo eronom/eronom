@@ -1520,12 +1520,15 @@ impl VM {
 
     pub fn run_event_loop(&mut self) -> Result<(), String> {
         let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
-        let result = self.run_event_loop_inner();
+        let has_server = crate::vm::er_http::ROUTES.with(|r| !r.borrow().is_empty()) 
+            || crate::vm::er_http::WS_ROUTES.with(|r| !r.borrow().is_empty())
+            || crate::vm::er_http::LISTEN_PORT.with(|p| p.get().is_some());
+        let result = self.run_event_loop_inner(!has_server);
         crate::vm::er_http::ACTIVE_VM.with(|active| active.set(prev_vm));
         result
     }
 
-    fn run_event_loop_inner(&mut self) -> Result<(), String> {
+    fn run_event_loop_inner(&mut self, wait_for_active: bool) -> Result<(), String> {
         loop {
             let tasks = {
                 let mut queue = self.event_loop_queue.lock().unwrap();
@@ -1641,7 +1644,7 @@ impl VM {
             }
 
             let active = self.active_async_tasks.load(std::sync::atomic::Ordering::SeqCst);
-            if active == 0 {
+            if active == 0 || !wait_for_active {
                 let queue_empty = self.event_loop_queue.lock().unwrap().is_empty();
                 if queue_empty {
                     break;

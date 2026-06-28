@@ -1,0 +1,1311 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="text-scale" content="scale" />
+    <!--12qhfyh-->
+    <link rel="icon"
+        href="data:image/svg+xml,%3csvg%20xmlns='http://www.w3.org/2000/svg'%20width='107'%20height='128'%20viewBox='0%200%20107%20128'%3e%3ctitle%3esvelte-logo%3c/title%3e%3cpath%20d='M94.157%2022.819c-10.4-14.885-30.94-19.297-45.792-9.835L22.282%2029.608A29.92%2029.92%200%200%200%208.764%2049.65a31.5%2031.5%200%200%200%203.108%2020.231%2030%2030%200%200%200-4.477%2011.183%2031.9%2031.9%200%200%200%205.448%2024.116c10.402%2014.887%2030.942%2019.297%2045.791%209.835l26.083-16.624A29.92%2029.92%200%200%200%2098.235%2078.35a31.53%2031.53%200%200%200-3.105-20.232%2030%2030%200%200%200%204.474-11.182%2031.88%2031.88%200%200%200-5.447-24.116'%20style='fill:%23ff3e00'/%3e%3cpath%20d='M45.817%20106.582a20.72%2020.72%200%200%201-22.237-8.243%2019.17%2019.17%200%200%201-3.277-14.503%2018%2018%200%200%201%20.624-2.435l.49-1.498%201.337.981a33.6%2033.6%200%200%200%2010.203%205.098l.97.294-.09.968a5.85%205.85%200%200%200%201.052%203.878%206.24%206.24%200%200%200%206.695%202.485%205.8%205.8%200%200%200%201.603-.704L69.27%2076.28a5.43%205.43%200%200%200%202.45-3.631%205.8%205.8%200%200%200-.987-4.371%206.24%206.24%200%200%200-6.698-2.487%205.7%205.7%200%200%200-1.6.704l-9.953%206.345a19%2019%200%200%201-5.296%202.326%2020.72%2020.72%200%200%201-22.237-8.243%2019.17%2019.17%200%200%201-3.277-14.502%2017.99%2017.99%200%200%201%208.13-12.052l26.081-16.623a19%2019%200%200%201%205.3-2.329%2020.72%2020.72%200%200%201%2022.237%208.243%2019.17%2019.17%200%200%201%203.277%2014.503%2018%2018%200%200%201-.624%202.435l-.49%201.498-1.337-.98a33.6%2033.6%200%200%200-10.203-5.1l-.97-.294.09-.968a5.86%205.86%200%200%200-1.052-3.878%206.24%206.24%200%200%200-6.696-2.485%205.8%205.8%200%200%200-1.602.704L37.73%2051.72a5.42%205.42%200%200%200-2.449%203.63%205.79%205.79%200%200%200%20.986%204.372%206.24%206.24%200%200%200%206.698%202.486%205.8%205.8%200%200%200%201.602-.704l9.952-6.342a19%2019%200%200%201%205.295-2.328%2020.72%2020.72%200%200%201%2022.237%208.242%2019.17%2019.17%200%200%201%203.277%2014.503%2018%2018%200%200%201-8.13%2012.053l-26.081%2016.622a19%2019%200%200%201-5.3%202.328'%20style='fill:%23fff'/%3e%3c/svg%3e" />
+    <!----><!--1oi0cf1-->
+    <meta name="description"
+        content="Explore reactive runes, API integrations, and dynamic state management in Svelte 5 with premium glassmorphism design."
+        class="s-MvhmkKCAb0tM" /><!---->
+    <title>Svelte 5 Interactive Playground</title>
+    <style data-sveltekit>
+        /*! tailwindcss v4.2.2 | MIT License | https://tailwindcss.com */
+        @layer properties;
+        @layer theme, base, components, utilities;
+
+        @layer theme {
+
+            :root,
+            :host {
+                --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+                    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+                --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+                    "Courier New", monospace;
+                --spacing: 0.25rem;
+                --default-transition-duration: 150ms;
+                --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+                --default-font-family: var(--font-sans);
+                --default-mono-font-family: var(--font-mono);
+            }
+        }
+
+        @layer base {
+
+            *,
+            ::after,
+            ::before,
+            ::backdrop,
+            ::file-selector-button {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+                border: 0 solid;
+            }
+
+            html,
+            :host {
+                line-height: 1.5;
+                -webkit-text-size-adjust: 100%;
+                tab-size: 4;
+                font-family: var(--default-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");
+                font-feature-settings: var(--default-font-feature-settings, normal);
+                font-variation-settings: var(--default-font-variation-settings, normal);
+                -webkit-tap-highlight-color: transparent;
+            }
+
+            hr {
+                height: 0;
+                color: inherit;
+                border-top-width: 1px;
+            }
+
+            abbr:where([title]) {
+                -webkit-text-decoration: underline dotted;
+                text-decoration: underline dotted;
+            }
+
+            h1,
+            h2,
+            h3,
+            h4,
+            h5,
+            h6 {
+                font-size: inherit;
+                font-weight: inherit;
+            }
+
+            a {
+                color: inherit;
+                -webkit-text-decoration: inherit;
+                text-decoration: inherit;
+            }
+
+            b,
+            strong {
+                font-weight: bolder;
+            }
+
+            code,
+            kbd,
+            samp,
+            pre {
+                font-family: var(--default-mono-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+                font-feature-settings: var(--default-mono-font-feature-settings, normal);
+                font-variation-settings: var(--default-mono-font-variation-settings, normal);
+                font-size: 1em;
+            }
+
+            small {
+                font-size: 80%;
+            }
+
+            sub,
+            sup {
+                font-size: 75%;
+                line-height: 0;
+                position: relative;
+                vertical-align: baseline;
+            }
+
+            sub {
+                bottom: -0.25em;
+            }
+
+            sup {
+                top: -0.5em;
+            }
+
+            table {
+                text-indent: 0;
+                border-color: inherit;
+                border-collapse: collapse;
+            }
+
+            :-moz-focusring {
+                outline: auto;
+            }
+
+            progress {
+                vertical-align: baseline;
+            }
+
+            summary {
+                display: list-item;
+            }
+
+            ol,
+            ul,
+            menu {
+                list-style: none;
+            }
+
+            img,
+            svg,
+            video,
+            canvas,
+            audio,
+            iframe,
+            embed,
+            object {
+                display: block;
+                vertical-align: middle;
+            }
+
+            img,
+            video {
+                max-width: 100%;
+                height: auto;
+            }
+
+            button,
+            input,
+            select,
+            optgroup,
+            textarea,
+            ::file-selector-button {
+                font: inherit;
+                font-feature-settings: inherit;
+                font-variation-settings: inherit;
+                letter-spacing: inherit;
+                color: inherit;
+                border-radius: 0;
+                background-color: transparent;
+                opacity: 1;
+            }
+
+            :where(select:is([multiple], [size])) optgroup {
+                font-weight: bolder;
+            }
+
+            :where(select:is([multiple], [size])) optgroup option {
+                padding-inline-start: 20px;
+            }
+
+            ::file-selector-button {
+                margin-inline-end: 4px;
+            }
+
+            ::placeholder {
+                opacity: 1;
+            }
+
+            @supports (not (-webkit-appearance: -apple-pay-button)) or (contain-intrinsic-size: 1px) {
+                ::placeholder {
+                    color: currentcolor;
+
+                    @supports (color: color-mix(in lab, red, red)) {
+                        color: color-mix(in oklab, currentcolor 50%, transparent);
+                    }
+                }
+            }
+
+            textarea {
+                resize: vertical;
+            }
+
+            ::-webkit-search-decoration {
+                -webkit-appearance: none;
+            }
+
+            ::-webkit-date-and-time-value {
+                min-height: 1lh;
+                text-align: inherit;
+            }
+
+            ::-webkit-datetime-edit {
+                display: inline-flex;
+            }
+
+            ::-webkit-datetime-edit-fields-wrapper {
+                padding: 0;
+            }
+
+            ::-webkit-datetime-edit,
+            ::-webkit-datetime-edit-year-field,
+            ::-webkit-datetime-edit-month-field,
+            ::-webkit-datetime-edit-day-field,
+            ::-webkit-datetime-edit-hour-field,
+            ::-webkit-datetime-edit-minute-field,
+            ::-webkit-datetime-edit-second-field,
+            ::-webkit-datetime-edit-millisecond-field,
+            ::-webkit-datetime-edit-meridiem-field {
+                padding-block: 0;
+            }
+
+            ::-webkit-calendar-picker-indicator {
+                line-height: 1;
+            }
+
+            :-moz-ui-invalid {
+                box-shadow: none;
+            }
+
+            button,
+            input:where([type="button"], [type="reset"], [type="submit"]),
+            ::file-selector-button {
+                appearance: button;
+            }
+
+            ::-webkit-inner-spin-button,
+            ::-webkit-outer-spin-button {
+                height: auto;
+            }
+
+            [hidden]:where(:not([hidden="until-found"])) {
+                display: none !important;
+            }
+        }
+
+        @layer utilities {
+            .absolute {
+                position: absolute;
+            }
+
+            .static {
+                position: static;
+            }
+
+            .start {
+                inset-inline-start: var(--spacing);
+            }
+
+            .end {
+                inset-inline-end: var(--spacing);
+            }
+
+            .container {
+                width: 100%;
+
+                @media (width >=40rem) {
+                    max-width: 40rem;
+                }
+
+                @media (width >=48rem) {
+                    max-width: 48rem;
+                }
+
+                @media (width >=64rem) {
+                    max-width: 64rem;
+                }
+
+                @media (width >=80rem) {
+                    max-width: 80rem;
+                }
+
+                @media (width >=96rem) {
+                    max-width: 96rem;
+                }
+            }
+
+            .block {
+                display: block;
+            }
+
+            .contents {
+                display: contents;
+            }
+
+            .flex {
+                display: flex;
+            }
+
+            .grid {
+                display: grid;
+            }
+
+            .hidden {
+                display: none;
+            }
+
+            .transform {
+                transform: var(--tw-rotate-x, ) var(--tw-rotate-y, ) var(--tw-rotate-z, ) var(--tw-skew-x, ) var(--tw-skew-y, );
+            }
+
+            .resize {
+                resize: both;
+            }
+
+            .flex-wrap {
+                flex-wrap: wrap;
+            }
+
+            .border {
+                border-style: var(--tw-border-style);
+                border-width: 1px;
+            }
+
+            .outline {
+                outline-style: var(--tw-outline-style);
+                outline-width: 1px;
+            }
+
+            .filter {
+                filter: var(--tw-blur, ) var(--tw-brightness, ) var(--tw-contrast, ) var(--tw-grayscale, ) var(--tw-hue-rotate, ) var(--tw-invert, ) var(--tw-saturate, ) var(--tw-sepia, ) var(--tw-drop-shadow, );
+            }
+
+            .backdrop-filter {
+                -webkit-backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, ) var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, ) var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, ) var(--tw-backdrop-sepia, );
+                backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, ) var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, ) var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, ) var(--tw-backdrop-sepia, );
+            }
+
+            .transition {
+                transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, -webkit-backdrop-filter, backdrop-filter, display, content-visibility, overlay, pointer-events;
+                transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+                transition-duration: var(--tw-duration, var(--default-transition-duration));
+            }
+        }
+
+        @property --tw-rotate-x {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-rotate-y {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-rotate-z {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-skew-x {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-skew-y {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-border-style {
+            syntax: "*";
+            inherits: false;
+            initial-value: solid;
+        }
+
+        @property --tw-outline-style {
+            syntax: "*";
+            inherits: false;
+            initial-value: solid;
+        }
+
+        @property --tw-blur {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-brightness {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-contrast {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-grayscale {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-hue-rotate {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-invert {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-opacity {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-saturate {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-sepia {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-drop-shadow {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-drop-shadow-color {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-drop-shadow-alpha {
+            syntax: "<percentage>";
+            inherits: false;
+            initial-value: 100%;
+        }
+
+        @property --tw-drop-shadow-size {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-blur {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-brightness {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-contrast {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-grayscale {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-hue-rotate {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-invert {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-opacity {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-saturate {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @property --tw-backdrop-sepia {
+            syntax: "*";
+            inherits: false;
+        }
+
+        @layer properties {
+            @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+
+                *,
+                ::before,
+                ::after,
+                ::backdrop {
+                    --tw-rotate-x: initial;
+                    --tw-rotate-y: initial;
+                    --tw-rotate-z: initial;
+                    --tw-skew-x: initial;
+                    --tw-skew-y: initial;
+                    --tw-border-style: solid;
+                    --tw-outline-style: solid;
+                    --tw-blur: initial;
+                    --tw-brightness: initial;
+                    --tw-contrast: initial;
+                    --tw-grayscale: initial;
+                    --tw-hue-rotate: initial;
+                    --tw-invert: initial;
+                    --tw-opacity: initial;
+                    --tw-saturate: initial;
+                    --tw-sepia: initial;
+                    --tw-drop-shadow: initial;
+                    --tw-drop-shadow-color: initial;
+                    --tw-drop-shadow-alpha: 100%;
+                    --tw-drop-shadow-size: initial;
+                    --tw-backdrop-blur: initial;
+                    --tw-backdrop-brightness: initial;
+                    --tw-backdrop-contrast: initial;
+                    --tw-backdrop-grayscale: initial;
+                    --tw-backdrop-hue-rotate: initial;
+                    --tw-backdrop-invert: initial;
+                    --tw-backdrop-opacity: initial;
+                    --tw-backdrop-saturate: initial;
+                    --tw-backdrop-sepia: initial;
+                }
+            }
+        }
+
+
+        /* Standard Vanilla CSS Variables for Rich Design System */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0b0f19;
+            background-image: radial-gradient(circle at 10% 20%,
+                    rgba(99, 102, 241, 0.15) 0%,
+                    transparent 40%),
+                radial-gradient(circle at 90% 80%,
+                    rgba(6, 182, 212, 0.12) 0%,
+                    transparent 45%);
+            color: #f1f5f9;
+            font-family:
+                "Outfit",
+                "Inter",
+                system-ui,
+                -apple-system,
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+            min-height: 100vh;
+        }
+
+        .playground-container.s-MvhmkKCAb0tM {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+
+        .playground-header.s-MvhmkKCAb0tM {
+            text-align: center;
+            margin-bottom: 4rem;
+            position: relative;
+        }
+
+        .badge.s-MvhmkKCAb0tM {
+            display: inline-block;
+            padding: 0.35rem 1rem;
+            background: linear-gradient(135deg,
+                    rgba(99, 102, 241, 0.2),
+                    rgba(6, 182, 212, 0.2));
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 9999px;
+            color: #a5b4fc;
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1);
+        }
+
+        h1.s-MvhmkKCAb0tM {
+            font-size: 3.5rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            margin: 0 0 1rem 0;
+            background: linear-gradient(135deg,
+                    #ffffff 30%,
+                    #cbd5e1 70%,
+                    #94a3b8 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+        }
+
+        .subtitle.s-MvhmkKCAb0tM {
+            font-size: 1.2rem;
+            color: #94a3b8;
+            max-width: 600px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        /* Dashboard Grid layout */
+        .dashboard-grid.s-MvhmkKCAb0tM {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2rem;
+        }
+
+        /* High-end Cards with Glassmorphism */
+        .card.s-MvhmkKCAb0tM {
+            background: rgba(17, 24, 39, 0.6);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 24px;
+            padding: 2.25rem;
+            transition:
+                transform 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 0.4s ease,
+                box-shadow 0.4s ease;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card.s-MvhmkKCAb0tM::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg,
+                    transparent,
+                    rgba(255, 255, 255, 0.12),
+                    transparent);
+        }
+
+        .card.s-MvhmkKCAb0tM:hover {
+            transform: translateY(-6px);
+            border-color: rgba(99, 102, 241, 0.25);
+            box-shadow:
+                0 20px 40px -15px rgba(0, 0, 0, 0.5),
+                0 0 50px -10px rgba(99, 102, 241, 0.15);
+        }
+
+        .card.wide.s-MvhmkKCAb0tM {
+            grid-column: span 2;
+        }
+
+        .card-header.s-MvhmkKCAb0tM {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .card-icon.s-MvhmkKCAb0tM {
+            font-size: 1.5rem;
+        }
+
+        .card.s-MvhmkKCAb0tM h2:where(.s-MvhmkKCAb0tM) {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin: 0;
+            color: #f8fafc;
+            letter-spacing: -0.01em;
+        }
+
+        .card-desc.s-MvhmkKCAb0tM {
+            color: #94a3b8;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            margin: 0 0 1.75rem 0;
+        }
+
+        /* Buttons with gradients and animations */
+        .btn.s-MvhmkKCAb0tM {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.75rem 1.5rem;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            border: none;
+            outline: none;
+            user-select: none;
+        }
+
+        .btn-sm.s-MvhmkKCAb0tM {
+            padding: 0.4rem 0.85rem;
+            font-size: 0.85rem;
+            border-radius: 8px;
+        }
+
+        .btn-primary.s-MvhmkKCAb0tM {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: #ffffff;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-primary.s-MvhmkKCAb0tM:hover {
+            background: linear-gradient(135deg, #818cf8, #6366f1);
+            transform: scale(1.02);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+        }
+
+        .btn-primary.s-MvhmkKCAb0tM:active {
+            transform: scale(0.98);
+        }
+
+        .btn-secondary.s-MvhmkKCAb0tM {
+            background: rgba(255, 255, 255, 0.08);
+            color: #f1f5f9;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-secondary.s-MvhmkKCAb0tM:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: scale(1.02);
+        }
+
+        .btn-outline.s-MvhmkKCAb0tM {
+            background: transparent;
+            color: #cbd5e1;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-outline.s-MvhmkKCAb0tM:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+        }
+
+        .btn-danger.s-MvhmkKCAb0tM {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: #ffffff;
+            box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-danger.s-MvhmkKCAb0tM:hover {
+            background: linear-gradient(135deg, #f87171, #ef4444);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-full.s-MvhmkKCAb0tM {
+            width: 100%;
+        }
+
+        /* Counter controls */
+        .signal-controls.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: auto;
+        }
+
+        .counter-box.s-MvhmkKCAb0tM {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .counter-box.s-MvhmkKCAb0tM .btn-primary:where(.s-MvhmkKCAb0tM) {
+            flex: 1;
+        }
+
+        .counter-box.s-MvhmkKCAb0tM .btn-secondary:where(.s-MvhmkKCAb0tM) {
+            width: 3.5rem;
+        }
+
+        .reactive-stats.s-MvhmkKCAb0tM {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 16px;
+            padding: 1rem 1.25rem;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .stat-row.s-MvhmkKCAb0tM {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            font-size: 0.9rem;
+        }
+
+        .stat-row.s-MvhmkKCAb0tM:not(:last-child) {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stat-label.s-MvhmkKCAb0tM {
+            color: #94a3b8;
+        }
+
+        .stat-value.s-MvhmkKCAb0tM {
+            font-weight: 700;
+        }
+
+        .text-indigo.s-MvhmkKCAb0tM {
+            color: #a5b4fc;
+        }
+
+        .text-cyan.s-MvhmkKCAb0tM {
+            color: #67e8f9;
+        }
+
+        .text-muted.s-MvhmkKCAb0tM {
+            color: #cbd5e1;
+        }
+
+        /* Porridge custom slider & feedback */
+        .porridge-controls.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: auto;
+        }
+
+        .slider-group.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .slider-group.s-MvhmkKCAb0tM label:where(.s-MvhmkKCAb0tM) {
+            font-size: 0.95rem;
+            color: #cbd5e1;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .temp-badge.s-MvhmkKCAb0tM {
+            font-weight: 700;
+            color: #818cf8;
+        }
+
+        /* Modern range slider styling */
+        .range-input.s-MvhmkKCAb0tM {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 9999px;
+            outline: none;
+        }
+
+        .range-input.s-MvhmkKCAb0tM::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #6366f1;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+        }
+
+        .range-input.s-MvhmkKCAb0tM::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        .temp-feedback.s-MvhmkKCAb0tM {
+            border-radius: 12px;
+            padding: 0.85rem 1.25rem;
+            font-weight: 600;
+            text-align: center;
+            transition: all 0.3s ease;
+            font-size: 0.95rem;
+        }
+
+        .temp-feedback.hot.s-MvhmkKCAb0tM {
+            background: rgba(239, 68, 68, 0.15);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.25);
+        }
+
+        .temp-feedback.cold.s-MvhmkKCAb0tM {
+            background: rgba(59, 130, 246, 0.15);
+            color: #93c5fd;
+            border: 1px solid rgba(59, 130, 246, 0.25);
+        }
+
+        .temp-feedback.perfect.s-MvhmkKCAb0tM {
+            background: rgba(16, 185, 129, 0.15);
+            color: #6ee7b7;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+
+        .feedback-msg.s-MvhmkKCAb0tM {
+            margin: 0;
+        }
+
+        /* For loops lists */
+        .list-controls.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: auto;
+        }
+
+        .btn-group.s-MvhmkKCAb0tM {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+
+        .items-grid.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            min-height: 52px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.75rem;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            align-content: flex-start;
+        }
+
+        .item-tag.s-MvhmkKCAb0tM {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 0.25rem 0.6rem;
+            font-size: 0.85rem;
+            transition: transform 0.2s ease;
+        }
+
+        .item-tag.s-MvhmkKCAb0tM:hover {
+            transform: scale(1.05);
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .item-index.s-MvhmkKCAb0tM {
+            color: #6366f1;
+            font-weight: 700;
+            margin-right: 0.4rem;
+        }
+
+        .item-value.s-MvhmkKCAb0tM {
+            color: #f1f5f9;
+        }
+
+        /* Extra content conditional block */
+        .conditional-controls.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: auto;
+        }
+
+        .extra-box.s-MvhmkKCAb0tM {
+            background: linear-gradient(135deg,
+                    rgba(66, 185, 131, 0.1),
+                    rgba(16, 185, 129, 0.05));
+            border: 1px dashed rgba(66, 185, 131, 0.4);
+            border-radius: 16px;
+            padding: 1.25rem;
+            text-align: left;
+        }
+
+        .extra-box.s-MvhmkKCAb0tM h3:where(.s-MvhmkKCAb0tM) {
+            margin: 0 0 0.5rem 0;
+            color: #42b983;
+            font-size: 1.1rem;
+        }
+
+        .extra-box.s-MvhmkKCAb0tM p:where(.s-MvhmkKCAb0tM) {
+            margin: 0;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #cbd5e1;
+        }
+
+        .extra-box.empty.s-MvhmkKCAb0tM {
+            background: rgba(0, 0, 0, 0.15);
+            border: 1px dashed rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem 1.25rem;
+        }
+
+        .extra-box.empty.s-MvhmkKCAb0tM p:where(.s-MvhmkKCAb0tM) {
+            color: #64748b;
+            font-style: italic;
+        }
+
+        /* API Todo List Styles */
+        .todo-interface.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .todo-form.s-MvhmkKCAb0tM {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .text-input.s-MvhmkKCAb0tM {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 0.75rem 1rem;
+            color: #ffffff;
+            font-size: 0.95rem;
+            outline: none;
+            transition:
+                border-color 0.2s ease,
+                box-shadow 0.2s ease;
+        }
+
+        .text-input.s-MvhmkKCAb0tM:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .todo-list-header.s-MvhmkKCAb0tM {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+            color: #94a3b8;
+        }
+
+        .todo-list.s-MvhmkKCAb0tM {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 0.25rem;
+        }
+
+        .todo-list.s-MvhmkKCAb0tM::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .todo-list.s-MvhmkKCAb0tM::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .todo-list.s-MvhmkKCAb0tM::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+
+        .todo-item.s-MvhmkKCAb0tM {
+            display: flex;
+            align-items: center;
+            padding: 0.85rem 1.25rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            transition:
+                background 0.2s ease,
+                border-color 0.2s ease;
+        }
+
+        .todo-item.s-MvhmkKCAb0tM:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .status-indicator.s-MvhmkKCAb0tM {
+            margin-right: 0.75rem;
+            font-weight: 800;
+            font-size: 1.1rem;
+            color: #ef4444;
+        }
+
+        .todo-item.done.s-MvhmkKCAb0tM .status-indicator:where(.s-MvhmkKCAb0tM) {
+            color: #10b981;
+        }
+
+        .todo-text.s-MvhmkKCAb0tM {
+            flex: 1;
+            font-size: 0.95rem;
+            color: #e2e8f0;
+        }
+
+        .todo-item.done.s-MvhmkKCAb0tM .todo-text:where(.s-MvhmkKCAb0tM) {
+            text-decoration: line-through;
+            color: #64748b;
+        }
+
+        .todo-badge.s-MvhmkKCAb0tM {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            background: rgba(239, 68, 68, 0.15);
+            color: #fca5a5;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            font-weight: 600;
+        }
+
+        .todo-badge.badge-done.s-MvhmkKCAb0tM {
+            background: rgba(16, 185, 129, 0.15);
+            color: #6ee7b7;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        div.s-MvhmkKCAb0tM {
+            border: 2px solid;
+            border-color: cyan;
+        }
+
+        .empty-todos.s-MvhmkKCAb0tM {
+            text-align: center;
+            padding: 2.5rem 1.25rem;
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 12px;
+            border: 1px dashed rgba(255, 255, 255, 0.06);
+        }
+
+        .empty-todos.s-MvhmkKCAb0tM p:where(.s-MvhmkKCAb0tM) {
+            margin: 0;
+            color: #64748b;
+            font-style: italic;
+            font-size: 0.95rem;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 900px) {
+            .dashboard-grid.s-MvhmkKCAb0tM {
+                grid-template-columns: 1fr;
+            }
+
+            .card.wide.s-MvhmkKCAb0tM {
+                grid-column: span 1;
+            }
+
+            h1.s-MvhmkKCAb0tM {
+                font-size: 2.75rem;
+            }
+        }
+
+        .s-MvhmkKCAb0tM {}
+    </style>
+</head>
+
+<body data-sveltekit-preload-data="hover">
+    <div style="display: contents"><!--[--><!--[0--><!--[--><!--[-->
+        <main class="playground-container s-MvhmkKCAb0tM">
+            <header class="playground-header s-MvhmkKCAb0tM">
+                <div class="badge s-MvhmkKCAb0tM">Svelte 5 Runes</div>
+                <h1 id="main-title" class="s-MvhmkKCAb0tM">Interactive Playground</h1>
+                <p class="subtitle s-MvhmkKCAb0tM">Experience high-performance client-side hydration, state reactivity,
+                    and seamless HMR updates.</p>
+            </header>
+            <div class="dashboard-grid s-MvhmkKCAb0tM">
+                <section class="card s-MvhmkKCAb0tM" id="card-signals">
+                    <div class="card-header s-MvhmkKCAb0tM"><span class="card-icon s-MvhmkKCAb0tM">⚡</span>
+                        <h2 class="s-MvhmkKCAb0tM">Reactive Signals</h2>
+                    </div>
+                    <p class="card-desc s-MvhmkKCAb0tM">Runes power ultra-efficient local reactivity without virtual DOM
+                        overhead.</p>
+                    <div class="signal-controls s-MvhmkKCAb0tM">
+                        <div class="counter-box s-MvhmkKCAb0tM"><button class="btn btn-primary s-MvhmkKCAb0tM"
+                                id="btn-increment">Count: <span class="s-MvhmkKCAb0tM">0</span></button> <button
+                                class="btn btn-secondary s-MvhmkKCAb0tM" id="btn-decrement">-</button></div>
+                        <div class="reactive-stats s-MvhmkKCAb0tM">
+                            <div class="stat-row s-MvhmkKCAb0tM"><span class="stat-label s-MvhmkKCAb0tM">Derived
+                                    Double:</span> <strong class="stat-value text-indigo s-MvhmkKCAb0tM">0</strong>
+                            </div>
+                            <div class="stat-row s-MvhmkKCAb0tM"><span class="stat-label s-MvhmkKCAb0tM">Active
+                                    Time:</span> <strong class="stat-value text-cyan s-MvhmkKCAb0tM">0s</strong></div>
+                            <div class="stat-row s-MvhmkKCAb0tM"><span class="stat-label s-MvhmkKCAb0tM">Clock:</span>
+                                <strong class="stat-value text-muted s-MvhmkKCAb0tM"></strong>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section class="card s-MvhmkKCAb0tM" id="card-porridge">
+                    <div class="card-header s-MvhmkKCAb0tM"><span class="card-icon s-MvhmkKCAb0tM">🥣</span>
+                        <h2 class="s-MvhmkKCAb0tM">Interactive Conditions</h2>
+                    </div>
+                    <p class="card-desc s-MvhmkKCAb0tM">Drag the slider to adjust porridge temperature and trigger
+                        immediate conditional evaluation.</p>
+                    <div class="porridge-controls s-MvhmkKCAb0tM">
+                        <div class="slider-group s-MvhmkKCAb0tM"><label for="temp-slider"
+                                class="s-MvhmkKCAb0tM">Temperature: <span
+                                    class="temp-badge s-MvhmkKCAb0tM">100°C</span></label> <input id="temp-slider"
+                                type="range" min="50" max="150" value="100" class="range-input s-MvhmkKCAb0tM" /></div>
+                        <div class="temp-feedback s-MvhmkKCAb0tM perfect"><!--[-1-->
+                            <p class="feedback-msg s-MvhmkKCAb0tM">✨ Just right! Perfectly delicious.</p><!--]-->
+                        </div>
+                    </div>
+                </section>
+                <section class="card s-MvhmkKCAb0tM" id="card-loops">
+                    <div class="card-header s-MvhmkKCAb0tM"><span class="card-icon s-MvhmkKCAb0tM">🔁</span>
+                        <h2 class="s-MvhmkKCAb0tM">Dynamic Lists</h2>
+                    </div>
+                    <p class="card-desc s-MvhmkKCAb0tM">Arrays are reactively proxied in Svelte 5. Push and pop items
+                        seamlessly.</p>
+                    <div class="list-controls s-MvhmkKCAb0tM">
+                        <div class="btn-group s-MvhmkKCAb0tM"><button class="btn btn-outline s-MvhmkKCAb0tM"
+                                id="btn-add-item">Add Item</button> <button
+                                class="btn btn-outline btn-danger s-MvhmkKCAb0tM" id="btn-remove-item">Remove
+                                Item</button></div>
+                        <div class="items-grid s-MvhmkKCAb0tM"><!--[-->
+                            <div class="item-tag s-MvhmkKCAb0tM"><span class="item-index s-MvhmkKCAb0tM">#0</span> <span
+                                    class="item-value s-MvhmkKCAb0tM">Item 1</span></div>
+                            <div class="item-tag s-MvhmkKCAb0tM"><span class="item-index s-MvhmkKCAb0tM">#1</span> <span
+                                    class="item-value s-MvhmkKCAb0tM">Item 2</span></div>
+                            <div class="item-tag s-MvhmkKCAb0tM"><span class="item-index s-MvhmkKCAb0tM">#2</span> <span
+                                    class="item-value s-MvhmkKCAb0tM">Item 3</span></div>
+                            <div class="item-tag s-MvhmkKCAb0tM"><span class="item-index s-MvhmkKCAb0tM">#3</span> <span
+                                    class="item-value s-MvhmkKCAb0tM">Item 4</span></div>
+                            <div class="item-tag s-MvhmkKCAb0tM"><span class="item-index s-MvhmkKCAb0tM">#4</span> <span
+                                    class="item-value s-MvhmkKCAb0tM">Item 5</span></div><!--]-->
+                        </div>
+                    </div>
+                </section>
+                <section class="card s-MvhmkKCAb0tM" id="card-conditional">
+                    <div class="card-header s-MvhmkKCAb0tM"><span class="card-icon s-MvhmkKCAb0tM">🎭</span>
+                        <h2 class="s-MvhmkKCAb0tM">Conditional Render</h2>
+                    </div>
+                    <p class="card-desc s-MvhmkKCAb0tM">Mount and unmount DOM nodes conditionally with smooth animation
+                        states.</p>
+                    <div class="conditional-controls s-MvhmkKCAb0tM"><!--[0-->
+                        <div id="extra-content" class="extra-box s-MvhmkKCAb0tM">
+                            <h3 class="s-MvhmkKCAb0tM">🎉 Extra Content Active</h3>
+                            <p class="s-MvhmkKCAb0tM">This block is fully hydrated and interactive. Try
+                                updating local variables to observe HMR persistence.</p>
+                        </div> <button class="btn btn-danger btn-full s-MvhmkKCAb0tM" id="btn-toggle-content-hide">Hide
+                            Content</button><!--]-->
+                    </div>
+                </section>
+                <section class="card wide s-MvhmkKCAb0tM" id="card-api">
+                    <div class="card-header s-MvhmkKCAb0tM"><span class="card-icon s-MvhmkKCAb0tM">🔌</span>
+                        <h2 class="s-MvhmkKCAb0tM">API Todo Integration</h2>
+                    </div>
+                    <p class="card-desc s-MvhmkKCAb0tM">Fetch and mutate server-side state in real-time. Connected to
+                        <code class="s-MvhmkKCAb0tM">/api/todo</code>.
+                    </p>
+                    <div class="todo-interface s-MvhmkKCAb0tM">
+                        <form class="todo-form s-MvhmkKCAb0tM"><input type="text" placeholder="Add a new task..."
+                                value="" class="text-input s-MvhmkKCAb0tM" id="todo-input-text" /> <button type="submit"
+                                class="btn btn-primary s-MvhmkKCAb0tM" id="btn-add-todo">Add Todo</button></form>
+                        <div class="todo-list-header s-MvhmkKCAb0tM"><span class="todo-count s-MvhmkKCAb0tM">Active
+                                Tasks: 0</span> <button class="btn btn-sm btn-outline s-MvhmkKCAb0tM"
+                                id="btn-refresh-todos">🔄 Refresh List</button></div>
+                        <div class="todo-list s-MvhmkKCAb0tM"><!--[!-->
+                            <div class="empty-todos s-MvhmkKCAb0tM">
+                                <p class="s-MvhmkKCAb0tM">No tasks found. Add a todo above to get started!</p>
+                            </div><!--]-->
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main><!--]--><!----><!--]--><!--]--> <!--[-1--><!--]--><!--]-->
+
+        <script>
+            {
+                __sveltekit_dev = {
+                    base: new URL(".", location).pathname.slice(0, -1),
+                    env: {}
+                };
+
+                const element = document.currentScript.parentElement;
+
+                Promise.all([
+                    import("/node_modules/@sveltejs/kit/src/runtime/client/entry.js"),
+                    import("/@fs/home/vishnus/Downloads/crzil.com/my-app/.svelte-kit/generated/client/app.js")
+                ]).then(([kit, app]) => {
+                    kit.start(app, element, {
+                        node_ids: [0, 7],
+                        data: [null, null],
+                        form: null,
+                        error: null
+                    });
+                });
+            }
+        </script>
+    </div>
+</body>
+
+</html>
