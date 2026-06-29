@@ -485,6 +485,13 @@ pub fn process_component_tree(
     if_counter: &mut usize,
     for_counter: &mut usize,
 ) -> anyhow::Result<ProcessResult> {
+    let preprocessed;
+    let content = if is_function_template(content) {
+        preprocessed = preprocess_function_template(content);
+        &preprocessed
+    } else {
+        content
+    };
     // 1. Initialize local ErmEval and parse parameters/scripts for SSR block evaluation
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();
@@ -1412,6 +1419,13 @@ fn process_if_block_at(
 }
 
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
+    let preprocessed;
+    let content = if is_function_template(content) {
+        preprocessed = preprocess_function_template(content);
+        &preprocessed
+    } else {
+        content
+    };
     let mut visited = HashMap::new();
     
     // Automatic Layout support: search for layout.erm in current and parent directories.
@@ -1605,9 +1619,239 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     Ok(output)
 }
 
+fn is_function_template(content: &str) -> bool {
+    if content.contains("<script") || content.contains("<SCRIPT") {
+        return false;
+    }
+    static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE_FN.get_or_init(|| {
+        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
+    });
+    re.is_match(content)
+}
+
+fn preprocess_function_template(content: &str) -> String {
+    static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE_FN.get_or_init(|| {
+        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
+    });
+
+    if let Some(captures) = re.captures(content) {
+        let entire_match = captures.get(0).unwrap();
+        let fn_start_byte = entire_match.start();
+        let fn_body_start_byte = entire_match.end();
+        let params_str = captures.get(2).map_or("", |m| m.as_str());
+
+        let mut fn_start_char = 0;
+        let mut fn_body_start_char = 0;
+        for (char_idx, (byte_idx, _)) in content.char_indices().enumerate() {
+            if byte_idx == fn_start_byte {
+                fn_start_char = char_idx;
+            }
+            if byte_idx == fn_body_start_byte {
+                fn_body_start_char = char_idx;
+            }
+        }
+
+        let chars: Vec<char> = content.chars().collect();
+        let mut depth = 1;
+        let mut i = fn_body_start_char;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut in_template_literal = false;
+        let mut in_line_comment = false;
+        let mut in_block_comment = false;
+        let mut escaped = false;
+        let mut fn_body_end_char = None;
+
+        while i < chars.len() {
+            let c = chars[i];
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if c == '\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if in_line_comment {
+                if c == '\n' {
+                    in_line_comment = false;
+                }
+            } else if in_block_comment {
+                if c == '/' && i > 0 && chars[i-1] == '*' {
+                    in_block_comment = false;
+                }
+            } else if in_single_quote {
+                if c == '\'' {
+                    in_single_quote = false;
+                }
+            } else if in_double_quote {
+                if c == '"' {
+                    in_double_quote = false;
+                }
+            } else if in_template_literal {
+                if c == '`' {
+                    in_template_literal = false;
+                }
+            } else {
+                if c == '/' && i + 1 < chars.len() && chars[i+1] == '/' {
+                    in_line_comment = true;
+                    i += 1;
+                } else if c == '/' && i + 1 < chars.len() && chars[i+1] == '*' {
+                    in_block_comment = true;
+                    i += 1;
+                } else if c == '\'' {
+                    in_single_quote = true;
+                } else if c == '"' {
+                    in_double_quote = true;
+                } else if c == '`' {
+                    in_template_literal = true;
+                } else if c == '{' {
+                    depth += 1;
+                } else if c == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        fn_body_end_char = Some(i);
+                        break;
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        let fn_body_end_char = fn_body_end_char.unwrap_or(chars.len());
+        
+        let prefix: String = chars[..fn_start_char].iter().collect();
+        let suffix: String = if fn_body_end_char < chars.len() {
+            chars[fn_body_end_char + 1..].iter().collect()
+        } else {
+            "".to_string()
+        };
+
+        let body_str: String = chars[fn_body_start_char..fn_body_end_char].iter().collect();
+        let mut script_lines = Vec::new();
+        let mut markup_lines = Vec::new();
+        let mut script_mode = true;
+
+        for line in body_str.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                if script_mode {
+                    script_lines.push(line.to_string());
+                } else {
+                    markup_lines.push(line.to_string());
+                }
+                continue;
+            }
+
+            if script_mode {
+                let starts_with_markup = trimmed.starts_with('<')
+                    || trimmed.starts_with("if ")
+                    || trimmed.starts_with("for ")
+                    || trimmed.starts_with("return")
+                    || trimmed.starts_with("{#if")
+                    || trimmed.starts_with("{#for");
+                if starts_with_markup {
+                    script_mode = false;
+                }
+            }
+
+            if script_mode {
+                script_lines.push(line.to_string());
+            } else {
+                markup_lines.push(line.to_string());
+            }
+        }
+
+        let mut cleaned_markup = Vec::new();
+        for line in markup_lines {
+            let mut cleaned = line.trim().to_string();
+            if cleaned.starts_with("return") {
+                cleaned = cleaned["return".len()..].trim().to_string();
+                if cleaned.starts_with('(') {
+                    cleaned = cleaned[1..].trim().to_string();
+                }
+            }
+            if cleaned == "(" {
+                continue;
+            }
+            if cleaned == ")" || cleaned == ");" || cleaned == "}" || cleaned == "};" {
+                continue;
+            }
+            if cleaned.ends_with(';') {
+                cleaned.pop();
+            }
+            if !cleaned.is_empty() {
+                cleaned_markup.push(cleaned);
+            }
+        }
+
+        let param_binding = if !params_str.trim().is_empty() {
+            format!("let {} = useParams();\n", params_str.trim())
+        } else {
+            "".to_string()
+        };
+
+        let mut result = String::new();
+        result.push_str("<script>\n");
+        if !prefix.trim().is_empty() {
+            result.push_str(prefix.trim());
+            result.push('\n');
+        }
+        if !param_binding.is_empty() {
+            result.push_str(&param_binding);
+        }
+        for s in script_lines {
+            result.push_str(&s);
+            result.push('\n');
+        }
+        result.push_str("</script>\n");
+
+        for m in cleaned_markup {
+            result.push_str(&m);
+            result.push('\n');
+        }
+
+        if !suffix.trim().is_empty() {
+            result.push_str(suffix.trim());
+            result.push('\n');
+        }
+
+        result
+    } else {
+        content.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_function_based_template() {
+        let content = r#"
+        import Header from './Header.erm';
+
+        export fn page(params) {
+            let name = useState('world');
+            <h1>Hello {name} from {params.id}</h1>
+        }
+        <style>
+            h1 { color: red; }
+        </style>
+        "#;
+        
+        let preprocessed = preprocess_function_template(content);
+        println!("PREPROCESSED:\n{}", preprocessed);
+        assert!(preprocessed.contains("<script>"));
+        assert!(preprocessed.contains("let params = useParams();"));
+        assert!(preprocessed.contains("let name = useState('world');"));
+        assert!(preprocessed.contains("<h1>Hello {name} from {params.id}</h1>"));
+        assert!(preprocessed.contains("<style>"));
+    }
 
     #[test]
     fn test_link_compilation() {
@@ -1659,15 +1903,15 @@ mod tests {
 
     #[test]
     fn test_contact_page_id() {
-        let content = std::fs::read_to_string("example_context/app/pages/contact.erm").unwrap();
+        let content = std::fs::read_to_string("libs/init/app/pages/contact.erm").unwrap();
         let mut visited = std::collections::HashMap::new();
         let mut if_counter = 0;
         let mut for_counter = 0;
         let params = std::collections::HashMap::new();
-        let tree_res = process_component_tree("example_context/app/pages", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
+        let tree_res = process_component_tree("libs/init/app/pages", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
         assert!(!tree_res.html.is_empty());
         let params = std::collections::HashMap::new();
-        let res = process_erm_component("example_context/app/pages", &content, true, &params).unwrap();
+        let res = process_erm_component("libs/init/app/pages", &content, true, &params).unwrap();
         assert!(!res.is_empty());
     }
 
