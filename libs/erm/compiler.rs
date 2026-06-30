@@ -699,6 +699,11 @@ pub fn process_component_tree(
             if !tag_content.is_empty() {
                 if tag_content.starts_with('/') {
                     let closing_tag_name = tag_content[1..].trim();
+                    if closing_tag_name.is_empty() {
+                        // Fragment: </>
+                        i += tag_end + 1;
+                        continue;
+                    }
                     if closing_tag_name == "Link" {
                         html_buf.push_str("</a>");
                         i += tag_end + 1;
@@ -811,6 +816,8 @@ pub fn process_component_tree(
                                 i += tag_end + 1;
                                 continue;
                             }
+                        } else {
+                            anyhow::bail!("Component '{}' not found in components/ or current directory.", tag_name);
                         }
                     }
                     if tag_name == "slot" {
@@ -821,6 +828,10 @@ pub fn process_component_tree(
                         continue;
                     }
                 }
+            } else {
+                // Fragment: <>
+                i += tag_end + 1;
+                continue;
             }
             html_buf.push('<');
             i += 1;
@@ -985,7 +996,20 @@ fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<Str
                                 }
                             };
 
-                            events.push(format!("window.__erm_events.push({{ id: \"{}\", event: \"{}\", handler: (event) => {{ ({})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); }} }});", id, event_type, expr));
+                            let mut tag_line = None;
+                            if let Some(line_pos) = full_tag.find("data-erm-line=\"") {
+                                let line_val_start = line_pos + 15;
+                                if let Some(line_val_end) = full_tag[line_val_start..].find('"') {
+                                    if let Ok(ln) = full_tag[line_val_start..line_val_start + line_val_end].parse::<usize>() {
+                                        tag_line = Some(ln);
+                                    }
+                                }
+                            }
+                            let event_line = tag_line.unwrap_or_else(|| {
+                                html[..i].chars().filter(|&ch| ch == '\n').count() + 1
+                            });
+
+                            events.push(format!("window.__erm_events.push({{ id: \"{}\", event: \"{}\", handler: (event) => {{ ({})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); }} }}); // line:{}", id, event_type, expr, event_line));
                             i = j;
                             continue;
                         }
@@ -1630,6 +1654,26 @@ fn is_function_template(content: &str) -> bool {
     re.is_match(content)
 }
 
+fn inject_line_attr(markup: &str, line_num: usize) -> String {
+    if markup.starts_with('<') {
+        if let Some(first_tag_char) = markup.chars().nth(1) {
+            if first_tag_char.is_ascii_alphabetic() {
+                let mut insert_pos = 1;
+                for (idx, ch) in markup.char_indices().skip(1) {
+                    if ch == ' ' || ch == '>' || ch == '/' {
+                        insert_pos = idx;
+                        break;
+                    }
+                }
+                let mut res = markup.to_string();
+                res.insert_str(insert_pos, &format!(" data-erm-line=\"{}\"", line_num));
+                return res;
+            }
+        }
+    }
+    markup.to_string()
+}
+
 fn preprocess_function_template(content: &str) -> String {
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
@@ -1732,17 +1776,19 @@ fn preprocess_function_template(content: &str) -> String {
         };
 
         let body_str: String = chars[fn_body_start_char..fn_body_end_char].iter().collect();
+        let body_start_line = content[..fn_body_start_byte].lines().count();
         let mut script_lines = Vec::new();
         let mut markup_lines = Vec::new();
         let mut script_mode = true;
 
-        for line in body_str.lines() {
+        for (line_idx, line) in body_str.lines().enumerate() {
+            let line_num = body_start_line + line_idx + 1;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 if script_mode {
-                    script_lines.push(line.to_string());
+                    script_lines.push((line.to_string(), line_num));
                 } else {
-                    markup_lines.push(line.to_string());
+                    markup_lines.push((line.to_string(), line_num));
                 }
                 continue;
             }
@@ -1760,14 +1806,14 @@ fn preprocess_function_template(content: &str) -> String {
             }
 
             if script_mode {
-                script_lines.push(line.to_string());
+                script_lines.push((line.to_string(), line_num));
             } else {
-                markup_lines.push(line.to_string());
+                markup_lines.push((line.to_string(), line_num));
             }
         }
 
         let mut cleaned_markup = Vec::new();
-        for line in markup_lines {
+        for (line, ln) in markup_lines {
             let mut cleaned = line.trim().to_string();
             if cleaned.starts_with("return") {
                 cleaned = cleaned["return".len()..].trim().to_string();
@@ -1785,7 +1831,7 @@ fn preprocess_function_template(content: &str) -> String {
                 cleaned.pop();
             }
             if !cleaned.is_empty() {
-                cleaned_markup.push(cleaned);
+                cleaned_markup.push((cleaned, ln));
             }
         }
 
@@ -1804,14 +1850,14 @@ fn preprocess_function_template(content: &str) -> String {
         if !param_binding.is_empty() {
             result.push_str(&param_binding);
         }
-        for s in script_lines {
-            result.push_str(&s);
-            result.push('\n');
+        for (s, ln) in script_lines {
+            result.push_str(&format!("{} // line:{}\n", s, ln));
         }
         result.push_str("</script>\n");
 
-        for m in cleaned_markup {
-            result.push_str(&m);
+        for (m, ln) in cleaned_markup {
+            let injected = inject_line_attr(&m, ln);
+            result.push_str(&injected);
             result.push('\n');
         }
 
@@ -1883,6 +1929,29 @@ mod tests {
         let combined = res.scripts.join("\n");
         assert!(combined.contains("useState(0, \"count\")"));
         assert!(combined.contains("count.value++"));
+    }
+
+    #[test]
+    fn test_fragment_compilation() {
+        let content = r#"
+        export fn page(params) {
+            let count = useState(0);
+            <>
+                <h1>Hello from function based template!</h1>
+                <p>Current count is: {count}</p>
+                <button onClick={() => { count++ }}>Increment</button>
+            </>
+        }
+        "#;
+        let mut visited = std::collections::HashMap::new();
+        let mut if_counter = 0;
+        let mut for_counter = 0;
+        let params = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
+        assert!(!res.html.contains("<>"));
+        assert!(!res.html.contains("</>"));
+        assert!(res.html.contains("Hello from function based template!</h1>"));
+        assert!(res.html.contains("Increment</button>"));
     }
 
     #[test]

@@ -426,6 +426,24 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
 
     println!("Request: {} {}", method, target);
 
+    if target.starts_with("/__erm_src/") {
+        let rel_file = &target["/__erm_src/".len()..];
+        let file_path = base_path.join(rel_file);
+        if file_path.exists() && file_path.is_file() {
+            if let Ok(src) = fs::read_to_string(&file_path) {
+                unsafe {
+                    let status = CString::new("200 OK").unwrap();
+                    er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+                    let content_type = CString::new("text/plain; charset=utf-8").unwrap();
+                    let content_type_key = CString::new("Content-Type").unwrap();
+                    er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
+                    er_http_response_end(res, src.as_ptr() as *const c_char, src.len());
+                }
+                return Ok(());
+            }
+        }
+    }
+
     let app_dir = if base_path.join("app").exists() {
         base_path.join("app")
     } else {
@@ -485,6 +503,18 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
             let parent = file_path.parent().unwrap().to_string_lossy();
             match compiler::process_erm_component(&parent, &content, is_prod, &params) {
                 Ok(processed) => {
+                    let rel_path = file_path.strip_prefix(&base_path)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
+                    let mut processed = processed;
+                    if !is_prod {
+                        let filename_script = format!("<script>window.__erm_filename = \"{}\";</script>\n", rel_path);
+                        if let Some(pos) = processed.find("<head>") {
+                            processed.insert_str(pos + 6, &filename_script);
+                        } else {
+                            processed.insert_str(0, &filename_script);
+                        }
+                    }
                     unsafe {
                         let status = CString::new("200 OK").unwrap();
                         er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
@@ -495,11 +525,190 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
                     }
                 }
                 Err(e) => {
-                    let err_msg = format!("Error: {}", e);
+                    let rel_path = file_path.strip_prefix(&base_path)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
+
+                    let escape_html = |s: &str| -> String {
+                        s.replace('&', "&amp;")
+                         .replace('<', "&lt;")
+                         .replace('>', "&gt;")
+                         .replace('"', "&quot;")
+                         .replace('\'', "&#39;")
+                    };
+
+                    let err_msg_escaped = escape_html(&format!("{}", e));
+                    let rel_path_escaped = escape_html(&rel_path);
+
+                    let html_content = format!(r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Compiler Error</title>
+  <style>
+    body {{
+      background-color: #0b0b0d;
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }}
+    #erm-error-overlay {{
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(10, 10, 12, 0.85);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 999999;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }}
+    .erm-error-card {{
+      background: #18181b;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      width: 90%;
+      max-width: 800px;
+      max-height: 85vh;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }}
+    .erm-error-header {{
+      padding: 20px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #202024;
+    }}
+    .erm-error-badge {{
+      background: #ef4444;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+    }}
+    .erm-error-file {{
+      color: #a1a1aa;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      margin-left: 12px;
+      flex-grow: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .erm-error-close-btn {{
+      background: transparent;
+      border: none;
+      color: #71717a;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }}
+    .erm-error-body {{
+      padding: 24px;
+      overflow-y: auto;
+      flex-grow: 1;
+    }}
+    .erm-error-title {{
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 0;
+      margin-bottom: 16px;
+      color: #ffffff;
+      line-height: 1.4;
+    }}
+    .erm-error-msg {{
+      background: #09090b;
+      border-left: 4px solid #ef4444;
+      padding: 16px;
+      border-radius: 0 8px 8px 0;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: #f3f4f6;
+      white-space: pre-wrap;
+      overflow-x: auto;
+      margin-bottom: 20px;
+    }}
+    .erm-error-footer {{
+      padding: 16px 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 12px;
+      color: #71717a;
+      background: #1b1b1f;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .erm-error-footer svg {{
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }}
+  </style>
+  <script src="/core/hmr.js"></script>
+</head>
+<body data-compile-error-file="{}" data-compile-error-message="{}">
+  <div id="erm-error-overlay">
+    <div class="erm-error-card">
+      <div class="erm-error-header">
+        <span class="erm-error-badge">Failed to compile</span>
+        <span class="erm-error-file">{}</span>
+        <button class="erm-error-close-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="erm-error-body">
+        <h2 class="erm-error-title">An error occurred during template compilation.</h2>
+        <pre class="erm-error-msg">{}</pre>
+      </div>
+      <div class="erm-error-footer">
+        <svg viewBox="0 0 20 20"><path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
+        <span>Fix the issue in your code to automatically reload/clear.</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>"#, rel_path_escaped, err_msg_escaped, rel_path_escaped, err_msg_escaped);
+
                     unsafe {
                         let status = CString::new("500 Internal Server Error").unwrap();
                         er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-                        er_http_response_end(res, err_msg.as_ptr() as *const c_char, err_msg.len());
+                        let content_type = CString::new("text/html; charset=utf-8").unwrap();
+                        let content_type_key = CString::new("Content-Type").unwrap();
+                        er_http_response_write_header(
+                            res,
+                            content_type_key.as_ptr(),
+                            content_type_key.as_bytes().len(),
+                            content_type.as_ptr(),
+                            content_type.as_bytes().len(),
+                        );
+                        er_http_response_end(res, html_content.as_ptr() as *const c_char, html_content.len());
                     }
                 }
             }

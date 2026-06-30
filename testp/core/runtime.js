@@ -87,6 +87,15 @@
         }
       } catch (e) {
         console.error("Binding update failed:", e);
+        if (typeof window.__erm_show_error_overlay === 'function') {
+          window.__erm_show_error_overlay({
+            type: 'Reactivity Error',
+            file: `Binding element: #${b.id}`,
+            title: e.name || 'TypeError',
+            message: e.message || String(e),
+            stack: e.stack || ''
+          });
+        }
       } finally {
         window.__current_eval_id = null;
         popListener();
@@ -111,6 +120,15 @@
             }
           } catch (e) {
             console.error("Delayed binding update failed:", e);
+            if (typeof window.__erm_show_error_overlay === 'function') {
+              window.__erm_show_error_overlay({
+                type: 'Reactivity Error',
+                file: `Binding element: #${b.id}`,
+                title: e.name || 'TypeError',
+                message: e.message || String(e),
+                stack: e.stack || ''
+              });
+            }
           } finally {
             popListener();
           }
@@ -519,5 +537,34 @@
 
   window.addEventListener('popstate', () => {
     navigate(window.location.pathname, false);
+  });
+
+  window.addEventListener('error', (event) => {
+    if (typeof window.__erm_show_error_overlay === 'function') {
+      const error = event.error || { message: event.message };
+      const stack = error.stack || '';
+      const filename = event.filename ? event.filename.replace(window.location.origin, '') : 'unknown';
+      window.__erm_show_error_overlay({
+        type: 'Runtime Error',
+        file: filename + (event.lineno ? `:${event.lineno}:${event.colno}` : ''),
+        title: error.name || 'Error',
+        message: error.message || event.message,
+        stack: stack
+      });
+    }
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    if (typeof window.__erm_show_error_overlay === 'function') {
+      const reason = event.reason || {};
+      const stack = reason.stack || '';
+      window.__erm_show_error_overlay({
+        type: 'Unhandled Rejection',
+        file: 'Promise Rejection',
+        title: reason.name || 'Error',
+        message: reason.message || String(reason),
+        stack: stack
+      });
+    }
   });
 })();
