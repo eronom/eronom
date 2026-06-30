@@ -487,7 +487,7 @@ pub fn process_component_tree(
 ) -> anyhow::Result<ProcessResult> {
     let preprocessed;
     let content = if is_function_template(content) {
-        preprocessed = preprocess_function_template(content);
+        preprocessed = preprocess_function_template(content)?;
         &preprocessed
     } else {
         content
@@ -1445,7 +1445,7 @@ fn process_if_block_at(
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let preprocessed;
     let content = if is_function_template(content) {
-        preprocessed = preprocess_function_template(content);
+        preprocessed = preprocess_function_template(content)?;
         &preprocessed
     } else {
         content
@@ -1674,7 +1674,8 @@ fn inject_line_attr(markup: &str, line_num: usize) -> String {
     markup.to_string()
 }
 
-fn preprocess_function_template(content: &str) -> String {
+
+fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
         regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
@@ -1782,7 +1783,7 @@ fn preprocess_function_template(content: &str) -> String {
         let mut script_mode = true;
 
         for (line_idx, line) in body_str.lines().enumerate() {
-            let line_num = body_start_line + line_idx + 1;
+            let line_num = body_start_line + line_idx;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 if script_mode {
@@ -1835,6 +1836,7 @@ fn preprocess_function_template(content: &str) -> String {
             }
         }
 
+
         let param_binding = if !params_str.trim().is_empty() {
             format!("let {} = useParams();\n", params_str.trim())
         } else {
@@ -1866,9 +1868,9 @@ fn preprocess_function_template(content: &str) -> String {
             result.push('\n');
         }
 
-        result
+        Ok(result)
     } else {
-        content.to_string()
+        Ok(content.to_string())
     }
 }
 
@@ -1890,12 +1892,12 @@ mod tests {
         </style>
         "#;
         
-        let preprocessed = preprocess_function_template(content);
+        let preprocessed = preprocess_function_template(content).unwrap();
         println!("PREPROCESSED:\n{}", preprocessed);
         assert!(preprocessed.contains("<script>"));
         assert!(preprocessed.contains("let params = useParams();"));
         assert!(preprocessed.contains("let name = useState('world');"));
-        assert!(preprocessed.contains("<h1>Hello {name} from {params.id}</h1>"));
+        assert!(preprocessed.contains("<h1 data-erm-line=\"6\">Hello {name} from {params.id}</h1>"));
         assert!(preprocessed.contains("<style>"));
     }
 

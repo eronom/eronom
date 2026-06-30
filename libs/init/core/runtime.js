@@ -558,6 +558,10 @@
     if (typeof window.__erm_show_error_overlay === 'function') {
       const reason = event.reason || {};
       const stack = reason.stack || '';
+      if (reason.message === "Compilation error overlay shown") {
+        event.preventDefault();
+        return;
+      }
       window.__erm_show_error_overlay({
         type: 'Unhandled Rejection',
         file: 'Promise Rejection',

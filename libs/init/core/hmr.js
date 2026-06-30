@@ -3,6 +3,205 @@
   window.__hmr_initialized = true;
   console.log("[HMR] Initialized");
 
+  function checkAdjacentJsx(content) {
+    const re = /^\s*export\s+(?:default\s+)?(?:fn|function)\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{/m;
+    const match = content.match(re);
+    if (!match) return null;
+
+    const fnBodyStart = match.index + match[0].length;
+    let depth = 1;
+    let i = fnBodyStart;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let inTemplateLiteral = false;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let escaped = false;
+    let fnBodyEnd = content.length;
+
+    while (i < content.length) {
+      const c = content[i];
+      if (escaped) {
+        escaped = false;
+        i++;
+        continue;
+      }
+      if (c === '\\') {
+        escaped = true;
+        i++;
+        continue;
+      }
+      if (inLineComment) {
+        if (c === '\n') inLineComment = false;
+      } else if (inBlockComment) {
+        if (c === '/' && i > 0 && content[i - 1] === '*') inBlockComment = false;
+      } else if (inSingleQuote) {
+        if (c === '\'') inSingleQuote = false;
+      } else if (inDoubleQuote) {
+        if (c === '"') inDoubleQuote = false;
+      } else if (inTemplateLiteral) {
+        if (c === '`') inTemplateLiteral = false;
+      } else {
+        if (c === '/' && i + 1 < content.length && content[i + 1] === '/') {
+          inLineComment = true;
+          i++;
+        } else if (c === '/' && i + 1 < content.length && content[i + 1] === '*') {
+          inBlockComment = true;
+          i++;
+        } else if (c === '\'') {
+          inSingleQuote = true;
+        } else if (c === '"') {
+          inDoubleQuote = true;
+        } else if (c === '`') {
+          inTemplateLiteral = true;
+        } else if (c === '{') {
+          depth++;
+        } else if (c === '}') {
+          depth--;
+          if (depth === 0) {
+            fnBodyEnd = i;
+            break;
+          }
+        }
+      }
+      i++;
+    }
+
+    const bodyStr = content.slice(fnBodyStart, fnBodyEnd);
+    const lines = bodyStr.split('\n');
+    let scriptMode = true;
+    const markupLines = [];
+
+    for (let line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (scriptMode) {
+        const startsWithMarkup = trimmed.startsWith('<') ||
+                                 trimmed.startsWith('if ') ||
+                                 trimmed.startsWith('for ') ||
+                                 trimmed.startsWith('return') ||
+                                 trimmed.startsWith('{#if') ||
+                                 trimmed.startsWith('{#for');
+        if (startsWithMarkup) {
+          scriptMode = false;
+        }
+      }
+      if (!scriptMode) {
+        markupLines.push(line);
+      }
+    }
+
+    const cleanedMarkup = [];
+    for (let line of markupLines) {
+      let cleaned = line.trim();
+      if (cleaned.startsWith('return')) {
+        cleaned = cleaned.slice(6).trim();
+        if (cleaned.startsWith('(')) {
+          cleaned = cleaned.slice(1).trim();
+        }
+      }
+      if (cleaned === '(') continue;
+      if (cleaned === ')' || cleaned === ');' || cleaned === '}' || cleaned === '};') continue;
+      if (cleaned.endsWith(';')) cleaned = cleaned.slice(0, -1);
+      if (cleaned) cleanedMarkup.push(cleaned);
+    }
+
+    const markupOnly = cleanedMarkup.join('\n');
+    let chars = markupOnly;
+    let rootCount = 0;
+    let markupDepth = 0;
+    let idx = 0;
+
+    while (idx < chars.length) {
+      if (chars[idx] === '<') {
+        if (idx + 1 < chars.length && chars[idx + 1] === '!') {
+          idx += 4;
+          while (idx < chars.length && !(chars[idx] === '-' && chars[idx - 1] === '-' && chars[idx - 2] === '>')) {
+            idx++;
+          }
+          idx++;
+          continue;
+        }
+        
+        let isClosing = false;
+        if (idx + 1 < chars.length && chars[idx + 1] === '/') {
+          isClosing = true;
+          idx++;
+        }
+        
+        idx++;
+        let tagContent = '';
+        while (idx < chars.length && chars[idx] !== '>') {
+          tagContent += chars[idx];
+          idx++;
+        }
+        
+        if (chars[idx] === '>') {
+          idx++;
+        }
+        
+        let isSelfClosing = false;
+        if (!isClosing) {
+          if (tagContent.trim().endsWith('/')) {
+            isSelfClosing = true;
+          }
+          if (markupDepth === 0) {
+            rootCount++;
+            if (rootCount > 1) {
+              return "Adjacent JSX elements must be wrapped in a fragment tag <> </>. Like: <> <h1>...</h1> <button>...</button> </>.";
+            }
+          }
+          if (!isSelfClosing) {
+            markupDepth++;
+          }
+        } else {
+          if (markupDepth > 0) {
+            markupDepth--;
+          }
+        }
+      } else {
+        idx++;
+      }
+    }
+
+    return null;
+  }
+
+  function validateSourceAndRun(next) {
+    if (!window.__erm_filename) {
+      next(false);
+      return;
+    }
+    fetch('/__erm_src/' + window.__erm_filename)
+      .then(r => r.ok ? r.text() : '')
+      .then(src => {
+        const error = checkAdjacentJsx(src);
+        if (error) {
+          if (typeof window.__erm_show_error_overlay === 'function') {
+            window.__erm_show_error_overlay({
+              type: 'Failed to compile',
+              file: window.__erm_filename,
+              title: 'An error occurred during template compilation.',
+              message: error
+            });
+            const closeBtn = document.querySelector('.erm-error-close-btn');
+            if (closeBtn) closeBtn.style.display = 'none';
+          }
+        } else {
+          const hasOverlay = !!document.getElementById('erm-error-overlay');
+          const overlay = document.getElementById('erm-error-overlay');
+          if (overlay) overlay.remove();
+          const styleOverlay = document.getElementById('erm-error-overlay-styles');
+          if (styleOverlay) styleOverlay.remove();
+          next(hasOverlay);
+        }
+      })
+      .catch(err => {
+        console.error("Failed to fetch source for validation:", err);
+        next(false);
+      });
+  }
+
   const OVERLAY_CSS = `
 #erm-error-overlay {
   position: fixed;
@@ -380,6 +579,10 @@
     }
   };
 
+  if (window.__erm_filename) {
+    validateSourceAndRun(() => {});
+  }
+
   window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
   window.hmr = {
     data: window.__hmr_data || {},
@@ -438,49 +641,44 @@
           if (found) return;
       }
 
-      fetch(location.href)
-        .then(r => {
-          if (!r.ok || r.status === 500) {
-            return r.text().then(text => {
-              const parser = new DOMParser();
-              const doc = parser.parseFromString(text, 'text/html');
-              const bodyEl = doc.body || doc.documentElement;
-              const file = bodyEl.getAttribute('data-compile-error-file');
-              const message = bodyEl.getAttribute('data-compile-error-message');
-              if (file && message) {
-                if (typeof window.__erm_show_error_overlay === 'function') {
-                  window.__erm_show_error_overlay({
-                    type: 'Failed to compile',
-                    file: file,
-                    title: 'An error occurred during template compilation.',
-                    message: message
-                  });
-                  const closeBtn = document.querySelector('.erm-error-close-btn');
-                  if (closeBtn) closeBtn.style.display = 'none';
+      validateSourceAndRun((wasError) => {
+        fetch(location.href)
+          .then(r => {
+            if (!r.ok || r.status === 500) {
+              return r.text().then(text => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(text, 'text/html');
+                const bodyEl = doc.body || doc.documentElement;
+                const file = bodyEl.getAttribute('data-compile-error-file');
+                const message = bodyEl.getAttribute('data-compile-error-message');
+                if (file && message) {
+                  if (typeof window.__erm_show_error_overlay === 'function') {
+                    window.__erm_show_error_overlay({
+                      type: 'Failed to compile',
+                      file: file,
+                      title: 'An error occurred during template compilation.',
+                      message: message
+                    });
+                    const closeBtn = document.querySelector('.erm-error-close-btn');
+                    if (closeBtn) closeBtn.style.display = 'none';
+                  }
+                } else {
+                  console.error("Server compilation failed:", text);
                 }
-              } else {
-                console.error("Server compilation failed:", text);
-              }
-              throw new Error("Compilation error overlay shown");
-            });
-          }
-          return r.text();
-        })
-        .then(html => {
-          const hasOverlay = !!document.getElementById('erm-error-overlay');
-          const overlay = document.getElementById('erm-error-overlay');
-          if (overlay) overlay.remove();
-          const styleOverlay = document.getElementById('erm-error-overlay-styles');
-          if (styleOverlay) styleOverlay.remove();
+                throw new Error("Compilation error overlay shown");
+              });
+            }
+            return r.text();
+          })
+          .then(html => {
+            if (wasError || !document.querySelector('script.__erm_script') || (document.body.firstElementChild && document.body.firstElementChild.id === 'erm-error-overlay')) {
+              location.reload();
+              return;
+            }
 
-          if (hasOverlay || !document.querySelector('script.__erm_script') || (document.body.firstElementChild && document.body.firstElementChild.id === 'erm-error-overlay')) {
-            location.reload();
-            return;
-          }
-
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(html, 'text/html');
-          document.title = doc.title;
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            document.title = doc.title;
 
           function morph(oldNode, newNode) {
             if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
@@ -603,7 +801,13 @@
           oldAccepts.forEach(cb => { try { cb(); } catch(err) {} });
           
           if (window.__erm_update) window.__erm_update();
+        })
+        .catch(err => {
+          if (err.message !== "Compilation error overlay shown") {
+            console.error("[HMR] Update failed:", err);
+          }
         });
+      });
     }
   };
 
