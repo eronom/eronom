@@ -487,7 +487,7 @@ pub fn process_component_tree(
 ) -> anyhow::Result<ProcessResult> {
     let preprocessed;
     let content = if is_function_template(content) {
-        preprocessed = preprocess_function_template(content);
+        preprocessed = preprocess_function_template(content)?;
         &preprocessed
     } else {
         content
@@ -1445,7 +1445,7 @@ fn process_if_block_at(
 pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let preprocessed;
     let content = if is_function_template(content) {
-        preprocessed = preprocess_function_template(content);
+        preprocessed = preprocess_function_template(content)?;
         &preprocessed
     } else {
         content
@@ -1674,7 +1674,143 @@ fn inject_line_attr(markup: &str, line_num: usize) -> String {
     markup.to_string()
 }
 
-fn preprocess_function_template(content: &str) -> String {
+fn check_adjacent_jsx(markup: &str) -> anyhow::Result<()> {
+    let mut chars = markup.chars().peekable();
+    let mut depth = 0;
+    let mut root_count = 0;
+    let mut in_tag = false;
+    let mut in_quote: Option<char> = None;
+    let mut braces_depth = 0;
+    
+    while let Some(c) = chars.next() {
+        if let Some(quote_char) = in_quote {
+            if c == '\\' {
+                let _ = chars.next(); // Skip escaped char
+            } else if c == quote_char {
+                in_quote = None;
+            }
+            continue;
+        }
+        
+        if in_tag {
+            if c == '"' || c == '\'' || c == '`' {
+                in_quote = Some(c);
+            } else if c == '{' {
+                braces_depth += 1;
+            } else if c == '}' {
+                if braces_depth > 0 {
+                    braces_depth -= 1;
+                }
+            } else if braces_depth == 0 && c == '>' {
+                in_tag = false;
+            }
+            continue;
+        }
+        
+        if c == '{' {
+            braces_depth += 1;
+        } else if c == '}' {
+            if braces_depth > 0 {
+                braces_depth -= 1;
+            }
+        } else if braces_depth == 0 && c == '<' {
+            let mut is_closing = false;
+            let mut is_self_closing = false;
+            let mut is_comment = false;
+            
+            if let Some(&next_c) = chars.peek() {
+                if next_c == '/' {
+                    is_closing = true;
+                    let _ = chars.next();
+                } else if next_c == '!' {
+                    is_comment = true;
+                    let _ = chars.next();
+                }
+            }
+            
+            if is_comment {
+                let mut hyphen_count = 0;
+                while let Some(comment_c) = chars.next() {
+                    if comment_c == '-' {
+                        hyphen_count += 1;
+                    } else if comment_c == '>' && hyphen_count >= 2 {
+                        break;
+                    } else {
+                        hyphen_count = 0;
+                    }
+                }
+                continue;
+            }
+            
+            let mut tag_content = String::new();
+            let mut temp_braces = 0;
+            let mut temp_quote: Option<char> = None;
+            
+            while let Some(&tag_c) = chars.peek() {
+                if let Some(q) = temp_quote {
+                    if tag_c == '\\' {
+                        let _ = chars.next();
+                        let _ = chars.next();
+                    } else if tag_c == q {
+                        temp_quote = None;
+                        let _ = chars.next();
+                    } else {
+                        let _ = chars.next();
+                    }
+                } else {
+                    if tag_c == '"' || tag_c == '\'' || tag_c == '`' {
+                        temp_quote = Some(tag_c);
+                        let _ = chars.next();
+                    } else if tag_c == '{' {
+                        temp_braces += 1;
+                        let _ = chars.next();
+                    } else if tag_c == '}' {
+                        if temp_braces > 0 {
+                            temp_braces -= 1;
+                        }
+                        let _ = chars.next();
+                    } else if temp_braces == 0 && tag_c == '>' {
+                        break;
+                    } else {
+                        tag_content.push(tag_c);
+                        let _ = chars.next();
+                    }
+                }
+            }
+            
+            if chars.peek() == Some(&'>') {
+                let _ = chars.next();
+            }
+            
+            if !is_closing {
+                if tag_content.trim().ends_with('/') {
+                    is_self_closing = true;
+                }
+                
+                if depth == 0 {
+                    root_count += 1;
+                    if root_count > 1 {
+                        anyhow::bail!(
+                            "Adjacent ERM elements must be wrapped in a fragment tag <> </>. Like: <> <h1>...</h1> <button>...</button> </>."
+                        );
+                    }
+                }
+                
+                if !is_self_closing {
+                    depth += 1;
+                }
+            } else {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
         regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
@@ -1782,7 +1918,7 @@ fn preprocess_function_template(content: &str) -> String {
         let mut script_mode = true;
 
         for (line_idx, line) in body_str.lines().enumerate() {
-            let line_num = body_start_line + line_idx + 1;
+            let line_num = body_start_line + line_idx;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 if script_mode {
@@ -1835,6 +1971,9 @@ fn preprocess_function_template(content: &str) -> String {
             }
         }
 
+        let markup_only: String = cleaned_markup.iter().map(|(m, _)| m.as_str()).collect::<Vec<&str>>().join("\n");
+        check_adjacent_jsx(&markup_only)?;
+
         let param_binding = if !params_str.trim().is_empty() {
             format!("let {} = useParams();\n", params_str.trim())
         } else {
@@ -1866,9 +2005,9 @@ fn preprocess_function_template(content: &str) -> String {
             result.push('\n');
         }
 
-        result
+        Ok(result)
     } else {
-        content.to_string()
+        Ok(content.to_string())
     }
 }
 
@@ -1890,13 +2029,27 @@ mod tests {
         </style>
         "#;
         
-        let preprocessed = preprocess_function_template(content);
+        let preprocessed = preprocess_function_template(content).unwrap();
         println!("PREPROCESSED:\n{}", preprocessed);
         assert!(preprocessed.contains("<script>"));
         assert!(preprocessed.contains("let params = useParams();"));
         assert!(preprocessed.contains("let name = useState('world');"));
-        assert!(preprocessed.contains("<h1>Hello {name} from {params.id}</h1>"));
+        assert!(preprocessed.contains("<h1 data-erm-line=\"6\">Hello {name} from {params.id}</h1>"));
         assert!(preprocessed.contains("<style>"));
+    }
+
+    #[test]
+    fn test_function_based_template_adjacent_error() {
+        let content = r#"
+        export fn page(params) {
+            <h1>Hello</h1>
+            <button>Click</button>
+        }
+        "#;
+        let preprocessed = preprocess_function_template(content);
+        assert!(preprocessed.is_err());
+        let err_msg = preprocessed.unwrap_err().to_string();
+        assert!(err_msg.contains("Adjacent ERM elements must be wrapped"));
     }
 
     #[test]

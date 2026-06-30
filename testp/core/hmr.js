@@ -603,6 +603,11 @@
           oldAccepts.forEach(cb => { try { cb(); } catch(err) {} });
           
           if (window.__erm_update) window.__erm_update();
+        })
+        .catch(err => {
+          if (err.message !== "Compilation error overlay shown") {
+            console.error("[HMR] Update failed:", err);
+          }
         });
     }
   };
