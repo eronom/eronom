@@ -444,20 +444,20 @@
             return r.text().then(text => {
               const parser = new DOMParser();
               const doc = parser.parseFromString(text, 'text/html');
-              const overlay = doc.getElementById('erm-error-overlay');
-              if (overlay) {
-                const style = doc.querySelector('style');
-                if (style) {
-                  const existingStyle = document.getElementById('erm-error-overlay-styles') || document.querySelector('style[id="erm-error-overlay-styles"]');
-                  if (!existingStyle) {
-                    const newStyle = style.cloneNode(true);
-                    newStyle.id = 'erm-error-overlay-styles';
-                    document.head.appendChild(newStyle);
-                  }
+              const bodyEl = doc.body || doc.documentElement;
+              const file = bodyEl.getAttribute('data-compile-error-file');
+              const message = bodyEl.getAttribute('data-compile-error-message');
+              if (file && message) {
+                if (typeof window.__erm_show_error_overlay === 'function') {
+                  window.__erm_show_error_overlay({
+                    type: 'Failed to compile',
+                    file: file,
+                    title: 'An error occurred during template compilation.',
+                    message: message
+                  });
+                  const closeBtn = document.querySelector('.erm-error-close-btn');
+                  if (closeBtn) closeBtn.style.display = 'none';
                 }
-                const existingOverlay = document.getElementById('erm-error-overlay');
-                if (existingOverlay) existingOverlay.remove();
-                (document.body || document.documentElement).appendChild(overlay.cloneNode(true));
               } else {
                 console.error("Server compilation failed:", text);
               }
@@ -554,13 +554,15 @@
             const newScript = document.createElement('script');
             newScript.text = s.innerHTML;
             if (s.className) newScript.className = s.className;
-            if (s.src) {
-               let sUrl = new URL(s.src, location.href);
-               sUrl.searchParams.set('t', new Date().getTime());
-               newScript.src = sUrl.href;
-            }
             try {
-              document.head.appendChild(newScript);
+              if (s.src) {
+                let sUrl = new URL(s.src, location.href);
+                sUrl.searchParams.set('t', new Date().getTime());
+                newScript.src = sUrl.href;
+                document.head.appendChild(newScript);
+              } else {
+                (0, eval)(s.innerHTML);
+              }
             } catch (err) {
               console.error("[HMR] Script evaluation failed:", err);
               if (typeof window.__erm_show_error_overlay === 'function') {
@@ -571,7 +573,7 @@
                 if (match) {
                   const inlineLine = parseInt(match[1], 10);
                   const inlineCol = match[2] ? parseInt(match[2], 10) : 0;
-                  const scriptLines = newScript.text.split('\n');
+                  const scriptLines = s.innerHTML.split('\n');
                   for (let idx = inlineLine - 1; idx >= 0; idx--) {
                     const lineContent = scriptLines[idx] || '';
                     const commentMatch = lineContent.match(/\/\/\s*line:(\d+)\s*$/);
@@ -605,4 +607,27 @@
     }
   };
 
+  const checkInitialCompileError = () => {
+    const bodyEl = document.body || document.documentElement;
+    if (bodyEl) {
+      const file = bodyEl.getAttribute('data-compile-error-file');
+      const message = bodyEl.getAttribute('data-compile-error-message');
+      if (file && message) {
+        window.__erm_show_error_overlay({
+          type: 'Failed to compile',
+          file: file,
+          title: 'An error occurred during template compilation.',
+          message: message
+        });
+        const closeBtn = document.querySelector('.erm-error-close-btn');
+        if (closeBtn) closeBtn.style.display = 'none';
+      }
+    }
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', checkInitialCompileError);
+  } else {
+    checkInitialCompileError();
+  }
 })();

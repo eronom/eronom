@@ -3,7 +3,6 @@ export fn page(params) {
     
     <>
         <h1>The Count is {count} </h1>
-        <NonExistentComponent />
         <button onClick={() => { count++ }}>Increment</button>
     </>
 }
