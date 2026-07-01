@@ -39,6 +39,9 @@ pub enum AsyncResult {
     Fetch(Result<String, String>),
     ResolvePromise(*mut crate::vm::gc::GcObject, Value),
     ResolveFetchPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+    ResolveTextPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+    ResolveJsonPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+    ResolveWritePromise(*mut crate::vm::gc::GcObject, Result<usize, String>),
 }
 
 pub struct EventLoopTask {
@@ -1538,7 +1541,10 @@ impl VM {
             for task in tasks {
                 match task.result {
                     AsyncResult::ResolvePromise(promise_ptr, _) |
-                    AsyncResult::ResolveFetchPromise(promise_ptr, _) => {
+                    AsyncResult::ResolveFetchPromise(promise_ptr, _) |
+                    AsyncResult::ResolveTextPromise(promise_ptr, _) |
+                    AsyncResult::ResolveJsonPromise(promise_ptr, _) |
+                    AsyncResult::ResolveWritePromise(promise_ptr, _) => {
                         let resolved_value = match task.result {
                             AsyncResult::ResolvePromise(_, val) => val,
                             AsyncResult::ResolveFetchPromise(_, res) => {
@@ -1554,6 +1560,42 @@ impl VM {
                                     Err(e) => {
                                         eprintln!("[FetchAsyncPromise] Error: {}", e);
                                         Value::null()
+                                    }
+                                }
+                            }
+                            AsyncResult::ResolveTextPromise(_, res) => {
+                                match res {
+                                    Ok(content) => {
+                                        let ptr = crate::vm::gc::get_or_create_string(&content);
+                                        Value::string(ptr)
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[FileTextPromise] Error: {}", e);
+                                        Value::null()
+                                    }
+                                }
+                            }
+                            AsyncResult::ResolveJsonPromise(_, res) => {
+                                match res {
+                                    Ok(content) => {
+                                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                            crate::vm::gc::json_to_value(json_val)
+                                        } else {
+                                            Value::null()
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[FileJsonPromise] Error: {}", e);
+                                        Value::null()
+                                    }
+                                }
+                            }
+                            AsyncResult::ResolveWritePromise(_, res) => {
+                                match res {
+                                    Ok(bytes) => Value::number(bytes as f64),
+                                    Err(e) => {
+                                        eprintln!("[FileWritePromise] Error: {}", e);
+                                        Value::number(0.0)
                                     }
                                 }
                             }
@@ -1635,7 +1677,7 @@ impl VM {
                         }
                         args.extend(task.args);
                     }
-                    _ => unreachable!(),
+                    _ => {}
                 };
 
                 if let Err(e) = self.call_function_reentrant(task.callback, args) {
