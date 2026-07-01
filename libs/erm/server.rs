@@ -16,7 +16,17 @@ static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 unsafe extern "C" {
     fn er_http_init_with_callbacks(
-        http_req_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
+        http_req_cb: extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+        ),
         ws_open_cb: extern "C" fn(*mut c_void, *const c_char, usize),
         ws_message_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
         ws_close_cb: extern "C" fn(*mut c_void, *const c_char, usize, i32, *const c_char, usize),
@@ -70,6 +80,10 @@ extern "C" fn dev_http_callback(
     method_len: usize,
     path_ptr: *const c_char,
     path_len: usize,
+    headers_ptr: *const c_char,
+    headers_len: usize,
+    body_ptr: *const c_char,
+    body_len: usize,
 ) {
     let method = unsafe {
         let slice = std::slice::from_raw_parts(method_ptr as *const u8, method_len);
@@ -79,8 +93,19 @@ extern "C" fn dev_http_callback(
         let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
         std::str::from_utf8(slice).unwrap_or("")
     };
+    let headers = unsafe {
+        let slice = std::slice::from_raw_parts(headers_ptr as *const u8, headers_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    let body = unsafe {
+        if body_ptr.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(body_ptr as *const u8, body_len)
+        }
+    };
 
-    if let Err(e) = handle_dev_request(res, method, path) {
+    if let Err(e) = handle_dev_request(res, method, path, headers, body) {
         let err_msg = format!("Internal Server Error: {}", e);
         let err_bytes = err_msg.as_bytes();
         unsafe {
@@ -309,6 +334,8 @@ fn execute_api_route(
     res: *mut c_void,
     method: &str,
     target: &str,
+    headers: &str,
+    body: &[u8],
     file_path: &Path,
 ) -> anyhow::Result<()> {
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
@@ -398,6 +425,7 @@ fn execute_api_route(
         active.set(&mut vm as *mut crate::vm::execute::VM);
     });
 
+    let headers_c = CString::new(headers).unwrap();
     unsafe {
         crate::vm::er_http::er_http_on_request(
             res,
@@ -405,6 +433,10 @@ fn execute_api_route(
             method.len(),
             target_c.as_ptr(),
             target.len(),
+            headers_c.as_ptr(),
+            headers.len(),
+            body.as_ptr() as *const c_char,
+            body.len(),
         );
     }
 
@@ -419,7 +451,7 @@ fn execute_api_route(
     Ok(())
 }
 
-fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::Result<()> {
+fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &str, body: &[u8]) -> anyhow::Result<()> {
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
     let default_file = DEFAULT_FILE.lock().unwrap().clone();
     let is_prod = *IS_PROD.lock().unwrap();
@@ -576,7 +608,7 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
                 }
             }
         } else if file_path.extension().map_or(false, |ext| ext == "er") {
-            if let Err(e) = execute_api_route(res, method, target, &file_path) {
+            if let Err(e) = execute_api_route(res, method, target, headers, body, &file_path) {
                 let err_msg = format!("Error running route: {}", e);
                 unsafe {
                     let status = CString::new("500 Internal Server Error").unwrap();

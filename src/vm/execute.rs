@@ -619,6 +619,58 @@ impl VM {
                         }
                         *frame_slots.add(dest_reg_out) = result;
                         ip_val = ip_out;
+                    } else if callee.is_method_file() {
+                        let ptr = (callee.0 & super::value::PTR_MASK & !3) as *mut GcObject;
+                        let method_sub_tag = callee.0 & 3;
+
+                        let path_str = match &(*ptr).data {
+                            GcData::Object(map) => {
+                                let name_key = super::gc::get_or_create_string("name");
+                                let name_val = map.get(&super::value::MapKey(Value::string(name_key))).cloned().unwrap_or(Value::null());
+                                match name_val.as_str() {
+                                    Some(s) => s.to_string(),
+                                    None => "".to_string(),
+                                }
+                            }
+                            GcData::Struct(s) => {
+                                let name_key = super::gc::get_or_create_string("name");
+                                let name_val = s.get_field(Value::string(name_key)).unwrap_or(Value::null());
+                                match name_val.as_str() {
+                                    Some(s) => s.to_string(),
+                                    None => "".to_string(),
+                                }
+                            }
+                            _ => "".to_string(),
+                        };
+
+                        let result = match method_sub_tag {
+                            0 => { // exists
+                                Value::boolean(std::path::Path::new(&path_str).exists())
+                            }
+                            1 => { // text
+                                if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                    let ptr = super::gc::gc_allocate(GcData::String(std::rc::Rc::from(content)));
+                                    Value::string(ptr)
+                                } else {
+                                    Value::null()
+                                }
+                            }
+                            2 => { // json
+                                if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                        super::gc::json_to_value(json_val)
+                                    } else {
+                                        Value::null()
+                                    }
+                                } else {
+                                    Value::null()
+                                }
+                            }
+                            _ => Value::null(),
+                        };
+                        reload_stack!();
+                        *frame_slots.add(dest_reg_out) = result;
+                        ip_val = ip_out;
                     } else if callee.is_array_method_push() || callee.is_array_method_pop() {
                         let ptr = callee.as_gc_ptr();
                         let result = match &mut (*ptr).data {
@@ -1017,10 +1069,37 @@ impl VM {
                                     }
                                 }
                             }
+                            let mut is_file_method = false;
+                            let mut file_method_sub_tag = 0;
+                            if name == "exists" || name == "text" || name == "json" {
+                                let is_file = match &(*ptr).data {
+                                    GcData::Object(map) => {
+                                        let file_key = super::gc::get_or_create_string("_isFile");
+                                        map.get(&super::value::MapKey(Value::string(file_key)))
+                                            .map(|v| v.as_boolean())
+                                            .unwrap_or(false)
+                                    }
+                                    GcData::Struct(s) => {
+                                        s.descriptor.name.as_ref() == "File"
+                                    }
+                                    _ => false,
+                                };
+                                if is_file {
+                                    is_file_method = true;
+                                    file_method_sub_tag = match name {
+                                        "exists" => 0,
+                                        "text" => 1,
+                                        "json" => 2,
+                                        _ => 3,
+                                    };
+                                }
+                            }
                             if is_json_method {
                                 *frame_slots.add(dest) = Value(super::value::TAG_METHOD_JSON | (ptr as u64 & super::value::PTR_MASK));
                             } else if is_text_method {
                                 *frame_slots.add(dest) = Value(super::value::TAG_METHOD_TEXT | (ptr as u64 & super::value::PTR_MASK));
+                            } else if is_file_method && file_method_sub_tag < 3 {
+                                *frame_slots.add(dest) = Value(super::value::TAG_METHOD_FILE | (ptr as u64 & super::value::PTR_MASK & !3) | file_method_sub_tag);
                             } else {
                                 match &(*ptr).data {
                                     GcData::Object(map) => {
@@ -1314,6 +1393,58 @@ impl VM {
                             if self.stack.is_empty() {
                                 return Ok(Value::null());
                             }
+                            *frame_slots.add(dest) = result;
+                        } else if callee.is_method_file() {
+                            let ptr = (callee.0 & super::value::PTR_MASK & !3) as *mut GcObject;
+                            let method_sub_tag = callee.0 & 3;
+
+                            let path_str = match &(*ptr).data {
+                                GcData::Object(map) => {
+                                    let name_key = super::gc::get_or_create_string("name");
+                                    let name_val = map.get(&super::value::MapKey(Value::string(name_key))).cloned().unwrap_or(Value::null());
+                                    match name_val.as_str() {
+                                        Some(s) => s.to_string(),
+                                        None => "".to_string(),
+                                    }
+                                }
+                                GcData::Struct(s) => {
+                                    let name_key = super::gc::get_or_create_string("name");
+                                    let name_val = s.get_field(Value::string(name_key)).unwrap_or(Value::null());
+                                    match name_val.as_str() {
+                                        Some(s) => s.to_string(),
+                                        None => "".to_string(),
+                                    }
+                                }
+                                _ => "".to_string(),
+                            };
+
+                            sync_stack!();
+                            let result = match method_sub_tag {
+                                0 => { // exists
+                                    Value::boolean(std::path::Path::new(&path_str).exists())
+                                }
+                                1 => { // text
+                                    if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                        let ptr = super::gc::gc_allocate(GcData::String(std::rc::Rc::from(content)));
+                                        Value::string(ptr)
+                                    } else {
+                                        Value::null()
+                                    }
+                                }
+                                2 => { // json
+                                    if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                            super::gc::json_to_value(json_val)
+                                        } else {
+                                            Value::null()
+                                        }
+                                    } else {
+                                        Value::null()
+                                    }
+                                }
+                                _ => Value::null(),
+                            };
+                            reload_stack!();
                             *frame_slots.add(dest) = result;
                         } else if callee.is_method_json() || callee.is_method_text() {
                             let ptr = callee.as_gc_ptr();

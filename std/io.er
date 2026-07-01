@@ -39,7 +39,7 @@ export const Io = {
   }
 }
 
-struct File {
+export struct File {
   name: string,
   type: string,
   size: int,

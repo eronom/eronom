@@ -1,0 +1,34 @@
+import { router } from "std/http"
+
+
+let app = router()
+
+app.post('/upload', (c) => {
+  let file = c.req.files.avatar
+  if (file) {
+    let exists = file.exists()
+    let content = file.text()
+    
+    // Write/copy the file to a permanent location to test writing
+    let written = write("uploaded_avatar.txt", file)
+    
+    return c.json({
+      success: true,
+      exists: exists,
+      type: file.type,
+      size: file.size,
+      name: file.name,
+      content: content,
+      written: written
+    })
+  } else {
+    return c.json({
+      success: false,
+      error: "No file uploaded"
+    })
+  }
+})
+
+app.listen(3000, () => {
+  print('Server running on port 3000')
+})
