@@ -85,6 +85,9 @@
             el.innerText = strVal;
           }
         }
+        if (!b.alwaysRun) {
+          b.initialized = true;
+        }
       } catch (e) {
         console.error("Binding update failed:", e);
         if (typeof window.__erm_show_error_overlay === 'function') {
@@ -117,6 +120,9 @@
             let strVal = val === undefined ? '' : String(val);
             if (el.innerText !== strVal) {
               el.innerText = strVal;
+            }
+            if (!b.alwaysRun) {
+              b.initialized = true;
             }
           } catch (e) {
             console.error("Delayed binding update failed:", e);
@@ -265,6 +271,7 @@
     const binding = {
       id: 'effect-' + Math.random().toString(36).substr(2, 9),
       cleanup: null,
+      alwaysRun: !depsFn,
       update: () => {
         if (typeof binding.cleanup === 'function') {
           try {
@@ -320,6 +327,7 @@
             }
           }
         }
+        binding.initialized = true;
       }
     };
 
@@ -331,6 +339,10 @@
     } finally {
       popListener();
     }
+  };
+
+  window.onMount = function (callback) {
+    window.useEffect(callback, () => []);
   };
 
   window.useParams = function () { return window.__erm_params || {}; };
@@ -354,7 +366,7 @@
 
   window.__erm_update = function () {
     window.__erm_bindings.forEach(b => {
-      if (!b.initialized) {
+      if (!b.initialized || b.alwaysRun) {
         queuedBindings.add(b);
       }
     });

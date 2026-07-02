@@ -28,16 +28,13 @@
 
 
 
-    document.addEventListener('DOMContentLoaded', () => {
-        const app = document.getElementById('app');
-        if (app) {
-            const timeDisplay = document.createElement('h3');
-            app.appendChild(timeDisplay);
-            setInterval(() => {
-                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-            }, 1);
-        }
-    
+    let time = useState("");
+    onMount(() => {
+        const id = setInterval(() => {
+            time = new Date().toLocaleTimeString();
+        }, 1000);
+
+        return () => clearInterval(id);
     });
 
     // TEST: Background updates now work automatically!
@@ -66,7 +63,7 @@ gvfcjb hyun</p>
 </div>
 
 <p>HMRsss is now EFddFIaaCIENTss and CLEAN! Edited <code>index.erm</code>.</p>
-<div id="app"></div>
+<h3>Current time: {time}</h3>
 <h2>Hellloo web added h2 tag</h2>
 <p>Random: {randomNum}</p>
 <h2>Hwwwssselaaaaaallsvvsssssssvvvvsssssssssssooooooovvvvaa wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
