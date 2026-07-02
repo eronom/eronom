@@ -844,7 +844,7 @@ pub fn process_component_tree(
 
     // Transform scripts
     for s in scripts.iter_mut() {
-        let mut transformed = s.clone();
+        let mut transformed = transform_use_effect(s);
         for sig in &state_vars {
             transformed = inject_state_name(&transformed, sig);
         }
@@ -1874,6 +1874,98 @@ fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
     }
 }
 
+pub fn transform_use_effect(input: &str) -> String {
+    let mut res = String::new();
+    let mut i = 0;
+    while i < input.len() {
+        if input[i..].starts_with("useEffect") {
+            let mut j = i + 9;
+            while j < input.len() {
+                let c = input[j..].chars().next().unwrap();
+                if c.is_whitespace() {
+                    j += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if j < input.len() && input[j..].starts_with('(') {
+                let mut depth = 0;
+                let mut brace_depth = 0;
+                let mut bracket_depth = 0;
+                let mut in_string: Option<char> = None;
+                let mut k = j;
+                let mut comma_pos = None;
+                let mut array_start_pos = None;
+                let mut array_end_pos = None;
+                
+                while k < input.len() {
+                    let c = input[k..].chars().next().unwrap();
+                    if let Some(quote) = in_string {
+                        if c == quote && (k == 0 || input[..k].chars().last() != Some('\\')) {
+                            in_string = None;
+                        }
+                        k += c.len_utf8();
+                        continue;
+                    }
+                    if c == '"' || c == '\'' || c == '`' {
+                        in_string = Some(c);
+                        k += 1;
+                        continue;
+                    }
+                    
+                    if c == '(' {
+                        depth += 1;
+                    } else if c == ')' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    } else if c == '{' {
+                        brace_depth += 1;
+                    } else if c == '}' {
+                        brace_depth -= 1;
+                    } else if c == '[' {
+                        bracket_depth += 1;
+                        if depth == 1 && brace_depth == 0 && bracket_depth == 1 {
+                            if comma_pos.is_some() {
+                                array_start_pos = Some(k);
+                            }
+                        }
+                    } else if c == ']' {
+                        if depth == 1 && brace_depth == 0 && bracket_depth == 1 && array_start_pos.is_some() {
+                            array_end_pos = Some(k);
+                        }
+                        bracket_depth -= 1;
+                    } else if c == ',' {
+                        if depth == 1 && brace_depth == 0 && bracket_depth == 0 {
+                            comma_pos = Some(k);
+                        }
+                    }
+                    k += c.len_utf8();
+                }
+                
+                if let (Some(cp), Some(asp), Some(aep)) = (comma_pos, array_start_pos, array_end_pos) {
+                    let callback_part = &input[j + 1..cp];
+                    let deps_content = &input[asp + 1..aep];
+                    
+                    res.push_str("useEffect(");
+                    res.push_str(&transform_use_effect(callback_part));
+                    res.push_str(", () => [");
+                    res.push_str(&transform_use_effect(deps_content));
+                    res.push_str("])");
+                    
+                    i = k + 1;
+                    continue;
+                }
+            }
+        }
+        let c = input[i..].chars().next().unwrap();
+        res.push(c);
+        i += c.len_utf8();
+    }
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2033,6 +2125,22 @@ mod tests {
         assert!(!html_part.contains("Inner True"));
         assert!(res.contains("erm-if-0"));
         assert!(res.contains("erm-if-1"));
+    }
+
+    #[test]
+    fn test_transform_use_effect_fn() {
+        assert_eq!(
+            transform_use_effect("useEffect(() => { console.log(count); }, [count])"),
+            "useEffect(() => { console.log(count); }, () => [count])"
+        );
+        assert_eq!(
+            transform_use_effect("useEffect(() => {}, [])"),
+            "useEffect(() => {}, () => [])"
+        );
+        assert_eq!(
+            transform_use_effect("useEffect(() => { const x = [1, 2]; }, [count, x])"),
+            "useEffect(() => { const x = [1, 2]; }, () => [count, x])"
+        );
     }
 }
 
