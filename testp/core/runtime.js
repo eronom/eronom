@@ -85,6 +85,9 @@
             el.innerText = strVal;
           }
         }
+        if (!b.alwaysRun) {
+          b.initialized = true;
+        }
       } catch (e) {
         console.error("Binding update failed:", e);
         if (typeof window.__erm_show_error_overlay === 'function') {
@@ -117,6 +120,9 @@
             let strVal = val === undefined ? '' : String(val);
             if (el.innerText !== strVal) {
               el.innerText = strVal;
+            }
+            if (!b.alwaysRun) {
+              b.initialized = true;
             }
           } catch (e) {
             console.error("Delayed binding update failed:", e);
@@ -258,6 +264,87 @@
     return stateProxy;
   };
 
+  window.useEffect = function (callback, depsFn) {
+    let lastDeps = undefined;
+    let hasRun = false;
+
+    const binding = {
+      id: 'effect-' + Math.random().toString(36).substr(2, 9),
+      cleanup: null,
+      alwaysRun: !depsFn,
+      update: () => {
+        if (typeof binding.cleanup === 'function') {
+          try {
+            binding.cleanup();
+          } catch (e) {
+            console.error("Effect cleanup failed:", e);
+          }
+          binding.cleanup = null;
+        }
+
+        let shouldRun = false;
+        let currentDeps = undefined;
+
+        if (depsFn) {
+          try {
+            currentDeps = depsFn();
+          } catch (e) {
+            console.error("Effect deps evaluation failed:", e);
+          }
+        }
+
+        if (!hasRun) {
+          shouldRun = true;
+          hasRun = true;
+        } else if (depsFn && currentDeps && lastDeps) {
+          shouldRun = currentDeps.some((dep, idx) => dep !== lastDeps[idx]);
+        } else if (!depsFn) {
+          shouldRun = true;
+        }
+
+        lastDeps = currentDeps;
+
+        if (shouldRun) {
+          if (depsFn) {
+            pushListener(null);
+          }
+          try {
+            binding.cleanup = callback();
+          } catch (e) {
+            console.error("Effect callback failed:", e);
+            if (typeof window.__erm_show_error_overlay === 'function') {
+              window.__erm_show_error_overlay({
+                type: 'Effect Error',
+                file: 'useEffect',
+                title: e.name || 'TypeError',
+                message: e.message || String(e),
+                stack: e.stack || ''
+              });
+            }
+          } finally {
+            if (depsFn) {
+              popListener();
+            }
+          }
+        }
+        binding.initialized = true;
+      }
+    };
+
+    window.__erm_bindings.push(binding);
+
+    pushListener(binding);
+    try {
+      binding.update();
+    } finally {
+      popListener();
+    }
+  };
+
+  window.onMount = function (callback) {
+    window.useEffect(callback, () => []);
+  };
+
   window.useParams = function () { return window.__erm_params || {}; };
 
   window.__erm_bindings = [];
@@ -279,7 +366,7 @@
 
   window.__erm_update = function () {
     window.__erm_bindings.forEach(b => {
-      if (!b.initialized) {
+      if (!b.initialized || b.alwaysRun) {
         queuedBindings.add(b);
       }
     });
@@ -490,6 +577,11 @@
       reconcileNodes(document.body, Array.from(doc.body.childNodes));
 
       // Reset bindings and events for the new page
+      window.__erm_bindings.forEach(b => {
+        if (b && typeof b.cleanup === 'function') {
+          try { b.cleanup(); } catch (e) { console.error("Effect cleanup failed on page navigate:", e); }
+        }
+      });
       window.__erm_bindings = [];
       window.__erm_bindings.push = function (binding) {
         return Array.prototype.push.call(this, binding);

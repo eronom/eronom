@@ -19,20 +19,22 @@
     let showExtraContent = useState(true);
     let porridge = useState({ temperature: 180 });
     
-
-
-
-
-    document.addEventListener('DOMContentLoaded', () => {
-        const app = document.getElementById('app');
-        if (app) {
-            const timeDisplay = document.createElement('h3');
-            app.appendChild(timeDisplay);
-            setInterval(() => {
-                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-            }, 1);
-        }
+    let effectMessage = useState('Effect has not run yet');
+    useEffect(() => {
+        effectMessage = "Effect triggered! Count is now: " + count;
+    }, [count]);
     
+
+
+
+
+    let time = useState("");
+    onMount(() => {
+        const id = setInterval(() => {
+            time = new Date().toLocaleTimeString();
+        }, 1000);
+
+        return () => clearInterval(id);
     });
 
     // TEST: Background updates now work automatically!
@@ -57,10 +59,11 @@ gvfcjb hyun</p>
     <button onClick={()=>{count++}}>Count {count}</button>
     <p>Double (Count * 2): <strong>{double}</strong></p>
     <p>Background Timer: <strong>{timer}s</strong></p>
+    <p>useEffect status: <strong style="color: #2ecc71;">{effectMessage}</strong></p>
 </div>
 
 <p>HMRsss is now EFddFIaaCIENTss and CLEAN! Edited <code>index.erm</code>.</p>
-<div id="app"></div>
+<h3>Current time: {time}</h3>
 <h2>Hellloo web added h2 tag</h2>
 <p>Random: {randomNum}</p>
 <h2>Hwwwssselaaaaaallsvvsssssssvvvvsssssssssssooooooovvvvaa wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
