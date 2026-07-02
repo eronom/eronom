@@ -1,0 +1,103 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Eronom Markup",
+  "scopeName": "source.erm",
+  "patterns": [
+    {
+      "include": "#script-block"
+    },
+    {
+      "include": "#style-block"
+    },
+    {
+      "include": "#control-blocks"
+    },
+    {
+      "include": "#interpolation"
+    },
+    {
+      "include": "#html-tags"
+    },
+    {
+      "include": "text.html.basic"
+    }
+  ],
+  "repository": {
+    "script-block": {
+      "begin": "(<)(script)\\b([^>]*)(\\s*)(\\>)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.script.html" },
+        "3": { "patterns": [{ "include": "text.html.basic#tag-stuff" }] },
+        "5": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "end": "(</)(script)(\\>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.script.html" },
+        "3": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "name": "meta.embedded.block.javascript",
+      "patterns": [
+        {
+          "include": "source.js"
+        }
+      ]
+    },
+    "style-block": {
+      "begin": "(<)(style)\\b([^>]*)(\\s*)(\\>)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.style.html" },
+        "3": { "patterns": [{ "include": "text.html.basic#tag-stuff" }] },
+        "5": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "end": "(</)(style)(\\>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.style.html" },
+        "3": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "name": "meta.embedded.block.css",
+      "patterns": [
+        {
+          "include": "source.css"
+        }
+      ]
+    },
+    "control-blocks": {
+      "patterns": [
+        {
+          "name": "keyword.control.er",
+          "match": "\\b(if|else\\s+if|else|for|in)\\b"
+        }
+      ]
+    },
+    "interpolation": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.bracket.curly.begin.er" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.bracket.curly.end.er" }
+      },
+      "name": "meta.embedded.expression.er",
+      "patterns": [
+        {
+          "include": "source.js"
+        }
+      ]
+    },
+    "html-tags": {
+      "patterns": [
+        {
+          "include": "text.html.basic#tag-stuff"
+        },
+        {
+          "include": "text.html.basic#tag-names"
+        }
+      ]
+    }
+  }
+}

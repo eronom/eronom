@@ -1,0 +1,65 @@
+{
+  "Script Block": {
+    "prefix": "script",
+    "body": [
+      "<script>",
+      "\t$0",
+      "</script>"
+    ],
+    "description": "Eronom script tag"
+  },
+  "Style Block": {
+    "prefix": "style",
+    "body": [
+      "<style>",
+      "\t$0",
+      "</style>"
+    ],
+    "description": "Eronom style tag"
+  },
+  "UseState": {
+    "prefix": "useState",
+    "body": [
+      "let ${1:stateName} = useState(${2:initialValue});"
+    ],
+    "description": "Reactive state variable"
+  },
+  "If Block (Markup)": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Conditional block in Eronom Markup"
+  },
+  "If Else Block (Markup)": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition} {",
+      "\t$2",
+      "} else {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Conditional If-Else block in Eronom Markup"
+  },
+  "For Loop (Markup)": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:list} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "For loop block in Eronom Markup"
+  },
+  "For Loop Index (Markup)": {
+    "prefix": "fori",
+    "body": [
+      "for ${1:item}, ${2:i} in ${3:list} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "For loop block with index in Eronom Markup"
+  }
+}

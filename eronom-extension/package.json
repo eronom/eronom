@@ -1,0 +1,88 @@
+{
+  "name": "eronom-extension",
+  "displayName": "Eronom",
+  "description": "Language support for the Eronom framework including syntax highlighting, snippets, and commands for .er and .erm files.",
+  "version": "0.1.0",
+  "publisher": "eronom",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "eronom",
+        "aliases": ["Eronom", "er"],
+        "extensions": [".er"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "eronom-markup",
+        "aliases": ["Eronom Markup", "erm"],
+        "extensions": [".erm"],
+        "configuration": "./erm-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "eronom",
+        "scopeName": "source.er",
+        "path": "./syntaxes/er.tmLanguage.json"
+      },
+      {
+        "language": "eronom-markup",
+        "scopeName": "source.erm",
+        "path": "./syntaxes/erm.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.javascript": "javascript",
+          "meta.embedded.block.css": "css"
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "eronom",
+        "path": "./snippets/er.code-snippets"
+      },
+      {
+        "language": "eronom-markup",
+        "path": "./snippets/erm.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "eronom.init",
+        "title": "Eronom: Initialize Project"
+      },
+      {
+        "command": "eronom.build",
+        "title": "Eronom: Build Project"
+      },
+      {
+        "command": "eronom.dev",
+        "title": "Eronom: Start Development Server"
+      },
+      {
+        "command": "eronom.start",
+        "title": "Eronom: Start Production Server"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run package",
+    "compile": "bun esbuild.js",
+    "watch": "bun esbuild.js --watch",
+    "package": "bun esbuild.js --production",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@types/node": "^18.11.18",
+    "typescript": "^5.0.0",
+    "esbuild": "^0.18.0"
+  }
+}
