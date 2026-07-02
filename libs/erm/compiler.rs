@@ -1287,6 +1287,72 @@ fn find_last_if_block(res_html: &str) -> Option<(usize, String, usize)> {
     last
 }
 
+
+fn wrap_unquoted_braces(html: &str) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    let mut in_tag = false;
+    let mut in_quote = None;
+
+    while i < html.len() {
+        let c = html[i..].chars().next().unwrap();
+
+        if !in_tag {
+            if c == '<' {
+                in_tag = true;
+                in_quote = None;
+            }
+            out.push(c);
+            i += c.len_utf8();
+        } else {
+            if c == '>' && in_quote.is_none() {
+                in_tag = false;
+                out.push(c);
+                i += c.len_utf8();
+                continue;
+            }
+
+            if c == '"' || c == '\'' {
+                if let Some(q) = in_quote {
+                    if q == c {
+                        in_quote = None;
+                    }
+                } else {
+                    in_quote = Some(c);
+                }
+                out.push(c);
+                i += c.len_utf8();
+                continue;
+            }
+
+            if in_quote.is_none() && i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && !html[i..].starts_with("on") {
+                if let Some(caps) = get_re_attr_brace().captures(&html[i..]) {
+                    let attr_name = caps.get(1).unwrap().as_str();
+                    let start_expr = i + attr_name.len() + 2;
+                    let mut depth = 1;
+                    let mut j = start_expr;
+                    while j < html.len() && depth > 0 {
+                        let cur_c = html[j..].chars().next().unwrap();
+                        if cur_c == '{' { depth += 1; }
+                        else if cur_c == '}' { depth -= 1; }
+                        j += cur_c.len_utf8();
+                    }
+                    if depth == 0 {
+                        let expr = &html[start_expr..j-1];
+                        out.push_str(&format!("{}=\"{{{}}}\" ", attr_name, expr));
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    out
+}
+
 fn process_for_block_at(
     start_idx: usize,
     res_html: &mut String,
@@ -1305,6 +1371,7 @@ fn process_for_block_at(
     };
     let absolute_close_idx = body_start_idx + close_idx;
     let body = remaining[..close_idx].to_string();
+    let body = wrap_unquoted_braces(&body);
 
     let in_idx = match header.find(" in ") {
         Some(idx) => idx,
@@ -1380,6 +1447,7 @@ fn process_if_block_at(
         let remaining = &res_html[current_body_start..];
         if let Some(close_idx) = find_matching_close_brace(remaining) {
             let body = remaining[..close_idx].to_string();
+            let body = wrap_unquoted_braces(&body);
             branches.push((current_cond.clone(), body));
             let absolute_close_idx = current_body_start + close_idx;
             if let Some(transition) = find_else_transition(res_html, absolute_close_idx + 1) {
@@ -1398,7 +1466,9 @@ fn process_if_block_at(
                 break;
             }
         } else {
-            branches.push((current_cond.clone(), remaining.to_string()));
+            let body = remaining.to_string();
+            let body = wrap_unquoted_braces(&body);
+            branches.push((current_cond.clone(), body));
             block_end_idx = res_html.len();
             break;
         }
