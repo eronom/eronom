@@ -1896,8 +1896,8 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     }
 
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
-        assets.push_str("<script src=\"/core/runtime.js\" class=\"__erm_script\"></script>\n");
-        assets.push_str("<script class=\"__erm_script\">\n");
+        assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
+        assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/core/runtime.js';\n");
         assets.push_str("{\n");
         for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
         assets.push_str("}\n");
@@ -2388,7 +2388,7 @@ mod tests {
         let params = std::collections::HashMap::new();
         let res = process_erm_component(".", content, false, &params).unwrap();
         println!("RES HTML:\n{}", res);
-        let html_part = res.split("<script class=\"__erm_script\">").next().unwrap();
+        let html_part = res.split("<script type=\"module\" class=\"__erm_script\">").next().unwrap();
         assert!(html_part.contains("just right!"));
         assert!(!html_part.contains("too hot!"));
         assert!(!html_part.contains("too cold!"));
@@ -2413,7 +2413,7 @@ mod tests {
         let params = std::collections::HashMap::new();
         let res = process_erm_component(".", content, false, &params).unwrap();
         println!("NESTED RES:\n{}", res);
-        let html_part = res.split("<script class=\"__erm_script\">").next().unwrap();
+        let html_part = res.split("<script type=\"module\" class=\"__erm_script\">").next().unwrap();
         assert!(html_part.contains("Inner False"));
         assert!(!html_part.contains("Inner True"));
         assert!(res.contains("erm-if-0"));

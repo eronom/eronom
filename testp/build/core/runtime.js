@@ -1,4 +1,3 @@
-(() => {
   window.__hmr_data = window.__hmr_data || { states: {} };
   if (!window.__hmr_data.states) window.__hmr_data.states = {};
 
@@ -234,7 +233,7 @@
 
   const statesRegistry = new Map();
 
-  window.useState = function (val, name) {
+  const useState = function (val, name) {
     if (name && statesRegistry.has(name)) {
       return statesRegistry.get(name);
     }
@@ -255,7 +254,7 @@
     return stateObj;
   };
 
-  window.effect = (fn) => {
+  const effect = (fn) => {
     const binding = {
       id: 'effect-' + Math.random().toString(36).substr(2, 9),
       deps: new Set(),
@@ -271,7 +270,7 @@
     }
   };
 
-  window.useEffect = function (callback, depsFn) {
+  const useEffect = function (callback, depsFn) {
     let lastDeps = undefined;
     let hasRun = false;
 
@@ -348,11 +347,11 @@
     }
   };
 
-  window.onMount = function (callback) {
-    window.useEffect(callback, () => []);
+  const onMount = function (callback) {
+    useEffect(callback, () => []);
   };
 
-  window.useParams = function () { return window.__erm_params || {}; };
+  const useParams = function () { return window.__erm_params || {}; };
 
   window.__erm_bindings = [];
   window.__erm_bindings.push = function (binding) {
@@ -605,6 +604,9 @@
       scripts.forEach(script => {
         const newScript = document.createElement('script');
         newScript.className = '__erm_script';
+        if (script.type) {
+          newScript.type = script.type;
+        }
         newScript.text = script.text;
         document.head.appendChild(newScript);
         newScript.remove();
@@ -673,4 +675,5 @@
       });
     }
   });
-})();
+
+export { useState, useEffect, onMount, useParams, effect };
