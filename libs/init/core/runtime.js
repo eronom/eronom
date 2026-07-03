@@ -234,7 +234,7 @@
 
   const statesRegistry = new Map();
 
-  window.track = function (val, name) {
+  window.useState = function (val, name) {
     if (name && statesRegistry.has(name)) {
       return statesRegistry.get(name);
     }
@@ -254,8 +254,6 @@
     }
     return stateObj;
   };
-
-  window.useState = window.track;
 
   window.effect = (fn) => {
     const binding = {

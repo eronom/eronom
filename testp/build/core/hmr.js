@@ -79,9 +79,7 @@
         const startsWithMarkup = trimmed.startsWith('<') ||
                                  trimmed.startsWith('if ') ||
                                  trimmed.startsWith('for ') ||
-                                 trimmed.startsWith('return') ||
-                                 trimmed.startsWith('{#if') ||
-                                 trimmed.startsWith('{#for');
+                                 trimmed.startsWith('return');
         if (startsWithMarkup) {
           scriptMode = false;
         }

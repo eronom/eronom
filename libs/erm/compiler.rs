@@ -2089,9 +2089,7 @@ fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
                 let starts_with_markup = trimmed.starts_with('<')
                     || trimmed.starts_with("if ")
                     || trimmed.starts_with("for ")
-                    || trimmed.starts_with("return")
-                    || trimmed.starts_with("{#if")
-                    || trimmed.starts_with("{#for");
+                    || trimmed.starts_with("return");
                 if starts_with_markup {
                     script_mode = false;
                 }
