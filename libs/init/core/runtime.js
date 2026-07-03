@@ -556,6 +556,9 @@
   // Client-side Router / Navigation Interceptor
   async function navigate(path, push = true) {
     try {
+      if (window.__hmr_data) {
+        window.__hmr_data.states = {};
+      }
       const res = await fetch(path);
       const html = await res.text();
 
