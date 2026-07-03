@@ -579,7 +579,7 @@ fn build_dir_recursive(
 
                     let content = fs::read_to_string(&path)?;
                     let parent_dir = path.parent().unwrap().to_string_lossy();
-                    match compiler::process_erm_component(&parent_dir, &content, true, &std::collections::HashMap::new()) {
+                    match compiler::process_erm_component(path.to_str().unwrap_or(&parent_dir), &content, true, &std::collections::HashMap::new()) {
                         Ok(processed) => {
                             let mut html_dest = dest_path.clone();
                             if name_str == "page.erm" || name_str == "index.erm" {

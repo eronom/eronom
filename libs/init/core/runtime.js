@@ -143,19 +143,38 @@
     });
   }
 
-  window.useState = function (val, name) {
-    if (name && window.__hmr_data.states[name] !== undefined) {
-      val = window.__hmr_data.states[name];
+  class Signal {
+    constructor(val, name) {
+      this._val = val;
+      this.id = name;
+      this.defaultValue = val;
+      this.subscribers = new Set();
     }
 
-    const subscribers = new Set();
-
-    function notify() {
-      subscribers.forEach(b => queueUpdate(b));
+    get value() {
+      if (activeListener) {
+        this.subscribers.add(activeListener);
+        activeListener.deps = activeListener.deps || new Set();
+        activeListener.deps.add(this.subscribers);
+      }
+      if (Array.isArray(this._val)) {
+        return this.makeArrayProxy(this._val);
+      }
+      return this._val;
     }
 
-    // Helper to proxy array mutations
-    function makeArrayProxy(arr) {
+    set value(newVal) {
+      if (this._val !== newVal) {
+        this._val = newVal;
+        if (this.id) {
+          window.__hmr_data.states[this.id] = newVal;
+        }
+        this.subscribers.forEach(b => queueUpdate(b));
+      }
+    }
+
+    makeArrayProxy(arr) {
+      const self = this;
       return new Proxy(arr, {
         get(target, prop) {
           let res = target[prop];
@@ -164,7 +183,10 @@
             if (methods.includes(prop)) {
               return (...args) => {
                 const result = target[prop].apply(target, args);
-                notify();
+                if (self.id) {
+                  window.__hmr_data.states[self.id] = self._val;
+                }
+                self.subscribers.forEach(b => queueUpdate(b));
                 return result;
               };
             }
@@ -174,94 +196,81 @@
         },
         set(target, prop, newVal) {
           target[prop] = newVal;
-          notify();
+          if (self.id) {
+            window.__hmr_data.states[self.id] = self._val;
+          }
+          self.subscribers.forEach(b => queueUpdate(b));
           return true;
         }
       });
     }
 
-    if (typeof val === 'function') {
-      const stateObj = {
-        _getter: val,
-        id: name,
-        defaultValue: undefined,
-        get value() {
-          if (activeListener) {
-            subscribers.add(activeListener);
-            activeListener.deps = activeListener.deps || new Set();
-            activeListener.deps.add(subscribers);
-          }
-          return this._getter();
-        },
-        toString() { return this.value; },
-        valueOf() { return this.value; },
-        [Symbol.toPrimitive]() { return this.value; }
-      };
-      if (name) {
-        window[name] = stateObj;
-      }
-      return stateObj;
+    toString() { return this.value; }
+    valueOf() { return this.value; }
+    [Symbol.toPrimitive]() { return this.value; }
+  }
+
+  class DerivedSignal {
+    constructor(getter, name) {
+      this._getter = getter;
+      this.id = name;
+      this.defaultValue = undefined;
+      this.subscribers = new Set();
     }
 
-    const container = {
-      _val: val,
-      id: name,
-      defaultValue: val,
-      toString() { return this._val; },
-      valueOf() { return this._val; },
-      [Symbol.toPrimitive]() { return this._val; }
-    };
-
-    const stateProxy = new Proxy(container, {
-      get(target, prop) {
-        if (prop === 'value') {
-          if (activeListener) {
-            subscribers.add(activeListener);
-            activeListener.deps = activeListener.deps || new Set();
-            activeListener.deps.add(subscribers);
-          }
-          if (Array.isArray(target._val)) {
-            return makeArrayProxy(target._val);
-          }
-          return target._val;
-        }
-        if (prop === 'id') {
-          return target.id;
-        }
-        if (prop === 'defaultValue') {
-          return target.defaultValue;
-        }
-        let res = target[prop];
-        if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
-          const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
-          if (methods.includes(prop)) {
-            return (...args) => {
-              const result = target._val[prop].apply(target._val, args);
-              notify();
-              return result;
-            };
-          }
-        }
-        return res !== undefined ? res : target._val[prop];
-      },
-      set(target, prop, newVal) {
-        if (prop === 'value') {
-          if (target._val !== newVal) {
-            target._val = newVal;
-            if (name) window.__hmr_data.states[name] = newVal;
-            notify();
-          }
-          return true;
-        }
-        target[prop] = newVal;
-        return true;
+    get value() {
+      if (activeListener) {
+        this.subscribers.add(activeListener);
+        activeListener.deps = activeListener.deps || new Set();
+        activeListener.deps.add(this.subscribers);
       }
-    });
+      return this._getter();
+    }
+
+    toString() { return this.value; }
+    valueOf() { return this.value; }
+    [Symbol.toPrimitive]() { return this.value; }
+  }
+
+  const statesRegistry = new Map();
+
+  window.track = function (val, name) {
+    if (name && statesRegistry.has(name)) {
+      return statesRegistry.get(name);
+    }
+    if (name && window.__hmr_data.states[name] !== undefined) {
+      val = window.__hmr_data.states[name];
+    }
+
+    let stateObj;
+    if (typeof val === 'function') {
+      stateObj = new DerivedSignal(val, name);
+    } else {
+      stateObj = new Signal(val, name);
+    }
 
     if (name) {
-      window[name] = stateProxy;
+      statesRegistry.set(name, stateObj);
     }
-    return stateProxy;
+    return stateObj;
+  };
+
+  window.useState = window.track;
+
+  window.effect = (fn) => {
+    const binding = {
+      id: 'effect-' + Math.random().toString(36).substr(2, 9),
+      deps: new Set(),
+      alwaysRun: true,
+      update: fn
+    };
+    window.__erm_bindings.push(binding);
+    pushListener(binding);
+    try {
+      fn();
+    } finally {
+      popListener();
+    }
   };
 
   window.useEffect = function (callback, depsFn) {

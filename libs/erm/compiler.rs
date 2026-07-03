@@ -31,6 +31,111 @@ fn get_re_export() -> &'static regex::Regex {
 
 
 
+fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
+    let path_buf = if import_path.starts_with("@pages/") {
+        let mut curr = std::path::PathBuf::from(base_dir);
+        let mut resolved = None;
+        loop {
+            let pages_dir = curr.join("app").join("pages");
+            if pages_dir.exists() {
+                resolved = Some(pages_dir.join(&import_path["@pages/".len()..]));
+                break;
+            }
+            let pages_dir_alt = curr.join("pages");
+            if pages_dir_alt.exists() && curr.join("config.er").exists() {
+                resolved = Some(pages_dir_alt.join(&import_path["@pages/".len()..]));
+                break;
+            }
+            if let Some(parent) = curr.parent() {
+                curr = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+        resolved
+    } else if import_path.starts_with("@components/") {
+        let mut curr = std::path::PathBuf::from(base_dir);
+        let mut resolved = None;
+        loop {
+            let comp_dir = curr.join("app").join("components");
+            if comp_dir.exists() {
+                resolved = Some(comp_dir.join(&import_path["@components/".len()..]));
+                break;
+            }
+            let comp_dir_alt = curr.join("components");
+            if comp_dir_alt.exists() && curr.join("config.er").exists() {
+                resolved = Some(comp_dir_alt.join(&import_path["@components/".len()..]));
+                break;
+            }
+            if let Some(parent) = curr.parent() {
+                curr = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+        resolved
+    } else {
+        let p = std::path::PathBuf::from(base_dir).join(import_path);
+        Some(p)
+    };
+
+    path_buf.map(|p| std::fs::canonicalize(&p).unwrap_or(p).to_string_lossy().into_owned())
+}
+
+fn parse_tag_attributes(tag_content: &str) -> HashMap<String, String> {
+    let mut attrs = HashMap::new();
+    static RE_ATTR: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE_ATTR.get_or_init(|| {
+        regex::Regex::new(r#"([a-zA-Z0-9_\-]+)\s*=\s*(?:\{([^{}]+)\}|"([^"]*)"|'([^']*)'|([^\s>]+))"#).unwrap()
+    });
+    for cap in re.captures_iter(tag_content) {
+        let name = cap.get(1).unwrap().as_str().to_string();
+        let val = if let Some(expr) = cap.get(2) {
+            format!("() => ({})", expr.as_str())
+        } else if let Some(dq) = cap.get(3) {
+            format!("() => \"{}\"", dq.as_str())
+        } else if let Some(sq) = cap.get(4) {
+            format!("() => '{}'", sq.as_str())
+        } else if let Some(raw) = cap.get(5) {
+            format!("() => ({})", raw.as_str())
+        } else {
+            "() => null".to_string()
+        };
+        attrs.insert(name, val);
+    }
+    attrs
+}
+
+fn scope_component_ids(html: &mut String, scripts: &mut Vec<String>) {
+    static RE_ID: OnceLock<regex::Regex> = OnceLock::new();
+    let re_id = RE_ID.get_or_init(|| regex::Regex::new(r#"id\s*=\s*["']([^"']+)["']"#).unwrap());
+    let mut ids = Vec::new();
+    for cap in re_id.captures_iter(html) {
+        let id_val = cap.get(1).unwrap().as_str().to_string();
+        if !ids.contains(&id_val) {
+            ids.push(id_val);
+        }
+    }
+    for id in &ids {
+        let old_pattern_dq = format!("id=\"{}\"", id);
+        let new_pattern_dq = format!("id=\"__erm_anchor_id_prefix__{}\"", id);
+        *html = html.replace(&old_pattern_dq, &new_pattern_dq);
+        let old_pattern_sq = format!("id='{}'", id);
+        let new_pattern_sq = format!("id='__erm_anchor_id_prefix__{}'", id);
+        *html = html.replace(&old_pattern_sq, &new_pattern_sq);
+    }
+    for id in &ids {
+        let dq_pattern = format!("\"{}\"", id);
+        let dq_replace = format!("anchorId + \"{}\"", id);
+        let sq_pattern = format!("'{}'", id);
+        let sq_replace = format!("anchorId + '{}'", id);
+        for s in scripts.iter_mut() {
+            *s = s.replace(&dq_pattern, &dq_replace);
+            *s = s.replace(&sq_pattern, &sq_replace);
+        }
+    }
+}
+
 pub fn scope_css(css: &str, scope_id: &str) -> anyhow::Result<String> {
     let mut result = String::new();
     let mut i = 0;
@@ -206,7 +311,7 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
     res
 }
 
-pub fn inject_state_name(input: &str, name: &str) -> String {
+pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
     let mut res = String::new();
     let mut i = 0;
     while i < input.len() {
@@ -243,9 +348,9 @@ pub fn inject_state_name(input: &str, name: &str) -> String {
                     if depth == 0 {
                         res.push_str(&input[i..j - 1]);
                         res.push_str(", \"");
-                        res.push_str(name);
+                        res.push_str(scoped_name);
                         res.push_str("\")");
-                        res.push_str(&inject_state_name(&input[j..], name));
+                        res.push_str(&inject_state_name(&input[j..], name, scoped_name));
                         return res;
                     }
                 }
@@ -477,13 +582,14 @@ fn find_else_transition(content: &str, start_pos: usize) -> Option<ElseTransitio
 
 
 pub fn process_component_tree(
-    base_dir: &str,
+    file_path: &str,
     content: &str,
-    visited: &mut HashMap<String, bool>,
+    visited: &mut HashMap<String, String>,
     slot_html: Option<&str>,
     params: &HashMap<String, String>,
     if_counter: &mut usize,
     for_counter: &mut usize,
+    state_var_sources: &mut HashMap<String, String>,
 ) -> anyhow::Result<ProcessResult> {
     let preprocessed;
     let content = if is_function_template(content) {
@@ -492,6 +598,28 @@ pub fn process_component_tree(
     } else {
         content
     };
+    
+    let path = std::path::Path::new(file_path);
+    let base_dir = if path.is_file() {
+        path.parent().unwrap().to_string_lossy().into_owned()
+    } else {
+        file_path.to_string()
+    };
+
+    let relative_path = if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(rel) = std::path::Path::new(file_path).strip_prefix(&cwd) {
+            rel.to_string_lossy().into_owned()
+        } else {
+            file_path.to_string()
+        }
+    } else {
+        file_path.to_string()
+    };
+    let file_id: String = relative_path
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+
     // 1. Initialize local ErmEval and parse parameters/scripts for SSR block evaluation
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();
@@ -533,8 +661,9 @@ pub fn process_component_tree(
             for cap in get_re_state().captures_iter(script_content) {
                 let var_name = cap.get(1).unwrap().as_str().to_string();
                 if !local_state_vars.contains(&var_name) {
-                    local_state_vars.push(var_name);
+                    local_state_vars.push(var_name.clone());
                 }
+                state_var_sources.insert(var_name, file_path.to_string());
             }
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
@@ -544,7 +673,7 @@ pub fn process_component_tree(
                         let name = name.trim().to_string();
                         if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
                             if !local_state_vars.contains(&name) {
-                                local_state_vars.push(name);
+                                  local_state_vars.push(name);
                             }
                         }
                     }
@@ -591,6 +720,7 @@ pub fn process_component_tree(
     let mut state_vars = Vec::new();
 
     let mut component_imports = HashMap::new();
+    let mut state_variable_imports = HashMap::new();
 
     let mut search_idx = 0;
     while let Some(start_idx) = content[search_idx..].find("<script") {
@@ -614,8 +744,12 @@ pub fn process_component_tree(
                     let comp_path_val = caps.get(2).unwrap().as_str().to_string();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
-                        if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
-                            component_imports.insert(name, comp_path_val.clone());
+                        if !name.is_empty() {
+                            if name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                                component_imports.insert(name, comp_path_val.clone());
+                            } else {
+                                state_variable_imports.insert(name, comp_path_val.clone());
+                            }
                         }
                     }
                 }
@@ -625,7 +759,6 @@ pub fn process_component_tree(
             break;
         }
     }
-
 
 
     let mut html_buf = String::new();
@@ -695,7 +828,7 @@ pub fn process_component_tree(
                     break;
                 }
             };
-            let tag_content = &content[i + 1..i + tag_end];
+            let tag_content = content[i + 1..i + tag_end].trim();
             if !tag_content.is_empty() {
                 if tag_content.starts_with('/') {
                     let closing_tag_name = tag_content[1..].trim();
@@ -757,7 +890,7 @@ pub fn process_component_tree(
                         let mut comp_path = None;
 
                         if let Some(import_path) = component_imports.get(tag_name) {
-                            let path_buf = std::path::PathBuf::from(base_dir).join(import_path);
+                            let path_buf = std::path::PathBuf::from(&base_dir).join(import_path);
                             if path_buf.extension().map_or(true, |ext| ext != "erm") {
                                 if path_buf.exists() {
                                     comp_path = Some(path_buf);
@@ -776,7 +909,7 @@ pub fn process_component_tree(
                         }
 
                         if comp_path.is_none() {
-                            let mut curr = std::path::PathBuf::from(base_dir);
+                            let mut curr = std::path::PathBuf::from(&base_dir);
                             loop {
                                 let p_comp = curr.join(&comp_filename);
                                 if p_comp.exists() {
@@ -802,20 +935,59 @@ pub fn process_component_tree(
                         if let Some(comp_path) = comp_path {
                             let canonical_comp_path = std::fs::canonicalize(&comp_path).unwrap_or(comp_path);
                             let comp_path_str = canonical_comp_path.to_string_lossy().into_owned();
-                            if !visited.contains_key(&comp_path_str) {
-                                visited.insert(comp_path_str.clone(), true);
+
+                            let anchor_id = format!("erm-anchor-{}-{}", tag_name.to_lowercase(), i);
+                            let attrs = parse_tag_attributes(tag_content);
+                            let mut props_fields = Vec::new();
+                            for (k, v) in attrs {
+                                props_fields.push(format!("{}: {}", k, v));
+                            }
+                            let props_js = if props_fields.is_empty() {
+                                "{}".to_string()
+                            } else {
+                                format!("{{ {} }}", props_fields.join(", "))
+                            };
+
+                            let sub_html = if !visited.contains_key(&comp_path_str) {
+                                visited.insert(comp_path_str.clone(), "".to_string()); // placeholder to avoid infinite recursion
                                 let comp_content = std::fs::read_to_string(&canonical_comp_path)?;
-                                let comp_dir = canonical_comp_path.parent().unwrap().to_string_lossy();
-                                let mut sub_res = process_component_tree(&comp_dir, &comp_content, visited, None, params, if_counter, for_counter)?;
-                                html_buf.push_str(&sub_res.html);
-                                scripts.append(&mut sub_res.scripts);
+                                let mut sub_res = process_component_tree(&comp_path_str, &comp_content, visited, None, params, if_counter, for_counter, state_var_sources)?;
+                                println!("DEBUG: compiled component {} scripts count = {}", tag_name, sub_res.scripts.len());
+                                for (idx, s) in sub_res.scripts.iter().enumerate() {
+                                    println!("DEBUG: script {} = {:?}", idx, s);
+                                }
+                                let mut sub_html = sub_res.html;
+                                let mut sub_scripts = sub_res.scripts;
+                                scope_component_ids(&mut sub_html, &mut sub_scripts);
+                                
+                                let sub_combined_script = sub_scripts.join("\n");
+                                let component_def = format!(
+                                    "window.{} = function(anchorId, props) {{\n  try {{\n    let el = document.getElementById(anchorId);\n    if (el && el.innerHTML.trim() === \"\") {{\n      el.innerHTML = `{}`;\n    }}\n  }} catch(e) {{ console.error(e); }}\n  {}\n}};\n",
+                                    tag_name, sub_html.replace("__erm_anchor_id_prefix__", "${anchorId}").replace("`", "\\`"), sub_combined_script
+                                );
+                                
+                                scripts.push(component_def);
                                 styles.append(&mut sub_res.styles);
                                 for v in sub_res.state_vars {
                                     if !state_vars.contains(&v) { state_vars.push(v); }
                                 }
-                                i += tag_end + 1;
-                                continue;
-                            }
+                                
+                                visited.insert(comp_path_str.clone(), sub_html.clone());
+                                sub_html
+                            } else {
+                                visited.get(&comp_path_str).cloned().unwrap_or_default()
+                            };
+
+                            let sub_html_scoped = sub_html.replace("__erm_anchor_id_prefix__", &format!("__erm_anchor_id_prefix__{}", anchor_id));
+                            html_buf.push_str(&format!(
+                                "<div id=\"__erm_anchor_id_prefix__{}\" class=\"erm-anchor\">{}</div>",
+                                anchor_id, sub_html_scoped
+                            ));
+
+                            scripts.push(format!("{}(anchorId + \"{}\", {});", tag_name, anchor_id, props_js));
+
+                            i += tag_end + 1;
+                            continue;
                         } else {
                             anyhow::bail!("Component '{}' not found in components/ or current directory.", tag_name);
                         }
@@ -846,7 +1018,29 @@ pub fn process_component_tree(
     for s in scripts.iter_mut() {
         let mut transformed = transform_use_effect(s);
         for sig in &state_vars {
-            transformed = inject_state_name(&transformed, sig);
+            let scoped_name = if let Some(import_path) = state_variable_imports.get(sig) {
+                if let Some(resolved_path) = resolve_import_path(&base_dir, import_path) {
+                    let rel_path = if let Ok(cwd) = std::env::current_dir() {
+                        if let Ok(rel) = std::path::Path::new(&resolved_path).strip_prefix(&cwd) {
+                            rel.to_string_lossy().into_owned()
+                        } else {
+                            resolved_path.clone()
+                        }
+                    } else {
+                        resolved_path.clone()
+                    };
+                    let imported_file_id: String = rel_path
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                        .collect();
+                    format!("{}__{}", imported_file_id, sig)
+                } else {
+                    format!("{}__{}", file_id, sig)
+                }
+            } else {
+                format!("{}__{}", file_id, sig)
+            };
+            transformed = inject_state_name(&transformed, sig, &scoped_name);
         }
         for sig in &state_vars {
             transformed = replace_word(&transformed, sig, ".value");
@@ -1512,7 +1706,7 @@ fn process_if_block_at(
     Ok(())
 }
 
-pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
+pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let preprocessed;
     let content = if is_function_template(content) {
         preprocessed = preprocess_function_template(content)?;
@@ -1520,7 +1714,16 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     } else {
         content
     };
+    
+    let path = std::path::Path::new(file_path);
+    let base_dir = if path.is_file() {
+        path.parent().unwrap().to_str().unwrap()
+    } else {
+        file_path
+    };
+
     let mut visited = HashMap::new();
+    let mut state_var_sources = HashMap::new();
     
     // Automatic Layout support: search for layout.erm in current and parent directories.
     let mut layout_path = None;
@@ -1548,8 +1751,8 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
             let layout_content = std::fs::read_to_string(&lp)?;
             if content.trim() != layout_content.trim() {
-                let page_res = process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?;
-                let mut layout_res = process_component_tree(&lp.parent().unwrap().to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html), params, &mut if_counter, &mut for_counter)?;
+                let page_res = process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
+                let mut layout_res = process_component_tree(&lp.to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html), params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
                 
                 for s in page_res.scripts {
                     if !layout_res.scripts.contains(&s) { layout_res.scripts.push(s); }
@@ -1562,13 +1765,13 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                 }
                 layout_res
             } else {
-                process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
+                process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?
             }
         } else {
-            process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
+            process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?
         }
     } else {
-        process_component_tree(base_dir, content, &mut visited, None, params, &mut if_counter, &mut for_counter)?
+        process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?
     };
 
     let mut ev = ErmEval::new();
@@ -1650,7 +1853,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
     scripts_to_inject.insert(0, params_js);
 
     let combined_scripts = scripts_to_inject.join("\n");
-    let mut declarations = String::new();
+    let mut declarations = String::from("let anchorId = \"\";\n");
     for v in &result.state_vars {
         if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+{}\b"#, v)) {
             if !re_decl.is_match(&combined_scripts) {
@@ -1663,9 +1866,27 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
                     "submitted" => "false",
                     _ => "null",
                 };
+                let scoped_name = if let Some(source_file) = state_var_sources.get(v) {
+                    let rel_path = if let Ok(cwd) = std::env::current_dir() {
+                        if let Ok(rel) = std::path::Path::new(source_file).strip_prefix(&cwd) {
+                            rel.to_string_lossy().into_owned()
+                        } else {
+                            source_file.clone()
+                        }
+                    } else {
+                        source_file.clone()
+                    };
+                    let source_file_id: String = rel_path
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                        .collect();
+                    format!("{}__{}", source_file_id, v)
+                } else {
+                    v.clone()
+                };
                 declarations.push_str(&format!(
-                    "let {} = window.{} || useState({}, \"{}\");\n",
-                    v, v, fallback_val, v
+                    "let {} = useState({}, \"{}\");\n",
+                    v, fallback_val, scoped_name
                 ));
             }
         }
@@ -1683,7 +1904,7 @@ pub fn process_erm_component(base_dir: &str, content: &str, is_prod: bool, param
         assets.push_str("</script>\n");
     }
 
-    let mut output = res_html;
+    let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
     
     if !is_prod {
         let hmr_script = "<script src=\"/core/hmr.js\"></script>";
@@ -2070,7 +2291,8 @@ mod tests {
         let mut if_counter = 0;
         let mut for_counter = 0;
         let params = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
+        let mut state_var_sources = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter, &mut state_var_sources).unwrap();
         assert!(res.html.contains("<a"));
         assert!(res.html.contains("href=\"/contact\""));
         assert!(res.html.contains(">Contact</a>"));
@@ -2088,10 +2310,11 @@ mod tests {
         let mut if_counter = 0;
         let mut for_counter = 0;
         let params = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
+        let mut state_var_sources = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter, &mut state_var_sources).unwrap();
         assert!(res.state_vars.contains(&"count".to_string()));
         let combined = res.scripts.join("\n");
-        assert!(combined.contains("useState(0, \"count\")"));
+        assert!(combined.contains("useState(0, \"___count\")"));
         assert!(combined.contains("count.value++"));
     }
 
@@ -2111,7 +2334,8 @@ mod tests {
         let mut if_counter = 0;
         let mut for_counter = 0;
         let params = std::collections::HashMap::new();
-        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
+        let mut state_var_sources = std::collections::HashMap::new();
+        let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter, &mut state_var_sources).unwrap();
         assert!(!res.html.contains("<>"));
         assert!(!res.html.contains("</>"));
         assert!(res.html.contains("Hello from function based template!</h1>"));
@@ -2141,10 +2365,11 @@ mod tests {
         let mut if_counter = 0;
         let mut for_counter = 0;
         let params = std::collections::HashMap::new();
-        let tree_res = process_component_tree("libs/init/app/pages", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter).unwrap();
+        let mut state_var_sources = std::collections::HashMap::new();
+        let tree_res = process_component_tree("libs/init/app/pages/contact.erm", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter, &mut state_var_sources).unwrap();
         assert!(!tree_res.html.is_empty());
         let params = std::collections::HashMap::new();
-        let res = process_erm_component("libs/init/app/pages", &content, true, &params).unwrap();
+        let res = process_erm_component("libs/init/app/pages/contact.erm", &content, true, &params).unwrap();
         assert!(!res.is_empty());
     }
 

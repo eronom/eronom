@@ -1,0 +1,8 @@
+export fn page(params) {
+    let count = useState(0);
+    
+
+           <h1>The Count is {count} </h1>
+        <button onClick={() => { count++ }}>Increment</button>
+   
+}

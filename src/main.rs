@@ -240,7 +240,7 @@ fn native_render(args: Vec<Value>) -> Value {
         return Value::string(ptr);
     }
     
-    match eronom::compiler::process_erm_component(&base_dir, &content, true, &params_map) {
+    match eronom::compiler::process_erm_component(resolved_path.to_str().unwrap_or(&base_dir), &content, true, &params_map) {
         Ok(html) => {
             let ptr = backend::gc::get_or_create_string(&html);
             Value::string(ptr)

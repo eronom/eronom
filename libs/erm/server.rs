@@ -315,7 +315,7 @@ fn native_render(args: Vec<Value>) -> Value {
     match fs::read_to_string(&path) {
         Ok(content) => {
             let parent = path.parent().unwrap().to_string_lossy();
-            match compiler::process_erm_component(&parent, &content, is_prod, &params_map) {
+            match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
                 Ok(html) => {
                     let ptr = crate::vm::gc::get_or_create_string(&html);
                     Value::string(ptr)
@@ -532,8 +532,7 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &st
     if file_path.exists() && file_path.is_file() {
         if file_path.extension().map_or(false, |ext| ext == "erm") {
             let content = fs::read_to_string(&file_path)?;
-            let parent = file_path.parent().unwrap().to_string_lossy();
-            match compiler::process_erm_component(&parent, &content, is_prod, &params) {
+            match compiler::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params) {
                 Ok(processed) => {
                     let rel_path = file_path.strip_prefix(&base_path)
                         .map(|p| p.to_string_lossy().into_owned())
