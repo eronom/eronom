@@ -669,11 +669,15 @@ pub fn process_component_tree(
                 let line_trimmed = line.trim();
                 if let Some(caps) = get_re_import_named().captures(line_trimmed) {
                     let names_str = caps.get(1).unwrap().as_str();
+                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
                         if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
                             if !local_state_vars.contains(&name) {
-                                  local_state_vars.push(name);
+                                  local_state_vars.push(name.clone());
+                            }
+                            if let Some(resolved_path) = resolve_import_path(&base_dir, &comp_path_val) {
+                                state_var_sources.insert(name, resolved_path);
                             }
                         }
                     }
@@ -748,7 +752,10 @@ pub fn process_component_tree(
                             if name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
                                 component_imports.insert(name, comp_path_val.clone());
                             } else {
-                                state_variable_imports.insert(name, comp_path_val.clone());
+                                state_variable_imports.insert(name.clone(), comp_path_val.clone());
+                                if let Some(resolved_path) = resolve_import_path(&base_dir, &comp_path_val) {
+                                    state_var_sources.insert(name, resolved_path);
+                                }
                             }
                         }
                     }
@@ -784,11 +791,15 @@ pub fn process_component_tree(
                 let line_trimmed = line.trim();
                 if let Some(caps) = get_re_import_named().captures(line_trimmed) {
                     let names_str = caps.get(1).unwrap().as_str();
+                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
                         if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
                             if !state_vars.contains(&name) {
-                                state_vars.push(name);
+                                state_vars.push(name.clone());
+                            }
+                            if let Some(resolved_path) = resolve_import_path(&base_dir, &comp_path_val) {
+                                state_var_sources.insert(name, resolved_path);
                             }
                         }
                     }

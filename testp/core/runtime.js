@@ -618,6 +618,11 @@
 
       _initReactivity();
       window.__erm_update();
+
+      setTimeout(() => {
+        _initReactivity();
+        window.__erm_update();
+      }, 50);
     } catch (err) {
       console.error("Navigation failed:", err);
       window.location.href = path;
