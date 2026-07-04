@@ -10,6 +10,9 @@
       "include": "#style-block"
     },
     {
+      "include": "#top-level-script"
+    },
+    {
       "include": "#control-blocks"
     },
     {
@@ -23,6 +26,20 @@
     }
   ],
   "repository": {
+    "top-level-script": {
+      "name": "meta.embedded.block.javascript",
+      "begin": "\\A",
+      "end": "(?m)^(?=\\s*(?:\\<|return\\b|if\\s|for\\s))",
+      "patterns": [
+        {
+          "name": "keyword.declaration.er",
+          "match": "\\b(fn|struct|embed|interface)\\b"
+        },
+        {
+          "include": "source.js"
+        }
+      ]
+    },
     "script-block": {
       "begin": "(<)(script)\\b([^>]*)(\\s*)(\\>)",
       "beginCaptures": {
