@@ -377,7 +377,6 @@ fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
 struct PageRoute {
     rel_path: String,
     route_path: String,
-    params: Vec<(String, usize)>,
 }
 
 fn get_page_route(rel_path: &str) -> Option<PageRoute> {
@@ -415,14 +414,11 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     }
     
     let mut route_segments = Vec::new();
-    let mut params = Vec::new();
     
-    for (i, part) in parts.iter().enumerate() {
+    for part in parts.iter() {
         if part.starts_with('[') && part.ends_with(']') {
             let param_name = &part[1..part.len() - 1];
             route_segments.push(format!(":{}", param_name));
-            // Index in url.split("/") will be i + 1
-            params.push((param_name.to_string(), i + 1));
         } else {
             route_segments.push(part.to_string());
         }
@@ -437,7 +433,6 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     Some(PageRoute {
         rel_path: path_str,
         route_path,
-        params,
     })
 }
 

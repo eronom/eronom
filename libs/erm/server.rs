@@ -509,19 +509,17 @@ fn execute_api_route(
     });
 
     let headers_c = CString::new(headers).unwrap();
-    unsafe {
-        crate::vm::er_http::er_http_on_request(
-            res,
-            method_c.as_ptr(),
-            method.len(),
-            target_c.as_ptr(),
-            target.len(),
-            headers_c.as_ptr(),
-            headers.len(),
-            body.as_ptr() as *const c_char,
-            body.len(),
-        );
-    }
+    crate::vm::er_http::er_http_on_request(
+        res,
+        method_c.as_ptr(),
+        method.len(),
+        target_c.as_ptr(),
+        target.len(),
+        headers_c.as_ptr(),
+        headers.len(),
+        body.as_ptr() as *const c_char,
+        body.len(),
+    );
 
     crate::vm::er_http::ACTIVE_VM.with(|active| {
         active.set(std::ptr::null_mut());

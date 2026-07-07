@@ -517,8 +517,8 @@ impl VM {
             let mut constants_ptr = func.chunk.constants.as_ptr();
             let mut slots_offset = frame.slots_offset;
 
-            let mut stack_start = self.stack.as_mut_ptr();
-            let mut frame_slots = stack_start.add(slots_offset);
+            let mut stack_start;
+            let mut frame_slots;
 
             macro_rules! reload_stack {
                 () => {
@@ -533,11 +533,9 @@ impl VM {
                 self.gc_trigger();
                 reload_stack!();
 
-                let is_async = unsafe {
-                    match &(*frame.function).data {
-                        GcData::Function(f) => f.is_async,
-                        _ => false,
-                    }
+                let is_async = match &(*frame.function).data {
+                    GcData::Function(f) => f.is_async,
+                    _ => false,
                 };
                 if is_async {
                     return self.execute_loop_interpreter(0);
@@ -603,7 +601,6 @@ impl VM {
                         func = get_func!(frame.function);
                         constants_ptr = func.chunk.constants.as_ptr();
                         slots_offset = frame.slots_offset;
-                        reload_stack!();
                         ip_val = 0;
                     } else if callee.is_native_function() {
                         let native = callee.as_native_fn();
@@ -1387,7 +1384,7 @@ impl VM {
                                 args.push(*frame_slots.add(func_reg + 1 + i));
                             }
                             sync_stack!();
-                            frame.ip = unsafe { ip.offset_from(code_ptr) } as usize - 1;
+                            frame.ip = ip.offset_from(code_ptr) as usize - 1;
                             let result = native(args);
                             reload_stack!();
                             if self.stack.is_empty() {
@@ -1548,11 +1545,9 @@ impl VM {
                         let await_value = *frame_slots.add(instruction.rb as usize);
                         if await_value.is_promise() {
                             let promise_ptr = await_value.as_gc_ptr();
-                            let state = unsafe {
-                                match &(*promise_ptr).data {
-                                    crate::vm::gc::GcData::Promise(prom) => prom.state.clone(),
-                                    _ => unreachable!(),
-                                }
+                            let state = match &(*promise_ptr).data {
+                                crate::vm::gc::GcData::Promise(prom) => prom.state.clone(),
+                                _ => unreachable!(),
                             };
                             let promise_status = {
                                 let lock = state.lock().unwrap();
@@ -1566,21 +1561,19 @@ impl VM {
                                     return Err(err);
                                 }
                                 crate::vm::gc::PromiseState::Pending => {
-                                     frame.ip = unsafe { ip.offset_from(code_ptr) } as usize - 1;
+                                     frame.ip = ip.offset_from(code_ptr) as usize - 1;
 
-                                    let mut suspended_stack = std::mem::take(&mut self.stack);
-                                    let mut suspended_frames = std::mem::take(&mut self.frames);
+                                     let suspended_stack = std::mem::take(&mut self.stack);
+                                     let suspended_frames = std::mem::take(&mut self.frames);
 
-                                    unsafe {
-                                        match &mut (*promise_ptr).data {
-                                            crate::vm::gc::GcData::Promise(prom) => {
-                                                *prom.suspended_stack.lock().unwrap() = suspended_stack;
-                                                *prom.suspended_frames.lock().unwrap() = suspended_frames;
-                                            }
-                                            _ => unreachable!(),
-                                        }
-                                    }
-                                    return Ok(Value::null());
+                                     match &mut (*promise_ptr).data {
+                                         crate::vm::gc::GcData::Promise(prom) => {
+                                             *prom.suspended_stack.lock().unwrap() = suspended_stack;
+                                             *prom.suspended_frames.lock().unwrap() = suspended_frames;
+                                         }
+                                         _ => unreachable!(),
+                                     }
+                                     return Ok(Value::null());
                                 }
                             }
                         } else {
