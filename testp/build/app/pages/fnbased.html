@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta data-e-91030222d917abb6 charset="UTF-8">
+    <meta data-e-91030222d917abb6 name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-e-91030222d917abb6>Erm Dev Server with HMR</title>
+    
+
+<style id="__erm_styles">
+body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }h1[data-e-91030222d917abb6] {
+            color: #42b983;
+        }code[data-e-91030222d917abb6] {
+            background-color: #4b3a27b2;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+</style>
+<script type="module" class="__erm_script">
+import { useState, useEffect, onMount, useParams, effect } from '/core/runtime.js';
+{
+let anchorId = "";
+
+window.__erm_params = {};
+let params = useParams();
+ // line:1
+    let count = useState(0, "testp_app_pages_fnbased_erm__count"); // line:2
+     // line:3
+window.__erm_bindings.push({ id: "erm-bind-44", get: () => (count.value) });
+window.__erm_events.push({ id: "erm-evt-104", event: "click", handler: (event) => { (() => { count.value++ })(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } }); // line:6
+}
+</script>
+</head>
+<body>
+    
+
+<h1 data-e-91030222d917abb6 data-e-4d312d75d744a567 data-erm-line="5">The Count is <span data-e-91030222d917abb6 data-e-4d312d75d744a567 id="erm-bind-44">0</span> </h1>
+<button data-e-91030222d917abb6 data-e-4d312d75d744a567 data-erm-line="6" id="erm-evt-104" >Increment</button>
+
+
+</body>
+</html>

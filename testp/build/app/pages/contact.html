@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta data-e-91030222d917abb6 charset="UTF-8">
+    <meta data-e-91030222d917abb6 name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-e-91030222d917abb6>Erm Dev Server with HMR</title>
+    
+
+<style id="__erm_styles">
+body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }h1[data-e-91030222d917abb6] {
+            color: #42b983;
+        }code[data-e-91030222d917abb6] {
+            background-color: #4b3a27b2;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+@import url('https[data-e-26af9a47634f6001]://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+    .contact-container {
+        font-family: 'Outfit', sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        max-width: 550px;
+        margin: 40px auto;
+        padding: 0 20px;
+        box-sizing: border-box;
+    }.contact-card[data-e-26af9a47634f6001] {
+        background: rgba(25, 25, 35, 0.65);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 24px;
+        padding: 40px;
+        width: 100%;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        position: relative;
+        overflow: hidden;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }.contact-card[data-e-26af9a47634f6001]::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 4px;
+        background: linear-gradient(90deg, #38ef7d, #11998e);
+    }.title[data-e-26af9a47634f6001] {
+        font-size: 2.2rem;
+        font-weight: 700;
+        margin-top: 0;
+        margin-bottom: 8px;
+        background: linear-gradient(135deg, #ffffff 30%, #a5a5a5 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        letter-spacing: -0.5px;
+    }.subtitle[data-e-26af9a47634f6001] {
+        color: #8892b0;
+        font-size: 1rem;
+        margin-bottom: 32px;
+        font-weight: 300;
+    }.form-group[data-e-26af9a47634f6001] {
+        margin-bottom: 24px;
+        position: relative;
+    }.form-label[data-e-26af9a47634f6001] {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #ccd6f6;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }.form-input[data-e-26af9a47634f6001], .form-textarea[data-e-26af9a47634f6001] {
+        width: 100%;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 14px 16px;
+        color: #ffffff;
+        font-family: 'Outfit', sans-serif;
+        font-size: 1rem;
+        box-sizing: border-box;
+        transition: all 0.2s ease;
+    }.form-input[data-e-26af9a47634f6001]:focus, .form-textarea[data-e-26af9a47634f6001]:focus {
+        outline: none;
+        border-color: #11998e;
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: 0 0 0 4px rgba(17, 153, 142, 0.15);
+    }.form-textarea[data-e-26af9a47634f6001] {
+        resize: vertical;
+        min-height: 120px;
+    }.error-banner[data-e-26af9a47634f6001] {
+        background: rgba(255, 107, 107, 0.1);
+        border: 1px solid rgba(255, 107, 107, 0.2);
+        color: #ff6b6b;
+        padding: 12px 16px;
+        border-radius: 12px;
+        font-size: 0.9rem;
+        margin-bottom: 24px;
+        box-sizing: border-box;
+        width: 100%;
+        display: block;
+    }.error-banner[data-e-26af9a47634f6001]:empty {
+        display: none !important;
+    }.error-banner[data-e-26af9a47634f6001]:not(:empty)::before {
+        content: '⚠️ ';
+        margin-right: 8px;
+    }.submit-btn[data-e-26af9a47634f6001] {
+        width: 100%;
+        background: linear-gradient(90deg, #11998e, #38ef7d);
+        border: none;
+        border-radius: 12px;
+        padding: 16px;
+        color: #0f172a;
+        font-family: 'Outfit', sans-serif;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        box-shadow: 0 4px 20px rgba(56, 239, 125, 0.2);
+    }.submit-btn[data-e-26af9a47634f6001]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(56, 239, 125, 0.4);
+    }.submit-btn[data-e-26af9a47634f6001]:active {
+        transform: translateY(0);
+    }.submit-btn[data-e-26af9a47634f6001]:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+        transform: none !important;
+        box-shadow: none !important;
+    }.success-container[data-e-26af9a47634f6001] {
+        text-align: center;
+        padding: 20px 0;
+    }.success-icon[data-e-26af9a47634f6001] {
+        width: 80px;
+        height: 80px;
+        background: rgba(56, 239, 125, 0.1);
+        border: 2px solid #38ef7d;
+        border-radius: 50%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin: 0 auto 24px;
+        color: #38ef7d;
+        font-size: 2.5rem;
+        box-shadow: 0 0 20px rgba(56, 239, 125, 0.2);
+    }.success-title[data-e-26af9a47634f6001] {
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 12px;
+        color: #ffffff;
+    }.success-text[data-e-26af9a47634f6001] {
+        color: #8892b0;
+        font-size: 1.1rem;
+        margin-bottom: 32px;
+        line-height: 1.6;
+    }.home-link-container[data-e-26af9a47634f6001] {
+        display: flex;
+        justify-content: center;
+        margin-top: 24px;
+    }.home-link[data-e-26af9a47634f6001] {
+        color: #11998e;
+        text-decoration: none;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }.home-link[data-e-26af9a47634f6001]:hover {
+        color: #38ef7d;
+    }/* Loader styling */
+    .spinner[data-e-26af9a47634f6001] {
+        border: 3px solid rgba(15, 23, 42, 0.3);
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border-left-color: #0f172a;
+        animation: spin 1s linear infinite;
+        margin-left: 10px;
+    }@keyframes spin[data-e-26af9a47634f6001] {
+        0% { transform: rotate(0deg); }100% { transform: rotate(360deg); }
+    }
+.header-box[data-e-393ce3e4b6d9ead9] {
+        border: 2px solid #42b983;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        text-align: center;
+        transition: all 0.3s ease;
+    }.theme-display-dark[data-e-393ce3e4b6d9ead9] {
+        background-color: #1a1a24;
+        color: #ffffff;
+        border-color: #9b5de5;
+    }.theme-display-light[data-e-393ce3e4b6d9ead9] {
+        background-color: #f7f9fc;
+        color: #1a1a24;
+        border-color: #00bbf9;
+    }
+</style>
+<script type="module" class="__erm_script">
+import { useState, useEffect, onMount, useParams, effect } from '/core/runtime.js';
+{
+let anchorId = "";
+let activeTheme = useState('light', "testp_app_pages_index_erm__activeTheme");
+
+window.__erm_params = {};
+window.__erm_register_if("erm-if-0", () => { let __erm_new = ""; if (submitted.value) { __erm_new = `
+            <div data-e-26af9a47634f6001 class="success-container">
+                <div data-e-26af9a47634f6001 class="success-icon">✓</div>
+                <h3 data-e-26af9a47634f6001 class="success-title">Message Sent!</h3>
+                <p data-e-26af9a47634f6001 class="success-text">Thank you for reaching out, <strong data-e-26af9a47634f6001>${window.__erm_escape(name.value)}</strong>. We have received your query and will get back to you shortly.</p>
+                <Link to="/" class="submit-btn" style="text-decoration: none; text-align: center;">Back to Home</Link>
+            </div>
+        `; } else { __erm_new = `
+            <h2 data-e-26af9a47634f6001 class="title">Get in touch</h2>
+            <p data-e-26af9a47634f6001 class="subtitle">Have a question or want to work together? Let us know.</p>
+            
+            <span data-e-26af9a47634f6001 class="error-banner">${window.__erm_escape(errorMsg.value)}</span>
+
+            <form data-e-26af9a47634f6001 ${window.__erm_register_event('submit', (event) => { (handleSubmit)(event); })}>
+                <div data-e-26af9a47634f6001 class="form-group">
+                    <label data-e-26af9a47634f6001 class="form-label" for="name">Name</label>
+                    <input data-e-26af9a47634f6001 class="form-input" id="name" type="text" placeholder="Enter your name" value="${window.__erm_escape(name.value)}"  ${window.__erm_register_event('input', (event) => { ((e) => { name.value = e.target.value; })(event); })} />
+                </div>
+
+                <div data-e-26af9a47634f6001 class="form-group">
+                    <label data-e-26af9a47634f6001 class="form-label" for="email">Email Address</label>
+                    <input data-e-26af9a47634f6001 class="form-input" id="email" type="email" placeholder="you@example.com" value="${window.__erm_escape(email.value)}"  ${window.__erm_register_event('input', (event) => { ((e) => { email.value = e.target.value; })(event); })} />
+                </div>
+
+                <div data-e-26af9a47634f6001 class="form-group">
+                    <label data-e-26af9a47634f6001 class="form-label" for="message">Message</label>
+                    <textarea data-e-26af9a47634f6001 class="form-textarea" id="message" placeholder="Type your message here..." value="${window.__erm_escape(message.value)}"  ${window.__erm_register_event('input', (event) => { ((e) => { message.value = e.target.value; })(event); })}></textarea>
+                </div>
+
+                <button data-e-26af9a47634f6001 class="submit-btn" type="submit">
+                    <span data-e-26af9a47634f6001 class="btn-text">Send Message</span>
+                    <div data-e-26af9a47634f6001 class="spinner" style="display: none;"></div>
+                </button>
+            </form>
+        `; }; return __erm_new; });
+let name = useState('', "testp_app_pages_contact_erm__name");
+    let email = useState('', "testp_app_pages_contact_erm__email");
+    let message = useState('', "testp_app_pages_contact_erm__message");
+    let submitted = useState(false, "testp_app_pages_contact_erm__submitted");
+    let errorMsg = useState('', "testp_app_pages_contact_erm__errorMsg");
+
+    function handleSubmit(e) {
+        if (e) e.preventDefault();
+        
+        if (!name.value || !email.value || !message.value) {
+            errorMsg.value = "Please fill in all fields.";
+            return;
+        }
+        
+        errorMsg.value = "";
+        
+        // Directly manipulate DOM for the premium submitting animation
+        const btn = document.querySelector('.submit-btn');
+        if (btn) {
+            btn.disabled = true;
+            const btnText = btn.querySelector('.btn-text');
+            if (btnText) btnText.innerText = "Sending...";
+            const spinner = btn.querySelector('.spinner');
+            if (spinner) spinner.style.display = "inline-block";
+        }
+        
+        setTimeout(() => {
+            submitted.value = true;
+        }, 1500);
+    }
+window.Header = function(anchorId, props) {
+  try {
+    let el = document.getElementById(anchorId);
+    if (el && el.innerHTML.trim() === "") {
+      el.innerHTML = `
+
+<span data-e-393ce3e4b6d9ead9 id="${anchorId}erm-if-1" style="display:contents;">
+    <div data-e-393ce3e4b6d9ead9 class="header-box theme-display-light">
+        <h1 data-e-393ce3e4b6d9ead9>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-393ce3e4b6d9ead9>Header consumed Theme Context: <strong data-e-393ce3e4b6d9ead9></strong></p>
+        <div data-e-393ce3e4b6d9ead9 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+</span>`;
+    }
+  } catch(e) { console.error(e); }
+  window.__erm_register_if(anchorId + "erm-if-1", () => { let __erm_new = ""; if (activeTheme.value == "dark") { __erm_new = `
+    <div data-e-393ce3e4b6d9ead9 class="header-box theme-display-dark">
+        <h1 data-e-393ce3e4b6d9ead9>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-393ce3e4b6d9ead9>Header consumed Theme Context: <strong data-e-393ce3e4b6d9ead9>${window.__erm_escape(activeTheme.value)}</strong></p>
+        <div data-e-393ce3e4b6d9ead9 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            🌌 Dark Mode Theme Context is Active
+        </div>
+    </div>
+`; } else { __erm_new = `
+    <div data-e-393ce3e4b6d9ead9 class="header-box theme-display-light">
+        <h1 data-e-393ce3e4b6d9ead9>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-393ce3e4b6d9ead9>Header consumed Theme Context: <strong data-e-393ce3e4b6d9ead9>${window.__erm_escape(activeTheme.value)}</strong></p>
+        <div data-e-393ce3e4b6d9ead9 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+`; }; return __erm_new; });
+let headerText = "Hello Header from component script!";
+    console.log("Header component loaded!");
+};
+
+Header(anchorId + "erm-anchor-header-6379", {});
+window.Footer = function(anchorId, props) {
+  try {
+    let el = document.getElementById(anchorId);
+    if (el && el.innerHTML.trim() === "") {
+      el.innerHTML = `<h1 data-e-1671d977afc46790>hello footer erm componentssssssss</h1>`;
+    }
+  } catch(e) { console.error(e); }
+  
+};
+
+Footer(anchorId + "erm-anchor-footer-7902", {});
+}
+</script>
+</head>
+<body>
+    
+
+
+
+<div data-e-91030222d917abb6 data-e-26af9a47634f6001 id="erm-anchor-header-6379" class="erm-anchor">
+
+<span data-e-91030222d917abb6 data-e-26af9a47634f6001 data-e-393ce3e4b6d9ead9 id="erm-anchor-header-6379erm-if-1" style="display:contents;">
+    <div data-e-91030222d917abb6 data-e-26af9a47634f6001 data-e-393ce3e4b6d9ead9 class="header-box theme-display-light">
+        <h1 data-e-91030222d917abb6 data-e-26af9a47634f6001 data-e-393ce3e4b6d9ead9>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-91030222d917abb6 data-e-26af9a47634f6001 data-e-393ce3e4b6d9ead9>Header consumed Theme Context: <strong data-e-91030222d917abb6 data-e-26af9a47634f6001 data-e-393ce3e4b6d9ead9></strong></p>
+        <div data-e-91030222d917abb6 data-e-26af9a47634f6001 data-e-393ce3e4b6d9ead9 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+</span></div>
+
+<div data-e-91030222d917abb6 data-e-26af9a47634f6001 class="contact-container">
+    <div data-e-91030222d917abb6 data-e-26af9a47634f6001 class="contact-card">
+        <span data-e-91030222d917abb6 data-e-26af9a47634f6001 id="erm-if-0" style="display:contents;">
+            <h2 data-e-91030222d917abb6 data-e-26af9a47634f6001 class="title">Get in touch</h2>
+            <p data-e-91030222d917abb6 data-e-26af9a47634f6001 class="subtitle">Have a question or want to work together? Let us know.</p>
+            
+            <span data-e-91030222d917abb6 data-e-26af9a47634f6001 class="error-banner"></span>
+
+            <form data-e-91030222d917abb6 data-e-26af9a47634f6001 >
+                <div data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-group">
+                    <label data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-label" for="name">Name</label>
+                    <input data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-input" id="name" type="text" placeholder="Enter your name" value=""   />
+                </div>
+
+                <div data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-group">
+                    <label data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-label" for="email">Email Address</label>
+                    <input data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-input" id="email" type="email" placeholder="you@example.com" value=""   />
+                </div>
+
+                <div data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-group">
+                    <label data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-label" for="message">Message</label>
+                    <textarea data-e-91030222d917abb6 data-e-26af9a47634f6001 class="form-textarea" id="message" placeholder="Type your message here..." value=""  ></textarea>
+                </div>
+
+                <button data-e-91030222d917abb6 data-e-26af9a47634f6001 class="submit-btn" type="submit">
+                    <span data-e-91030222d917abb6 data-e-26af9a47634f6001 class="btn-text">Send Message</span>
+                    <div data-e-91030222d917abb6 data-e-26af9a47634f6001 class="spinner" style="display: none;"></div>
+                </button>
+            </form>
+        </span>
+
+        <div data-e-91030222d917abb6 data-e-26af9a47634f6001 class="home-link-container">
+            <a data-e-91030222d917abb6 data-e-26af9a47634f6001 href="/" class="home-link">← Go Back Home</a>
+        </div>
+    </div>
+</div>
+
+<div data-e-91030222d917abb6 data-e-26af9a47634f6001 id="erm-anchor-footer-7902" class="erm-anchor"><h1 data-e-91030222d917abb6 data-e-26af9a47634f6001 data-e-1671d977afc46790>hello footer erm componentssssssss</h1></div>
+
+</body>
+</html>

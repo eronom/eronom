@@ -16,6 +16,13 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildMode {
+    Ssr,
+    Ssg,
+    Ppr,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Initialize a fresh Eronom project
@@ -51,12 +58,16 @@ pub enum Commands {
         dir: String,
 
         /// Build for Server-Side Rendering (SSR) (default)
-        #[arg(long, conflicts_with = "ssg")]
+        #[arg(long, conflicts_with = "ssg", conflicts_with = "ppr")]
         ssr: bool,
 
         /// Build for Static Site Generation (SSG)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "ppr")]
         ssg: bool,
+
+        /// Build for Partial Prerendering (PPR)
+        #[arg(long)]
+        ppr: bool,
     },
     /// Start the server in production mode
     Start {
@@ -149,9 +160,15 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
         } => {
             init_project(&dir, template, branch, force, git, no_commit)?;
         }
-        Commands::Build { dir, ssr: _, ssg } => {
-            let is_ssr = if ssg { false } else { true };
-            build_project(&dir, is_ssr)?;
+        Commands::Build { dir, ssr: _, ssg, ppr } => {
+            let mode = if ppr {
+                BuildMode::Ppr
+            } else if ssg {
+                BuildMode::Ssg
+            } else {
+                BuildMode::Ssr
+            };
+            build_project(&dir, mode)?;
         }
         Commands::Start {
             dir_or_port,
@@ -481,12 +498,12 @@ fn generate_server_er_ssg(routes: &[PageRoute], api_routes: &[String]) -> String
     generate_server_script(routes, api_routes, |r| get_ssg_html_path(&r.rel_path))
 }
 
-fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
+fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     let build_dir = Path::new(dir).join("build");
-    if is_ssr {
-        println!("Building project for SSR to {:?}", build_dir);
-    } else {
-        println!("Building project (SSG) to {:?}", build_dir);
+    match mode {
+        BuildMode::Ssr => println!("Building project for SSR to {:?}", build_dir),
+        BuildMode::Ssg => println!("Building project (SSG) to {:?}", build_dir),
+        BuildMode::Ppr => println!("Building project for PPR (Partial Prerendering) to {:?}", build_dir),
     }
     
     if build_dir.exists() {
@@ -497,18 +514,21 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     let base_path = fs::canonicalize(dir)?;
     let mut routes = Vec::new();
     let mut api_routes = Vec::new();
-    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr, &mut routes, &mut api_routes)?;
+    build_dir_recursive(&base_path, &base_path, &build_dir, mode, &mut routes, &mut api_routes)?;
 
-    if is_ssr {
-        // Write the generated server.er file
-        let server_er_content = generate_server_er(&routes, &api_routes);
-        let server_er_path = build_dir.join("server.er");
-        fs::write(server_er_path, server_er_content)?;
-    } else {
-        // Write the generated server.er file for SSG
-        let server_er_content = generate_server_er_ssg(&routes, &api_routes);
-        let server_er_path = build_dir.join("server.er");
-        fs::write(server_er_path, server_er_content)?;
+    match mode {
+        BuildMode::Ssr => {
+            // Write the generated server.er file
+            let server_er_content = generate_server_er(&routes, &api_routes);
+            let server_er_path = build_dir.join("server.er");
+            fs::write(server_er_path, server_er_content)?;
+        }
+        BuildMode::Ssg | BuildMode::Ppr => {
+            // Write the generated server.er file for SSG/PPR
+            let server_er_content = generate_server_er_ssg(&routes, &api_routes);
+            let server_er_path = build_dir.join("server.er");
+            fs::write(server_er_path, server_er_content)?;
+        }
     }
 
     Ok(())
@@ -518,7 +538,7 @@ fn build_dir_recursive(
     root: &Path,
     current: &Path,
     build_root: &Path,
-    is_ssr: bool,
+    mode: BuildMode,
     routes: &mut Vec<PageRoute>,
     api_routes: &mut Vec<String>,
 ) -> anyhow::Result<()> {
@@ -551,7 +571,7 @@ fn build_dir_recursive(
         }
 
         if path.is_dir() {
-            build_dir_recursive(root, &path, build_root, is_ssr, routes, api_routes)?;
+            build_dir_recursive(root, &path, build_root, mode, routes, api_routes)?;
         } else {
             let rel_path = path.strip_prefix(root)?;
             let dest_path = build_root.join(rel_path);
@@ -561,14 +581,14 @@ fn build_dir_recursive(
             }
 
             if name_str.ends_with(".erm") {
-                if is_ssr {
+                if mode == BuildMode::Ssr {
                     // SSR mode: just copy the .erm file
                     fs::copy(&path, &dest_path)?;
                     if let Some(r) = get_page_route(&rel_path.to_string_lossy()) {
                         routes.push(r);
                     }
                 } else {
-                    // SSG mode: compile to .html
+                    // SSG or PPR mode: compile to .html
                     if name_str == "layout.erm" {
                         continue;
                     }
