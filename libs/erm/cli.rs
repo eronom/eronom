@@ -176,7 +176,9 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             port,
         } => {
             let (mut dir, port_val) = parse_dir_and_port(dir_or_port, port_pos, port, "build")?;
-            if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
+            if Path::new(&dir).join("build").exists() {
+                dir = Path::new(&dir).join("build").to_string_lossy().to_string();
+            } else if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
                 dir = "app/build".to_string();
             }
             let resolved_port = resolve_port(&dir, port_val, false)?;

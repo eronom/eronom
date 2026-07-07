@@ -11,6 +11,17 @@ static BASE_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 static DEFAULT_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
 static IS_PROD: Mutex<bool> = Mutex::new(false);
 
+use std::sync::LazyLock;
+
+static HTML_SHELL_CACHE: LazyLock<Mutex<HashMap<PathBuf, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static SSR_CACHE: LazyLock<Mutex<HashMap<(PathBuf, Vec<(String, String)>), String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_sorted_params(map: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut vec: Vec<(String, String)> = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    vec.sort_by(|a, b| a.0.cmp(&b.0));
+    vec
+}
+
 static HMR_QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
@@ -312,21 +323,93 @@ fn native_render(args: Vec<Value>) -> Value {
     }
     
     let is_prod = *IS_PROD.lock().unwrap();
-    match fs::read_to_string(&path) {
-        Ok(content) => {
-            let parent = path.parent().unwrap().to_string_lossy();
-            match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
-                Ok(html) => {
-                    let ptr = crate::vm::gc::get_or_create_string(&html);
-                    Value::string(ptr)
-                }
-                Err(e) => {
-                    eprintln!("[render] Compiler error: {:?}", e);
-                    Value::null()
-                }
+    let is_html = path.extension().map_or(false, |ext| ext == "html");
+
+    if is_html {
+        // PPR/SSG Path: Bypass compiler entirely
+        let content = if is_prod {
+            let mut cache = HTML_SHELL_CACHE.lock().unwrap();
+            if let Some(cached) = cache.get(&path) {
+                cached.clone()
+            } else {
+                let loaded = fs::read_to_string(&path).unwrap_or_default();
+                cache.insert(path.clone(), loaded.clone());
+                loaded
+            }
+        } else {
+            fs::read_to_string(&path).unwrap_or_default()
+        };
+
+        // Construct parameters string: window.__erm_params = {...};
+        let mut params_js = String::from("window.__erm_params = {");
+        for (i, (k, v)) in params_map.iter().enumerate() {
+            if i > 0 {
+                params_js.push_str(", ");
+            }
+            let is_numeric = v.parse::<f64>().is_ok();
+            let is_boolean = v == "true" || v == "false";
+            if is_numeric || is_boolean {
+                params_js.push_str(&format!("\"{}\": {}", k, v));
+            } else {
+                params_js.push_str(&format!("\"{}\": \"{}\"", k, v.replace('"', "\\\"")));
             }
         }
-        Err(_) => Value::null(),
+        params_js.push_str("};");
+
+        let processed = content.replace("window.__erm_params = {};", &params_js);
+        let ptr = crate::vm::gc::get_or_create_string(&processed);
+        Value::string(ptr)
+    } else {
+        // SSR Path (.erm files)
+        if is_prod {
+            let sorted_params = get_sorted_params(&params_map);
+            let cache_key = (path.clone(), sorted_params);
+            {
+                let cache = SSR_CACHE.lock().unwrap();
+                if let Some(cached_html) = cache.get(&cache_key) {
+                    let ptr = crate::vm::gc::get_or_create_string(cached_html);
+                    return Value::string(ptr);
+                }
+            }
+            
+            // Not in cache, compile and cache
+            match fs::read_to_string(&path) {
+                Ok(content) => {
+                    let parent = path.parent().unwrap().to_string_lossy();
+                    match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
+                        Ok(html) => {
+                            let mut cache = SSR_CACHE.lock().unwrap();
+                            cache.insert(cache_key, html.clone());
+                            let ptr = crate::vm::gc::get_or_create_string(&html);
+                            Value::string(ptr)
+                        }
+                        Err(e) => {
+                            eprintln!("[render] Compiler error: {:?}", e);
+                            Value::null()
+                        }
+                    }
+                }
+                Err(_) => Value::null(),
+            }
+        } else {
+            // Dev SSR Path (always read & compile)
+            match fs::read_to_string(&path) {
+                Ok(content) => {
+                    let parent = path.parent().unwrap().to_string_lossy();
+                    match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
+                        Ok(html) => {
+                            let ptr = crate::vm::gc::get_or_create_string(&html);
+                            Value::string(ptr)
+                        }
+                        Err(e) => {
+                            eprintln!("[render] Compiler error: {:?}", e);
+                            Value::null()
+                        }
+                    }
+                }
+                Err(_) => Value::null(),
+            }
+        }
     }
 }
 
@@ -810,28 +893,40 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
                     current_path = erm;
                     found = true;
                 } else {
-                    if let Ok(entries) = fs::read_dir(&current_path) {
-                        for entry in entries.flatten() {
-                            let name = entry.file_name().to_string_lossy().into_owned();
-                            if name.starts_with('[') {
-                                if name.ends_with(']') {
-                                    let param_name = &name[1..name.len() - 1];
-                                    params.insert(param_name.to_string(), part.to_string());
-                                    current_path.push(name);
-                                    found = true;
-                                    break;
-                                } else if name.ends_with("].er") {
-                                    let param_name = &name[1..name.len() - 4];
-                                    params.insert(param_name.to_string(), part.to_string());
-                                    current_path.push(name);
-                                    found = true;
-                                    break;
-                                } else if name.ends_with("].erm") {
-                                    let param_name = &name[1..name.len() - 5];
-                                    params.insert(param_name.to_string(), part.to_string());
-                                    current_path.push(name);
-                                    found = true;
-                                    break;
+                    let html = current_path.join(format!("{}.html", part));
+                    if html.exists() {
+                        current_path = html;
+                        found = true;
+                    } else {
+                        if let Ok(entries) = fs::read_dir(&current_path) {
+                            for entry in entries.flatten() {
+                                let name = entry.file_name().to_string_lossy().into_owned();
+                                if name.starts_with('[') {
+                                    if name.ends_with(']') {
+                                        let param_name = &name[1..name.len() - 1];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    } else if name.ends_with("].er") {
+                                        let param_name = &name[1..name.len() - 4];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    } else if name.ends_with("].erm") {
+                                        let param_name = &name[1..name.len() - 5];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    } else if name.ends_with("].html") {
+                                        let param_name = &name[1..name.len() - 6];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    }
                                 }
                             }
                         }
