@@ -614,8 +614,32 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &st
 
     if file_path.exists() && file_path.is_file() {
         if file_path.extension().map_or(false, |ext| ext == "erm") {
-            let content = fs::read_to_string(&file_path)?;
-            match compiler::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params) {
+            let cached_html = if is_prod {
+                let sorted_params = get_sorted_params(&params);
+                let cache_key = (file_path.clone(), sorted_params);
+                let cache = SSR_CACHE.lock().unwrap();
+                cache.get(&cache_key).cloned()
+            } else {
+                None
+            };
+
+            let render_result = if let Some(html) = cached_html {
+                Ok(html)
+            } else {
+                let content = fs::read_to_string(&file_path)?;
+                let res = compiler::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params);
+                if let Ok(ref html) = res {
+                    if is_prod {
+                        let sorted_params = get_sorted_params(&params);
+                        let cache_key = (file_path.clone(), sorted_params);
+                        let mut cache = SSR_CACHE.lock().unwrap();
+                        cache.insert(cache_key, html.clone());
+                    }
+                }
+                res
+            };
+
+            match render_result {
                 Ok(processed) => {
                     let rel_path = file_path.strip_prefix(&base_path)
                         .map(|p| p.to_string_lossy().into_owned())
@@ -699,7 +723,21 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &st
                 }
             }
         } else {
-            let content = fs::read(&file_path)?;
+            let is_html = file_path.extension().map_or(false, |ext| ext == "html");
+            let content = if is_prod && is_html {
+                let mut cache = HTML_SHELL_CACHE.lock().unwrap();
+                if let Some(cached) = cache.get(&file_path) {
+                    cached.as_bytes().to_vec()
+                } else {
+                    let loaded = fs::read(&file_path)?;
+                    if let Ok(loaded_str) = std::str::from_utf8(&loaded) {
+                        cache.insert(file_path.clone(), loaded_str.to_string());
+                    }
+                    loaded
+                }
+            } else {
+                fs::read(&file_path)?
+            };
             let mime = if let Some(ext) = file_path.extension() {
                 let ext_str = ext.to_string_lossy().to_lowercase();
                 match ext_str.as_str() {
