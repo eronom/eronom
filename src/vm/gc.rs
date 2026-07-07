@@ -6,9 +6,7 @@ use super::bytecode::Function;
 use fnv::FnvHashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use indexmap::IndexMap;
-
-pub type ObjectMap = IndexMap<MapKey, Value, fnv::FnvBuildHasher>;
+pub type ObjectMap = FnvHashMap<MapKey, Value>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GcColor {

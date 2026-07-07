@@ -214,7 +214,6 @@ dependencies = [
  "cc",
  "clap",
  "fnv",
- "indexmap",
  "regex",
  "serde",
  "serde_json",
