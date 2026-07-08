@@ -473,6 +473,73 @@
     }
   }
 
+  function initLoadingSwap() {
+    const fallback = document.getElementById('erm-loading-fallback');
+    const content = document.getElementById('erm-loading-content');
+    const suspenses = document.querySelectorAll('.erm-suspense-container');
+    
+    if (!fallback && suspenses.length === 0) return;
+
+    if (fallback && content) {
+      fallback.style.display = 'block';
+      content.style.display = 'none';
+    }
+    suspenses.forEach(s => {
+      const fb = s.querySelector('.erm-suspense-fallback');
+      const ct = s.querySelector('.erm-suspense-content');
+      if (fb && ct) {
+        fb.style.display = 'block';
+        ct.style.display = 'none';
+      }
+    });
+
+    const originalFetch = window.fetch;
+    let activeInitFetches = 0;
+    let finished = false;
+
+    function checkLoadingFinished() {
+      if (finished) return;
+      setTimeout(() => {
+        if (activeInitFetches <= 0) {
+          finished = true;
+          window.fetch = originalFetch;
+          if (fallback && content) {
+            fallback.style.display = 'none';
+            content.style.display = 'contents';
+          }
+          suspenses.forEach(s => {
+            const fb = s.querySelector('.erm-suspense-fallback');
+            const ct = s.querySelector('.erm-suspense-content');
+            if (fb && ct) {
+              fb.style.display = 'none';
+              ct.style.display = 'contents';
+            }
+          });
+          if (typeof window.__erm_update === 'function') {
+            window.__erm_update();
+          }
+        }
+      }, 20);
+    }
+
+    window.fetch = function(...args) {
+      if (finished) {
+        return originalFetch(...args);
+      }
+      activeInitFetches++;
+      return originalFetch(...args).finally(() => {
+        activeInitFetches--;
+        queueMicrotask(checkLoadingFinished);
+      });
+    };
+
+    setTimeout(() => {
+      checkLoadingFinished();
+    }, 100);
+  }
+
+  initLoadingSwap();
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       _initReactivity();
@@ -584,6 +651,8 @@
 
       // Reconcile body children
       reconcileNodes(document.body, Array.from(doc.body.childNodes));
+
+      initLoadingSwap();
 
       // Reset bindings and events for the new page
       window.__erm_bindings.forEach(b => {

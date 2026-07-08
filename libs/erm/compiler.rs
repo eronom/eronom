@@ -452,6 +452,29 @@ pub fn extract_attribute(tag_content: &str, attr_name: &str) -> Option<String> {
     None
 }
 
+fn find_tag_end(content: &str, start_pos: usize) -> Option<usize> {
+    let mut brace_depth = 0;
+    let mut in_quotes = false;
+    let mut in_squotes = false;
+    let chars: Vec<char> = content[start_pos..].chars().collect();
+    for (idx, c) in chars.iter().enumerate() {
+        if *c == '"' && !in_squotes {
+            in_quotes = !in_quotes;
+        } else if *c == '\'' && !in_quotes {
+            in_squotes = !in_squotes;
+        } else if !in_quotes && !in_squotes {
+            if *c == '{' {
+                brace_depth += 1;
+            } else if *c == '}' {
+                if brace_depth > 0 { brace_depth -= 1; }
+            } else if *c == '>' && brace_depth == 0 {
+                return Some(start_pos + idx);
+            }
+        }
+    }
+    None
+}
+
 enum ElseTransition {
     ElseIf(String, usize),
     Else(usize),
@@ -832,8 +855,8 @@ pub fn process_component_tree(
             styles.push(scope_css(style_content, &scope_id)?);
             i += end + 8;
         } else if content[i..].starts_with('<') {
-            let tag_end = match content[i..].find('>') {
-                Some(idx) => idx,
+            let tag_end = match find_tag_end(content, i) {
+                Some(end_idx) => end_idx - i,
                 None => {
                     html_buf.push_str(&content[i..]);
                     break;
@@ -896,6 +919,136 @@ pub fn process_component_tree(
                         i += tag_end + 1;
                         continue;
                     }
+                    if tag_name == "Suspense" {
+                        let mut parent_scripts = String::new();
+                        let mut temp_search = 0;
+                        while let Some(start_idx) = content[temp_search..].find("<script") {
+                            let script_start = temp_search + start_idx;
+                            if let Some(end_idx) = content[script_start..].find("</script>") {
+                                let script_end = script_start + end_idx;
+                                parent_scripts.push_str(&content[script_start..script_end + 9]);
+                                parent_scripts.push('\n');
+                                temp_search = script_end + 9;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        let mut parent_scripts_res = None;
+                        if !parent_scripts.is_empty() {
+                            let mut dummy_if = 9999;
+                            let mut dummy_for = 9999;
+                            if let Ok(res) = process_component_tree(
+                                file_path,
+                                &parent_scripts,
+                                visited,
+                                None,
+                                params,
+                                &mut dummy_if,
+                                &mut dummy_for,
+                                state_var_sources,
+                            ) {
+                                parent_scripts_res = Some(res);
+                            }
+                        }
+
+                        let fallback_html = if let Some(fallback_expr) = extract_attribute(tag_content, "fallback") {
+                            let mut fallback_full = parent_scripts.clone();
+                            fallback_full.push_str(&fallback_expr);
+                            let sub_res = process_component_tree(
+                                file_path,
+                                &fallback_full,
+                                visited,
+                                None,
+                                params,
+                                if_counter,
+                                for_counter,
+                                state_var_sources,
+                            )?;
+                            for s in sub_res.scripts {
+                                let is_parent_script = parent_scripts_res.as_ref().map_or(false, |r| r.scripts.contains(&s));
+                                if !is_parent_script && !scripts.contains(&s) {
+                                    scripts.push(s);
+                                }
+                            }
+                            for s in sub_res.styles {
+                                if !styles.contains(&s) { styles.push(s); }
+                            }
+                            for v in sub_res.state_vars {
+                                if !state_vars.contains(&v) { state_vars.push(v); }
+                            }
+                            sub_res.html
+                        } else {
+                            "".to_string()
+                        };
+
+                        // Find matching </Suspense> tag
+                        let mut depth = 1;
+                        let mut search_pos = i + tag_end + 1;
+                        let mut closing_idx = None;
+                        while search_pos < content.len() {
+                            if content[search_pos..].starts_with("<Suspense") {
+                                depth += 1;
+                                search_pos += 9;
+                            } else if content[search_pos..].starts_with("</Suspense>") {
+                                depth -= 1;
+                                if depth == 0 {
+                                    closing_idx = Some(search_pos);
+                                    break;
+                                }
+                                search_pos += 11;
+                            } else {
+                                search_pos += 1;
+                            }
+                        }
+
+                        if let Some(closing) = closing_idx {
+                            let children_raw = &content[i + tag_end + 1..closing];
+                            let mut children_full = parent_scripts.clone();
+                            children_full.push_str(children_raw);
+                            let children_res = process_component_tree(
+                                file_path,
+                                &children_full,
+                                visited,
+                                None,
+                                params,
+                                if_counter,
+                                for_counter,
+                                state_var_sources,
+                            )?;
+                            for s in children_res.scripts {
+                                let is_parent_script = parent_scripts_res.as_ref().map_or(false, |r| r.scripts.contains(&s));
+                                if !is_parent_script && !scripts.contains(&s) {
+                                    scripts.push(s);
+                                }
+                            }
+                            for s in children_res.styles {
+                                if !styles.contains(&s) { styles.push(s); }
+                            }
+                            for v in children_res.state_vars {
+                                if !state_vars.contains(&v) { state_vars.push(v); }
+                            }
+
+                            let suspense_id = format!("erm-suspense-{}", i);
+                            html_buf.push_str(&format!(
+                                r#"<div id="{}" class="erm-suspense-container" style="display: contents;">
+  <div id="{}-fallback" class="erm-suspense-fallback" style="display: block;">
+    {}
+  </div>
+  <div id="{}-content" class="erm-suspense-content" style="display: none;">
+    {}
+  </div>
+</div>"#,
+                                suspense_id, suspense_id, fallback_html, suspense_id, children_res.html
+                            ));
+
+                            i = closing + 11;
+                            continue;
+                        } else {
+                            return Err(anyhow::anyhow!("Unclosed <Suspense> tag"));
+                        }
+                    }
+
                     if !tag_name.is_empty() && tag_name.chars().next().unwrap().is_ascii_uppercase() {
                         let comp_filename = format!("{}.erm", tag_name);
                         let mut comp_path = None;
@@ -1755,15 +1908,64 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         }
     }
 
+    // Automatic Loading support: search for loading.erm in current and parent directories.
+    let mut loading_path = None;
+    let mut curr_load = std::path::PathBuf::from(base_dir);
+    loop {
+        let p_loadings = curr_load.join("layouts").join("loading.erm");
+        if p_loadings.exists() {
+            loading_path = Some(p_loadings);
+            break;
+        }
+        let p_loading_direct = curr_load.join("loading.erm");
+        if p_loading_direct.exists() {
+            loading_path = Some(p_loading_direct);
+            break;
+        }
+        if let Some(parent) = curr_load.parent() {
+            if curr_load.join("Cargo.toml").exists() || curr_load.join(".git").exists() {
+                break;
+            }
+            curr_load = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
     let mut if_counter = 0;
     let mut for_counter = 0;
-    
-    let result = if let Some(lp) = layout_path {
+
+    let loading_res = if let Some(ref l_path) = loading_path {
+        let loading_content = std::fs::read_to_string(l_path)?;
+        let res = process_component_tree(&l_path.to_string_lossy(), &loading_content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
+        Some(res)
+    } else {
+        None
+    };
+
+    let mut result = if let Some(lp) = layout_path {
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
             let layout_content = std::fs::read_to_string(&lp)?;
             if content.trim() != layout_content.trim() {
                 let page_res = process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
-                let mut layout_res = process_component_tree(&lp.to_string_lossy(), &layout_content, &mut visited, Some(&page_res.html), params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
+                
+                let wrapped_html = if let Some(ref l_res) = loading_res {
+                    format!(
+                        r#"<div id="erm-loading-container" class="erm-loading-container" style="display: contents;">
+  <div id="erm-loading-fallback" class="erm-loading-fallback" style="display: block;">
+    {}
+  </div>
+  <div id="erm-loading-content" class="erm-loading-content" style="display: none;">
+    {}
+  </div>
+</div>"#,
+                        l_res.html, page_res.html
+                    )
+                } else {
+                    page_res.html.clone()
+                };
+
+                let mut layout_res = process_component_tree(&lp.to_string_lossy(), &layout_content, &mut visited, Some(&wrapped_html), params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
                 
                 for s in page_res.scripts {
                     if !layout_res.scripts.contains(&s) { layout_res.scripts.push(s); }
@@ -1782,8 +1984,41 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?
         }
     } else {
-        process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?
+        let page_res = process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
+        if let Some(ref l_res) = loading_res {
+            let wrapped_html = format!(
+                r#"<div id="erm-loading-container" class="erm-loading-container" style="display: contents;">
+  <div id="erm-loading-fallback" class="erm-loading-fallback" style="display: block;">
+    {}
+  </div>
+  <div id="erm-loading-content" class="erm-loading-content" style="display: none;">
+    {}
+  </div>
+</div>"#,
+                l_res.html, page_res.html
+            );
+            ProcessResult {
+                html: wrapped_html,
+                scripts: page_res.scripts,
+                styles: page_res.styles,
+                state_vars: page_res.state_vars,
+            }
+        } else {
+            page_res
+        }
     };
+
+    if let Some(ref l_res) = loading_res {
+        for s in &l_res.scripts {
+            if !result.scripts.contains(s) { result.scripts.push(s.clone()); }
+        }
+        for s in &l_res.styles {
+            if !result.styles.contains(s) { result.styles.push(s.clone()); }
+        }
+        for v in &l_res.state_vars {
+            if !result.state_vars.contains(v) { result.state_vars.push(v.clone()); }
+        }
+    }
 
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();

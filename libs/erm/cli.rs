@@ -394,7 +394,7 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
         if last.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
             return None;
         }
-        if *last == "layout.erm" {
+        if *last == "layout.erm" || *last == "loading.erm" {
             return None;
         }
     }
@@ -586,7 +586,7 @@ fn build_dir_recursive(
                     }
                 } else {
                     // SSG or PPR mode: compile to .html
-                    if name_str == "layout.erm" {
+                    if name_str == "layout.erm" || name_str == "loading.erm" {
                         continue;
                     }
                     // Skip components (starts with uppercase)
