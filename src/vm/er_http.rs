@@ -2196,6 +2196,188 @@ pub fn register_eronom_file_api(vm: &mut VM) -> Result<(), String> {
     // 2. Register global built-ins so they are available without imports
     vm.register_global("file", Value::native_function(native_file_global));
     vm.register_global("write", Value::native_function(native_write_global));
+
+    // 3. Register native string helpers
+    vm.register_global("stringSplit", Value::native_function(native_string_split));
+    vm.register_global("stringIncludes", Value::native_function(native_string_includes));
+    vm.register_global("stringStartsWith", Value::native_function(native_string_starts_with));
+    vm.register_global("stringEndsWith", Value::native_function(native_string_ends_with));
+    vm.register_global("stringSubstring", Value::native_function(native_string_substring));
+    vm.register_global("stringReplace", Value::native_function(native_string_replace));
+    vm.register_global("stringTrim", Value::native_function(native_string_trim));
+    vm.register_global("stringLength", Value::native_function(native_string_length));
+    vm.register_global("stringCharAt", Value::native_function(native_string_char_at));
+    vm.register_global("stringIndexOf", Value::native_function(native_string_index_of));
+
     Ok(())
+}
+
+fn native_string_split(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let sep = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let parts: Vec<Value> = s.split(sep)
+        .map(|part| Value::string(get_or_create_string(part)))
+        .collect();
+    
+    let ptr = gc_allocate(GcData::Array(parts));
+    Value::array(ptr)
+}
+
+fn native_string_includes(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    let search = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    Value::boolean(s.contains(search))
+}
+
+fn native_string_starts_with(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    let prefix = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    Value::boolean(s.starts_with(prefix))
+}
+
+fn native_string_ends_with(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    let suffix = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    Value::boolean(s.ends_with(suffix))
+}
+
+fn native_string_substring(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let start = args[1].as_number() as usize;
+    let end = if args.len() >= 3 {
+        args[2].as_number() as usize
+    } else {
+        s.len()
+    };
+    if start > s.len() || end > s.len() || start > end {
+        return Value::null();
+    }
+    let sub = &s[start..end];
+    let ptr = get_or_create_string(sub);
+    Value::string(ptr)
+}
+
+fn native_string_replace(args: Vec<Value>) -> Value {
+    if args.len() < 3 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let from = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let to = match args[2].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let replaced = s.replace(from, to);
+    let ptr = get_or_create_string(&replaced);
+    Value::string(ptr)
+}
+
+fn native_string_trim(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let trimmed = s.trim();
+    let ptr = get_or_create_string(trimmed);
+    Value::string(ptr)
+}
+
+fn native_string_length(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::number(0.0);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::number(0.0),
+    };
+    Value::number(s.len() as f64)
+}
+
+fn native_string_char_at(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let idx = args[1].as_number() as usize;
+    if let Some(c) = s.chars().nth(idx) {
+        let mut buf = [0; 4];
+        let c_str = c.encode_utf8(&mut buf);
+        let ptr = get_or_create_string(c_str);
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
+}
+
+fn native_string_index_of(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::number(-1.0);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::number(-1.0),
+    };
+    let search = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::number(-1.0),
+    };
+    match s.find(search) {
+        Some(idx) => Value::number(idx as f64),
+        None => Value::number(-1.0),
+    }
 }
 

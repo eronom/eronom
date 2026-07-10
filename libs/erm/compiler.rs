@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::eval::{self, ErmEval};
 use fnv::FnvHasher;
 use std::hash::Hasher;
@@ -2071,6 +2071,40 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     res_html = evaluate_braces_in_html(&res_html, &mut ev, &result.state_vars);
 
+    // Extract utility classes and compile them using native ermcss/compiler.er
+    let mut classes_set = HashSet::new();
+    if let Ok(re_class1) = regex::Regex::new(r#"class\s*=\s*"([^"]*)""#) {
+        for cap in re_class1.captures_iter(&res_html) {
+            for cls in cap[1].split_whitespace() {
+                classes_set.insert(cls.to_string());
+            }
+        }
+    }
+    if let Ok(re_class2) = regex::Regex::new(r#"class\s*=\s*'([^']*)'"#) {
+        for cap in re_class2.captures_iter(&res_html) {
+            for cls in cap[1].split_whitespace() {
+                classes_set.insert(cls.to_string());
+            }
+        }
+    }
+
+    if !classes_set.is_empty() {
+        if let Some(compiler_path) = find_ermcss_path(file_path) {
+            let mut classes_vec: Vec<String> = classes_set.into_iter().collect();
+            classes_vec.sort();
+            match run_ermcss_compiler(&compiler_path, &classes_vec) {
+                Ok(compiled_css) => {
+                    if !compiled_css.trim().is_empty() {
+                        result.styles.push(compiled_css);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to compile utility classes using ermcss: {}", e);
+                }
+            }
+        }
+    }
+
     let mut assets = String::new();
     if !result.styles.is_empty() {
         assets.push_str("\n<style id=\"__erm_styles\">\n");
@@ -2501,9 +2535,140 @@ pub fn transform_use_effect(input: &str) -> String {
     res
 }
 
+fn find_ermcss_path(file_path: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(file_path);
+    let parent_dir = path.parent().unwrap_or(std::path::Path::new("."));
+    
+    // 1. Search upwards from the compiling file's directory
+    let mut current = Some(parent_dir);
+    while let Some(dir) = current {
+        let ermcss_path = dir.join("ermcss").join("compiler.er");
+        if ermcss_path.is_file() {
+            return Some(ermcss_path);
+        }
+        let ermcss_path_sibling = dir.join("compiler.er");
+        if dir.file_name().and_then(|n| n.to_str()) == Some("ermcss") && ermcss_path_sibling.is_file() {
+            return Some(ermcss_path_sibling);
+        }
+        current = dir.parent();
+    }
+
+    // 2. Search upwards from current working directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut current = Some(cwd.as_path());
+        while let Some(dir) = current {
+            let ermcss_path = dir.join("ermcss").join("compiler.er");
+            if ermcss_path.is_file() {
+                return Some(ermcss_path);
+            }
+            current = dir.parent();
+        }
+    }
+
+    // 3. Search relative to executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut current = Some(exe_dir);
+            while let Some(dir) = current {
+                let ermcss_path = dir.join("ermcss").join("compiler.er");
+                if ermcss_path.is_file() {
+                    return Some(ermcss_path);
+                }
+                current = dir.parent();
+            }
+        }
+    }
+
+    None
+}
+
+fn run_ermcss_compiler(compiler_path: &std::path::Path, classes: &[String]) -> anyhow::Result<String> {
+    let stmts = match crate::frontend::parse_and_resolve_imports(compiler_path) {
+        Ok(s) => s,
+        Err(e) => anyhow::bail!("Compile/Import error for ermcss: {}", e),
+    };
+
+    let compiler = crate::vm::compiler::Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => anyhow::bail!("Compile error for ermcss: {}", e),
+    };
+
+    let mut vm = crate::vm::execute::VM::new();
+    vm.register_global("print", crate::vm::value::Value::native_function(|args| {
+        let mut outputs = Vec::new();
+        for arg in args {
+            outputs.push(arg.to_string());
+        }
+        println!("{}", outputs.join(" "));
+        crate::vm::value::Value::null()
+    }));
+
+    let lbrace_ptr = crate::vm::gc::get_or_create_string("{");
+    vm.register_global("LBRACE", crate::vm::value::Value::string(lbrace_ptr));
+    let rbrace_ptr = crate::vm::gc::get_or_create_string("}");
+    vm.register_global("RBRACE", crate::vm::value::Value::string(rbrace_ptr));
+    
+    crate::vm::er_http::register_eronom_file_api(&mut vm).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    if let Err(e) = vm.run(function) {
+        anyhow::bail!("VM Runtime error for ermcss: {}", e);
+    }
+    if let Err(e) = vm.run_event_loop() {
+        anyhow::bail!("VM Event loop error for ermcss: {}", e);
+    }
+
+    let compile_val = match vm.globals.get("compile") {
+        Some(val) => *val,
+        None => anyhow::bail!("Global 'compile' function not found in compiler.er"),
+    };
+
+    let mut parts = Vec::new();
+    for cls in classes {
+        let ptr = crate::vm::gc::get_or_create_string(cls);
+        parts.push(crate::vm::value::Value::string(ptr));
+    }
+    let array_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Array(parts));
+    let classes_array_val = crate::vm::value::Value::array(array_ptr);
+
+    let res = vm.call_function_reentrant(compile_val, vec![classes_array_val]);
+    let res_val = match res {
+        Ok(v) => v,
+        Err(e) => anyhow::bail!("VM compilation function error: {}", e),
+    };
+
+    let css_string = match res_val.as_str() {
+        Some(s) => s.to_string(),
+        None => anyhow::bail!("Expected compile() to return a string, got: {:?}", res_val),
+    };
+
+    Ok(css_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ermcss_utility_compilation() {
+        let content = r#"
+        <div class="flex items-center justify-center min-h-screen bg-gray-100">
+            <h2 class="text-2xl font-bold text-gray-800">Hello Eronom</h2>
+        </div>
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, false, &params).unwrap();
+        println!("ERMCSS COMPILATION RES:\n{}", res);
+        
+        assert!(res.contains(".flex { display: flex; }"));
+        assert!(res.contains(".items-center { align-items: center; }"));
+        assert!(res.contains(".justify-center { justify-content: center; }"));
+        assert!(res.contains(".min-h-screen { min-height: 100vh; }"));
+        assert!(res.contains(".bg-gray-100 { background-color: #f3f4f6; }"));
+        assert!(res.contains(".text-2xl { font-size: 1.5rem; line-height: 2rem; }"));
+        assert!(res.contains(".font-bold { font-weight: 700; }"));
+        assert!(res.contains(".text-gray-800 { color: #1f2937; }"));
+    }
 
     #[test]
     fn test_function_based_template() {
