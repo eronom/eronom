@@ -63,6 +63,20 @@ gvfcjb hyun</p>
     <p>useEffect status: <strong style="color: #2ecc71;">{effectMessage}</strong></p>
 </div>
 
+<div class="flex items-center justify-center min-h-screen bg-gray-100">
+  <div class="w-80 rounded-xl bg-white p-6 shadow-lg border border-gray-200">
+    <h2 class="text-2xl font-bold text-gray-800">Hello Eronom</h2>
+    <p class="mt-2 text-gray-600">
+      This is a simple card built with Eronom.
+    </p>
+    <button
+      class="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 transition"
+    >
+      Get Started
+    </button>
+  </div>
+</div>
+
 <p>HMRsss is now EFddFIaaCIENTss and CLEAN! Edited <code>index.erm</code>.</p>
 <h3>Current time: {time}</h3>
 <h2>Hellloo web added h2 tag</h2>

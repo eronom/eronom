@@ -750,11 +750,15 @@
               const newScript = document.createElement('script');
               newScript.text = s.innerHTML;
               if (s.className) newScript.className = s.className;
+              const sType = s.getAttribute('type');
+              if (sType) newScript.type = sType;
               try {
                 if (s.src) {
                   let sUrl = new URL(s.src, location.href);
                   sUrl.searchParams.set('t', new Date().getTime());
                   newScript.src = sUrl.href;
+                  document.head.appendChild(newScript);
+                } else if (sType === 'module') {
                   document.head.appendChild(newScript);
                 } else {
                   (0, eval)(s.innerHTML);

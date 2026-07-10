@@ -14,6 +14,11 @@ app.get("/contact", (c) => {
   return c.html(template)
 })
 
+app.get("/ermcss-demo", (c) => {
+  let template = render("app/pages/ermcss-demo.erm", c.req.params)
+  return c.html(template)
+})
+
 app.get("/fnbased", (c) => {
   let template = render("app/pages/fnbased.erm", c.req.params)
   return c.html(template)

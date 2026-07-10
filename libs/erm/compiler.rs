@@ -2612,7 +2612,7 @@ fn run_ermcss_compiler(compiler_path: &std::path::Path, classes: &[String]) -> a
     };
 
     let css_string = match res_val.as_str() {
-        Some(s) => s.to_string(),
+        Some(s) => s.to_string().replace("\\n", "\n"),
         None => anyhow::bail!("Expected compile() to return a string, got: {:?}", res_val),
     };
 
@@ -2823,6 +2823,16 @@ mod tests {
         assert!(res.contains(".text-2xl { font-size: 1.5rem; line-height: 2rem; }"));
         assert!(res.contains(".font-bold { font-weight: 700; }"));
         assert!(res.contains(".text-gray-800 { color: #1f2937; }"));
+    }
+
+    #[test]
+    fn test_testp_ermcss_compilation() {
+        let base_path = std::path::Path::new("testp");
+        let cfg = parse_ermcss_config(base_path);
+        println!("CFG ENABLED: {}, GLOBS: {:?}", cfg.enabled, cfg.content);
+        let res = compile_project_ermcss(base_path, &cfg.content).unwrap();
+        println!("COMPILED CSS LENGTH: {}", res.len());
+        println!("COMPILED CSS:\n{}", res);
     }
 
     #[test]
