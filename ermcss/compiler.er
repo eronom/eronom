@@ -67,6 +67,57 @@ let parseSpacingValue = (val) => {
   return (num * 0.25) + "rem"
 }
 
+let getCustomColor = (colorName) => {
+  let configContent = ""
+  if (Eronom_nativeFileExists("config.er")) {
+    configContent = Eronom_nativeFileText("config.er")
+  } else if (Eronom_nativeFileExists("testp/config.er")) {
+    configContent = Eronom_nativeFileText("testp/config.er")
+  }
+  
+  if (stringLength(configContent) > 0) {
+    let target1 = colorName + ":"
+    let target2 = colorName + " :"
+    let idx = stringIndexOf(configContent, target1)
+    let len = stringLength(target1)
+    if (idx == 0 - 1) {
+      idx = stringIndexOf(configContent, target2)
+      len = stringLength(target2)
+    }
+    
+    if (idx == 0 - 1) {
+      return null
+    }
+    
+    let sub = stringSubstring(configContent, idx + len, stringLength(configContent))
+    let quoteIdx = stringIndexOf(sub, '"')
+    let isSingleQuote = false
+    if (quoteIdx == 0 - 1) {
+      quoteIdx = stringIndexOf(sub, "'")
+      isSingleQuote = true
+    }
+    if (quoteIdx == 0 - 1) {
+      return null
+    }
+    
+    let sub2 = stringSubstring(sub, quoteIdx + 1, stringLength(sub))
+    let quoteChar = '"'
+    if (isSingleQuote) {
+      quoteChar = "'"
+    }
+    let endQuoteIdx = stringIndexOf(sub2, quoteChar)
+    if (endQuoteIdx == 0 - 1) {
+      return null
+    }
+    
+    let hex = stringSubstring(sub2, 0, endQuoteIdx)
+    if (stringStartsWith(hex, "#")) {
+      return hex
+    }
+  }
+  return null
+}
+
 let getHexColor = (colorName, shade) => {
   if (colorName == "white") { return "#ffffff" }
   if (colorName == "black") { return "#000000" }
@@ -136,6 +187,11 @@ let getHexColor = (colorName, shade) => {
     if (shade == "800") { return "#854d0e" }
     if (shade == "900") { return "#713f12" }
     if (shade == "950") { return "#422006" }
+  }
+  let custom = getCustomColor(colorName)
+  if (custom == null) {
+  } else {
+    return custom
   }
   return null
 }
@@ -378,41 +434,47 @@ export const compile = (classes) => {
         else if (stringStartsWith(baseClass, "bg-")) {
           let colorPart = stringSubstring(baseClass, 3, stringLength(baseClass))
           let hyphenIdx = stringIndexOf(colorPart, "-")
+          let hex = null
           if (hyphenIdx == 0 - 1) {
+            hex = getHexColor(colorPart, null)
           } else {
             let colorName = stringSubstring(colorPart, 0, hyphenIdx)
             let shade = stringSubstring(colorPart, hyphenIdx + 1, stringLength(colorPart))
-            let hex = getHexColor(colorName, shade)
-            if (hex == null) {
-            } else {
-              ruleContent = "background-color: " + hex + ";"
-            }
+            hex = getHexColor(colorName, shade)
+          }
+          if (hex == null) {
+          } else {
+            ruleContent = "background-color: " + hex + ";"
           }
         } else if (stringStartsWith(baseClass, "text-")) {
           let colorPart = stringSubstring(baseClass, 5, stringLength(baseClass))
           let hyphenIdx = stringIndexOf(colorPart, "-")
+          let hex = null
           if (hyphenIdx == 0 - 1) {
+            hex = getHexColor(colorPart, null)
           } else {
             let colorName = stringSubstring(colorPart, 0, hyphenIdx)
             let shade = stringSubstring(colorPart, hyphenIdx + 1, stringLength(colorPart))
-            let hex = getHexColor(colorName, shade)
-            if (hex == null) {
-            } else {
-              ruleContent = "color: " + hex + ";"
-            }
+            hex = getHexColor(colorName, shade)
+          }
+          if (hex == null) {
+          } else {
+            ruleContent = "color: " + hex + ";"
           }
         } else if (stringStartsWith(baseClass, "border-")) {
           let colorPart = stringSubstring(baseClass, 7, stringLength(baseClass))
           let hyphenIdx = stringIndexOf(colorPart, "-")
+          let hex = null
           if (hyphenIdx == 0 - 1) {
+            hex = getHexColor(colorPart, null)
           } else {
             let colorName = stringSubstring(colorPart, 0, hyphenIdx)
             let shade = stringSubstring(colorPart, hyphenIdx + 1, stringLength(colorPart))
-            let hex = getHexColor(colorName, shade)
-            if (hex == null) {
-            } else {
-              ruleContent = "border-color: " + hex + ";"
-            }
+            hex = getHexColor(colorName, shade)
+          }
+          if (hex == null) {
+          } else {
+            ruleContent = "border-color: " + hex + ";"
           }
         }
       } else {
