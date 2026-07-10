@@ -644,7 +644,13 @@
       const newStyle = doc.getElementById('__erm_styles');
       const oldStyle = document.getElementById('__erm_styles');
       if (newStyle && oldStyle) {
-        oldStyle.innerHTML = newStyle.innerHTML;
+        if (newStyle.tagName === 'LINK') {
+          if (oldStyle.getAttribute('href') !== newStyle.getAttribute('href')) {
+            oldStyle.setAttribute('href', newStyle.getAttribute('href') || '');
+          }
+        } else {
+          oldStyle.innerHTML = newStyle.innerHTML;
+        }
       } else if (newStyle) {
         document.head.appendChild(newStyle.cloneNode(true));
       }

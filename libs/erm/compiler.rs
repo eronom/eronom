@@ -2072,15 +2072,23 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     res_html = evaluate_braces_in_html(&res_html, &mut ev, &result.state_vars);
 
     // Inject precompiled global ermcss styles if populated
+    let mut has_global_ermcss = false;
     if let Ok(global_css) = get_global_ermcss() {
         if !global_css.trim().is_empty() {
-            result.styles.push(global_css);
+            if is_prod {
+                has_global_ermcss = true;
+            } else {
+                result.styles.push(global_css);
+            }
         }
     }
 
     let mut assets = String::new();
+    if has_global_ermcss {
+        assets.push_str("\n<link rel=\"stylesheet\" id=\"__erm_styles\" href=\"/css/global.css\">\n");
+    }
     if !result.styles.is_empty() {
-        assets.push_str("\n<style id=\"__erm_styles\">\n");
+        assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
         for s in &result.styles { assets.push_str(s); assets.push('\n'); }
         assets.push_str("</style>\n");
     }
