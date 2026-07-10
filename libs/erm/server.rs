@@ -806,6 +806,26 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
     *DEFAULT_FILE.lock().unwrap() = default_file;
     *IS_PROD.lock().unwrap() = is_prod;
 
+    // Compile global ermcss styles on start if enabled
+    let ermcss_cfg = crate::compiler::parse_ermcss_config(&base_path);
+    let mut ermcss_enabled = ermcss_cfg.enabled;
+    let mut ermcss_globs = ermcss_cfg.content;
+
+    if ermcss_enabled {
+        println!("[ermcss] Compiling project styles...");
+        match crate::compiler::compile_project_ermcss(&base_path, &ermcss_globs) {
+            Ok(css) => {
+                crate::compiler::set_global_ermcss(css);
+                println!("[ermcss] Styles compiled successfully.");
+            }
+            Err(e) => {
+                eprintln!("[Warning] Failed to compile global ermcss styles: {}", e);
+            }
+        }
+    } else {
+        crate::compiler::set_global_ermcss(String::new());
+    }
+
     unsafe {
         er_http_init_with_callbacks(
             dev_http_callback,
@@ -861,6 +881,35 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                         .into_owned();
                     
                     println!("[HMR] File changed: {}", rel_path);
+
+                    if ermcss_enabled {
+                        let should_recompile = rel_path == "config.er" || ermcss_globs.iter().any(|glob| {
+                            crate::compiler::matches_glob(&watch_path, &path, glob)
+                        });
+                        
+                        if should_recompile {
+                            println!("[ermcss] Recompiling project styles...");
+                            if rel_path == "config.er" {
+                                let new_cfg = crate::compiler::parse_ermcss_config(&watch_path);
+                                ermcss_enabled = new_cfg.enabled;
+                                ermcss_globs = new_cfg.content;
+                            }
+                            
+                            if ermcss_enabled {
+                                match crate::compiler::compile_project_ermcss(&watch_path, &ermcss_globs) {
+                                    Ok(css) => {
+                                        crate::compiler::set_global_ermcss(css);
+                                        println!("[ermcss] Styles recompiled successfully.");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[Warning] Failed to recompile global ermcss styles: {}", e);
+                                    }
+                                }
+                            } else {
+                                crate::compiler::set_global_ermcss(String::new());
+                            }
+                        }
+                    }
                     
                     let path_str = if rel_path.starts_with('/') {
                         rel_path

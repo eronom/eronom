@@ -2,6 +2,24 @@ let config = {
     server: { 
         port: 4000 
     } 
+
+    package: {
+        ermcss,
+    }
+ermcss : {
+  content: [
+    "./app/**/*.erm",
+    "./pages/**/*.erm",
+    "./components/**/*.erm",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        primary: "#2563eb",
+      },
+    },
+  },
+}
 }
 
 

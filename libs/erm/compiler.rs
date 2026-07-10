@@ -2071,37 +2071,10 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     res_html = evaluate_braces_in_html(&res_html, &mut ev, &result.state_vars);
 
-    // Extract utility classes and compile them using native ermcss/compiler.er
-    let mut classes_set = HashSet::new();
-    if let Ok(re_class1) = regex::Regex::new(r#"class\s*=\s*"([^"]*)""#) {
-        for cap in re_class1.captures_iter(&res_html) {
-            for cls in cap[1].split_whitespace() {
-                classes_set.insert(cls.to_string());
-            }
-        }
-    }
-    if let Ok(re_class2) = regex::Regex::new(r#"class\s*=\s*'([^']*)'"#) {
-        for cap in re_class2.captures_iter(&res_html) {
-            for cls in cap[1].split_whitespace() {
-                classes_set.insert(cls.to_string());
-            }
-        }
-    }
-
-    if !classes_set.is_empty() {
-        if let Some(compiler_path) = find_ermcss_path(file_path) {
-            let mut classes_vec: Vec<String> = classes_set.into_iter().collect();
-            classes_vec.sort();
-            match run_ermcss_compiler(&compiler_path, &classes_vec) {
-                Ok(compiled_css) => {
-                    if !compiled_css.trim().is_empty() {
-                        result.styles.push(compiled_css);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to compile utility classes using ermcss: {}", e);
-                }
-            }
+    // Inject precompiled global ermcss styles if populated
+    if let Ok(global_css) = get_global_ermcss() {
+        if !global_css.trim().is_empty() {
+            result.styles.push(global_css);
         }
     }
 
@@ -2595,6 +2568,7 @@ fn run_ermcss_compiler(compiler_path: &std::path::Path, classes: &[String]) -> a
     };
 
     let mut vm = crate::vm::execute::VM::new();
+    vm.use_jit = false;
     vm.register_global("print", crate::vm::value::Value::native_function(|args| {
         let mut outputs = Vec::new();
         for arg in args {
@@ -2645,6 +2619,171 @@ fn run_ermcss_compiler(compiler_path: &std::path::Path, classes: &[String]) -> a
     Ok(css_string)
 }
 
+pub static GLOBAL_ERMCSS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+pub fn set_global_ermcss(css: String) {
+    if let Ok(mut lock) = GLOBAL_ERMCSS.lock() {
+        *lock = css;
+    }
+}
+
+pub fn get_global_ermcss() -> anyhow::Result<String> {
+    if let Ok(lock) = GLOBAL_ERMCSS.lock() {
+        Ok(lock.clone())
+    } else {
+        anyhow::bail!("Failed to lock GLOBAL_ERMCSS")
+    }
+}
+
+pub struct ErmcssConfig {
+    pub enabled: bool,
+    pub content: Vec<String>,
+}
+
+pub fn parse_ermcss_config(base_path: &std::path::Path) -> ErmcssConfig {
+    let mut config = ErmcssConfig {
+        enabled: false,
+        content: Vec::new(),
+    };
+    let config_path = base_path.join("config.er");
+    if config_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(re_package) = regex::Regex::new(r#"(?s)package\s*:\s*\{[^}]*ermcss"#) {
+                if re_package.is_match(&content) {
+                    config.enabled = true;
+                }
+            }
+            if let Ok(re_content) = regex::Regex::new(r#"(?s)content\s*:\s*\[([^\]]*)\]"#) {
+                if let Some(caps) = re_content.captures(&content) {
+                    if let Some(list_str) = caps.get(1) {
+                        for cap in list_str.as_str().split(',') {
+                            let trimmed = cap.trim().trim_matches('"').trim_matches('\'').trim();
+                            if !trimmed.is_empty() {
+                                config.content.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    config
+}
+
+pub fn matches_glob(base_path: &std::path::Path, path: &std::path::Path, glob: &str) -> bool {
+    let rel_path = path.strip_prefix(base_path).unwrap_or(path);
+    let path_str = rel_path.to_string_lossy().replace('\\', "/");
+    
+    let mut glob_clean = glob.replace('\\', "/");
+    if glob_clean.starts_with("./") {
+        glob_clean = glob_clean[2..].to_string();
+    }
+    
+    let mut regex_pattern = String::new();
+    let mut chars = glob_clean.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '.' => {
+                regex_pattern.push_str(r#"\."#);
+            }
+            '/' => {
+                regex_pattern.push_str("/");
+            }
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    if chars.peek() == Some(&'/') {
+                        chars.next();
+                        regex_pattern.push_str("(?:.*/)?");
+                    } else {
+                        regex_pattern.push_str(".*");
+                    }
+                } else {
+                    regex_pattern.push_str("[^/]*");
+                }
+            }
+            '?' => {
+                regex_pattern.push_str(".");
+            }
+            other => {
+                regex_pattern.push_str(&regex::escape(&other.to_string()));
+            }
+        }
+    }
+    
+    if let Ok(re) = regex::Regex::new(&format!("(?i)^{}$", regex_pattern)) {
+        re.is_match(&path_str)
+    } else {
+        false
+    }
+}
+
+pub fn compile_project_ermcss(base_path: &std::path::Path, content_globs: &[String]) -> anyhow::Result<String> {
+    let mut classes_set = HashSet::new();
+    
+    fn scan_for_classes(dir: &std::path::Path, base_path: &std::path::Path, globs: &[String], classes: &mut HashSet<String>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                
+                if name_str.starts_with('.') ||
+                   name_str == "target" ||
+                   name_str == "build" ||
+                   name_str == "node_modules" {
+                    continue;
+                }
+                
+                if path.is_dir() {
+                    scan_for_classes(&path, base_path, globs, classes);
+                } else if path.is_file() {
+                    let mut matched = false;
+                    for glob in globs {
+                        if matches_glob(base_path, &path, glob) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                    
+                    if matched {
+                        if let Ok(html_content) = std::fs::read_to_string(&path) {
+                            if let Ok(re_class1) = regex::Regex::new(r#"class\s*=\s*"([^"]*)""#) {
+                                for cap in re_class1.captures_iter(&html_content) {
+                                    for cls in cap[1].split_whitespace() {
+                                        classes.insert(cls.to_string());
+                                    }
+                                }
+                            }
+                            if let Ok(re_class2) = regex::Regex::new(r#"class\s*=\s*'([^']*)'"#) {
+                                  for cap in re_class2.captures_iter(&html_content) {
+                                      for cls in cap[1].split_whitespace() {
+                                          classes.insert(cls.to_string());
+                                      }
+                                  }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    scan_for_classes(base_path, base_path, content_globs, &mut classes_set);
+    
+    if classes_set.is_empty() {
+        return Ok(String::new());
+    }
+    
+    if let Some(compiler_path) = find_ermcss_path(base_path.to_str().unwrap_or(".")) {
+        let mut classes_vec: Vec<String> = classes_set.into_iter().collect();
+        classes_vec.sort();
+        run_ermcss_compiler(&compiler_path, &classes_vec)
+    } else {
+        anyhow::bail!("compiler.er not found")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2657,6 +2796,22 @@ mod tests {
         </div>
         "#;
         let params = std::collections::HashMap::new();
+        
+        let classes = vec![
+            "flex".to_string(),
+            "items-center".to_string(),
+            "justify-center".to_string(),
+            "min-h-screen".to_string(),
+            "bg-gray-100".to_string(),
+            "text-2xl".to_string(),
+            "font-bold".to_string(),
+            "text-gray-800".to_string(),
+        ];
+        if let Some(compiler_path) = find_ermcss_path(".") {
+            let css = run_ermcss_compiler(&compiler_path, &classes).unwrap();
+            set_global_ermcss(css);
+        }
+        
         let res = process_erm_component(".", content, false, &params).unwrap();
         println!("ERMCSS COMPILATION RES:\n{}", res);
         

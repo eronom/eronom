@@ -509,6 +509,24 @@ fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     fs::create_dir_all(&build_dir)?;
 
     let base_path = fs::canonicalize(dir)?;
+
+    // Parse ermcss config and compile if enabled
+    let ermcss_cfg = crate::compiler::parse_ermcss_config(&base_path);
+    if ermcss_cfg.enabled {
+        println!("[ermcss] Compiling project styles...");
+        match crate::compiler::compile_project_ermcss(&base_path, &ermcss_cfg.content) {
+            Ok(css) => {
+                crate::compiler::set_global_ermcss(css);
+                println!("[ermcss] Styles compiled successfully.");
+            }
+            Err(e) => {
+                eprintln!("[Warning] Failed to compile global ermcss styles: {}", e);
+            }
+        }
+    } else {
+        crate::compiler::set_global_ermcss(String::new());
+    }
+
     let mut routes = Vec::new();
     let mut api_routes = Vec::new();
     build_dir_recursive(&base_path, &base_path, &build_dir, mode, &mut routes, &mut api_routes)?;
