@@ -277,7 +277,7 @@ export const compile = (classes) => {
         }
       }
       
-      let escapedCls = stringReplace(rawCls, ":", "\\:")
+      let escapedCls = stringReplace(rawCls, ":", "\:")
       let selector = "." + escapedCls
       if (isHover) {
         selector = selector + ":hover"
