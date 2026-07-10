@@ -653,6 +653,19 @@
         }
       } else if (newStyle) {
         document.head.appendChild(newStyle.cloneNode(true));
+      } else if (oldStyle) {
+        oldStyle.remove();
+      }
+
+      // Update page-scoped styles
+      const newScopedStyle = doc.getElementById('__erm_scoped_styles');
+      const oldScopedStyle = document.getElementById('__erm_scoped_styles');
+      if (newScopedStyle && oldScopedStyle) {
+        oldScopedStyle.innerHTML = newScopedStyle.innerHTML;
+      } else if (newScopedStyle) {
+        document.head.appendChild(newScopedStyle.cloneNode(true));
+      } else if (oldScopedStyle) {
+        oldScopedStyle.remove();
       }
 
       // Reconcile body children
