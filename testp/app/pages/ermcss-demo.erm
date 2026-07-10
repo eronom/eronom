@@ -12,7 +12,7 @@
 
 <Header />
 
-<div class="p-6 bg-gray-50 min-h-screen">
+<div class="p-6 bg-gray-50">
     <div class="max-w-4xl mx-auto">
         <!-- Top Banner / Header Card -->
         <div class="rounded-xl bg-white p-6 shadow-md border border-gray-200 mb-6 transition hover:shadow-lg">
@@ -79,5 +79,4 @@
         </div>
     </div>
 </div>
-
 <Footer />
