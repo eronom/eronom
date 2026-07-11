@@ -477,17 +477,29 @@ fn execute_api_route(
 
     let _guard = GcGuard;
     
-    // Load config.er if it exists
+    // Load config from eronom.toml or config.er if they exist
     if let Some(parent_dir) = file_path.parent() {
-        let config_path = parent_dir.join("config.er");
-        if config_path.exists() {
-            if let Ok(config_content) = std::fs::read_to_string(&config_path) {
-                let config_tokens = crate::frontend::lex(&config_content);
-                let mut config_parser = crate::frontend::Parser::new(config_tokens);
-                if let Ok(config_stmts) = config_parser.parse() {
-                    let config_compiler = crate::vm::compiler::Compiler::new();
-                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
-                        let _ = vm.run(config_func);
+        let toml_path = parent_dir.join("eronom.toml");
+        if toml_path.exists() {
+            if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
+                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                    if let Ok(json_val) = serde_json::to_value(toml_val) {
+                        let config_val = crate::vm::gc::json_to_value(json_val);
+                        vm.register_global("config", config_val);
+                    }
+                }
+            }
+        } else {
+            let config_path = parent_dir.join("config.er");
+            if config_path.exists() {
+                if let Ok(config_content) = std::fs::read_to_string(&config_path) {
+                    let config_tokens = crate::frontend::lex(&config_content);
+                    let mut config_parser = crate::frontend::Parser::new(config_tokens);
+                    if let Ok(config_stmts) = config_parser.parse() {
+                        let config_compiler = crate::vm::compiler::Compiler::new();
+                        if let Ok(config_func) = config_compiler.compile(&config_stmts) {
+                            let _ = vm.run(config_func);
+                        }
                     }
                 }
             }
@@ -785,15 +797,36 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
             base_path = parent.to_path_buf();
         }
     } else {
-        let config_path = base_path.join("config.er");
-        if config_path.exists() {
-            if let Ok(content) = fs::read_to_string(&config_path) {
-                if let Ok(re) = regex::Regex::new(r#"(?s)server\s*:\s*\{[^}]*dev\s*:\s*["']([^"']+)["']"#) {
-                    if let Some(caps) = re.captures(&content) {
-                        if let Some(dev_val) = caps.get(1) {
-                            let dev_file = base_path.join(dev_val.as_str());
-                            if dev_file.exists() {
-                                default_file = Some(dev_file);
+        let toml_path = base_path.join("eronom.toml");
+        let mut got_dev = false;
+        if toml_path.exists() {
+            if let Ok(content) = fs::read_to_string(&toml_path) {
+                if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
+                    if let Some(server) = toml_val.get("server") {
+                        if let Some(dev) = server.get("dev") {
+                            if let Some(dev_str) = dev.as_str() {
+                                let dev_file = base_path.join(dev_str);
+                                if dev_file.exists() {
+                                    default_file = Some(dev_file);
+                                    got_dev = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !got_dev {
+            let config_path = base_path.join("config.er");
+            if config_path.exists() {
+                if let Ok(content) = fs::read_to_string(&config_path) {
+                    if let Ok(re) = regex::Regex::new(r#"(?s)server\s*:\s*\{[^}]*dev\s*:\s*["']([^"']+)["']"#) {
+                        if let Some(caps) = re.captures(&content) {
+                            if let Some(dev_val) = caps.get(1) {
+                                let dev_file = base_path.join(dev_val.as_str());
+                                if dev_file.exists() {
+                                    default_file = Some(dev_file);
+                                }
                             }
                         }
                     }
@@ -883,13 +916,13 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                     println!("[HMR] File changed: {}", rel_path);
 
                     if ermcss_enabled {
-                        let should_recompile = rel_path == "config.er" || ermcss_globs.iter().any(|glob| {
+                        let should_recompile = rel_path == "config.er" || rel_path == "eronom.toml" || ermcss_globs.iter().any(|glob| {
                             crate::compiler::matches_glob(&watch_path, &path, glob)
                         });
                         
                         if should_recompile {
                             println!("[ermcss] Recompiling project styles...");
-                            if rel_path == "config.er" {
+                            if rel_path == "config.er" || rel_path == "eronom.toml" {
                                 let new_cfg = crate::compiler::parse_ermcss_config(&watch_path);
                                 ermcss_enabled = new_cfg.enabled;
                                 ermcss_globs = new_cfg.content;

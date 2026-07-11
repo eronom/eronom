@@ -19,6 +19,8 @@ regex = "1"
 ureq = { version = "2.10.1", features = ["tls"] }
 sha1 = "0.10.6"
 clap = { version = "4.6.1", features = ["derive"] }
+toml = "0.8.19"
+
 
 
 [build-dependencies]

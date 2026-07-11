@@ -42,7 +42,7 @@ fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
                 break;
             }
             let pages_dir_alt = curr.join("pages");
-            if pages_dir_alt.exists() && curr.join("config.er").exists() {
+            if pages_dir_alt.exists() && (curr.join("eronom.toml").exists() || curr.join("config.er").exists()) {
                 resolved = Some(pages_dir_alt.join(&import_path["@pages/".len()..]));
                 break;
             }
@@ -63,7 +63,7 @@ fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
                 break;
             }
             let comp_dir_alt = curr.join("components");
-            if comp_dir_alt.exists() && curr.join("config.er").exists() {
+            if comp_dir_alt.exists() && (curr.join("eronom.toml").exists() || curr.join("config.er").exists()) {
                 resolved = Some(comp_dir_alt.join(&import_path["@components/".len()..]));
                 break;
             }
@@ -1086,7 +1086,7 @@ pub fn process_component_tree(
                                     break;
                                 }
                                 if let Some(parent) = curr.parent() {
-                                    if curr.join("config.er").exists() || curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
+                                    if curr.join("eronom.toml").exists() || curr.join("config.er").exists() || curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
                                         break;
                                     }
                                     curr = parent.to_path_buf();
@@ -2653,6 +2653,32 @@ pub fn parse_ermcss_config(base_path: &std::path::Path) -> ErmcssConfig {
         enabled: false,
         content: Vec::new(),
     };
+    let toml_path = base_path.join("eronom.toml");
+    if toml_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&toml_path) {
+            if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
+                if let Some(package) = toml_val.get("package") {
+                    if let Some(ermcss) = package.get("ermcss") {
+                        if ermcss.as_bool().unwrap_or(false) {
+                            config.enabled = true;
+                        }
+                    }
+                }
+                if let Some(ermcss) = toml_val.get("ermcss") {
+                    if let Some(content_arr) = ermcss.get("content") {
+                        if let Some(arr) = content_arr.as_array() {
+                            for item in arr {
+                                if let Some(s) = item.as_str() {
+                                    config.content.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                return config;
+            }
+        }
+    }
     let config_path = base_path.join("config.er");
     if config_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&config_path) {

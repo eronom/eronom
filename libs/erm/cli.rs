@@ -144,7 +144,7 @@ fn resolve_port(dir: &str, port_val: Option<u16>, is_build_or_init: bool) -> any
     } else if is_build_or_init {
         Ok(0)
     } else {
-        anyhow::bail!("No port specified. Please provide a port in config.er or PORT environment variable.");
+        anyhow::bail!("No port specified. Please provide a port in eronom.toml or PORT environment variable.");
     }
 }
 
@@ -692,28 +692,53 @@ fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
 
 fn get_port_from_config_file(dir: &str) -> Option<u16> {
     let path = Path::new(dir);
-    let mut config_path = if path.is_file() {
-        path.parent()?.join("config.er")
+    let mut current = if path.is_file() {
+        path.parent()
     } else {
-        path.join("config.er")
+        Some(path)
     };
 
-    let mut current = config_path.parent();
+    let mut found_toml = None;
+    let mut found_er = None;
+
     while let Some(p) = current {
-        let check = p.join("config.er");
-        if check.exists() {
-            config_path = check;
+        let check_toml = p.join("eronom.toml");
+        if check_toml.exists() {
+            found_toml = Some(check_toml);
             break;
+        }
+        let check_er = p.join("config.er");
+        if check_er.exists() && found_er.is_none() {
+            found_er = Some(check_er);
         }
         current = p.parent();
     }
 
-    if !config_path.exists() {
-        return None;
+    if let Some(toml_path) = found_toml {
+        if let Ok(content) = fs::read_to_string(toml_path) {
+            if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
+                if let Some(server) = toml_val.get("server") {
+                    if let Some(port) = server.get("port") {
+                        if let Some(port_u64) = port.as_integer() {
+                            return Some(port_u64 as u16);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    let content = fs::read_to_string(config_path).ok()?;
-    let re = regex::Regex::new(r"(?s)server\s*:\s*\{[^}]*port\s*:\s*(\d+)").ok()?;
-    let caps = re.captures(&content)?;
-    caps.get(1)?.as_str().parse::<u16>().ok()
+    if let Some(er_path) = found_er {
+        if let Ok(content) = fs::read_to_string(er_path) {
+            if let Ok(re) = regex::Regex::new(r"(?s)server\s*:\s*\{[^}]*port\s*:\s*(\d+)") {
+                if let Some(caps) = re.captures(&content) {
+                    if let Some(port_str) = caps.get(1) {
+                        return port_str.as_str().parse::<u16>().ok();
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }

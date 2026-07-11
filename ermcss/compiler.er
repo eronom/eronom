@@ -69,7 +69,14 @@ let parseSpacingValue = (val) => {
 
 let getCustomColor = (colorName) => {
   let configContent = ""
-  if (Eronom_nativeFileExists("config.er")) {
+  let isToml = false
+  if (Eronom_nativeFileExists("eronom.toml")) {
+    configContent = Eronom_nativeFileText("eronom.toml")
+    isToml = true
+  } else if (Eronom_nativeFileExists("testp/eronom.toml")) {
+    configContent = Eronom_nativeFileText("testp/eronom.toml")
+    isToml = true
+  } else if (Eronom_nativeFileExists("config.er")) {
     configContent = Eronom_nativeFileText("config.er")
   } else if (Eronom_nativeFileExists("testp/config.er")) {
     configContent = Eronom_nativeFileText("testp/config.er")
@@ -78,6 +85,10 @@ let getCustomColor = (colorName) => {
   if (stringLength(configContent) > 0) {
     let target1 = colorName + ":"
     let target2 = colorName + " :"
+    if (isToml) {
+      target1 = colorName + "="
+      target2 = colorName + " ="
+    }
     let idx = stringIndexOf(configContent, target1)
     let len = stringLength(target1)
     if (idx == 0 - 1) {
