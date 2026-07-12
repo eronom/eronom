@@ -699,17 +699,12 @@ fn get_port_from_config_file(dir: &str) -> Option<u16> {
     };
 
     let mut found_toml = None;
-    let mut found_er = None;
 
     while let Some(p) = current {
         let check_toml = p.join("eronom.toml");
         if check_toml.exists() {
             found_toml = Some(check_toml);
             break;
-        }
-        let check_er = p.join("config.er");
-        if check_er.exists() && found_er.is_none() {
-            found_er = Some(check_er);
         }
         current = p.parent();
     }
@@ -722,18 +717,6 @@ fn get_port_from_config_file(dir: &str) -> Option<u16> {
                         if let Some(port_u64) = port.as_integer() {
                             return Some(port_u64 as u16);
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(er_path) = found_er {
-        if let Ok(content) = fs::read_to_string(er_path) {
-            if let Ok(re) = regex::Regex::new(r"(?s)server\s*:\s*\{[^}]*port\s*:\s*(\d+)") {
-                if let Some(caps) = re.captures(&content) {
-                    if let Some(port_str) = caps.get(1) {
-                        return port_str.as_str().parse::<u16>().ok();
                     }
                 }
             }

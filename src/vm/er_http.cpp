@@ -248,7 +248,6 @@ extern "C" void er_http_listen_and_run(int port) {
     
     g_app->listen(port, [port](auto* listen_socket) {
         if (listen_socket) {
-            std::cout << "[uWebSockets] Server listening on port " << port << std::endl;
             er_http_on_listening();
         } else {
             std::cerr << "[uWebSockets] Failed to listen on port " << port << std::endl;

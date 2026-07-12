@@ -566,16 +566,6 @@ fn get_max_mtime_for_reload(path: &str) -> Option<SystemTime> {
                 }
             }
         }
-        let config_path = parent.join("config.er");
-        if config_path.exists() {
-            if let Ok(meta) = fs::metadata(&config_path) {
-                if let Ok(mtime) = meta.modified() {
-                    if mtime > max_mtime {
-                        max_mtime = mtime;
-                    }
-                }
-            }
-        }
     }
     
     Some(max_mtime)
@@ -650,7 +640,7 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
         }
     };
     
-    // Reload eronom.toml or config.er if they exist
+    // Reload eronom.toml if it exists
     let parent_dir = Path::new(&path).parent();
     if let Some(parent) = parent_dir {
         let toml_path = parent.join("eronom.toml");
@@ -660,20 +650,6 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
                     if let Ok(json_val) = serde_json::to_value(toml_val) {
                         let config_val = crate::vm::gc::json_to_value(json_val);
                         vm.register_global("config", config_val);
-                    }
-                }
-            }
-        } else {
-            let config_path = parent.join("config.er");
-            if config_path.exists() {
-                if let Ok(config_content) = fs::read_to_string(&config_path) {
-                    let config_tokens = crate::frontend::lex(&config_content);
-                    let mut config_parser = crate::frontend::Parser::new(config_tokens);
-                    if let Ok(config_stmts) = config_parser.parse() {
-                        let config_compiler = crate::vm::compiler::Compiler::new();
-                        if let Ok(config_func) = config_compiler.compile(&config_stmts) {
-                            let _ = vm.run(config_func);
-                        }
                     }
                 }
             }

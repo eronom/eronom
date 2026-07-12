@@ -477,7 +477,7 @@ fn execute_api_route(
 
     let _guard = GcGuard;
     
-    // Load config from eronom.toml or config.er if they exist
+    // Load config from eronom.toml if it exists
     if let Some(parent_dir) = file_path.parent() {
         let toml_path = parent_dir.join("eronom.toml");
         if toml_path.exists() {
@@ -486,20 +486,6 @@ fn execute_api_route(
                     if let Ok(json_val) = serde_json::to_value(toml_val) {
                         let config_val = crate::vm::gc::json_to_value(json_val);
                         vm.register_global("config", config_val);
-                    }
-                }
-            }
-        } else {
-            let config_path = parent_dir.join("config.er");
-            if config_path.exists() {
-                if let Ok(config_content) = std::fs::read_to_string(&config_path) {
-                    let config_tokens = crate::frontend::lex(&config_content);
-                    let mut config_parser = crate::frontend::Parser::new(config_tokens);
-                    if let Ok(config_stmts) = config_parser.parse() {
-                        let config_compiler = crate::vm::compiler::Compiler::new();
-                        if let Ok(config_func) = config_compiler.compile(&config_stmts) {
-                            let _ = vm.run(config_func);
-                        }
                     }
                 }
             }
@@ -798,7 +784,6 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         }
     } else {
         let toml_path = base_path.join("eronom.toml");
-        let mut got_dev = false;
         if toml_path.exists() {
             if let Ok(content) = fs::read_to_string(&toml_path) {
                 if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
@@ -806,24 +791,6 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                         if let Some(dev) = server.get("dev") {
                             if let Some(dev_str) = dev.as_str() {
                                 let dev_file = base_path.join(dev_str);
-                                if dev_file.exists() {
-                                    default_file = Some(dev_file);
-                                    got_dev = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !got_dev {
-            let config_path = base_path.join("config.er");
-            if config_path.exists() {
-                if let Ok(content) = fs::read_to_string(&config_path) {
-                    if let Ok(re) = regex::Regex::new(r#"(?s)server\s*:\s*\{[^}]*dev\s*:\s*["']([^"']+)["']"#) {
-                        if let Some(caps) = re.captures(&content) {
-                            if let Some(dev_val) = caps.get(1) {
-                                let dev_file = base_path.join(dev_val.as_str());
                                 if dev_file.exists() {
                                     default_file = Some(dev_file);
                                 }
@@ -845,11 +812,9 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
     let mut ermcss_globs = ermcss_cfg.content;
 
     if ermcss_enabled {
-        println!("[ermcss] Compiling project styles...");
         match crate::compiler::compile_project_ermcss(&base_path, &ermcss_globs) {
             Ok(css) => {
                 crate::compiler::set_global_ermcss(css);
-                println!("[ermcss] Styles compiled successfully.");
             }
             Err(e) => {
                 eprintln!("[Warning] Failed to compile global ermcss styles: {}", e);
@@ -916,13 +881,12 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                     println!("[HMR] File changed: {}", rel_path);
 
                     if ermcss_enabled {
-                        let should_recompile = rel_path == "config.er" || rel_path == "eronom.toml" || ermcss_globs.iter().any(|glob| {
+                        let should_recompile = rel_path == "eronom.toml" || ermcss_globs.iter().any(|glob| {
                             crate::compiler::matches_glob(&watch_path, &path, glob)
                         });
                         
                         if should_recompile {
-                            println!("[ermcss] Recompiling project styles...");
-                            if rel_path == "config.er" || rel_path == "eronom.toml" {
+                            if rel_path == "eronom.toml" {
                                 let new_cfg = crate::compiler::parse_ermcss_config(&watch_path);
                                 ermcss_enabled = new_cfg.enabled;
                                 ermcss_globs = new_cfg.content;
@@ -932,7 +896,6 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                                 match crate::compiler::compile_project_ermcss(&watch_path, &ermcss_globs) {
                                     Ok(css) => {
                                         crate::compiler::set_global_ermcss(css);
-                                        println!("[ermcss] Styles recompiled successfully.");
                                     }
                                     Err(e) => {
                                         eprintln!("[Warning] Failed to recompile global ermcss styles: {}", e);

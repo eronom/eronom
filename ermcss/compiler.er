@@ -70,16 +70,15 @@ let parseSpacingValue = (val) => {
 let getCustomColor = (colorName) => {
   let configContent = ""
   let isToml = false
-  if (Eronom_nativeFileExists("eronom.toml")) {
-    configContent = Eronom_nativeFileText("eronom.toml")
+  let tomlPath = "eronom.toml"
+  if (PROJECT_DIR == "") {
+  } else {
+    tomlPath = PROJECT_DIR + "/eronom.toml"
+  }
+  
+  if (Eronom_nativeFileExists(tomlPath)) {
+    configContent = Eronom_nativeFileText(tomlPath)
     isToml = true
-  } else if (Eronom_nativeFileExists("testp/eronom.toml")) {
-    configContent = Eronom_nativeFileText("testp/eronom.toml")
-    isToml = true
-  } else if (Eronom_nativeFileExists("config.er")) {
-    configContent = Eronom_nativeFileText("config.er")
-  } else if (Eronom_nativeFileExists("testp/config.er")) {
-    configContent = Eronom_nativeFileText("testp/config.er")
   }
   
   if (stringLength(configContent) > 0) {

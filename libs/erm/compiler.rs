@@ -42,7 +42,7 @@ fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
                 break;
             }
             let pages_dir_alt = curr.join("pages");
-            if pages_dir_alt.exists() && (curr.join("eronom.toml").exists() || curr.join("config.er").exists()) {
+            if pages_dir_alt.exists() && curr.join("eronom.toml").exists() {
                 resolved = Some(pages_dir_alt.join(&import_path["@pages/".len()..]));
                 break;
             }
@@ -63,7 +63,7 @@ fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
                 break;
             }
             let comp_dir_alt = curr.join("components");
-            if comp_dir_alt.exists() && (curr.join("eronom.toml").exists() || curr.join("config.er").exists()) {
+            if comp_dir_alt.exists() && curr.join("eronom.toml").exists() {
                 resolved = Some(comp_dir_alt.join(&import_path["@components/".len()..]));
                 break;
             }
@@ -1086,7 +1086,7 @@ pub fn process_component_tree(
                                     break;
                                 }
                                 if let Some(parent) = curr.parent() {
-                                    if curr.join("eronom.toml").exists() || curr.join("config.er").exists() || curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
+                                    if curr.join("eronom.toml").exists() || curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
                                         break;
                                     }
                                     curr = parent.to_path_buf();
@@ -2563,7 +2563,7 @@ fn find_ermcss_path(file_path: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-fn run_ermcss_compiler(compiler_path: &std::path::Path, classes: &[String]) -> anyhow::Result<String> {
+fn run_ermcss_compiler(compiler_path: &std::path::Path, base_path: &std::path::Path, classes: &[String]) -> anyhow::Result<String> {
     let stmts = match crate::frontend::parse_and_resolve_imports(compiler_path) {
         Ok(s) => s,
         Err(e) => anyhow::bail!("Compile/Import error for ermcss: {}", e),
@@ -2591,6 +2591,10 @@ fn run_ermcss_compiler(compiler_path: &std::path::Path, classes: &[String]) -> a
     let rbrace_ptr = crate::vm::gc::get_or_create_string("}");
     vm.register_global("RBRACE", crate::vm::value::Value::string(rbrace_ptr));
     
+    let base_path_str = base_path.to_string_lossy().replace('\\', "/");
+    let base_path_ptr = crate::vm::gc::get_or_create_string(&base_path_str);
+    vm.register_global("PROJECT_DIR", crate::vm::value::Value::string(base_path_ptr));
+
     crate::vm::er_http::register_eronom_file_api(&mut vm).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     if let Err(e) = vm.run(function) {
@@ -2676,28 +2680,6 @@ pub fn parse_ermcss_config(base_path: &std::path::Path) -> ErmcssConfig {
                     }
                 }
                 return config;
-            }
-        }
-    }
-    let config_path = base_path.join("config.er");
-    if config_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&config_path) {
-            if let Ok(re_package) = regex::Regex::new(r#"(?s)package\s*:\s*\{[^}]*ermcss"#) {
-                if re_package.is_match(&content) {
-                    config.enabled = true;
-                }
-            }
-            if let Ok(re_content) = regex::Regex::new(r#"(?s)content\s*:\s*\[([^\]]*)\]"#) {
-                if let Some(caps) = re_content.captures(&content) {
-                    if let Some(list_str) = caps.get(1) {
-                        for cap in list_str.as_str().split(',') {
-                            let trimmed = cap.trim().trim_matches('"').trim_matches('\'').trim();
-                            if !trimmed.is_empty() {
-                                config.content.push(trimmed.to_string());
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -2812,7 +2794,7 @@ pub fn compile_project_ermcss(base_path: &std::path::Path, content_globs: &[Stri
     if let Some(compiler_path) = find_ermcss_path(base_path.to_str().unwrap_or(".")) {
         let mut classes_vec: Vec<String> = classes_set.into_iter().collect();
         classes_vec.sort();
-        run_ermcss_compiler(&compiler_path, &classes_vec)
+        run_ermcss_compiler(&compiler_path, base_path, &classes_vec)
     } else {
         anyhow::bail!("compiler.er not found")
     }
@@ -2842,7 +2824,7 @@ mod tests {
             "text-gray-800".to_string(),
         ];
         if let Some(compiler_path) = find_ermcss_path(".") {
-            let css = run_ermcss_compiler(&compiler_path, &classes).unwrap();
+            let css = run_ermcss_compiler(&compiler_path, std::path::Path::new("."), &classes).unwrap();
             set_global_ermcss(css);
         }
         

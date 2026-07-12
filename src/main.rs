@@ -3,7 +3,7 @@ pub use eronom::frontend;
 pub use eronom::jit;
 
 use backend::{Compiler, VM, Value};
-use frontend::{Parser, lex, Expr, LiteralValue, Stmt};
+use frontend::{Expr, LiteralValue, Stmt};
 
 struct GcGuard;
 impl Drop for GcGuard {
@@ -487,7 +487,6 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
     backend::er_http::register_eronom_file_api(&mut vm).unwrap();
     backend::er_http::set_target_script_path(path);
-
     let main_path = std::path::Path::new(path);
     if let Some(parent_dir) = main_path.parent() {
         let toml_path = parent_dir.join("eronom.toml");
@@ -497,22 +496,6 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
                     if let Ok(json_val) = serde_json::to_value(toml_val) {
                         let config_val = backend::gc::json_to_value(json_val);
                         vm.register_global("config", config_val);
-                    }
-                }
-            }
-        } else {
-            let config_path = parent_dir.join("config.er");
-            if config_path.exists() {
-                if let Ok(config_content) = std::fs::read_to_string(&config_path) {
-                    let config_tokens = lex(&config_content);
-                    let mut config_parser = Parser::new(config_tokens);
-                    if let Ok(config_stmts) = config_parser.parse() {
-                        let config_compiler = Compiler::new();
-                        if let Ok(config_func) = config_compiler.compile(&config_stmts) {
-                            if let Err(e) = vm.run(config_func) {
-                                  eprintln!("[Warning] Failed to run config.er: {}", e);
-                            }
-                        }
                     }
                 }
             }

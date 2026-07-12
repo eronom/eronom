@@ -1,5 +1,5 @@
 [server]
-port = 4700
+port = 4000
 
 [package]
 ermcss = true
@@ -7,8 +7,7 @@ ermcss = true
 [ermcss]
 content = [
     "./app/**/*.erm",
-    "./pages/**/*.erm",
-    "./components/**/*.erm"
+    "./pages/**/*.erm"
 ]
 
 [ermcss.theme.extend.colors]
