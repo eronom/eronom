@@ -1,0 +1,26 @@
+import "./server/api/routes.er"
+
+import { router } from "std/http"
+
+let app = router()
+
+app.get("/", (c) => {
+  let template = render("app/pages/index.html", c.req.params)
+  return c.html(template)
+})
+
+app.get("/contact", (c) => {
+  let template = render("app/pages/contact.html", c.req.params)
+  return c.html(template)
+})
+
+app.get("/ermcss-demo", (c) => {
+  let template = render("app/pages/ermcss-demo.html", c.req.params)
+  return c.html(template)
+})
+
+app.get("/fnbased", (c) => {
+  let template = render("app/pages/fnbased.html", c.req.params)
+  return c.html(template)
+})
+

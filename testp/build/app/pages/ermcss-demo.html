@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta data-e-91030222d917abb6 charset="UTF-8">
+    <meta data-e-91030222d917abb6 name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-e-91030222d917abb6>Erm Dev Server with HMR</title>
+    
+
+<link rel="stylesheet" id="__erm_styles" href="/css/global.css">
+
+<style id="__erm_scoped_styles">
+body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }h1[data-e-91030222d917abb6] {
+            color: #42b983;
+        }code[data-e-91030222d917abb6] {
+            background-color: #4b3a27b2;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+.header-box[data-e-1c6210a2b44a0489] {
+        border: 2px solid #42b983;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        text-align: center;
+        transition: all 0.3s ease;
+    }.theme-display-dark[data-e-1c6210a2b44a0489] {
+        background-color: #1a1a24;
+        color: #ffffff;
+        border-color: #9b5de5;
+    }.theme-display-light[data-e-1c6210a2b44a0489] {
+        background-color: #f7f9fc;
+        color: #1a1a24;
+        border-color: #00bbf9;
+    }
+</style>
+<script type="module" class="__erm_script">
+import { useState, useEffect, onMount, useParams, effect } from '/core/runtime.js';
+{
+let anchorId = "";
+
+window.__erm_params = {};
+let activeTheme = useState('light', "testp_app_pages_ermcss_demo_erm__activeTheme");
+    let users = useState(1280, "testp_app_pages_ermcss_demo_erm__users");
+    let clicks = useState(4820, "testp_app_pages_ermcss_demo_erm__clicks");
+    let status = useState('Online', "testp_app_pages_ermcss_demo_erm__status");
+    let notificationCount = useState(3, "testp_app_pages_ermcss_demo_erm__notificationCount");
+    
+    function handleAlert() {
+        alert("Ermcss utility actions work flawlessly!");
+    }
+window.Header = function(anchorId, props) {
+  try {
+    let el = document.getElementById(anchorId);
+    if (el && el.innerHTML.trim() === "") {
+      el.innerHTML = `
+
+<span data-e-1c6210a2b44a0489 id="${anchorId}erm-if-0" style="display:contents;">
+    <div data-e-1c6210a2b44a0489 class="header-box theme-display-light">
+        <h1 data-e-1c6210a2b44a0489>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-1c6210a2b44a0489>Header consumed Theme Context: <strong data-e-1c6210a2b44a0489></strong></p>
+        <div data-e-1c6210a2b44a0489 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+</span>
+`;
+    }
+  } catch(e) { console.error(e); }
+  window.__erm_register_if(anchorId + "erm-if-0", () => { let __erm_new = ""; if (activeTheme.value == "dark") { __erm_new = `
+    <div data-e-1c6210a2b44a0489 class="header-box theme-display-dark">
+        <h1 data-e-1c6210a2b44a0489>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-1c6210a2b44a0489>Header consumed Theme Context: <strong data-e-1c6210a2b44a0489>${window.__erm_escape(activeTheme.value)}</strong></p>
+        <div data-e-1c6210a2b44a0489 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            🌌 Dark Mode Theme Context is Active
+        </div>
+    </div>
+`; } else { __erm_new = `
+    <div data-e-1c6210a2b44a0489 class="header-box theme-display-light">
+        <h1 data-e-1c6210a2b44a0489>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-1c6210a2b44a0489>Header consumed Theme Context: <strong data-e-1c6210a2b44a0489>${window.__erm_escape(activeTheme.value)}</strong></p>
+        <div data-e-1c6210a2b44a0489 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+`; }; return __erm_new; });
+let headerText = "Hello Header from component script!";
+    console.log("Header component loaded!");
+};
+
+Header(anchorId + "erm-anchor-header-309", {});
+window.Footer = function(anchorId, props) {
+  try {
+    let el = document.getElementById(anchorId);
+    if (el && el.innerHTML.trim() === "") {
+      el.innerHTML = `<h1 data-e-e7dc205faabc0aae>hello footer erm componentssssssss</h1>
+`;
+    }
+  } catch(e) { console.error(e); }
+  
+};
+
+Footer(anchorId + "erm-anchor-footer-4212", {});
+window.__erm_bindings.push({ id: "erm-bind-1456", get: () => (status.value) });
+window.__erm_bindings.push({ id: "erm-bind-1638", get: () => (notificationCount.value) });
+window.__erm_bindings.push({ id: "erm-bind-2124", get: () => (users.value) });
+window.__erm_bindings.push({ id: "erm-bind-3018", get: () => (clicks.value) });
+window.__erm_events.push({ id: "erm-evt-2335", event: "click", handler: (event) => { (() => { users.value++ })(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } }); // line:42
+window.__erm_events.push({ id: "erm-evt-2579", event: "click", handler: (event) => { (() => { if(users.value > 0) users.value-- })(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } }); // line:45
+window.__erm_events.push({ id: "erm-evt-3242", event: "click", handler: (event) => { (() => { clicks.value = clicks.value + 10 })(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } }); // line:56
+window.__erm_events.push({ id: "erm-evt-3480", event: "click", handler: (event) => { (() => { clicks.value = 0 })(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } }); // line:59
+window.__erm_events.push({ id: "erm-evt-4159", event: "click", handler: (event) => { (handleAlert)(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } }); // line:73
+window.__erm_events.push({ id: "erm-evt-4425", event: "click", handler: (event) => { (() => { notificationCount.value = 0 })(event); if (typeof window.__erm_update === 'function') window.__erm_update(); } }); // line:76
+}
+</script>
+</head>
+<body>
+    
+
+<div data-e-91030222d917abb6 data-e-c01802ccb62ae9be id="erm-anchor-header-309" class="erm-anchor">
+
+<span data-e-91030222d917abb6 data-e-c01802ccb62ae9be data-e-1c6210a2b44a0489 id="erm-anchor-header-309erm-if-0" style="display:contents;">
+    <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be data-e-1c6210a2b44a0489 class="header-box theme-display-light">
+        <h1 data-e-91030222d917abb6 data-e-c01802ccb62ae9be data-e-1c6210a2b44a0489>Eronom Context API Demo (Header Component)</h1>
+        <p data-e-91030222d917abb6 data-e-c01802ccb62ae9be data-e-1c6210a2b44a0489>Header consumed Theme Context: <strong data-e-91030222d917abb6 data-e-c01802ccb62ae9be data-e-1c6210a2b44a0489></strong></p>
+        <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be data-e-1c6210a2b44a0489 style="padding: 10px; border-radius: 5px; margin-top: 10px;">
+            ☀️ Light Mode Theme Context is Active
+        </div>
+    </div>
+</span>
+</div>
+
+<div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="p-6 bg-gray-50">
+    <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="max-w-4xl mx-auto">
+        <!-- data-e-91030222d917abb6 data-e-c01802ccb62ae9be Top Banner / Header Card -->
+        <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-xl bg-white p-6 shadow-md border border-gray-200 mb-6 transition hover:shadow-lg">
+            <h2 data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="text-3xl font-bold text-gray-800">Ermcss Styling Showcase</h2>
+            <p data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-2 text-gray-600">
+                This page demonstrates utility classes compiled on-the-fly via <code data-e-91030222d917abb6 data-e-c01802ccb62ae9be>ermcss</code>. 
+                Everything below is styled purely using standard layout, size, color, hover, and responsive utility class tags.
+            </p>
+            <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-4 flex flex-row gap-4 items-center">
+                <span data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-full bg-green-100 text-green-800 px-3 py-1 text-sm font-semibold">
+                    System: <span data-e-91030222d917abb6 data-e-c01802ccb62ae9be id="erm-bind-1456">Online</span>
+                </span>
+                <span data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-full bg-blue-100 text-blue-800 px-3 py-1 text-sm font-semibold">
+                    Pending Alerts: <span data-e-91030222d917abb6 data-e-c01802ccb62ae9be id="erm-bind-1638">3</span>
+                </span>
+            </div>
+        </div>
+
+        <!-- data-e-91030222d917abb6 data-e-c01802ccb62ae9be Dashboard Stats Grid -->
+        <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="grid md:flex md:flex-row gap-6 mb-6">
+            <!-- data-e-91030222d917abb6 data-e-c01802ccb62ae9be Card 1 -->
+            <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="flex-1 rounded-xl bg-white p-6 shadow-md border border-gray-200 hover:shadow-lg transition">
+                <h3 data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="text-sm font-semibold text-gray-600 uppercase tracking-wider">Total Active Users</h3>
+                <p data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-2 text-4xl font-bold text-gray-800"><span data-e-91030222d917abb6 data-e-c01802ccb62ae9be id="erm-bind-2124">1280</span></p>
+                <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-4 flex gap-2">
+                    <button data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-lg bg-blue-600 px-3 py-1.5 text-white text-xs font-semibold hover:bg-blue-700 transition" id="erm-evt-2335" >
+                        + Add User
+                    </button>
+                    <button data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-lg bg-gray-200 px-3 py-1.5 text-gray-800 text-xs font-semibold hover:bg-gray-300 transition" id="erm-evt-2579" >
+                        - Remove
+                    </button>
+                </div>
+            </div>
+
+            <!-- data-e-91030222d917abb6 data-e-c01802ccb62ae9be Card 2 -->
+            <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="flex-1 rounded-xl bg-white p-6 shadow-md border border-gray-200 hover:shadow-lg transition">
+                <h3 data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="text-sm font-semibold text-gray-600 uppercase tracking-wider">Total Interactions</h3>
+                <p data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-2 text-4xl font-bold text-gray-800"><span data-e-91030222d917abb6 data-e-c01802ccb62ae9be id="erm-bind-3018">4820</span></p>
+                <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-4 flex gap-2">
+                    <button data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-lg bg-blue-600 px-3 py-1.5 text-white text-xs font-semibold hover:bg-blue-700 transition" id="erm-evt-3242" >
+                        + Add 10 Clicks
+                    </button>
+                    <button data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-lg bg-gray-200 px-3 py-1.5 text-gray-800 text-xs font-semibold hover:bg-gray-300 transition" id="erm-evt-3480" >
+                        Reset
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- data-e-91030222d917abb6 data-e-c01802ccb62ae9be Interactive Settings / Call to Action -->
+        <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-xl bg-white p-6 shadow-md border border-gray-200">
+            <h3 data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="text-xl font-bold text-gray-800">Dynamic Theme Control</h3>
+            <p data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-1 text-gray-600 text-sm">
+                Control notifications and toggle styles.
+            </p>
+            <div data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="mt-4 flex flex-col gap-3">
+                <button data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-lg bg-primary px-4 py-2 text-white font-semibold hover:bg-blue-700 transition cursor-pointer text-center" id="erm-evt-4159" >
+                    Trigger System Notification
+                </button>
+                <button data-e-91030222d917abb6 data-e-c01802ccb62ae9be class="rounded-lg bg-gray-200 px-4 py-2 text-gray-800 font-semibold hover:bg-gray-300 transition cursor-pointer text-center" id="erm-evt-4425" >
+                    Clear Notification Badge
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div data-e-91030222d917abb6 data-e-c01802ccb62ae9be id="erm-anchor-footer-4212" class="erm-anchor"><h1 data-e-91030222d917abb6 data-e-c01802ccb62ae9be data-e-e7dc205faabc0aae>hello footer erm componentssssssss</h1>
+</div>
+
+</body>
+</html>

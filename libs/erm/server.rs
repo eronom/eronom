@@ -11,16 +11,7 @@ static BASE_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 static DEFAULT_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
 static IS_PROD: Mutex<bool> = Mutex::new(false);
 
-use std::sync::LazyLock;
 
-static HTML_SHELL_CACHE: LazyLock<Mutex<HashMap<PathBuf, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-static SSR_CACHE: LazyLock<Mutex<HashMap<(PathBuf, Vec<(String, String)>), String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-fn get_sorted_params(map: &HashMap<String, String>) -> Vec<(String, String)> {
-    let mut vec: Vec<(String, String)> = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    vec.sort_by(|a, b| a.0.cmp(&b.0));
-    vec
-}
 
 static HMR_QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
@@ -327,18 +318,7 @@ fn native_render(args: Vec<Value>) -> Value {
 
     if is_html {
         // PPR/SSG Path: Bypass compiler entirely
-        let content = if is_prod {
-            let mut cache = HTML_SHELL_CACHE.lock().unwrap();
-            if let Some(cached) = cache.get(&path) {
-                cached.clone()
-            } else {
-                let loaded = fs::read_to_string(&path).unwrap_or_default();
-                cache.insert(path.clone(), loaded.clone());
-                loaded
-            }
-        } else {
-            fs::read_to_string(&path).unwrap_or_default()
-        };
+        let content = fs::read_to_string(&path).unwrap_or_default();
 
         // Construct parameters string: window.__erm_params = {...};
         let mut params_js = String::from("window.__erm_params = {");
@@ -361,54 +341,21 @@ fn native_render(args: Vec<Value>) -> Value {
         Value::string(ptr)
     } else {
         // SSR Path (.erm files)
-        if is_prod {
-            let sorted_params = get_sorted_params(&params_map);
-            let cache_key = (path.clone(), sorted_params);
-            {
-                let cache = SSR_CACHE.lock().unwrap();
-                if let Some(cached_html) = cache.get(&cache_key) {
-                    let ptr = crate::vm::gc::get_or_create_string(cached_html);
-                    return Value::string(ptr);
-                }
-            }
-            
-            // Not in cache, compile and cache
-            match fs::read_to_string(&path) {
-                Ok(content) => {
-                    let parent = path.parent().unwrap().to_string_lossy();
-                    match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
-                        Ok(html) => {
-                            let mut cache = SSR_CACHE.lock().unwrap();
-                            cache.insert(cache_key, html.clone());
-                            let ptr = crate::vm::gc::get_or_create_string(&html);
-                            Value::string(ptr)
-                        }
-                        Err(e) => {
-                            eprintln!("[render] Compiler error: {:?}", e);
-                            Value::null()
-                        }
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                let parent = path.parent().unwrap().to_string_lossy();
+                match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
+                    Ok(html) => {
+                        let ptr = crate::vm::gc::get_or_create_string(&html);
+                        Value::string(ptr)
+                    }
+                    Err(e) => {
+                        eprintln!("[render] Compiler error: {:?}", e);
+                        Value::null()
                     }
                 }
-                Err(_) => Value::null(),
             }
-        } else {
-            // Dev SSR Path (always read & compile)
-            match fs::read_to_string(&path) {
-                Ok(content) => {
-                    let parent = path.parent().unwrap().to_string_lossy();
-                    match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
-                        Ok(html) => {
-                            let ptr = crate::vm::gc::get_or_create_string(&html);
-                            Value::string(ptr)
-                        }
-                        Err(e) => {
-                            eprintln!("[render] Compiler error: {:?}", e);
-                            Value::null()
-                        }
-                    }
-                }
-                Err(_) => Value::null(),
-            }
+            Err(_) => Value::null(),
         }
     }
 }
@@ -610,29 +557,9 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &st
 
     if file_path.exists() && file_path.is_file() {
         if file_path.extension().map_or(false, |ext| ext == "erm") {
-            let cached_html = if is_prod {
-                let sorted_params = get_sorted_params(&params);
-                let cache_key = (file_path.clone(), sorted_params);
-                let cache = SSR_CACHE.lock().unwrap();
-                cache.get(&cache_key).cloned()
-            } else {
-                None
-            };
-
-            let render_result = if let Some(html) = cached_html {
-                Ok(html)
-            } else {
+            let render_result = {
                 let content = fs::read_to_string(&file_path)?;
-                let res = compiler::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params);
-                if let Ok(ref html) = res {
-                    if is_prod {
-                        let sorted_params = get_sorted_params(&params);
-                        let cache_key = (file_path.clone(), sorted_params);
-                        let mut cache = SSR_CACHE.lock().unwrap();
-                        cache.insert(cache_key, html.clone());
-                    }
-                }
-                res
+                compiler::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params)
             };
 
             match render_result {
@@ -719,21 +646,7 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &st
                 }
             }
         } else {
-            let is_html = file_path.extension().map_or(false, |ext| ext == "html");
-            let content = if is_prod && is_html {
-                let mut cache = HTML_SHELL_CACHE.lock().unwrap();
-                if let Some(cached) = cache.get(&file_path) {
-                    cached.as_bytes().to_vec()
-                } else {
-                    let loaded = fs::read(&file_path)?;
-                    if let Ok(loaded_str) = std::str::from_utf8(&loaded) {
-                        cache.insert(file_path.clone(), loaded_str.to_string());
-                    }
-                    loaded
-                }
-            } else {
-                fs::read(&file_path)?
-            };
+            let content = fs::read(&file_path)?;
             let mime = if let Some(ext) = file_path.extension() {
                 let ext_str = ext.to_string_lossy().to_lowercase();
                 match ext_str.as_str() {

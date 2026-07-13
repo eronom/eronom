@@ -1,0 +1,30 @@
+import { router } from "std/http"
+
+let app = router()
+
+let todos = [
+  { id: 1, text: "Learn Eronomss", done: false },
+  { id: 2, text: "Learn Er", done: false },
+  { id: 3, text: "Learn Erm", done: false },
+  { id: 4, text: "Learn E", done: false },
+  { id: 5, text: "Learn Eronom", done: false }
+]
+
+app.get('/api/todo', (c) => {
+  return c.json(todos)
+})
+
+app.get('/api/slow', (c) => {
+  let start = now()
+  for i in 0..5000 {
+    for j in 0..5000 {
+      if (now() - start > 1500) {
+        return c.json({ ok: true })
+      }
+    }
+  }
+  return c.json({ ok: true })
+})
+
+
+
