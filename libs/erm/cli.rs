@@ -50,6 +50,10 @@ pub enum Commands {
         /// Do not create an initial commit
         #[arg(long, requires = "git")]
         no_commit: bool,
+
+        /// Add ermcss capability for the project
+        #[arg(long)]
+        ermcss: bool,
     },
     /// Build the project
     Build {
@@ -157,8 +161,9 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             force,
             git,
             no_commit,
+            ermcss,
         } => {
-            init_project(&dir, template, branch, force, git, no_commit)?;
+            init_project(&dir, template, branch, force, git, no_commit, ermcss)?;
         }
         Commands::Build { dir, ssr: _, ssg, ppr } => {
             let mode = if ppr {
@@ -213,13 +218,14 @@ fn init_project(
     force: bool,
     git: bool,
     no_commit: bool,
+    ermcss: bool,
 ) -> anyhow::Result<()> {
     let dst_dir = Path::new(dir);
 
     if dst_dir.exists() && !is_dir_empty(dst_dir) && !force {
         anyhow::bail!(
             "Cannot run `init` on a non-empty directory.\n\
-             Run with the `--force` flag to initialize regardless."
+              Run with the `--force` flag to initialize regardless."
         );
     }
 
@@ -258,6 +264,33 @@ fn init_project(
 
         println!("Copying template files...");
         copy_dir_all(&temp_dir, dst_dir)?;
+
+        if ermcss {
+            let eronom_temp_dir_name = format!(
+                "eronom-ermcss-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let eronom_temp_dir = std::env::temp_dir().join(eronom_temp_dir_name);
+            let mut git_clone = std::process::Command::new("git");
+            git_clone.arg("clone")
+                .arg("--depth").arg("1")
+                .arg("https://github.com/eronom/eronom.git")
+                .arg(&eronom_temp_dir);
+            
+            if let Ok(status) = git_clone.status() {
+                if status.success() {
+                    let ermcss_src = eronom_temp_dir.join("libs/ermcss");
+                    if ermcss_src.exists() {
+                        let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
+                    }
+                }
+            }
+            let _ = fs::remove_dir_all(&eronom_temp_dir);
+        }
+
         let _ = fs::remove_dir_all(&temp_dir);
     } else {
         // Fetch the default template (libs/init) from GitHub main branch
@@ -285,6 +318,13 @@ fn init_project(
         if cloned {
             let repo_init = temp_dir.join("libs/init");
             copy_dir_all(&repo_init, dst_dir)?;
+
+            if ermcss {
+                let ermcss_src = temp_dir.join("libs/ermcss");
+                if ermcss_src.exists() {
+                    let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
+                }
+            }
             
             // Get commit hash
             let mut commit_hash = String::new();
@@ -305,6 +345,21 @@ fn init_project(
             let _ = fs::remove_dir_all(&temp_dir);
             anyhow::bail!("Failed to clone template from https://github.com/eronom/eronom.git");
         }
+    }
+
+    if ermcss {
+        let toml_path = dst_dir.join("eronom.toml");
+        let mut toml_content = if toml_path.exists() {
+            fs::read_to_string(&toml_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        
+        if !toml_content.contains("[ermcss]") {
+            toml_content.push_str("\n[package]\nermcss = true\n\n[ermcss]\ncontent = [\n    \"./app/**/*.erm\",\n    \"./pages/**/*.erm\",\n    \"./components/**/*.erm\"\n]\n\n[ermcss.theme.extend.colors]\nprimary = \"#2563eb\"\n");
+            let _ = fs::write(&toml_path, toml_content);
+        }
+        println!("    Added ermcss capability");
     }
 
 

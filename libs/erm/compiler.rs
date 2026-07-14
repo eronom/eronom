@@ -2531,6 +2531,10 @@ fn find_ermcss_path(file_path: &str) -> Option<std::path::PathBuf> {
         if dir.file_name().and_then(|n| n.to_str()) == Some("ermcss") && ermcss_path_sibling.is_file() {
             return Some(ermcss_path_sibling);
         }
+        let libs_ermcss_path = dir.join("libs").join("ermcss").join("compiler.er");
+        if libs_ermcss_path.is_file() {
+            return Some(libs_ermcss_path);
+        }
         current = dir.parent();
     }
 
@@ -2541,6 +2545,10 @@ fn find_ermcss_path(file_path: &str) -> Option<std::path::PathBuf> {
             let ermcss_path = dir.join("ermcss").join("compiler.er");
             if ermcss_path.is_file() {
                 return Some(ermcss_path);
+            }
+            let libs_ermcss_path = dir.join("libs").join("ermcss").join("compiler.er");
+            if libs_ermcss_path.is_file() {
+                return Some(libs_ermcss_path);
             }
             current = dir.parent();
         }
@@ -2554,6 +2562,10 @@ fn find_ermcss_path(file_path: &str) -> Option<std::path::PathBuf> {
                 let ermcss_path = dir.join("ermcss").join("compiler.er");
                 if ermcss_path.is_file() {
                     return Some(ermcss_path);
+                }
+                let libs_ermcss_path = dir.join("libs").join("ermcss").join("compiler.er");
+                if libs_ermcss_path.is_file() {
+                    return Some(libs_ermcss_path);
                 }
                 current = dir.parent();
             }
