@@ -41,7 +41,7 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
 * **`external/`**: Submodules for dependencies:
   * `mir`: Vladimir Makarov's lightweight JIT compiler.
   * `uWebSockets`: The high-performance C++ uWebSockets & uSockets library.
-* **`example-er/`**: Reference scripts, benchmark configurations, and comparable API server implementations.
+* **`example-er/`**: Reference scripts and comparable API server implementations.
 
 ---
 

@@ -580,7 +580,6 @@ fn build_dir_recursive(
            name_str == "Cargo.lock" ||
            name_str == "cargo.log" ||
            name_str == "build.rs" ||
-           name_str == "benchmark_ws.py" ||
            name_str == "temp_compiled.mir" ||
            name_str == "eronom" ||
            name_str == "LICENSE" ||
