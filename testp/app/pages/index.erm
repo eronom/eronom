@@ -19,20 +19,22 @@
     let showExtraContent = useState(true);
     let porridge = useState({ temperature: 180 });
     
-
-
-
-
-    document.addEventListener('DOMContentLoaded', () => {
-        const app = document.getElementById('app');
-        if (app) {
-            const timeDisplay = document.createElement('h3');
-            app.appendChild(timeDisplay);
-            setInterval(() => {
-                timeDisplay.innerText = "Current time: " + new Date().toLocaleTimeString();
-            }, 1);
-        }
+    let effectMessage = useState('Effect has not run yet');
+    useEffect(() => {
+        effectMessage = "Effect triggered! Count is now: " + count;
+    }, [count]);
     
+
+
+
+
+    let time = useState("");
+    onMount(() => {
+        const id = setInterval(() => {
+            time = new Date().toLocaleTimeString();
+        }, 1000);
+
+        return () => clearInterval(id);
     });
 
     // TEST: Background updates now work automatically!
@@ -43,6 +45,7 @@
 
     let randomNum = Math.floor(Math.random() * 1000);
     let items = useState([1, 2, 3, 4, 5]);
+    let submitted = useState(false);
 </script>
 
 
@@ -57,10 +60,25 @@ gvfcjb hyun</p>
     <button onClick={()=>{count++}}>Count {count}</button>
     <p>Double (Count * 2): <strong>{double}</strong></p>
     <p>Background Timer: <strong>{timer}s</strong></p>
+    <p>useEffect status: <strong style="color: #2ecc71;">{effectMessage}</strong></p>
+</div>
+
+<div class="flex items-center justify-center bg-gray-100">
+  <div class="w-80 rounded-xl bg-white p-6 shadow-lg border border-gray-200">
+    <h2 class="text-2xl font-bold text-gray-800">Hello Eronom</h2>
+    <p class="mt-2 text-gray-600">
+      This is a simple card built with Eronom.
+    </p>
+    <button
+      class="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 transition"
+    >
+      Get Started
+    </button>
+  </div>
 </div>
 
 <p>HMRsss is now EFddFIaaCIENTss and CLEAN! Edited <code>index.erm</code>.</p>
-<div id="app"></div>
+<h3>Current time: {time}</h3>
 <h2>Hellloo web added h2 tag</h2>
 <p>Random: {randomNum}</p>
 <h2>Hwwwssselaaaaaallsvvsssssssvvvvsssssssssssooooooovvvvaa wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
@@ -109,6 +127,19 @@ if porridge.temperature > 100 {
 } else {
     <p>just right!</p>
 }
+
+<div style="padding: 20px; border: 2px solid #9b5de5; border-radius: 10px; margin-bottom: 20px;">
+    <h3>Newsletter Signup (Global State Collision Demo)</h3>
+    <p>This form uses the state variable <code>submitted</code>.</p>
+    if submitted {
+        <p style="color: #38ef7d; font-weight: bold;">🎉 Thank you for subscribing to our newsletter!</p>
+    } else {
+        <div>
+            <input type="email" placeholder="enter your email..." style="padding: 8px; border-radius: 5px; border: 1px solid #ccc; margin-right: 10px;" />
+            <button onClick={() => { submitted = true }}>Subscribe</button>
+        </div>
+    }
+</div>
 
 <Link to="/contact">Contact</Link>
 

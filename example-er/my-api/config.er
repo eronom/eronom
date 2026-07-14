@@ -1,6 +1,0 @@
-let config = {
-    server: { 
-        port: 5000 
-        dev: "todos.er"
-    } 
-}

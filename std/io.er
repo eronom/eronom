@@ -38,3 +38,36 @@ export const Io = {
     }
   }
 }
+
+export struct File {
+  name: string,
+  type: string,
+  size: int,
+  
+  fn exists() {
+    return Eronom_nativeFileExists(this.name)
+  }
+  fn text() {
+    return Eronom_nativeFileText(this.name)
+  }
+  fn json() {
+    return Eronom_nativeFileJson(this.name)
+  }
+}
+
+export const file = (path) => {
+  return File({
+    name: path,
+    type: Eronom_nativeGetMimeType(path),
+    size: Eronom_nativeGetFileSize(path)
+  })
+}
+
+export const write = (path, data) => {
+  let is_file = Eronom_nativeIsFile(data)
+  let dataStr = data
+  if (is_file) {
+    dataStr = data.name
+  }
+  return Eronom_nativeWriteFile(path, dataStr, is_file)
+}

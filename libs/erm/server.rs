@@ -11,12 +11,24 @@ static BASE_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 static DEFAULT_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
 static IS_PROD: Mutex<bool> = Mutex::new(false);
 
+
+
 static HMR_QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 unsafe extern "C" {
     fn er_http_init_with_callbacks(
-        http_req_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
+        http_req_cb: extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+        ),
         ws_open_cb: extern "C" fn(*mut c_void, *const c_char, usize),
         ws_message_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
         ws_close_cb: extern "C" fn(*mut c_void, *const c_char, usize, i32, *const c_char, usize),
@@ -70,6 +82,10 @@ extern "C" fn dev_http_callback(
     method_len: usize,
     path_ptr: *const c_char,
     path_len: usize,
+    headers_ptr: *const c_char,
+    headers_len: usize,
+    body_ptr: *const c_char,
+    body_len: usize,
 ) {
     let method = unsafe {
         let slice = std::slice::from_raw_parts(method_ptr as *const u8, method_len);
@@ -79,8 +95,19 @@ extern "C" fn dev_http_callback(
         let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
         std::str::from_utf8(slice).unwrap_or("")
     };
+    let headers = unsafe {
+        let slice = std::slice::from_raw_parts(headers_ptr as *const u8, headers_len);
+        std::str::from_utf8(slice).unwrap_or("")
+    };
+    let body = unsafe {
+        if body_ptr.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(body_ptr as *const u8, body_len)
+        }
+    };
 
-    if let Err(e) = handle_dev_request(res, method, path) {
+    if let Err(e) = handle_dev_request(res, method, path, headers, body) {
         let err_msg = format!("Internal Server Error: {}", e);
         let err_bytes = err_msg.as_bytes();
         unsafe {
@@ -287,21 +314,49 @@ fn native_render(args: Vec<Value>) -> Value {
     }
     
     let is_prod = *IS_PROD.lock().unwrap();
-    match fs::read_to_string(&path) {
-        Ok(content) => {
-            let parent = path.parent().unwrap().to_string_lossy();
-            match compiler::process_erm_component(&parent, &content, is_prod, &params_map) {
-                Ok(html) => {
-                    let ptr = crate::vm::gc::get_or_create_string(&html);
-                    Value::string(ptr)
-                }
-                Err(e) => {
-                    eprintln!("[render] Compiler error: {:?}", e);
-                    Value::null()
-                }
+    let is_html = path.extension().map_or(false, |ext| ext == "html");
+
+    if is_html {
+        // PPR/SSG Path: Bypass compiler entirely
+        let content = fs::read_to_string(&path).unwrap_or_default();
+
+        // Construct parameters string: window.__erm_params = {...};
+        let mut params_js = String::from("window.__erm_params = {");
+        for (i, (k, v)) in params_map.iter().enumerate() {
+            if i > 0 {
+                params_js.push_str(", ");
+            }
+            let is_numeric = v.parse::<f64>().is_ok();
+            let is_boolean = v == "true" || v == "false";
+            if is_numeric || is_boolean {
+                params_js.push_str(&format!("\"{}\": {}", k, v));
+            } else {
+                params_js.push_str(&format!("\"{}\": \"{}\"", k, v.replace('"', "\\\"")));
             }
         }
-        Err(_) => Value::null(),
+        params_js.push_str("};");
+
+        let processed = content.replace("window.__erm_params = {};", &params_js);
+        let ptr = crate::vm::gc::get_or_create_string(&processed);
+        Value::string(ptr)
+    } else {
+        // SSR Path (.erm files)
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                let parent = path.parent().unwrap().to_string_lossy();
+                match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
+                    Ok(html) => {
+                        let ptr = crate::vm::gc::get_or_create_string(&html);
+                        Value::string(ptr)
+                    }
+                    Err(e) => {
+                        eprintln!("[render] Compiler error: {:?}", e);
+                        Value::null()
+                    }
+                }
+            }
+            Err(_) => Value::null(),
+        }
     }
 }
 
@@ -309,6 +364,8 @@ fn execute_api_route(
     res: *mut c_void,
     method: &str,
     target: &str,
+    headers: &str,
+    body: &[u8],
     file_path: &Path,
 ) -> anyhow::Result<()> {
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
@@ -362,22 +419,20 @@ fn execute_api_route(
     vm.register_global("getIoMode", Value::native_function(crate::vm::er_http::native_get_io_mode));
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
-
+    crate::vm::er_http::register_eronom_file_api(&mut vm).unwrap();
     crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
 
     let _guard = GcGuard;
     
-    // Load config.er if it exists
+    // Load config from eronom.toml if it exists
     if let Some(parent_dir) = file_path.parent() {
-        let config_path = parent_dir.join("config.er");
-        if config_path.exists() {
-            if let Ok(config_content) = std::fs::read_to_string(&config_path) {
-                let config_tokens = crate::frontend::lex(&config_content);
-                let mut config_parser = crate::frontend::Parser::new(config_tokens);
-                if let Ok(config_stmts) = config_parser.parse() {
-                    let config_compiler = crate::vm::compiler::Compiler::new();
-                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
-                        let _ = vm.run(config_func);
+        let toml_path = parent_dir.join("eronom.toml");
+        if toml_path.exists() {
+            if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
+                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                    if let Ok(json_val) = serde_json::to_value(toml_val) {
+                        let config_val = crate::vm::gc::json_to_value(json_val);
+                        vm.register_global("config", config_val);
                     }
                 }
             }
@@ -398,15 +453,18 @@ fn execute_api_route(
         active.set(&mut vm as *mut crate::vm::execute::VM);
     });
 
-    unsafe {
-        crate::vm::er_http::er_http_on_request(
-            res,
-            method_c.as_ptr(),
-            method.len(),
-            target_c.as_ptr(),
-            target.len(),
-        );
-    }
+    let headers_c = CString::new(headers).unwrap();
+    crate::vm::er_http::er_http_on_request(
+        res,
+        method_c.as_ptr(),
+        method.len(),
+        target_c.as_ptr(),
+        target.len(),
+        headers_c.as_ptr(),
+        headers.len(),
+        body.as_ptr() as *const c_char,
+        body.len(),
+    );
 
     crate::vm::er_http::ACTIVE_VM.with(|active| {
         active.set(std::ptr::null_mut());
@@ -419,12 +477,30 @@ fn execute_api_route(
     Ok(())
 }
 
-fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::Result<()> {
+fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &str, body: &[u8]) -> anyhow::Result<()> {
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
     let default_file = DEFAULT_FILE.lock().unwrap().clone();
     let is_prod = *IS_PROD.lock().unwrap();
 
     println!("Request: {} {}", method, target);
+
+    if target.starts_with("/__erm_src/") {
+        let rel_file = &target["/__erm_src/".len()..];
+        let file_path = base_path.join(rel_file);
+        if file_path.exists() && file_path.is_file() {
+            if let Ok(src) = fs::read_to_string(&file_path) {
+                unsafe {
+                    let status = CString::new("200 OK").unwrap();
+                    er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+                    let content_type = CString::new("text/plain; charset=utf-8").unwrap();
+                    let content_type_key = CString::new("Content-Type").unwrap();
+                    er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
+                    er_http_response_end(res, src.as_ptr() as *const c_char, src.len());
+                }
+                return Ok(());
+            }
+        }
+    }
 
     let app_dir = if base_path.join("app").exists() {
         base_path.join("app")
@@ -481,10 +557,25 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
 
     if file_path.exists() && file_path.is_file() {
         if file_path.extension().map_or(false, |ext| ext == "erm") {
-            let content = fs::read_to_string(&file_path)?;
-            let parent = file_path.parent().unwrap().to_string_lossy();
-            match compiler::process_erm_component(&parent, &content, is_prod, &params) {
+            let render_result = {
+                let content = fs::read_to_string(&file_path)?;
+                compiler::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params)
+            };
+
+            match render_result {
                 Ok(processed) => {
+                    let rel_path = file_path.strip_prefix(&base_path)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
+                    let mut processed = processed;
+                    if !is_prod {
+                        let filename_script = format!("<script>window.__erm_filename = \"{}\";</script>\n", rel_path);
+                        if let Some(pos) = processed.find("<head>") {
+                            processed.insert_str(pos + 6, &filename_script);
+                        } else {
+                            processed.insert_str(0, &filename_script);
+                        }
+                    }
                     unsafe {
                         let status = CString::new("200 OK").unwrap();
                         er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
@@ -495,16 +586,58 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str) -> anyhow::R
                     }
                 }
                 Err(e) => {
-                    let err_msg = format!("Error: {}", e);
+                    let rel_path = file_path.strip_prefix(&base_path)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
+
+                    let escape_html = |s: &str| -> String {
+                        s.replace('&', "&amp;")
+                         .replace('<', "&lt;")
+                         .replace('>', "&gt;")
+                         .replace('"', "&quot;")
+                         .replace('\'', "&#39;")
+                    };
+
+                    let err_msg_escaped = escape_html(&format!("{}", e));
+                    let rel_path_escaped = escape_html(&rel_path);
+
+                    let html_content = format!(r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Compiler Error</title>
+  <style>
+    body {{
+      background-color: #0b0b0d;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }}
+  </style>
+  <script src="/core/hmr.js"></script>
+</head>
+<body data-compile-error-file="{}" data-compile-error-message="{}">
+</body>
+</html>"#, rel_path_escaped, err_msg_escaped);
+
                     unsafe {
                         let status = CString::new("500 Internal Server Error").unwrap();
                         er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-                        er_http_response_end(res, err_msg.as_ptr() as *const c_char, err_msg.len());
+                        let content_type = CString::new("text/html; charset=utf-8").unwrap();
+                        let content_type_key = CString::new("Content-Type").unwrap();
+                        er_http_response_write_header(
+                            res,
+                            content_type_key.as_ptr(),
+                            content_type_key.as_bytes().len(),
+                            content_type.as_ptr(),
+                            content_type.as_bytes().len(),
+                        );
+                        er_http_response_end(res, html_content.as_ptr() as *const c_char, html_content.len());
                     }
                 }
             }
         } else if file_path.extension().map_or(false, |ext| ext == "er") {
-            if let Err(e) = execute_api_route(res, method, target, &file_path) {
+            if let Err(e) = execute_api_route(res, method, target, headers, body, &file_path) {
                 let err_msg = format!("Error running route: {}", e);
                 unsafe {
                     let status = CString::new("500 Internal Server Error").unwrap();
@@ -563,15 +696,17 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
             base_path = parent.to_path_buf();
         }
     } else {
-        let config_path = base_path.join("config.er");
-        if config_path.exists() {
-            if let Ok(content) = fs::read_to_string(&config_path) {
-                if let Ok(re) = regex::Regex::new(r#"(?s)server\s*:\s*\{[^}]*dev\s*:\s*["']([^"']+)["']"#) {
-                    if let Some(caps) = re.captures(&content) {
-                        if let Some(dev_val) = caps.get(1) {
-                            let dev_file = base_path.join(dev_val.as_str());
-                            if dev_file.exists() {
-                                default_file = Some(dev_file);
+        let toml_path = base_path.join("eronom.toml");
+        if toml_path.exists() {
+            if let Ok(content) = fs::read_to_string(&toml_path) {
+                if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
+                    if let Some(server) = toml_val.get("server") {
+                        if let Some(dev) = server.get("dev") {
+                            if let Some(dev_str) = dev.as_str() {
+                                let dev_file = base_path.join(dev_str);
+                                if dev_file.exists() {
+                                    default_file = Some(dev_file);
+                                }
                             }
                         }
                     }
@@ -583,6 +718,24 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
     *BASE_PATH.lock().unwrap() = Some(base_path.clone());
     *DEFAULT_FILE.lock().unwrap() = default_file;
     *IS_PROD.lock().unwrap() = is_prod;
+
+    // Compile global ermcss styles on start if enabled
+    let ermcss_cfg = crate::compiler::parse_ermcss_config(&base_path);
+    let mut ermcss_enabled = ermcss_cfg.enabled;
+    let mut ermcss_globs = ermcss_cfg.content;
+
+    if ermcss_enabled {
+        match crate::compiler::compile_project_ermcss(&base_path, &ermcss_globs) {
+            Ok(css) => {
+                crate::compiler::set_global_ermcss(css);
+            }
+            Err(e) => {
+                eprintln!("[Warning] Failed to compile global ermcss styles: {}", e);
+            }
+        }
+    } else {
+        crate::compiler::set_global_ermcss(String::new());
+    }
 
     unsafe {
         er_http_init_with_callbacks(
@@ -639,6 +792,33 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                         .into_owned();
                     
                     println!("[HMR] File changed: {}", rel_path);
+
+                    if ermcss_enabled {
+                        let should_recompile = rel_path == "eronom.toml" || ermcss_globs.iter().any(|glob| {
+                            crate::compiler::matches_glob(&watch_path, &path, glob)
+                        });
+                        
+                        if should_recompile {
+                            if rel_path == "eronom.toml" {
+                                let new_cfg = crate::compiler::parse_ermcss_config(&watch_path);
+                                ermcss_enabled = new_cfg.enabled;
+                                ermcss_globs = new_cfg.content;
+                            }
+                            
+                            if ermcss_enabled {
+                                match crate::compiler::compile_project_ermcss(&watch_path, &ermcss_globs) {
+                                    Ok(css) => {
+                                        crate::compiler::set_global_ermcss(css);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[Warning] Failed to recompile global ermcss styles: {}", e);
+                                    }
+                                }
+                            } else {
+                                crate::compiler::set_global_ermcss(String::new());
+                            }
+                        }
+                    }
                     
                     let path_str = if rel_path.starts_with('/') {
                         rel_path
@@ -707,28 +887,40 @@ fn resolve_path(base_path: &Path, target: &str) -> Option<(PathBuf, HashMap<Stri
                     current_path = erm;
                     found = true;
                 } else {
-                    if let Ok(entries) = fs::read_dir(&current_path) {
-                        for entry in entries.flatten() {
-                            let name = entry.file_name().to_string_lossy().into_owned();
-                            if name.starts_with('[') {
-                                if name.ends_with(']') {
-                                    let param_name = &name[1..name.len() - 1];
-                                    params.insert(param_name.to_string(), part.to_string());
-                                    current_path.push(name);
-                                    found = true;
-                                    break;
-                                } else if name.ends_with("].er") {
-                                    let param_name = &name[1..name.len() - 4];
-                                    params.insert(param_name.to_string(), part.to_string());
-                                    current_path.push(name);
-                                    found = true;
-                                    break;
-                                } else if name.ends_with("].erm") {
-                                    let param_name = &name[1..name.len() - 5];
-                                    params.insert(param_name.to_string(), part.to_string());
-                                    current_path.push(name);
-                                    found = true;
-                                    break;
+                    let html = current_path.join(format!("{}.html", part));
+                    if html.exists() {
+                        current_path = html;
+                        found = true;
+                    } else {
+                        if let Ok(entries) = fs::read_dir(&current_path) {
+                            for entry in entries.flatten() {
+                                let name = entry.file_name().to_string_lossy().into_owned();
+                                if name.starts_with('[') {
+                                    if name.ends_with(']') {
+                                        let param_name = &name[1..name.len() - 1];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    } else if name.ends_with("].er") {
+                                        let param_name = &name[1..name.len() - 4];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    } else if name.ends_with("].erm") {
+                                        let param_name = &name[1..name.len() - 5];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    } else if name.ends_with("].html") {
+                                        let param_name = &name[1..name.len() - 6];
+                                        params.insert(param_name.to_string(), part.to_string());
+                                        current_path.push(name);
+                                        found = true;
+                                        break;
+                                    }
                                 }
                             }
                         }

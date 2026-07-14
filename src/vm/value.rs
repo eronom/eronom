@@ -2,6 +2,7 @@ use super::gc::{GcObject, GcData};
 use std::fmt;
 
 pub const TAG_NUMBER_MASK: u64 = 0xfff0_0000_0000_0000;
+pub const TAG_METHOD_FILE: u64  = 0xfff0_0000_0000_0000;
 pub const TAG_NULL: u64        = 0xfff1_0000_0000_0000;
 pub const TAG_FALSE: u64       = 0xfff2_0000_0000_0000;
 pub const TAG_TRUE: u64        = 0xfff3_0000_0000_0000;
@@ -168,6 +169,11 @@ impl Value {
     #[inline(always)]
     pub fn is_method_resolve(self) -> bool {
         (self.0 & 0xffff_0000_0000_0000) == TAG_METHOD_RESOLVE
+    }
+
+    #[inline(always)]
+    pub fn is_method_file(self) -> bool {
+        (self.0 & 0xffff_0000_0000_0000) == TAG_METHOD_FILE
     }
 
     #[inline(always)]

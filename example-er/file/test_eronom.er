@@ -1,0 +1,62 @@
+import { Io } from "std/io"
+
+const runTests = () => {
+    print("----------------------------------------")
+    print("Testing Eronom File I/O in mode: " + Io.getMode())
+    print("----------------------------------------")
+
+    const testFile = "test_output.txt"
+    const content = "Hello Eronom File API!"
+
+    // 1. Test write with string
+    print("Writing to file: " + testFile)
+    const bytesWritten = write(testFile, content)
+    print("Bytes written: " + bytesWritten)
+
+    // 2. Test file properties
+    const f = file(testFile)
+    print("File size: " + f.size)
+    print("File type: " + f.type)
+
+    // 3. Test exists()
+    const fileExists = f.exists()
+    print("File exists: " + fileExists)
+
+    // 4. Test text()
+    const textContent = f.text()
+    print("File text content: " + textContent)
+
+    // 5. Test json() using pre-created test_input.json
+    const jsonFile = file("test_input.json")
+    print("JSON File exists: " + jsonFile.exists())
+    const jsonContent = jsonFile.json()
+    print("JSON count: " + jsonContent.count)
+    print("JSON hello: " + jsonContent.hello)
+
+    // 6. Test copying a file via write(dest, file)
+    const copyFile = "test_output_copy.txt"
+    print("Copying " + testFile + " to " + copyFile)
+    const copyBytes = write(copyFile, f)
+    print("Copy bytes written: " + copyBytes)
+
+    const copiedFile = file(copyFile)
+    print("Copied file exists: " + copiedFile.exists())
+    print("Copied file size: " + copiedFile.size)
+    print("Copied file text: " + copiedFile.text())
+}
+
+print("=== RUNNING IN SYNC / THREADED MODE ===")
+Io.setMode("threaded")
+runTests()
+
+print("\n=== RUNNING IN EVENTED MODE ===")
+Io.setMode("evented")
+runTests()
+
+print("\n=== RUNNING CONCURRENTLY VIA IO.SPAWN ===")
+const fut1 = Io.spawn(() => {
+    const f = file("test_output.txt")
+    return f.text()
+}, [])
+const text = Io.wait(fut1)
+print("Spawn text output: " + text)

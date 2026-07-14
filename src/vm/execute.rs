@@ -39,6 +39,9 @@ pub enum AsyncResult {
     Fetch(Result<String, String>),
     ResolvePromise(*mut crate::vm::gc::GcObject, Value),
     ResolveFetchPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+    ResolveTextPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+    ResolveJsonPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
+    ResolveWritePromise(*mut crate::vm::gc::GcObject, Result<usize, String>),
 }
 
 pub struct EventLoopTask {
@@ -514,8 +517,8 @@ impl VM {
             let mut constants_ptr = func.chunk.constants.as_ptr();
             let mut slots_offset = frame.slots_offset;
 
-            let mut stack_start = self.stack.as_mut_ptr();
-            let mut frame_slots = stack_start.add(slots_offset);
+            let mut stack_start;
+            let mut frame_slots;
 
             macro_rules! reload_stack {
                 () => {
@@ -530,11 +533,9 @@ impl VM {
                 self.gc_trigger();
                 reload_stack!();
 
-                let is_async = unsafe {
-                    match &(*frame.function).data {
-                        GcData::Function(f) => f.is_async,
-                        _ => false,
-                    }
+                let is_async = match &(*frame.function).data {
+                    GcData::Function(f) => f.is_async,
+                    _ => false,
                 };
                 if is_async {
                     return self.execute_loop_interpreter(0);
@@ -600,7 +601,6 @@ impl VM {
                         func = get_func!(frame.function);
                         constants_ptr = func.chunk.constants.as_ptr();
                         slots_offset = frame.slots_offset;
-                        reload_stack!();
                         ip_val = 0;
                     } else if callee.is_native_function() {
                         let native = callee.as_native_fn();
@@ -614,6 +614,58 @@ impl VM {
                             frame.ip = ip_out - 1;
                             return Ok(Value::null());
                         }
+                        *frame_slots.add(dest_reg_out) = result;
+                        ip_val = ip_out;
+                    } else if callee.is_method_file() {
+                        let ptr = (callee.0 & super::value::PTR_MASK & !3) as *mut GcObject;
+                        let method_sub_tag = callee.0 & 3;
+
+                        let path_str = match &(*ptr).data {
+                            GcData::Object(map) => {
+                                let name_key = super::gc::get_or_create_string("name");
+                                let name_val = map.get(&super::value::MapKey(Value::string(name_key))).cloned().unwrap_or(Value::null());
+                                match name_val.as_str() {
+                                    Some(s) => s.to_string(),
+                                    None => "".to_string(),
+                                }
+                            }
+                            GcData::Struct(s) => {
+                                let name_key = super::gc::get_or_create_string("name");
+                                let name_val = s.get_field(Value::string(name_key)).unwrap_or(Value::null());
+                                match name_val.as_str() {
+                                    Some(s) => s.to_string(),
+                                    None => "".to_string(),
+                                }
+                            }
+                            _ => "".to_string(),
+                        };
+
+                        let result = match method_sub_tag {
+                            0 => { // exists
+                                Value::boolean(std::path::Path::new(&path_str).exists())
+                            }
+                            1 => { // text
+                                if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                    let ptr = super::gc::gc_allocate(GcData::String(std::rc::Rc::from(content)));
+                                    Value::string(ptr)
+                                } else {
+                                    Value::null()
+                                }
+                            }
+                            2 => { // json
+                                if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                        super::gc::json_to_value(json_val)
+                                    } else {
+                                        Value::null()
+                                    }
+                                } else {
+                                    Value::null()
+                                }
+                            }
+                            _ => Value::null(),
+                        };
+                        reload_stack!();
                         *frame_slots.add(dest_reg_out) = result;
                         ip_val = ip_out;
                     } else if callee.is_array_method_push() || callee.is_array_method_pop() {
@@ -1014,10 +1066,37 @@ impl VM {
                                     }
                                 }
                             }
+                            let mut is_file_method = false;
+                            let mut file_method_sub_tag = 0;
+                            if name == "exists" || name == "text" || name == "json" {
+                                let is_file = match &(*ptr).data {
+                                    GcData::Object(map) => {
+                                        let file_key = super::gc::get_or_create_string("_isFile");
+                                        map.get(&super::value::MapKey(Value::string(file_key)))
+                                            .map(|v| v.as_boolean())
+                                            .unwrap_or(false)
+                                    }
+                                    GcData::Struct(s) => {
+                                        s.descriptor.name.as_ref() == "File"
+                                    }
+                                    _ => false,
+                                };
+                                if is_file {
+                                    is_file_method = true;
+                                    file_method_sub_tag = match name {
+                                        "exists" => 0,
+                                        "text" => 1,
+                                        "json" => 2,
+                                        _ => 3,
+                                    };
+                                }
+                            }
                             if is_json_method {
                                 *frame_slots.add(dest) = Value(super::value::TAG_METHOD_JSON | (ptr as u64 & super::value::PTR_MASK));
                             } else if is_text_method {
                                 *frame_slots.add(dest) = Value(super::value::TAG_METHOD_TEXT | (ptr as u64 & super::value::PTR_MASK));
+                            } else if is_file_method && file_method_sub_tag < 3 {
+                                *frame_slots.add(dest) = Value(super::value::TAG_METHOD_FILE | (ptr as u64 & super::value::PTR_MASK & !3) | file_method_sub_tag);
                             } else {
                                 match &(*ptr).data {
                                     GcData::Object(map) => {
@@ -1305,12 +1384,64 @@ impl VM {
                                 args.push(*frame_slots.add(func_reg + 1 + i));
                             }
                             sync_stack!();
-                            frame.ip = unsafe { ip.offset_from(code_ptr) } as usize - 1;
+                            frame.ip = ip.offset_from(code_ptr) as usize - 1;
                             let result = native(args);
                             reload_stack!();
                             if self.stack.is_empty() {
                                 return Ok(Value::null());
                             }
+                            *frame_slots.add(dest) = result;
+                        } else if callee.is_method_file() {
+                            let ptr = (callee.0 & super::value::PTR_MASK & !3) as *mut GcObject;
+                            let method_sub_tag = callee.0 & 3;
+
+                            let path_str = match &(*ptr).data {
+                                GcData::Object(map) => {
+                                    let name_key = super::gc::get_or_create_string("name");
+                                    let name_val = map.get(&super::value::MapKey(Value::string(name_key))).cloned().unwrap_or(Value::null());
+                                    match name_val.as_str() {
+                                        Some(s) => s.to_string(),
+                                        None => "".to_string(),
+                                    }
+                                }
+                                GcData::Struct(s) => {
+                                    let name_key = super::gc::get_or_create_string("name");
+                                    let name_val = s.get_field(Value::string(name_key)).unwrap_or(Value::null());
+                                    match name_val.as_str() {
+                                        Some(s) => s.to_string(),
+                                        None => "".to_string(),
+                                    }
+                                }
+                                _ => "".to_string(),
+                            };
+
+                            sync_stack!();
+                            let result = match method_sub_tag {
+                                0 => { // exists
+                                    Value::boolean(std::path::Path::new(&path_str).exists())
+                                }
+                                1 => { // text
+                                    if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                        let ptr = super::gc::gc_allocate(GcData::String(std::rc::Rc::from(content)));
+                                        Value::string(ptr)
+                                    } else {
+                                        Value::null()
+                                    }
+                                }
+                                2 => { // json
+                                    if let Ok(content) = std::fs::read_to_string(&path_str) {
+                                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                            super::gc::json_to_value(json_val)
+                                        } else {
+                                            Value::null()
+                                        }
+                                    } else {
+                                        Value::null()
+                                    }
+                                }
+                                _ => Value::null(),
+                            };
+                            reload_stack!();
                             *frame_slots.add(dest) = result;
                         } else if callee.is_method_json() || callee.is_method_text() {
                             let ptr = callee.as_gc_ptr();
@@ -1414,11 +1545,9 @@ impl VM {
                         let await_value = *frame_slots.add(instruction.rb as usize);
                         if await_value.is_promise() {
                             let promise_ptr = await_value.as_gc_ptr();
-                            let state = unsafe {
-                                match &(*promise_ptr).data {
-                                    crate::vm::gc::GcData::Promise(prom) => prom.state.clone(),
-                                    _ => unreachable!(),
-                                }
+                            let state = match &(*promise_ptr).data {
+                                crate::vm::gc::GcData::Promise(prom) => prom.state.clone(),
+                                _ => unreachable!(),
                             };
                             let promise_status = {
                                 let lock = state.lock().unwrap();
@@ -1432,21 +1561,19 @@ impl VM {
                                     return Err(err);
                                 }
                                 crate::vm::gc::PromiseState::Pending => {
-                                     frame.ip = unsafe { ip.offset_from(code_ptr) } as usize - 1;
+                                     frame.ip = ip.offset_from(code_ptr) as usize - 1;
 
-                                    let mut suspended_stack = std::mem::take(&mut self.stack);
-                                    let mut suspended_frames = std::mem::take(&mut self.frames);
+                                     let suspended_stack = std::mem::take(&mut self.stack);
+                                     let suspended_frames = std::mem::take(&mut self.frames);
 
-                                    unsafe {
-                                        match &mut (*promise_ptr).data {
-                                            crate::vm::gc::GcData::Promise(prom) => {
-                                                *prom.suspended_stack.lock().unwrap() = suspended_stack;
-                                                *prom.suspended_frames.lock().unwrap() = suspended_frames;
-                                            }
-                                            _ => unreachable!(),
-                                        }
-                                    }
-                                    return Ok(Value::null());
+                                     match &mut (*promise_ptr).data {
+                                         crate::vm::gc::GcData::Promise(prom) => {
+                                             *prom.suspended_stack.lock().unwrap() = suspended_stack;
+                                             *prom.suspended_frames.lock().unwrap() = suspended_frames;
+                                         }
+                                         _ => unreachable!(),
+                                     }
+                                     return Ok(Value::null());
                                 }
                             }
                         } else {
@@ -1538,7 +1665,10 @@ impl VM {
             for task in tasks {
                 match task.result {
                     AsyncResult::ResolvePromise(promise_ptr, _) |
-                    AsyncResult::ResolveFetchPromise(promise_ptr, _) => {
+                    AsyncResult::ResolveFetchPromise(promise_ptr, _) |
+                    AsyncResult::ResolveTextPromise(promise_ptr, _) |
+                    AsyncResult::ResolveJsonPromise(promise_ptr, _) |
+                    AsyncResult::ResolveWritePromise(promise_ptr, _) => {
                         let resolved_value = match task.result {
                             AsyncResult::ResolvePromise(_, val) => val,
                             AsyncResult::ResolveFetchPromise(_, res) => {
@@ -1554,6 +1684,42 @@ impl VM {
                                     Err(e) => {
                                         eprintln!("[FetchAsyncPromise] Error: {}", e);
                                         Value::null()
+                                    }
+                                }
+                            }
+                            AsyncResult::ResolveTextPromise(_, res) => {
+                                match res {
+                                    Ok(content) => {
+                                        let ptr = crate::vm::gc::get_or_create_string(&content);
+                                        Value::string(ptr)
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[FileTextPromise] Error: {}", e);
+                                        Value::null()
+                                    }
+                                }
+                            }
+                            AsyncResult::ResolveJsonPromise(_, res) => {
+                                match res {
+                                    Ok(content) => {
+                                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                            crate::vm::gc::json_to_value(json_val)
+                                        } else {
+                                            Value::null()
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[FileJsonPromise] Error: {}", e);
+                                        Value::null()
+                                    }
+                                }
+                            }
+                            AsyncResult::ResolveWritePromise(_, res) => {
+                                match res {
+                                    Ok(bytes) => Value::number(bytes as f64),
+                                    Err(e) => {
+                                        eprintln!("[FileWritePromise] Error: {}", e);
+                                        Value::number(0.0)
                                     }
                                 }
                             }
@@ -1635,7 +1801,7 @@ impl VM {
                         }
                         args.extend(task.args);
                     }
-                    _ => unreachable!(),
+                    _ => {}
                 };
 
                 if let Err(e) = self.call_function_reentrant(task.callback, args) {

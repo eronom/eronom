@@ -369,10 +369,37 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
                     }
                 }
             }
+            let mut is_file_method = false;
+            let mut file_method_sub_tag = 0;
+            if name == "exists" || name == "text" || name == "json" {
+                let is_file = match &(*ptr).data {
+                    GcData::Object(map) => {
+                        let file_key = get_or_create_string("_isFile");
+                        map.get(&MapKey(Value::string(file_key)))
+                            .map(|v| v.as_boolean())
+                            .unwrap_or(false)
+                    }
+                    GcData::Struct(s) => {
+                        s.descriptor.name.as_ref() == "File"
+                    }
+                    _ => false,
+                };
+                if is_file {
+                    is_file_method = true;
+                    file_method_sub_tag = match name {
+                        "exists" => 0,
+                        "text" => 1,
+                        "json" => 2,
+                        _ => 3,
+                    };
+                }
+            }
             if is_json_method {
                 Value(crate::vm::value::TAG_METHOD_JSON | (ptr as u64 & crate::vm::value::PTR_MASK))
             } else if is_text_method {
                 Value(crate::vm::value::TAG_METHOD_TEXT | (ptr as u64 & crate::vm::value::PTR_MASK))
+            } else if is_file_method && file_method_sub_tag < 3 {
+                Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | file_method_sub_tag)
             } else {
                 match &(*ptr).data {
                     GcData::Object(map) => {

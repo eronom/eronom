@@ -14,3 +14,17 @@ app.get('/todo', (c) => {
   return c.json(todos)
 })
 
+app.get('/slow', (c) => {
+  let start = now()
+  for i in 0..5000 {
+    for j in 0..5000 {
+      if (now() - start > 1500) {
+        return c.json({ ok: true })
+      }
+    }
+  }
+  return c.json({ ok: true })
+})
+
+
+

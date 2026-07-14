@@ -556,9 +556,9 @@ fn get_max_mtime_for_reload(path: &str) -> Option<SystemTime> {
     
     let path_obj = Path::new(path);
     if let Some(parent) = path_obj.parent() {
-        let config_path = parent.join("config.er");
-        if config_path.exists() {
-            if let Ok(meta) = fs::metadata(&config_path) {
+        let toml_path = parent.join("eronom.toml");
+        if toml_path.exists() {
+            if let Ok(meta) = fs::metadata(&toml_path) {
                 if let Ok(mtime) = meta.modified() {
                     if mtime > max_mtime {
                         max_mtime = mtime;
@@ -640,18 +640,16 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
         }
     };
     
-    // Reload config.er if it exists
+    // Reload eronom.toml if it exists
     let parent_dir = Path::new(&path).parent();
     if let Some(parent) = parent_dir {
-        let config_path = parent.join("config.er");
-        if config_path.exists() {
-            if let Ok(config_content) = fs::read_to_string(&config_path) {
-                let config_tokens = crate::frontend::lex(&config_content);
-                let mut config_parser = crate::frontend::Parser::new(config_tokens);
-                if let Ok(config_stmts) = config_parser.parse() {
-                    let config_compiler = crate::vm::compiler::Compiler::new();
-                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
-                        let _ = vm.run(config_func);
+        let toml_path = parent.join("eronom.toml");
+        if toml_path.exists() {
+            if let Ok(toml_content) = fs::read_to_string(&toml_path) {
+                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                    if let Ok(json_val) = serde_json::to_value(toml_val) {
+                        let config_val = crate::vm::gc::json_to_value(json_val);
+                        vm.register_global("config", config_val);
                     }
                 }
             }
@@ -713,12 +711,157 @@ pub extern "C" fn er_http_on_listening() {
 }
 
 #[unsafe(no_mangle)]
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+struct MultipartPart {
+    headers: HashMap<String, String>,
+    data: Vec<u8>,
+}
+
+fn parse_header_params(header_val: &str) -> HashMap<String, String> {
+    let mut params = HashMap::new();
+    for part in header_val.split(';') {
+        let part = part.trim();
+        if let Some(pos) = part.find('=') {
+            let key = part[..pos].trim().to_lowercase();
+            let mut val = part[pos + 1..].trim();
+            if val.starts_with('"') && val.ends_with('"') && val.len() >= 2 {
+                val = &val[1..val.len() - 1];
+            }
+            params.insert(key, val.to_string());
+        }
+    }
+    params
+}
+
+fn parse_part_bytes(part_bytes: &[u8]) -> Option<MultipartPart> {
+    let mut part = part_bytes;
+    if part.starts_with(b"\r\n") {
+        part = &part[2..];
+    } else if part.starts_with(b"\n") {
+        part = &part[1..];
+    }
+    
+    let d_crlf = b"\r\n\r\n";
+    if let Some(headers_end) = find_subslice(part, d_crlf) {
+        let headers_part = &part[..headers_end];
+        let mut data_part = &part[headers_end + 4..];
+        
+        if data_part.ends_with(b"\r\n") {
+            data_part = &data_part[..data_part.len() - 2];
+        } else if data_part.ends_with(b"\n") {
+            data_part = &data_part[..data_part.len() - 1];
+        }
+        
+        if headers_part.starts_with(b"--") {
+            return None;
+        }
+        
+        let mut headers = HashMap::new();
+        let headers_str = std::str::from_utf8(headers_part).unwrap_or("");
+        for line in headers_str.lines() {
+            if let Some(pos) = line.find(": ") {
+                let key = line[..pos].to_lowercase();
+                let val = &line[pos + 2..];
+                headers.insert(key, val.to_string());
+            }
+        }
+        
+        return Some(MultipartPart {
+            headers,
+            data: data_part.to_vec(),
+        });
+    }
+    None
+}
+
+fn parse_multipart(body: &[u8], boundary: &str) -> Vec<MultipartPart> {
+    let boundary_marker = format!("--{}", boundary).into_bytes();
+    let mut parts = Vec::new();
+    let mut current_pos = 0;
+
+    while current_pos < body.len() {
+        let remaining = &body[current_pos..];
+        if let Some(found_idx) = find_subslice(remaining, &boundary_marker) {
+            let start_of_part = current_pos + found_idx + boundary_marker.len();
+            let next_remaining = &body[start_of_part..];
+            if let Some(end_idx) = find_subslice(next_remaining, &boundary_marker) {
+                let part_bytes = &body[start_of_part..start_of_part + end_idx];
+                if let Some(part) = parse_part_bytes(part_bytes) {
+                    parts.push(part);
+                }
+                current_pos = start_of_part + end_idx;
+            } else {
+                let part_bytes = next_remaining;
+                if let Some(part) = parse_part_bytes(part_bytes) {
+                    parts.push(part);
+                }
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    parts
+}
+
+fn construct_file_object(vm: &mut VM, name: &str, type_str: &str, size: usize) -> Value {
+    let name_val = Value::string(crate::vm::gc::get_or_create_string(name));
+    let type_val = Value::string(crate::vm::gc::get_or_create_string(type_str));
+    let size_val = Value::number(size as f64);
+
+    if let Some(desc) = vm.structs.get("File") {
+        let count = desc.field_indices.len();
+        let mut fields = crate::vm::gc::get_pooled_vec(count);
+        fields.resize(count, Value::null());
+
+        let name_key = crate::vm::gc::get_or_create_string("name");
+        let type_key = crate::vm::gc::get_or_create_string("type");
+        let size_key = crate::vm::gc::get_or_create_string("size");
+
+        if let Some(&idx) = desc.field_indices.get(&crate::vm::value::MapKey(Value::string(name_key))) {
+            fields[idx] = name_val;
+        }
+        if let Some(&idx) = desc.field_indices.get(&crate::vm::value::MapKey(Value::string(type_key))) {
+            fields[idx] = type_val;
+        }
+        if let Some(&idx) = desc.field_indices.get(&crate::vm::value::MapKey(Value::string(size_key))) {
+            fields[idx] = size_val;
+        }
+
+        Value::object(crate::vm::gc::gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+            descriptor: desc.clone(),
+            fields,
+        })))
+    } else {
+        let mut map = crate::vm::gc::get_pooled_map(4);
+        let name_key = crate::vm::gc::get_or_create_string("name");
+        let type_key = crate::vm::gc::get_or_create_string("type");
+        let size_key = crate::vm::gc::get_or_create_string("size");
+        let is_file_key = crate::vm::gc::get_or_create_string("_isFile");
+
+        map.insert(crate::vm::value::MapKey(Value::string(name_key)), name_val);
+        map.insert(crate::vm::value::MapKey(Value::string(type_key)), type_val);
+        map.insert(crate::vm::value::MapKey(Value::string(size_key)), size_val);
+        map.insert(crate::vm::value::MapKey(Value::string(is_file_key)), Value::boolean(true));
+
+        Value::object(crate::vm::gc::gc_allocate(GcData::Object(map)))
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn er_http_on_request(
     res: *mut c_void,
     method_ptr: *const c_char,
     method_len: usize,
     path_ptr: *const c_char,
     path_len: usize,
+    headers_ptr: *const c_char,
+    headers_len: usize,
+    body_ptr: *const c_char,
+    body_len: usize,
 ) {
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     if !vm_ptr.is_null() {
@@ -733,6 +876,21 @@ pub extern "C" fn er_http_on_request(
     let path = unsafe {
         let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
         std::str::from_utf8(slice).unwrap_or("")
+    };
+    let headers_str = unsafe {
+        if headers_ptr.is_null() {
+            ""
+        } else {
+            let slice = std::slice::from_raw_parts(headers_ptr as *const u8, headers_len);
+            std::str::from_utf8(slice).unwrap_or("")
+        }
+    };
+    let body_bytes = unsafe {
+        if body_ptr.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(body_ptr as *const u8, body_len)
+        }
     };
     
     let mut extracted_params = HashMap::new();
@@ -758,7 +916,7 @@ pub extern "C" fn er_http_on_request(
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
                 
-                let mut req_map = crate::vm::gc::get_pooled_map(3);
+                let mut req_map = crate::vm::gc::get_pooled_map(6);
                 let url_name = get_or_create_string("url");
                 let method_name = get_or_create_string("method");
                 let params_name = get_or_create_string("params");
@@ -773,9 +931,78 @@ pub extern "C" fn er_http_on_request(
                 }
                 let params_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(params_obj_map)));
                 
+                let mut headers_obj_map = crate::vm::gc::get_pooled_map(10);
+                for line in headers_str.lines() {
+                    if let Some(pos) = line.find(": ") {
+                        let key = line[..pos].to_lowercase();
+                        let val = &line[pos + 2..];
+                        let key_ptr = get_or_create_string(&key);
+                        let val_ptr = get_or_create_string(val);
+                        headers_obj_map.insert(crate::vm::value::MapKey(Value::string(key_ptr)), Value::string(val_ptr));
+                    }
+                }
+                let headers_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(headers_obj_map)));
+
+                let mut content_type = String::new();
+                for line in headers_str.lines() {
+                    if let Some(pos) = line.find(": ") {
+                        let key = line[..pos].to_lowercase();
+                        if key == "content-type" {
+                            content_type = line[pos + 2..].to_string();
+                            break;
+                        }
+                    }
+                }
+
+                let mut files_obj_map = crate::vm::gc::get_pooled_map(5);
+                if content_type.contains("multipart/form-data") {
+                    if let Some(b_pos) = content_type.find("boundary=") {
+                        let boundary = content_type[b_pos + 9..].trim().to_string();
+                        let parts = parse_multipart(body_bytes, &boundary);
+                        
+                        let temp_dir = std::path::Path::new("temp_uploads");
+                        if !temp_dir.exists() {
+                            let _ = std::fs::create_dir_all(temp_dir);
+                        }
+                        
+                        static UPLOAD_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                        
+                        for part in parts {
+                            if let Some(cd) = part.headers.get("content-disposition") {
+                                let params = parse_header_params(cd);
+                                if let Some(name) = params.get("name") {
+                                    if let Some(_filename) = params.get("filename") {
+                                        let count = UPLOAD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                        let temp_filename = format!("temp_uploads/upload_{}_{}.tmp", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), count);
+                                        
+                                        if std::fs::write(&temp_filename, &part.data).is_ok() {
+                                            let content_type_str = part.headers.get("content-type").map(|s| s.as_str()).unwrap_or("application/octet-stream");
+                                            let file_val = construct_file_object(vm, &temp_filename, content_type_str, part.data.len());
+                                            files_obj_map.insert(
+                                                crate::vm::value::MapKey(Value::string(get_or_create_string(name))),
+                                                file_val
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let files_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(files_obj_map)));
+
+                let body_str = std::str::from_utf8(body_bytes).unwrap_or("");
+                let body_val = Value::string(get_or_create_string(body_str));
+                let body_name = get_or_create_string("_body");
+                let headers_name = get_or_create_string("headers");
+                let files_name = get_or_create_string("files");
+
                 req_map.insert(crate::vm::value::MapKey(Value::string(url_name)), Value::string(path_str));
                 req_map.insert(crate::vm::value::MapKey(Value::string(method_name)), Value::string(method_str));
                 req_map.insert(crate::vm::value::MapKey(Value::string(params_name)), params_obj);
+                req_map.insert(crate::vm::value::MapKey(Value::string(headers_name)), headers_obj);
+                req_map.insert(crate::vm::value::MapKey(Value::string(files_name)), files_obj);
+                req_map.insert(crate::vm::value::MapKey(Value::string(body_name)), body_val);
                 
                 let req_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(req_map)));
                 
@@ -1479,5 +1706,676 @@ pub fn native_create_promise_pair(_args: Vec<Value>) -> Value {
 
     let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
     Value::object(ptr)
+}
+
+pub fn native_eronom_is_file(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::boolean(false);
+    }
+    let val = args[0];
+    if val.is_object() {
+        let ptr = val.as_gc_ptr();
+        unsafe {
+            match &(*ptr).data {
+                crate::vm::gc::GcData::Struct(s) => {
+                    return Value::boolean(s.descriptor.name.as_ref() == "File");
+                }
+                crate::vm::gc::GcData::Object(map) => {
+                    let is_file_key = crate::vm::gc::get_or_create_string("_isFile");
+                    if let Some(is_file_val) = map.get(&crate::vm::value::MapKey(Value::string(is_file_key))) {
+                        return Value::boolean(is_file_val.as_boolean());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Value::boolean(false)
+}
+
+pub fn native_eronom_get_mime_type(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let path_val = args[0];
+    let path = match path_val.as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+        
+    let mime = match ext.as_str() {
+        "json" => "application/json;charset=utf-8",
+        "html" | "htm" => "text/html;charset=utf-8",
+        "js" | "mjs" => "text/javascript;charset=utf-8",
+        "css" => "text/css;charset=utf-8",
+        "txt" => "text/plain;charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        _ => "text/plain;charset=utf-8",
+    };
+    
+    let ptr = crate::vm::gc::get_or_create_string(mime);
+    Value::string(ptr)
+}
+
+pub fn native_eronom_get_file_size(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::number(0.0);
+    }
+    let path_val = args[0];
+    let path = match path_val.as_str() {
+        Some(s) => s,
+        None => return Value::number(0.0),
+    };
+    
+    let size = std::fs::metadata(path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+        
+    Value::number(size as f64)
+}
+
+pub fn native_eronom_file_exists(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::boolean(false);
+    }
+    let path_val = args[0];
+    let path_str = match path_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::boolean(false),
+    };
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::boolean(std::path::Path::new(&path_str).exists());
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    if vm.use_evented_io {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
+        let prom = crate::vm::gc::GcPromise {
+            state: state.clone(),
+            suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+        let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+
+        let suspended_stack = std::mem::take(&mut vm.stack);
+        let suspended_frames = std::mem::take(&mut vm.frames);
+
+        unsafe {
+            match &mut (*promise_ptr).data {
+                crate::vm::gc::GcData::Promise(p) => {
+                    *p.suspended_stack.lock().unwrap() = suspended_stack;
+                    *p.suspended_frames.lock().unwrap() = suspended_frames;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let active_counter = vm.active_async_tasks.clone();
+        let queue = vm.event_loop_queue.clone();
+        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let promise_ptr_usize = promise_ptr as usize;
+
+        std::thread::spawn(move || {
+            let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
+            let exists = std::path::Path::new(&path_str).exists();
+            let res_val = Value::boolean(exists);
+
+            let mut q = queue.lock().unwrap();
+            q.push(crate::vm::execute::EventLoopTask {
+                callback: Value::null(),
+                args: Vec::new(),
+                result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, res_val),
+            });
+
+            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        Value::null()
+    } else {
+        Value::boolean(std::path::Path::new(&path_str).exists())
+    }
+}
+
+pub fn native_eronom_file_text(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let path_val = args[0];
+    let path_str = match path_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
+    };
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        let content = std::fs::read_to_string(&path_str).unwrap_or_default();
+        let ptr = crate::vm::gc::get_or_create_string(&content);
+        return Value::string(ptr);
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    if vm.use_evented_io {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
+        let prom = crate::vm::gc::GcPromise {
+            state: state.clone(),
+            suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+        let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+
+        let suspended_stack = std::mem::take(&mut vm.stack);
+        let suspended_frames = std::mem::take(&mut vm.frames);
+
+        unsafe {
+            match &mut (*promise_ptr).data {
+                crate::vm::gc::GcData::Promise(p) => {
+                    *p.suspended_stack.lock().unwrap() = suspended_stack;
+                    *p.suspended_frames.lock().unwrap() = suspended_frames;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let active_counter = vm.active_async_tasks.clone();
+        let queue = vm.event_loop_queue.clone();
+        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let promise_ptr_usize = promise_ptr as usize;
+
+        std::thread::spawn(move || {
+            let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
+            let content = std::fs::read_to_string(&path_str).map_err(|e| e.to_string());
+
+            let mut q = queue.lock().unwrap();
+            q.push(crate::vm::execute::EventLoopTask {
+                callback: Value::null(),
+                args: Vec::new(),
+                result: crate::vm::execute::AsyncResult::ResolveTextPromise(promise_ptr, content),
+            });
+
+            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        Value::null()
+    } else {
+        let content = std::fs::read_to_string(&path_str).unwrap_or_default();
+        let ptr = crate::vm::gc::get_or_create_string(&content);
+        Value::string(ptr)
+    }
+}
+
+pub fn native_eronom_file_json(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let path_val = args[0];
+    let path_str = match path_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
+    };
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        let content = std::fs::read_to_string(&path_str).unwrap_or_default();
+        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+            return crate::vm::gc::json_to_value(json_val);
+        } else {
+            return Value::null();
+        }
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    if vm.use_evented_io {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
+        let prom = crate::vm::gc::GcPromise {
+            state: state.clone(),
+            suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+        let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+
+        let suspended_stack = std::mem::take(&mut vm.stack);
+        let suspended_frames = std::mem::take(&mut vm.frames);
+
+        unsafe {
+            match &mut (*promise_ptr).data {
+                crate::vm::gc::GcData::Promise(p) => {
+                    *p.suspended_stack.lock().unwrap() = suspended_stack;
+                    *p.suspended_frames.lock().unwrap() = suspended_frames;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let active_counter = vm.active_async_tasks.clone();
+        let queue = vm.event_loop_queue.clone();
+        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let promise_ptr_usize = promise_ptr as usize;
+
+        std::thread::spawn(move || {
+            let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
+            let content = std::fs::read_to_string(&path_str).map_err(|e| e.to_string());
+
+            let mut q = queue.lock().unwrap();
+            q.push(crate::vm::execute::EventLoopTask {
+                callback: Value::null(),
+                args: Vec::new(),
+                result: crate::vm::execute::AsyncResult::ResolveJsonPromise(promise_ptr, content),
+            });
+
+            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        Value::null()
+    } else {
+        let content = std::fs::read_to_string(&path_str).unwrap_or_default();
+        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
+            crate::vm::gc::json_to_value(json_val)
+        } else {
+            Value::null()
+        }
+    }
+}
+
+pub fn native_eronom_write_file(args: Vec<Value>) -> Value {
+    if args.len() < 3 {
+        return Value::number(0.0);
+    }
+    let path_val = args[0];
+    let data_val = args[1];
+    let is_src_file = args[2].as_boolean();
+
+    let path_str = match path_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::number(0.0),
+    };
+
+    let data_str = match data_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::number(0.0),
+    };
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        let res = write_file_helper(&path_str, &data_str, is_src_file);
+        return Value::number(res.unwrap_or(0) as f64);
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    if vm.use_evented_io {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
+        let prom = crate::vm::gc::GcPromise {
+            state: state.clone(),
+            suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+        let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+
+        let suspended_stack = std::mem::take(&mut vm.stack);
+        let suspended_frames = std::mem::take(&mut vm.frames);
+
+        unsafe {
+            match &mut (*promise_ptr).data {
+                crate::vm::gc::GcData::Promise(p) => {
+                    *p.suspended_stack.lock().unwrap() = suspended_stack;
+                    *p.suspended_frames.lock().unwrap() = suspended_frames;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let active_counter = vm.active_async_tasks.clone();
+        let queue = vm.event_loop_queue.clone();
+        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let promise_ptr_usize = promise_ptr as usize;
+
+        std::thread::spawn(move || {
+            let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
+            let res = write_file_helper(&path_str, &data_str, is_src_file);
+
+            let mut q = queue.lock().unwrap();
+            q.push(crate::vm::execute::EventLoopTask {
+                callback: Value::null(),
+                args: Vec::new(),
+                result: crate::vm::execute::AsyncResult::ResolveWritePromise(promise_ptr, res),
+            });
+
+            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        Value::null()
+    } else {
+        let res = write_file_helper(&path_str, &data_str, is_src_file);
+        Value::number(res.unwrap_or(0) as f64)
+    }
+}
+
+fn write_file_helper(path: &str, data: &str, is_src_file: bool) -> Result<usize, String> {
+    if is_src_file {
+        std::fs::copy(data, path)
+            .map(|bytes| bytes as usize)
+            .map_err(|e| e.to_string())
+    } else {
+        std::fs::write(path, data)
+            .map(|_| data.len())
+            .map_err(|e| e.to_string())
+    }
+}
+
+pub fn native_file_global(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let path_val = args[0];
+    let path_str = match path_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
+    };
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    let ext = std::path::Path::new(&path_str)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+        
+    let mime = match ext.as_str() {
+        "json" => "application/json;charset=utf-8",
+        "html" | "htm" => "text/html;charset=utf-8",
+        "js" | "mjs" => "text/javascript;charset=utf-8",
+        "css" => "text/css;charset=utf-8",
+        "txt" => "text/plain;charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        _ => "text/plain;charset=utf-8",
+    };
+
+    let size = std::fs::metadata(&path_str)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    construct_file_object(vm, &path_str, mime, size as usize)
+}
+
+pub fn native_write_global(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::number(0.0);
+    }
+    let path_val = args[0];
+    let data_val = args[1];
+
+    if path_val.as_str().is_none() {
+        return Value::number(0.0);
+    }
+
+    let mut is_src_file = false;
+    let mut data_str = String::new();
+
+    if data_val.is_object() {
+        let ptr = data_val.as_gc_ptr();
+        unsafe {
+            match &(*ptr).data {
+                crate::vm::gc::GcData::Struct(s) => {
+                    if s.descriptor.name.as_ref() == "File" {
+                        is_src_file = true;
+                        let name_key = crate::vm::gc::get_or_create_string("name");
+                        if let Some(name_val) = s.get_field(Value::string(name_key)) {
+                            if let Some(s) = name_val.as_str() {
+                                data_str = s.to_string();
+                            }
+                        }
+                    }
+                }
+                crate::vm::gc::GcData::Object(map) => {
+                    let is_file_key = crate::vm::gc::get_or_create_string("_isFile");
+                    let is_file_val = map.get(&crate::vm::value::MapKey(Value::string(is_file_key)))
+                        .map(|v| v.as_boolean())
+                        .unwrap_or(false);
+                    if is_file_val {
+                        is_src_file = true;
+                        let name_key = crate::vm::gc::get_or_create_string("name");
+                        let name_val = map.get(&crate::vm::value::MapKey(Value::string(name_key))).cloned().unwrap_or(Value::null());
+                        if let Some(s) = name_val.as_str() {
+                            data_str = s.to_string();
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if !is_src_file {
+        data_str = match data_val.as_str() {
+            Some(s) => s.to_string(),
+            None => return Value::number(0.0),
+        };
+    }
+
+    let args_to_pass = vec![
+        path_val,
+        Value::string(crate::vm::gc::get_or_create_string(&data_str)),
+        Value::boolean(is_src_file)
+    ];
+    native_eronom_write_file(args_to_pass)
+}
+
+pub fn register_eronom_file_api(vm: &mut VM) -> Result<(), String> {
+    // 1. Register native functions for Eronom File API
+    vm.register_global("Eronom_nativeFileExists", Value::native_function(native_eronom_file_exists));
+    vm.register_global("Eronom_nativeFileText", Value::native_function(native_eronom_file_text));
+    vm.register_global("Eronom_nativeFileJson", Value::native_function(native_eronom_file_json));
+    vm.register_global("Eronom_nativeGetMimeType", Value::native_function(native_eronom_get_mime_type));
+    vm.register_global("Eronom_nativeGetFileSize", Value::native_function(native_eronom_get_file_size));
+    vm.register_global("Eronom_nativeIsFile", Value::native_function(native_eronom_is_file));
+    vm.register_global("Eronom_nativeWriteFile", Value::native_function(native_eronom_write_file));
+
+    // 2. Register global built-ins so they are available without imports
+    vm.register_global("file", Value::native_function(native_file_global));
+    vm.register_global("write", Value::native_function(native_write_global));
+
+    // 3. Register native string helpers
+    vm.register_global("stringSplit", Value::native_function(native_string_split));
+    vm.register_global("stringIncludes", Value::native_function(native_string_includes));
+    vm.register_global("stringStartsWith", Value::native_function(native_string_starts_with));
+    vm.register_global("stringEndsWith", Value::native_function(native_string_ends_with));
+    vm.register_global("stringSubstring", Value::native_function(native_string_substring));
+    vm.register_global("stringReplace", Value::native_function(native_string_replace));
+    vm.register_global("stringTrim", Value::native_function(native_string_trim));
+    vm.register_global("stringLength", Value::native_function(native_string_length));
+    vm.register_global("stringCharAt", Value::native_function(native_string_char_at));
+    vm.register_global("stringIndexOf", Value::native_function(native_string_index_of));
+
+    Ok(())
+}
+
+fn native_string_split(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let sep = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let parts: Vec<Value> = s.split(sep)
+        .map(|part| Value::string(get_or_create_string(part)))
+        .collect();
+    
+    let ptr = gc_allocate(GcData::Array(parts));
+    Value::array(ptr)
+}
+
+fn native_string_includes(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    let search = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    Value::boolean(s.contains(search))
+}
+
+fn native_string_starts_with(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    let prefix = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    Value::boolean(s.starts_with(prefix))
+}
+
+fn native_string_ends_with(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    let suffix = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::boolean(false),
+    };
+    Value::boolean(s.ends_with(suffix))
+}
+
+fn native_string_substring(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let start = args[1].as_number() as usize;
+    let end = if args.len() >= 3 {
+        args[2].as_number() as usize
+    } else {
+        s.len()
+    };
+    if start > s.len() || end > s.len() || start > end {
+        return Value::null();
+    }
+    let sub = &s[start..end];
+    let ptr = get_or_create_string(sub);
+    Value::string(ptr)
+}
+
+fn native_string_replace(args: Vec<Value>) -> Value {
+    if args.len() < 3 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let from = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let to = match args[2].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let replaced = s.replace(from, to);
+    let ptr = get_or_create_string(&replaced);
+    Value::string(ptr)
+}
+
+fn native_string_trim(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let trimmed = s.trim();
+    let ptr = get_or_create_string(trimmed);
+    Value::string(ptr)
+}
+
+fn native_string_length(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::number(0.0);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::number(0.0),
+    };
+    Value::number(s.len() as f64)
+}
+
+fn native_string_char_at(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::null(),
+    };
+    let idx = args[1].as_number() as usize;
+    if let Some(c) = s.chars().nth(idx) {
+        let mut buf = [0; 4];
+        let c_str = c.encode_utf8(&mut buf);
+        let ptr = get_or_create_string(c_str);
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
+}
+
+fn native_string_index_of(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::number(-1.0);
+    }
+    let s = match args[0].as_str() {
+        Some(val) => val,
+        None => return Value::number(-1.0),
+    };
+    let search = match args[1].as_str() {
+        Some(val) => val,
+        None => return Value::number(-1.0),
+    };
+    match s.find(search) {
+        Some(idx) => Value::number(idx as f64),
+        None => Value::number(-1.0),
+    }
 }
 

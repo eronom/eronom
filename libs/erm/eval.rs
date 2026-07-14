@@ -382,7 +382,25 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
             else if c == b')' { depth -= 1; }
             p += 1;
         }
-        let arg_expr = s[start..p-1].trim();
+        let full_arg_expr = s[start..p-1].trim();
+        let mut arg_expr = full_arg_expr;
+        let mut brace_depth = 0;
+        let mut in_quote = None;
+        for (idx, c) in full_arg_expr.chars().enumerate() {
+            if let Some(q) = in_quote {
+                if c == q { in_quote = None; }
+            } else if c == '"' || c == '\'' || c == '`' {
+                in_quote = Some(c);
+            } else if c == '(' || c == '[' || c == '{' {
+                brace_depth += 1;
+            } else if c == ')' || c == ']' || c == '}' {
+                brace_depth -= 1;
+            } else if c == ',' && brace_depth == 0 {
+                arg_expr = &full_arg_expr[..idx];
+                break;
+            }
+        }
+        let arg_expr = arg_expr.trim();
         let mut ev_temp = ErmEval::new();
         if let Some(v_map) = vars {
             ev_temp.vars = v_map.clone();

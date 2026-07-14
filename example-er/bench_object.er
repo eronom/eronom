@@ -1,6 +1,0 @@
-let sum = 0
-for i in 1..1000000 {
-    let obj = { name: "vishnu", age: i }
-    sum = sum + obj.age
-}
-print(sum)

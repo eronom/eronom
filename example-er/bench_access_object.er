@@ -1,6 +1,0 @@
-let obj = { name: "vishnu", age: 25 }
-for i in 1..10000000 {
-    obj.age = i
-    let a = obj.age
-}
-print(obj.age)

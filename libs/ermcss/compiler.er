@@ -1,0 +1,507 @@
+// compiler.er - Eronom native CSS Utility compiler
+
+let parseNumber = (s) => {
+  let len = stringLength(s)
+  if (len == 0) { return 0 }
+  let res = 0
+  let isDecimal = false
+  let decimalPlace = 0.1
+  let isNegative = false
+  let startIdx = 0
+  if (stringCharAt(s, 0) == "-") {
+    isNegative = true
+    startIdx = 1
+  }
+  for i in startIdx .. len {
+    let char = stringCharAt(s, i)
+    if (char == ".") {
+      isDecimal = true
+    } else {
+      let digit = 0 - 1
+      if (char == "0") { digit = 0 }
+      if (char == "1") { digit = 1 }
+      if (char == "2") { digit = 2 }
+      if (char == "3") { digit = 3 }
+      if (char == "4") { digit = 4 }
+      if (char == "5") { digit = 5 }
+      if (char == "6") { digit = 6 }
+      if (char == "7") { digit = 7 }
+      if (char == "8") { digit = 8 }
+      if (char == "9") { digit = 9 }
+      
+      if (digit == 0 - 1) {
+      } else {
+        if (isDecimal) {
+          res = res + digit * decimalPlace
+          decimalPlace = decimalPlace * 0.1
+        } else {
+          res = res * 10 + digit
+        }
+      }
+    }
+  }
+  if (isNegative) {
+    return 0 - res
+  }
+  return res
+}
+
+let parseSpacingValue = (val) => {
+  if (val == "auto") { return "auto" }
+  if (val == "full") { return "100%" }
+  if (val == "screen") { return "100vw" }
+  
+  let slashIdx = stringIndexOf(val, "/")
+  if (slashIdx == 0 - 1) {
+  } else {
+    let parts = stringSplit(val, "/")
+    let num = parseNumber(parts[0])
+    let den = parseNumber(parts[1])
+    if (den > 0) {
+      return (num / den * 100) + "%"
+    }
+    return "0%"
+  }
+  
+  let num = parseNumber(val)
+  return (num * 0.25) + "rem"
+}
+
+let getCustomColor = (colorName) => {
+  let configContent = ""
+  let isToml = false
+  let tomlPath = "eronom.toml"
+  if (PROJECT_DIR == "") {
+  } else {
+    tomlPath = PROJECT_DIR + "/eronom.toml"
+  }
+  
+  if (Eronom_nativeFileExists(tomlPath)) {
+    configContent = Eronom_nativeFileText(tomlPath)
+    isToml = true
+  }
+  
+  if (stringLength(configContent) > 0) {
+    let target1 = colorName + ":"
+    let target2 = colorName + " :"
+    if (isToml) {
+      target1 = colorName + "="
+      target2 = colorName + " ="
+    }
+    let idx = stringIndexOf(configContent, target1)
+    let len = stringLength(target1)
+    if (idx == 0 - 1) {
+      idx = stringIndexOf(configContent, target2)
+      len = stringLength(target2)
+    }
+    
+    if (idx == 0 - 1) {
+      return null
+    }
+    
+    let sub = stringSubstring(configContent, idx + len, stringLength(configContent))
+    let quoteIdx = stringIndexOf(sub, '"')
+    let isSingleQuote = false
+    if (quoteIdx == 0 - 1) {
+      quoteIdx = stringIndexOf(sub, "'")
+      isSingleQuote = true
+    }
+    if (quoteIdx == 0 - 1) {
+      return null
+    }
+    
+    let sub2 = stringSubstring(sub, quoteIdx + 1, stringLength(sub))
+    let quoteChar = '"'
+    if (isSingleQuote) {
+      quoteChar = "'"
+    }
+    let endQuoteIdx = stringIndexOf(sub2, quoteChar)
+    if (endQuoteIdx == 0 - 1) {
+      return null
+    }
+    
+    let hex = stringSubstring(sub2, 0, endQuoteIdx)
+    if (stringStartsWith(hex, "#")) {
+      return hex
+    }
+  }
+  return null
+}
+
+let getHexColor = (colorName, shade) => {
+  if (colorName == "white") { return "#ffffff" }
+  if (colorName == "black") { return "#000000" }
+  if (colorName == "transparent") { return "transparent" }
+  
+  if (colorName == "gray") {
+    if (shade == "50") { return "#f9fafb" }
+    if (shade == "100") { return "#f3f4f6" }
+    if (shade == "200") { return "#e5e7eb" }
+    if (shade == "300") { return "#d1d5db" }
+    if (shade == "400") { return "#9ca3af" }
+    if (shade == "500") { return "#6b7280" }
+    if (shade == "600") { return "#4b5563" }
+    if (shade == "700") { return "#374151" }
+    if (shade == "800") { return "#1f2937" }
+    if (shade == "900") { return "#111827" }
+    if (shade == "950") { return "#030712" }
+  }
+  if (colorName == "blue") {
+    if (shade == "50") { return "#eff6ff" }
+    if (shade == "100") { return "#dbeafe" }
+    if (shade == "200") { return "#bfdbfe" }
+    if (shade == "300") { return "#93c5fd" }
+    if (shade == "400") { return "#60a5fa" }
+    if (shade == "500") { return "#3b82f6" }
+    if (shade == "600") { return "#2563eb" }
+    if (shade == "700") { return "#1d4ed8" }
+    if (shade == "800") { return "#1e40af" }
+    if (shade == "900") { return "#1e3a8a" }
+    if (shade == "950") { return "#172554" }
+  }
+  if (colorName == "red") {
+    if (shade == "50") { return "#fef2f2" }
+    if (shade == "100") { return "#fee2e2" }
+    if (shade == "200") { return "#fecaca" }
+    if (shade == "300") { return "#fca5a5" }
+    if (shade == "400") { return "#f87171" }
+    if (shade == "500") { return "#ef4444" }
+    if (shade == "600") { return "#dc2626" }
+    if (shade == "700") { return "#b91c1c" }
+    if (shade == "800") { return "#991b1b" }
+    if (shade == "900") { return "#7f1d1d" }
+    if (shade == "950") { return "#450a0a" }
+  }
+  if (colorName == "green") {
+    if (shade == "50") { return "#f0fdf4" }
+    if (shade == "100") { return "#dcfce7" }
+    if (shade == "200") { return "#bbf7d0" }
+    if (shade == "300") { return "#86efac" }
+    if (shade == "400") { return "#4ade80" }
+    if (shade == "500") { return "#22c55e" }
+    if (shade == "600") { return "#16a34a" }
+    if (shade == "700") { return "#15803d" }
+    if (shade == "800") { return "#166534" }
+    if (shade == "900") { return "#14532d" }
+    if (shade == "950") { return "#052e16" }
+  }
+  if (colorName == "yellow") {
+    if (shade == "50") { return "#fefce8" }
+    if (shade == "100") { return "#fef9c3" }
+    if (shade == "200") { return "#fef08a" }
+    if (shade == "300") { return "#fde047" }
+    if (shade == "400") { return "#facc15" }
+    if (shade == "500") { return "#eab308" }
+    if (shade == "600") { return "#ca8a04" }
+    if (shade == "700") { return "#a16207" }
+    if (shade == "800") { return "#854d0e" }
+    if (shade == "900") { return "#713f12" }
+    if (shade == "950") { return "#422006" }
+  }
+  let custom = getCustomColor(colorName)
+  if (custom == null) {
+  } else {
+    return custom
+  }
+  return null
+}
+
+export const compile = (classes) => {
+  let css = ""
+  let count = classes.length
+  
+  let staticRules = {}
+  staticRules["flex"] = "display: flex;"
+  staticRules["grid"] = "display: grid;"
+  staticRules["block"] = "display: block;"
+  staticRules["inline"] = "display: inline;"
+  staticRules["inline-block"] = "display: inline-block;"
+  staticRules["hidden"] = "display: none;"
+  staticRules["items-center"] = "align-items: center;"
+  staticRules["items-start"] = "align-items: flex-start;"
+  staticRules["items-end"] = "align-items: flex-end;"
+  staticRules["items-baseline"] = "align-items: baseline;"
+  staticRules["items-stretch"] = "align-items: stretch;"
+  staticRules["justify-center"] = "justify-content: center;"
+  staticRules["justify-start"] = "justify-content: flex-start;"
+  staticRules["justify-end"] = "justify-content: flex-end;"
+  staticRules["justify-between"] = "justify-content: space-between;"
+  staticRules["justify-around"] = "justify-content: space-around;"
+  staticRules["justify-evenly"] = "justify-content: space-evenly;"
+  staticRules["flex-row"] = "flex-direction: row;"
+  staticRules["flex-row-reverse"] = "flex-direction: row-reverse;"
+  staticRules["flex-col"] = "flex-direction: column;"
+  staticRules["flex-col-reverse"] = "flex-direction: column-reverse;"
+  staticRules["flex-wrap"] = "flex-wrap: wrap;"
+  staticRules["flex-nowrap"] = "flex-wrap: nowrap;"
+  staticRules["flex-1"] = "flex: 1 1 0%;"
+  staticRules["flex-auto"] = "flex: 1 1 auto;"
+  staticRules["flex-initial"] = "flex: 0 1 auto;"
+  staticRules["flex-none"] = "flex: none;"
+  staticRules["grow"] = "flex-grow: 1;"
+  staticRules["grow-0"] = "flex-grow: 0;"
+  staticRules["shrink"] = "flex-shrink: 1;"
+  staticRules["shrink-0"] = "flex-shrink: 0;"
+  staticRules["min-h-screen"] = "min-height: 100vh;"
+  staticRules["min-h-full"] = "min-height: 100%;"
+  staticRules["w-full"] = "width: 100%;"
+  staticRules["w-screen"] = "width: 100vw;"
+  staticRules["h-full"] = "height: 100%;"
+  staticRules["h-screen"] = "height: 100vh;"
+  staticRules["rounded-none"] = "border-radius: 0px;"
+  staticRules["rounded-sm"] = "border-radius: 0.125rem;"
+  staticRules["rounded"] = "border-radius: 0.25rem;"
+  staticRules["rounded-md"] = "border-radius: 0.375rem;"
+  staticRules["rounded-lg"] = "border-radius: 0.5rem;"
+  staticRules["rounded-xl"] = "border-radius: 0.75rem;"
+  staticRules["rounded-2xl"] = "border-radius: 1rem;"
+  staticRules["rounded-3xl"] = "border-radius: 1.5rem;"
+  staticRules["rounded-full"] = "border-radius: 9999px;"
+  staticRules["text-xs"] = "font-size: 0.75rem; line-height: 1rem;"
+  staticRules["text-sm"] = "font-size: 0.875rem; line-height: 1.25rem;"
+  staticRules["text-base"] = "font-size: 1rem; line-height: 1.5rem;"
+  staticRules["text-lg"] = "font-size: 1.125rem; line-height: 1.75rem;"
+  staticRules["text-xl"] = "font-size: 1.25rem; line-height: 1.75rem;"
+  staticRules["text-2xl"] = "font-size: 1.5rem; line-height: 2rem;"
+  staticRules["text-3xl"] = "font-size: 1.875rem; line-height: 2.25rem;"
+  staticRules["text-4xl"] = "font-size: 2.25rem; line-height: 2.5rem;"
+  staticRules["text-5xl"] = "font-size: 3rem; line-height: 1;"
+  staticRules["text-6xl"] = "font-size: 3.75rem; line-height: 1;"
+  staticRules["font-thin"] = "font-weight: 100;"
+  staticRules["font-extralight"] = "font-weight: 200;"
+  staticRules["font-light"] = "font-weight: 300;"
+  staticRules["font-normal"] = "font-weight: 400;"
+  staticRules["font-medium"] = "font-weight: 500;"
+  staticRules["font-semibold"] = "font-weight: 600;"
+  staticRules["font-bold"] = "font-weight: 700;"
+  staticRules["font-extrabold"] = "font-weight: 800;"
+  staticRules["font-black"] = "font-weight: 900;"
+  staticRules["text-left"] = "text-align: left;"
+  staticRules["text-center"] = "text-align: center;"
+  staticRules["text-right"] = "text-align: right;"
+  staticRules["text-justify"] = "text-align: justify;"
+  staticRules["uppercase"] = "text-transform: uppercase;"
+  staticRules["lowercase"] = "text-transform: lowercase;"
+  staticRules["capitalize"] = "text-transform: capitalize;"
+  staticRules["normal-case"] = "text-transform: none;"
+  staticRules["border"] = "border-width: 1px; border-style: solid;"
+  staticRules["border-0"] = "border-width: 0px;"
+  staticRules["border-2"] = "border-width: 2px; border-style: solid;"
+  staticRules["border-4"] = "border-width: 4px; border-style: solid;"
+  staticRules["border-8"] = "border-width: 8px; border-style: solid;"
+  staticRules["shadow-sm"] = "box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);"
+  staticRules["shadow"] = "box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);"
+  staticRules["shadow-md"] = "box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);"
+  staticRules["shadow-lg"] = "box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);"
+  staticRules["shadow-xl"] = "box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);"
+  staticRules["shadow-2xl"] = "box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);"
+  staticRules["shadow-none"] = "box-shadow: 0 0 #0000;"
+  staticRules["transition"] = "transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms;"
+  staticRules["cursor-pointer"] = "cursor: pointer;"
+  staticRules["cursor-default"] = "cursor: default;"
+  staticRules["overflow-auto"] = "overflow: auto;"
+  staticRules["overflow-hidden"] = "overflow: hidden;"
+  staticRules["overflow-visible"] = "overflow: visible;"
+  staticRules["overflow-scroll"] = "overflow: scroll;"
+  staticRules["text-white"] = "color: #ffffff;"
+  staticRules["text-black"] = "color: #000000;"
+  staticRules["bg-white"] = "background-color: #ffffff;"
+  staticRules["bg-black"] = "background-color: #000000;"
+  staticRules["bg-transparent"] = "background-color: transparent;"
+  staticRules["border-white"] = "border-color: #ffffff;"
+  staticRules["border-black"] = "border-color: #000000;"
+
+  let processedResponsive = ""
+
+  for idx in 0 .. count {
+    let rawCls = classes[idx]
+    
+    if (stringLength(rawCls) > 0) {
+      let isHover = false
+      let isFocus = false
+      let isResponsive = false
+      let mediaBreakpoint = ""
+      let baseClass = rawCls
+      
+      let colonIdx = stringIndexOf(rawCls, ":")
+      if (colonIdx == 0 - 1) {
+      } else {
+        let parts = stringSplit(rawCls, ":")
+        let prefix = parts[0]
+        baseClass = parts[1]
+        
+        if (prefix == "hover") {
+          isHover = true
+        } else if (prefix == "focus") {
+          isFocus = true
+        } else if (prefix == "sm" or prefix == "md" or prefix == "lg" or prefix == "xl") {
+          isResponsive = true
+          if (prefix == "sm") { mediaBreakpoint = "640px" }
+          if (prefix == "md") { mediaBreakpoint = "768px" }
+          if (prefix == "lg") { mediaBreakpoint = "1024px" }
+          if (prefix == "xl") { mediaBreakpoint = "1280px" }
+        }
+      }
+      
+      let escapedCls = stringReplace(rawCls, ":", "\:")
+      let selector = "." + escapedCls
+      if (isHover) {
+        selector = selector + ":hover"
+      }
+      if (isFocus) {
+        selector = selector + ":focus"
+      }
+      
+      let ruleContent = ""
+      
+      let staticMatch = staticRules[baseClass]
+      if (staticMatch == null) {
+        if (stringStartsWith(baseClass, "p-")) {
+          let val = stringSubstring(baseClass, 2, stringLength(baseClass))
+          ruleContent = "padding: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "px-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          let parsed = parseSpacingValue(val)
+          ruleContent = "padding-left: " + parsed + "; padding-right: " + parsed + ";"
+        } else if (stringStartsWith(baseClass, "py-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          let parsed = parseSpacingValue(val)
+          ruleContent = "padding-top: " + parsed + "; padding-bottom: " + parsed + ";"
+        } else if (stringStartsWith(baseClass, "pt-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "padding-top: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "pr-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "padding-right: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "pb-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "padding-bottom: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "pl-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "padding-left: " + parseSpacingValue(val) + ";"
+        }
+        
+        else if (stringStartsWith(baseClass, "m-")) {
+          let val = stringSubstring(baseClass, 2, stringLength(baseClass))
+          ruleContent = "margin: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "mx-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          let parsed = parseSpacingValue(val)
+          ruleContent = "margin-left: " + parsed + "; margin-right: " + parsed + ";"
+        } else if (stringStartsWith(baseClass, "my-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          let parsed = parseSpacingValue(val)
+          ruleContent = "margin-top: " + parsed + "; margin-bottom: " + parsed + ";"
+        } else if (stringStartsWith(baseClass, "mt-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "margin-top: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "mr-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "margin-right: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "mb-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "margin-bottom: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "ml-")) {
+          let val = stringSubstring(baseClass, 3, stringLength(baseClass))
+          ruleContent = "margin-left: " + parseSpacingValue(val) + ";"
+        }
+        
+        else if (stringStartsWith(baseClass, "gap-")) {
+          let val = stringSubstring(baseClass, 4, stringLength(baseClass))
+          ruleContent = "gap: " + parseSpacingValue(val) + ";"
+        }
+        
+        else if (stringStartsWith(baseClass, "w-")) {
+          let val = stringSubstring(baseClass, 2, stringLength(baseClass))
+          ruleContent = "width: " + parseSpacingValue(val) + ";"
+        } else if (stringStartsWith(baseClass, "h-")) {
+          let val = stringSubstring(baseClass, 2, stringLength(baseClass))
+          let parsed = parseSpacingValue(val)
+          if (val == "screen") { parsed = "100vh" }
+          ruleContent = "height: " + parsed + ";"
+        }
+        
+        else if (stringStartsWith(baseClass, "max-w-")) {
+          let val = stringSubstring(baseClass, 6, stringLength(baseClass))
+          let parsed = ""
+          if (val == "sm") { parsed = "24rem" }
+          if (val == "md") { parsed = "28rem" }
+          if (val == "lg") { parsed = "32rem" }
+          if (val == "xl") { parsed = "36rem" }
+          if (val == "2xl") { parsed = "42rem" }
+          if (val == "3xl") { parsed = "48rem" }
+          if (val == "4xl") { parsed = "56rem" }
+          if (val == "5xl") { parsed = "64rem" }
+          if (val == "6xl") { parsed = "72rem" }
+          if (val == "7xl") { parsed = "80rem" }
+          if (val == "full") { parsed = "100%" }
+          if (parsed == "") {
+          } else {
+            ruleContent = "max-width: " + parsed + ";"
+          }
+        }
+        
+        else if (stringStartsWith(baseClass, "bg-")) {
+          let colorPart = stringSubstring(baseClass, 3, stringLength(baseClass))
+          let hyphenIdx = stringIndexOf(colorPart, "-")
+          let hex = null
+          if (hyphenIdx == 0 - 1) {
+            hex = getHexColor(colorPart, null)
+          } else {
+            let colorName = stringSubstring(colorPart, 0, hyphenIdx)
+            let shade = stringSubstring(colorPart, hyphenIdx + 1, stringLength(colorPart))
+            hex = getHexColor(colorName, shade)
+          }
+          if (hex == null) {
+          } else {
+            ruleContent = "background-color: " + hex + ";"
+          }
+        } else if (stringStartsWith(baseClass, "text-")) {
+          let colorPart = stringSubstring(baseClass, 5, stringLength(baseClass))
+          let hyphenIdx = stringIndexOf(colorPart, "-")
+          let hex = null
+          if (hyphenIdx == 0 - 1) {
+            hex = getHexColor(colorPart, null)
+          } else {
+            let colorName = stringSubstring(colorPart, 0, hyphenIdx)
+            let shade = stringSubstring(colorPart, hyphenIdx + 1, stringLength(colorPart))
+            hex = getHexColor(colorName, shade)
+          }
+          if (hex == null) {
+          } else {
+            ruleContent = "color: " + hex + ";"
+          }
+        } else if (stringStartsWith(baseClass, "border-")) {
+          let colorPart = stringSubstring(baseClass, 7, stringLength(baseClass))
+          let hyphenIdx = stringIndexOf(colorPart, "-")
+          let hex = null
+          if (hyphenIdx == 0 - 1) {
+            hex = getHexColor(colorPart, null)
+          } else {
+            let colorName = stringSubstring(colorPart, 0, hyphenIdx)
+            let shade = stringSubstring(colorPart, hyphenIdx + 1, stringLength(colorPart))
+            hex = getHexColor(colorName, shade)
+          }
+          if (hex == null) {
+          } else {
+            ruleContent = "border-color: " + hex + ";"
+          }
+        }
+      } else {
+        ruleContent = staticMatch
+      }
+      
+      if (ruleContent == "") {
+      } else {
+        let ruleStr = selector + " " + LBRACE + " " + ruleContent + " " + RBRACE + "\n"
+        if (isResponsive) {
+          processedResponsive = processedResponsive + "@media (min-width: " + mediaBreakpoint + ") " + LBRACE + " " + selector + " " + LBRACE + " " + ruleContent + " " + RBRACE + " " + RBRACE + "\n"
+        } else {
+          css = css + ruleStr
+        }
+      }
+    }
+  }
+  
+  return css + processedResponsive
+}

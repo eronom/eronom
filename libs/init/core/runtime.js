@@ -1,4 +1,3 @@
-(() => {
   window.__hmr_data = window.__hmr_data || { states: {} };
   if (!window.__hmr_data.states) window.__hmr_data.states = {};
 
@@ -85,8 +84,20 @@
             el.innerText = strVal;
           }
         }
+        if (!b.alwaysRun) {
+          b.initialized = true;
+        }
       } catch (e) {
         console.error("Binding update failed:", e);
+        if (typeof window.__erm_show_error_overlay === 'function') {
+          window.__erm_show_error_overlay({
+            type: 'Reactivity Error',
+            file: `Binding element: #${b.id}`,
+            title: e.name || 'TypeError',
+            message: e.message || String(e),
+            stack: e.stack || ''
+          });
+        }
       } finally {
         window.__current_eval_id = null;
         popListener();
@@ -109,8 +120,20 @@
             if (el.innerText !== strVal) {
               el.innerText = strVal;
             }
+            if (!b.alwaysRun) {
+              b.initialized = true;
+            }
           } catch (e) {
             console.error("Delayed binding update failed:", e);
+            if (typeof window.__erm_show_error_overlay === 'function') {
+              window.__erm_show_error_overlay({
+                type: 'Reactivity Error',
+                file: `Binding element: #${b.id}`,
+                title: e.name || 'TypeError',
+                message: e.message || String(e),
+                stack: e.stack || ''
+              });
+            }
           } finally {
             popListener();
           }
@@ -119,19 +142,38 @@
     });
   }
 
-  window.useState = function (val, name) {
-    if (name && window.__hmr_data.states[name] !== undefined) {
-      val = window.__hmr_data.states[name];
+  class Signal {
+    constructor(val, name) {
+      this._val = val;
+      this.id = name;
+      this.defaultValue = val;
+      this.subscribers = new Set();
     }
 
-    const subscribers = new Set();
-
-    function notify() {
-      subscribers.forEach(b => queueUpdate(b));
+    get value() {
+      if (activeListener) {
+        this.subscribers.add(activeListener);
+        activeListener.deps = activeListener.deps || new Set();
+        activeListener.deps.add(this.subscribers);
+      }
+      if (Array.isArray(this._val)) {
+        return this.makeArrayProxy(this._val);
+      }
+      return this._val;
     }
 
-    // Helper to proxy array mutations
-    function makeArrayProxy(arr) {
+    set value(newVal) {
+      if (this._val !== newVal) {
+        this._val = newVal;
+        if (this.id) {
+          window.__hmr_data.states[this.id] = newVal;
+        }
+        this.subscribers.forEach(b => queueUpdate(b));
+      }
+    }
+
+    makeArrayProxy(arr) {
+      const self = this;
       return new Proxy(arr, {
         get(target, prop) {
           let res = target[prop];
@@ -140,7 +182,10 @@
             if (methods.includes(prop)) {
               return (...args) => {
                 const result = target[prop].apply(target, args);
-                notify();
+                if (self.id) {
+                  window.__hmr_data.states[self.id] = self._val;
+                }
+                self.subscribers.forEach(b => queueUpdate(b));
                 return result;
               };
             }
@@ -150,97 +195,163 @@
         },
         set(target, prop, newVal) {
           target[prop] = newVal;
-          notify();
+          if (self.id) {
+            window.__hmr_data.states[self.id] = self._val;
+          }
+          self.subscribers.forEach(b => queueUpdate(b));
           return true;
         }
       });
     }
 
-    if (typeof val === 'function') {
-      const stateObj = {
-        _getter: val,
-        id: name,
-        defaultValue: undefined,
-        get value() {
-          if (activeListener) {
-            subscribers.add(activeListener);
-            activeListener.deps = activeListener.deps || new Set();
-            activeListener.deps.add(subscribers);
-          }
-          return this._getter();
-        },
-        toString() { return this.value; },
-        valueOf() { return this.value; },
-        [Symbol.toPrimitive]() { return this.value; }
-      };
-      if (name) {
-        window[name] = stateObj;
-      }
-      return stateObj;
+    toString() { return this.value; }
+    valueOf() { return this.value; }
+    [Symbol.toPrimitive]() { return this.value; }
+  }
+
+  class DerivedSignal {
+    constructor(getter, name) {
+      this._getter = getter;
+      this.id = name;
+      this.defaultValue = undefined;
+      this.subscribers = new Set();
     }
 
-    const container = {
-      _val: val,
-      id: name,
-      defaultValue: val,
-      toString() { return this._val; },
-      valueOf() { return this._val; },
-      [Symbol.toPrimitive]() { return this._val; }
-    };
-
-    const stateProxy = new Proxy(container, {
-      get(target, prop) {
-        if (prop === 'value') {
-          if (activeListener) {
-            subscribers.add(activeListener);
-            activeListener.deps = activeListener.deps || new Set();
-            activeListener.deps.add(subscribers);
-          }
-          if (Array.isArray(target._val)) {
-            return makeArrayProxy(target._val);
-          }
-          return target._val;
-        }
-        if (prop === 'id') {
-          return target.id;
-        }
-        if (prop === 'defaultValue') {
-          return target.defaultValue;
-        }
-        let res = target[prop];
-        if (Array.isArray(target._val) && typeof target._val[prop] === 'function') {
-          const methods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
-          if (methods.includes(prop)) {
-            return (...args) => {
-              const result = target._val[prop].apply(target._val, args);
-              notify();
-              return result;
-            };
-          }
-        }
-        return res !== undefined ? res : target._val[prop];
-      },
-      set(target, prop, newVal) {
-        if (prop === 'value') {
-          if (target._val !== newVal) {
-            target._val = newVal;
-            if (name) window.__hmr_data.states[name] = newVal;
-            notify();
-          }
-          return true;
-        }
-        target[prop] = newVal;
-        return true;
+    get value() {
+      if (activeListener) {
+        this.subscribers.add(activeListener);
+        activeListener.deps = activeListener.deps || new Set();
+        activeListener.deps.add(this.subscribers);
       }
-    });
+      return this._getter();
+    }
+
+    toString() { return this.value; }
+    valueOf() { return this.value; }
+    [Symbol.toPrimitive]() { return this.value; }
+  }
+
+  const statesRegistry = new Map();
+
+  const useState = function (val, name) {
+    if (name && statesRegistry.has(name)) {
+      return statesRegistry.get(name);
+    }
+    if (name && window.__hmr_data.states[name] !== undefined) {
+      val = window.__hmr_data.states[name];
+    }
+
+    let stateObj;
+    if (typeof val === 'function') {
+      stateObj = new DerivedSignal(val, name);
+    } else {
+      stateObj = new Signal(val, name);
+    }
 
     if (name) {
-      window[name] = stateProxy;
+      statesRegistry.set(name, stateObj);
     }
-    return stateProxy;
+    return stateObj;
   };
 
-  window.useParams = function () { return window.__erm_params || {}; };
+  const effect = (fn) => {
+    const binding = {
+      id: 'effect-' + Math.random().toString(36).substr(2, 9),
+      deps: new Set(),
+      alwaysRun: true,
+      update: fn
+    };
+    window.__erm_bindings.push(binding);
+    pushListener(binding);
+    try {
+      fn();
+    } finally {
+      popListener();
+    }
+  };
+
+  const useEffect = function (callback, depsFn) {
+    let lastDeps = undefined;
+    let hasRun = false;
+
+    const binding = {
+      id: 'effect-' + Math.random().toString(36).substr(2, 9),
+      cleanup: null,
+      alwaysRun: !depsFn,
+      update: () => {
+        if (typeof binding.cleanup === 'function') {
+          try {
+            binding.cleanup();
+          } catch (e) {
+            console.error("Effect cleanup failed:", e);
+          }
+          binding.cleanup = null;
+        }
+
+        let shouldRun = false;
+        let currentDeps = undefined;
+
+        if (depsFn) {
+          try {
+            currentDeps = depsFn();
+          } catch (e) {
+            console.error("Effect deps evaluation failed:", e);
+          }
+        }
+
+        if (!hasRun) {
+          shouldRun = true;
+          hasRun = true;
+        } else if (depsFn && currentDeps && lastDeps) {
+          shouldRun = currentDeps.some((dep, idx) => dep !== lastDeps[idx]);
+        } else if (!depsFn) {
+          shouldRun = true;
+        }
+
+        lastDeps = currentDeps;
+
+        if (shouldRun) {
+          if (depsFn) {
+            pushListener(null);
+          }
+          try {
+            binding.cleanup = callback();
+          } catch (e) {
+            console.error("Effect callback failed:", e);
+            if (typeof window.__erm_show_error_overlay === 'function') {
+              window.__erm_show_error_overlay({
+                type: 'Effect Error',
+                file: 'useEffect',
+                title: e.name || 'TypeError',
+                message: e.message || String(e),
+                stack: e.stack || ''
+              });
+            }
+          } finally {
+            if (depsFn) {
+              popListener();
+            }
+          }
+        }
+        binding.initialized = true;
+      }
+    };
+
+    window.__erm_bindings.push(binding);
+
+    pushListener(binding);
+    try {
+      binding.update();
+    } finally {
+      popListener();
+    }
+  };
+
+  const onMount = function (callback) {
+    useEffect(callback, () => []);
+  };
+
+  const useParams = function () { return window.__erm_params || {}; };
 
   window.__erm_bindings = [];
   window.__erm_bindings.push = function (binding) {
@@ -261,7 +372,7 @@
 
   window.__erm_update = function () {
     window.__erm_bindings.forEach(b => {
-      if (!b.initialized) {
+      if (!b.initialized || b.alwaysRun) {
         queuedBindings.add(b);
       }
     });
@@ -362,6 +473,73 @@
     }
   }
 
+  function initLoadingSwap() {
+    const fallback = document.getElementById('erm-loading-fallback');
+    const content = document.getElementById('erm-loading-content');
+    const suspenses = document.querySelectorAll('.erm-suspense-container');
+    
+    if (!fallback && suspenses.length === 0) return;
+
+    if (fallback && content) {
+      fallback.style.display = 'block';
+      content.style.display = 'none';
+    }
+    suspenses.forEach(s => {
+      const fb = s.querySelector('.erm-suspense-fallback');
+      const ct = s.querySelector('.erm-suspense-content');
+      if (fb && ct) {
+        fb.style.display = 'block';
+        ct.style.display = 'none';
+      }
+    });
+
+    const originalFetch = window.fetch;
+    let activeInitFetches = 0;
+    let finished = false;
+
+    function checkLoadingFinished() {
+      if (finished) return;
+      setTimeout(() => {
+        if (activeInitFetches <= 0) {
+          finished = true;
+          window.fetch = originalFetch;
+          if (fallback && content) {
+            fallback.style.display = 'none';
+            content.style.display = 'contents';
+          }
+          suspenses.forEach(s => {
+            const fb = s.querySelector('.erm-suspense-fallback');
+            const ct = s.querySelector('.erm-suspense-content');
+            if (fb && ct) {
+              fb.style.display = 'none';
+              ct.style.display = 'contents';
+            }
+          });
+          if (typeof window.__erm_update === 'function') {
+            window.__erm_update();
+          }
+        }
+      }, 20);
+    }
+
+    window.fetch = function(...args) {
+      if (finished) {
+        return originalFetch(...args);
+      }
+      activeInitFetches++;
+      return originalFetch(...args).finally(() => {
+        activeInitFetches--;
+        queueMicrotask(checkLoadingFinished);
+      });
+    };
+
+    setTimeout(() => {
+      checkLoadingFinished();
+    }, 100);
+  }
+
+  initLoadingSwap();
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       _initReactivity();
@@ -451,6 +629,9 @@
   // Client-side Router / Navigation Interceptor
   async function navigate(path, push = true) {
     try {
+      if (window.__hmr_data) {
+        window.__hmr_data.states = {};
+      }
       const res = await fetch(path);
       const html = await res.text();
 
@@ -463,15 +644,41 @@
       const newStyle = doc.getElementById('__erm_styles');
       const oldStyle = document.getElementById('__erm_styles');
       if (newStyle && oldStyle) {
-        oldStyle.innerHTML = newStyle.innerHTML;
+        if (newStyle.tagName === 'LINK') {
+          if (oldStyle.getAttribute('href') !== newStyle.getAttribute('href')) {
+            oldStyle.setAttribute('href', newStyle.getAttribute('href') || '');
+          }
+        } else {
+          oldStyle.innerHTML = newStyle.innerHTML;
+        }
       } else if (newStyle) {
         document.head.appendChild(newStyle.cloneNode(true));
+      } else if (oldStyle) {
+        oldStyle.remove();
+      }
+
+      // Update page-scoped styles
+      const newScopedStyle = doc.getElementById('__erm_scoped_styles');
+      const oldScopedStyle = document.getElementById('__erm_scoped_styles');
+      if (newScopedStyle && oldScopedStyle) {
+        oldScopedStyle.innerHTML = newScopedStyle.innerHTML;
+      } else if (newScopedStyle) {
+        document.head.appendChild(newScopedStyle.cloneNode(true));
+      } else if (oldScopedStyle) {
+        oldScopedStyle.remove();
       }
 
       // Reconcile body children
       reconcileNodes(document.body, Array.from(doc.body.childNodes));
 
+      initLoadingSwap();
+
       // Reset bindings and events for the new page
+      window.__erm_bindings.forEach(b => {
+        if (b && typeof b.cleanup === 'function') {
+          try { b.cleanup(); } catch (e) { console.error("Effect cleanup failed on page navigate:", e); }
+        }
+      });
       window.__erm_bindings = [];
       window.__erm_bindings.push = function (binding) {
         return Array.prototype.push.call(this, binding);
@@ -485,6 +692,9 @@
       scripts.forEach(script => {
         const newScript = document.createElement('script');
         newScript.className = '__erm_script';
+        if (script.type) {
+          newScript.type = script.type;
+        }
         newScript.text = script.text;
         document.head.appendChild(newScript);
         newScript.remove();
@@ -496,6 +706,11 @@
 
       _initReactivity();
       window.__erm_update();
+
+      setTimeout(() => {
+        _initReactivity();
+        window.__erm_update();
+      }, 50);
     } catch (err) {
       console.error("Navigation failed:", err);
       window.location.href = path;
@@ -520,4 +735,38 @@
   window.addEventListener('popstate', () => {
     navigate(window.location.pathname, false);
   });
-})();
+
+  window.addEventListener('error', (event) => {
+    if (typeof window.__erm_show_error_overlay === 'function') {
+      const error = event.error || { message: event.message };
+      const stack = error.stack || '';
+      const filename = event.filename ? event.filename.replace(window.location.origin, '') : 'unknown';
+      window.__erm_show_error_overlay({
+        type: 'Runtime Error',
+        file: filename + (event.lineno ? `:${event.lineno}:${event.colno}` : ''),
+        title: error.name || 'Error',
+        message: error.message || event.message,
+        stack: stack
+      });
+    }
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    if (typeof window.__erm_show_error_overlay === 'function') {
+      const reason = event.reason || {};
+      const stack = reason.stack || '';
+      if (reason.message === "Compilation error overlay shown") {
+        event.preventDefault();
+        return;
+      }
+      window.__erm_show_error_overlay({
+        type: 'Unhandled Rejection',
+        file: 'Promise Rejection',
+        title: reason.name || 'Error',
+        message: reason.message || String(reason),
+        stack: stack
+      });
+    }
+  });
+
+export { useState, useEffect, onMount, useParams, effect };

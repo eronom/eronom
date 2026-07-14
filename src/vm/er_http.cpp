@@ -2,18 +2,18 @@
 #include <string>
 #include <string_view>
 #include <iostream>
-
 #include <cstring>
+#include <memory>
 
 extern "C" {
-    void er_http_on_request(void* res, const char* method, size_t method_len, const char* path, size_t path_len);
+    void er_http_on_request(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
     void er_ws_on_open(void* ws, const char* path, size_t path_len);
     void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
     void er_ws_on_close(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
     void er_http_on_listening();
 }
 
-typedef void (*HttpRequestCallback)(void* res, const char* method, size_t method_len, const char* path, size_t path_len);
+typedef void (*HttpRequestCallback)(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
 typedef void (*WsOpenCallback)(void* ws, const char* path, size_t path_len);
 typedef void (*WsMessageCallback)(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
 typedef void (*WsCloseCallback)(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
@@ -115,11 +115,21 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
             std::string_view method = "GET";
             std::string_view path = req->getUrl();
             
+            std::string headers_str;
+            for (auto h : *req) {
+                headers_str.append(h.first);
+                headers_str.append(": ");
+                headers_str.append(h.second);
+                headers_str.append("\r\n");
+            }
+            
             res->onAborted([]() {});
             if (g_http_req_cb) {
-                g_http_req_cb(res, method.data(), method.length(), path.data(), path.length());
+                g_http_req_cb(res, method.data(), method.length(), path.data(), path.length(),
+                              headers_str.data(), headers_str.length(), nullptr, 0);
             } else {
-                er_http_on_request(res, method.data(), method.length(), path.data(), path.length());
+                er_http_on_request(res, method.data(), method.length(), path.data(), path.length(),
+                                   headers_str.data(), headers_str.length(), nullptr, 0);
             }
         });
     } else if (method_str == "POST") {
@@ -127,12 +137,43 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
             std::string_view method = "POST";
             std::string_view path = req->getUrl();
             
-            res->onAborted([]() {});
-            if (g_http_req_cb) {
-                g_http_req_cb(res, method.data(), method.length(), path.data(), path.length());
-            } else {
-                er_http_on_request(res, method.data(), method.length(), path.data(), path.length());
+            std::string headers_str;
+            for (auto h : *req) {
+                headers_str.append(h.first);
+                headers_str.append(": ");
+                headers_str.append(h.second);
+                headers_str.append("\r\n");
             }
+            
+            struct PostCtx {
+                std::string method;
+                std::string path;
+                std::string headers;
+                std::string body;
+                bool aborted = false;
+            };
+            auto ctx = std::make_shared<PostCtx>();
+            ctx->method = std::string(method);
+            ctx->path = std::string(path);
+            ctx->headers = std::move(headers_str);
+            
+            res->onAborted([ctx]() {
+                ctx->aborted = true;
+            });
+            
+            res->onData([ctx, res](std::string_view chunk, bool isLast) {
+                if (ctx->aborted) return;
+                ctx->body.append(chunk.data(), chunk.length());
+                if (isLast) {
+                    if (g_http_req_cb) {
+                        g_http_req_cb(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                      ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                    } else {
+                        er_http_on_request(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                           ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                    }
+                }
+            });
         });
     }
 }
@@ -143,28 +184,70 @@ extern "C" void er_http_listen_and_run(int port) {
     g_app->get("/*", [](auto* res, auto* req) {
         std::string_view method = "GET";
         std::string_view path = req->getUrl();
+        
+        std::string headers_str;
+        for (auto h : *req) {
+            headers_str.append(h.first);
+            headers_str.append(": ");
+            headers_str.append(h.second);
+            headers_str.append("\r\n");
+        }
+        
         res->onAborted([]() {});
         if (g_http_req_cb) {
-            g_http_req_cb(res, method.data(), method.length(), path.data(), path.length());
+            g_http_req_cb(res, method.data(), method.length(), path.data(), path.length(),
+                          headers_str.data(), headers_str.length(), nullptr, 0);
         } else {
-            er_http_on_request(res, method.data(), method.length(), path.data(), path.length());
+            er_http_on_request(res, method.data(), method.length(), path.data(), path.length(),
+                               headers_str.data(), headers_str.length(), nullptr, 0);
         }
     });
     
     g_app->post("/*", [](auto* res, auto* req) {
         std::string_view method = "POST";
         std::string_view path = req->getUrl();
-        res->onAborted([]() {});
-        if (g_http_req_cb) {
-            g_http_req_cb(res, method.data(), method.length(), path.data(), path.length());
-        } else {
-            er_http_on_request(res, method.data(), method.length(), path.data(), path.length());
+        
+        std::string headers_str;
+        for (auto h : *req) {
+            headers_str.append(h.first);
+            headers_str.append(": ");
+            headers_str.append(h.second);
+            headers_str.append("\r\n");
         }
+        
+        struct PostCtx {
+            std::string method;
+            std::string path;
+            std::string headers;
+            std::string body;
+            bool aborted = false;
+        };
+        auto ctx = std::make_shared<PostCtx>();
+        ctx->method = std::string(method);
+        ctx->path = std::string(path);
+        ctx->headers = std::move(headers_str);
+        
+        res->onAborted([ctx]() {
+            ctx->aborted = true;
+        });
+        
+        res->onData([ctx, res](std::string_view chunk, bool isLast) {
+            if (ctx->aborted) return;
+            ctx->body.append(chunk.data(), chunk.length());
+            if (isLast) {
+                if (g_http_req_cb) {
+                    g_http_req_cb(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                  ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                } else {
+                    er_http_on_request(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                       ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                }
+            }
+        });
     });
     
     g_app->listen(port, [port](auto* listen_socket) {
         if (listen_socket) {
-            std::cout << "[uWebSockets] Server listening on port " << port << std::endl;
             er_http_on_listening();
         } else {
             std::cerr << "[uWebSockets] Failed to listen on port " << port << std::endl;

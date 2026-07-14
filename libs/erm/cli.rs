@@ -16,6 +16,13 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildMode {
+    Ssr,
+    Ssg,
+    Ppr,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Initialize a fresh Eronom project
@@ -43,6 +50,10 @@ pub enum Commands {
         /// Do not create an initial commit
         #[arg(long, requires = "git")]
         no_commit: bool,
+
+        /// Add ermcss capability for the project
+        #[arg(long)]
+        ermcss: bool,
     },
     /// Build the project
     Build {
@@ -51,12 +62,16 @@ pub enum Commands {
         dir: String,
 
         /// Build for Server-Side Rendering (SSR) (default)
-        #[arg(long, conflicts_with = "ssg")]
+        #[arg(long, conflicts_with = "ssg", conflicts_with = "ppr")]
         ssr: bool,
 
         /// Build for Static Site Generation (SSG)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "ppr")]
         ssg: bool,
+
+        /// Build for Partial Prerendering (PPR)
+        #[arg(long)]
+        ppr: bool,
     },
     /// Start the server in production mode
     Start {
@@ -133,7 +148,7 @@ fn resolve_port(dir: &str, port_val: Option<u16>, is_build_or_init: bool) -> any
     } else if is_build_or_init {
         Ok(0)
     } else {
-        anyhow::bail!("No port specified. Please provide a port in config.er or PORT environment variable.");
+        anyhow::bail!("No port specified. Please provide a port in eronom.toml or PORT environment variable.");
     }
 }
 
@@ -146,12 +161,19 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             force,
             git,
             no_commit,
+            ermcss,
         } => {
-            init_project(&dir, template, branch, force, git, no_commit)?;
+            init_project(&dir, template, branch, force, git, no_commit, ermcss)?;
         }
-        Commands::Build { dir, ssr: _, ssg } => {
-            let is_ssr = if ssg { false } else { true };
-            build_project(&dir, is_ssr)?;
+        Commands::Build { dir, ssr: _, ssg, ppr } => {
+            let mode = if ppr {
+                BuildMode::Ppr
+            } else if ssg {
+                BuildMode::Ssg
+            } else {
+                BuildMode::Ssr
+            };
+            build_project(&dir, mode)?;
         }
         Commands::Start {
             dir_or_port,
@@ -159,7 +181,9 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             port,
         } => {
             let (mut dir, port_val) = parse_dir_and_port(dir_or_port, port_pos, port, "build")?;
-            if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
+            if Path::new(&dir).join("build").exists() {
+                dir = Path::new(&dir).join("build").to_string_lossy().to_string();
+            } else if dir == "build" && !Path::new("build").exists() && Path::new("app/build").exists() {
                 dir = "app/build".to_string();
             }
             let resolved_port = resolve_port(&dir, port_val, false)?;
@@ -194,13 +218,14 @@ fn init_project(
     force: bool,
     git: bool,
     no_commit: bool,
+    ermcss: bool,
 ) -> anyhow::Result<()> {
     let dst_dir = Path::new(dir);
 
     if dst_dir.exists() && !is_dir_empty(dst_dir) && !force {
         anyhow::bail!(
             "Cannot run `init` on a non-empty directory.\n\
-             Run with the `--force` flag to initialize regardless."
+              Run with the `--force` flag to initialize regardless."
         );
     }
 
@@ -239,6 +264,33 @@ fn init_project(
 
         println!("Copying template files...");
         copy_dir_all(&temp_dir, dst_dir)?;
+
+        if ermcss {
+            let eronom_temp_dir_name = format!(
+                "eronom-ermcss-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let eronom_temp_dir = std::env::temp_dir().join(eronom_temp_dir_name);
+            let mut git_clone = std::process::Command::new("git");
+            git_clone.arg("clone")
+                .arg("--depth").arg("1")
+                .arg("https://github.com/eronom/eronom.git")
+                .arg(&eronom_temp_dir);
+            
+            if let Ok(status) = git_clone.status() {
+                if status.success() {
+                    let ermcss_src = eronom_temp_dir.join("libs/ermcss");
+                    if ermcss_src.exists() {
+                        let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
+                    }
+                }
+            }
+            let _ = fs::remove_dir_all(&eronom_temp_dir);
+        }
+
         let _ = fs::remove_dir_all(&temp_dir);
     } else {
         // Fetch the default template (libs/init) from GitHub main branch
@@ -266,6 +318,13 @@ fn init_project(
         if cloned {
             let repo_init = temp_dir.join("libs/init");
             copy_dir_all(&repo_init, dst_dir)?;
+
+            if ermcss {
+                let ermcss_src = temp_dir.join("libs/ermcss");
+                if ermcss_src.exists() {
+                    let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
+                }
+            }
             
             // Get commit hash
             let mut commit_hash = String::new();
@@ -286,6 +345,21 @@ fn init_project(
             let _ = fs::remove_dir_all(&temp_dir);
             anyhow::bail!("Failed to clone template from https://github.com/eronom/eronom.git");
         }
+    }
+
+    if ermcss {
+        let toml_path = dst_dir.join("eronom.toml");
+        let mut toml_content = if toml_path.exists() {
+            fs::read_to_string(&toml_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        
+        if !toml_content.contains("[ermcss]") {
+            toml_content.push_str("\n[package]\nermcss = true\n\n[ermcss]\ncontent = [\n    \"./app/**/*.erm\",\n    \"./pages/**/*.erm\",\n    \"./components/**/*.erm\"\n]\n\n[ermcss.theme.extend.colors]\nprimary = \"#2563eb\"\n");
+            let _ = fs::write(&toml_path, toml_content);
+        }
+        println!("    Added ermcss capability");
     }
 
 
@@ -358,7 +432,6 @@ fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
 struct PageRoute {
     rel_path: String,
     route_path: String,
-    params: Vec<(String, usize)>,
 }
 
 fn get_page_route(rel_path: &str) -> Option<PageRoute> {
@@ -376,7 +449,7 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
         if last.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
             return None;
         }
-        if *last == "layout.erm" {
+        if *last == "layout.erm" || *last == "loading.erm" {
             return None;
         }
     }
@@ -396,14 +469,11 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     }
     
     let mut route_segments = Vec::new();
-    let mut params = Vec::new();
     
-    for (i, part) in parts.iter().enumerate() {
+    for part in parts.iter() {
         if part.starts_with('[') && part.ends_with(']') {
             let param_name = &part[1..part.len() - 1];
             route_segments.push(format!(":{}", param_name));
-            // Index in url.split("/") will be i + 1
-            params.push((param_name.to_string(), i + 1));
         } else {
             route_segments.push(part.to_string());
         }
@@ -418,7 +488,6 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     Some(PageRoute {
         rel_path: path_str,
         route_path,
-        params,
     })
 }
 
@@ -481,12 +550,12 @@ fn generate_server_er_ssg(routes: &[PageRoute], api_routes: &[String]) -> String
     generate_server_script(routes, api_routes, |r| get_ssg_html_path(&r.rel_path))
 }
 
-fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
+fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     let build_dir = Path::new(dir).join("build");
-    if is_ssr {
-        println!("Building project for SSR to {:?}", build_dir);
-    } else {
-        println!("Building project (SSG) to {:?}", build_dir);
+    match mode {
+        BuildMode::Ssr => println!("Building project for SSR to {:?}", build_dir),
+        BuildMode::Ssg => println!("Building project (SSG) to {:?}", build_dir),
+        BuildMode::Ppr => println!("Building project for PPR (Partial Prerendering) to {:?}", build_dir),
     }
     
     if build_dir.exists() {
@@ -495,20 +564,46 @@ fn build_project(dir: &str, is_ssr: bool) -> anyhow::Result<()> {
     fs::create_dir_all(&build_dir)?;
 
     let base_path = fs::canonicalize(dir)?;
+
+    // Parse ermcss config and compile if enabled
+    let ermcss_cfg = crate::compiler::parse_ermcss_config(&base_path);
+    if ermcss_cfg.enabled {
+        println!("[ermcss] Compiling project styles...");
+        match crate::compiler::compile_project_ermcss(&base_path, &ermcss_cfg.content) {
+            Ok(css) => {
+                crate::compiler::set_global_ermcss(css.clone());
+                println!("[ermcss] Styles compiled successfully.");
+                let css_dir = build_dir.join("css");
+                if !css_dir.exists() {
+                    fs::create_dir_all(&css_dir)?;
+                }
+                fs::write(css_dir.join("global.css"), css)?;
+            }
+            Err(e) => {
+                eprintln!("[Warning] Failed to compile global ermcss styles: {}", e);
+            }
+        }
+    } else {
+        crate::compiler::set_global_ermcss(String::new());
+    }
+
     let mut routes = Vec::new();
     let mut api_routes = Vec::new();
-    build_dir_recursive(&base_path, &base_path, &build_dir, is_ssr, &mut routes, &mut api_routes)?;
+    build_dir_recursive(&base_path, &base_path, &build_dir, mode, &mut routes, &mut api_routes)?;
 
-    if is_ssr {
-        // Write the generated server.er file
-        let server_er_content = generate_server_er(&routes, &api_routes);
-        let server_er_path = build_dir.join("server.er");
-        fs::write(server_er_path, server_er_content)?;
-    } else {
-        // Write the generated server.er file for SSG
-        let server_er_content = generate_server_er_ssg(&routes, &api_routes);
-        let server_er_path = build_dir.join("server.er");
-        fs::write(server_er_path, server_er_content)?;
+    match mode {
+        BuildMode::Ssr => {
+            // Write the generated server.er file
+            let server_er_content = generate_server_er(&routes, &api_routes);
+            let server_er_path = build_dir.join("server.er");
+            fs::write(server_er_path, server_er_content)?;
+        }
+        BuildMode::Ssg | BuildMode::Ppr => {
+            // Write the generated server.er file for SSG/PPR
+            let server_er_content = generate_server_er_ssg(&routes, &api_routes);
+            let server_er_path = build_dir.join("server.er");
+            fs::write(server_er_path, server_er_content)?;
+        }
     }
 
     Ok(())
@@ -518,7 +613,7 @@ fn build_dir_recursive(
     root: &Path,
     current: &Path,
     build_root: &Path,
-    is_ssr: bool,
+    mode: BuildMode,
     routes: &mut Vec<PageRoute>,
     api_routes: &mut Vec<String>,
 ) -> anyhow::Result<()> {
@@ -540,7 +635,6 @@ fn build_dir_recursive(
            name_str == "Cargo.lock" ||
            name_str == "cargo.log" ||
            name_str == "build.rs" ||
-           name_str == "benchmark_ws.py" ||
            name_str == "temp_compiled.mir" ||
            name_str == "eronom" ||
            name_str == "LICENSE" ||
@@ -551,7 +645,7 @@ fn build_dir_recursive(
         }
 
         if path.is_dir() {
-            build_dir_recursive(root, &path, build_root, is_ssr, routes, api_routes)?;
+            build_dir_recursive(root, &path, build_root, mode, routes, api_routes)?;
         } else {
             let rel_path = path.strip_prefix(root)?;
             let dest_path = build_root.join(rel_path);
@@ -561,15 +655,15 @@ fn build_dir_recursive(
             }
 
             if name_str.ends_with(".erm") {
-                if is_ssr {
+                if mode == BuildMode::Ssr {
                     // SSR mode: just copy the .erm file
                     fs::copy(&path, &dest_path)?;
                     if let Some(r) = get_page_route(&rel_path.to_string_lossy()) {
                         routes.push(r);
                     }
                 } else {
-                    // SSG mode: compile to .html
-                    if name_str == "layout.erm" {
+                    // SSG or PPR mode: compile to .html
+                    if name_str == "layout.erm" || name_str == "loading.erm" {
                         continue;
                     }
                     // Skip components (starts with uppercase)
@@ -579,7 +673,7 @@ fn build_dir_recursive(
 
                     let content = fs::read_to_string(&path)?;
                     let parent_dir = path.parent().unwrap().to_string_lossy();
-                    match compiler::process_erm_component(&parent_dir, &content, true, &std::collections::HashMap::new()) {
+                    match compiler::process_erm_component(path.to_str().unwrap_or(&parent_dir), &content, true, &std::collections::HashMap::new()) {
                         Ok(processed) => {
                             let mut html_dest = dest_path.clone();
                             if name_str == "page.erm" || name_str == "index.erm" {
@@ -652,28 +746,36 @@ fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
 
 fn get_port_from_config_file(dir: &str) -> Option<u16> {
     let path = Path::new(dir);
-    let mut config_path = if path.is_file() {
-        path.parent()?.join("config.er")
+    let mut current = if path.is_file() {
+        path.parent()
     } else {
-        path.join("config.er")
+        Some(path)
     };
 
-    let mut current = config_path.parent();
+    let mut found_toml = None;
+
     while let Some(p) = current {
-        let check = p.join("config.er");
-        if check.exists() {
-            config_path = check;
+        let check_toml = p.join("eronom.toml");
+        if check_toml.exists() {
+            found_toml = Some(check_toml);
             break;
         }
         current = p.parent();
     }
 
-    if !config_path.exists() {
-        return None;
+    if let Some(toml_path) = found_toml {
+        if let Ok(content) = fs::read_to_string(toml_path) {
+            if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
+                if let Some(server) = toml_val.get("server") {
+                    if let Some(port) = server.get("port") {
+                        if let Some(port_u64) = port.as_integer() {
+                            return Some(port_u64 as u16);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    let content = fs::read_to_string(config_path).ok()?;
-    let re = regex::Regex::new(r"(?s)server\s*:\s*\{[^}]*port\s*:\s*(\d+)").ok()?;
-    let caps = re.captures(&content)?;
-    caps.get(1)?.as_str().parse::<u16>().ok()
+    None
 }

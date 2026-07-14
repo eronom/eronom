@@ -3,7 +3,7 @@ pub use eronom::frontend;
 pub use eronom::jit;
 
 use backend::{Compiler, VM, Value};
-use frontend::{Parser, lex, Expr, LiteralValue, Stmt};
+use frontend::{Expr, LiteralValue, Stmt};
 
 struct GcGuard;
 impl Drop for GcGuard {
@@ -240,7 +240,7 @@ fn native_render(args: Vec<Value>) -> Value {
         return Value::string(ptr);
     }
     
-    match eronom::compiler::process_erm_component(&base_dir, &content, true, &params_map) {
+    match eronom::compiler::process_erm_component(resolved_path.to_str().unwrap_or(&base_dir), &content, true, &params_map) {
         Ok(html) => {
             let ptr = backend::gc::get_or_create_string(&html);
             Value::string(ptr)
@@ -485,21 +485,17 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("getIoMode", Value::native_function(backend::er_http::native_get_io_mode));
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
+    backend::er_http::register_eronom_file_api(&mut vm).unwrap();
     backend::er_http::set_target_script_path(path);
-
     let main_path = std::path::Path::new(path);
     if let Some(parent_dir) = main_path.parent() {
-        let config_path = parent_dir.join("config.er");
-        if config_path.exists() {
-            if let Ok(config_content) = std::fs::read_to_string(&config_path) {
-                let config_tokens = lex(&config_content);
-                let mut config_parser = Parser::new(config_tokens);
-                if let Ok(config_stmts) = config_parser.parse() {
-                    let config_compiler = Compiler::new();
-                    if let Ok(config_func) = config_compiler.compile(&config_stmts) {
-                        if let Err(e) = vm.run(config_func) {
-                            eprintln!("[Warning] Failed to run config.er: {}", e);
-                        }
+        let toml_path = parent_dir.join("eronom.toml");
+        if toml_path.exists() {
+            if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
+                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                    if let Ok(json_val) = serde_json::to_value(toml_val) {
+                        let config_val = backend::gc::json_to_value(json_val);
+                        vm.register_global("config", config_val);
                     }
                 }
             }

@@ -13,7 +13,7 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
   * **Bytecode Interpreter**: Standard VM executing custom Eronom bytecode.
   * **JIT Compiler**: Compile bytecode directly to native machine code on-the-fly via the integrated **MIR JIT compiler** (C backend).
 * **Native C++ Networking**: Integrates **uWebSockets** and **uSockets** via custom FFI bindings for maximum performance.
-* **Dynamic Hot-Reloading**: Automatically detects source code changes (in the main script or `config.er`) and re-evaluates the VM script state without dropping network socket connections.
+* **Dynamic Hot-Reloading**: Automatically detects source code changes (in the main script or `eronom.toml`) and re-evaluates the VM script state without dropping network socket connections.
 * **Modern Syntax**:
   * Variable declarations with optional types (`let name : string = "value"`) or constants (`const age = 7`).
   * String interpolation: `"Hello {name}"`.
@@ -41,7 +41,7 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
 * **`external/`**: Submodules for dependencies:
   * `mir`: Vladimir Makarov's lightweight JIT compiler.
   * `uWebSockets`: The high-performance C++ uWebSockets & uSockets library.
-* **`example-er/`**: Reference scripts, benchmark configurations, and comparable API server implementations.
+* **`example-er/`**: Reference scripts and comparable API server implementations.
 
 ---
 
@@ -106,5 +106,5 @@ To run the included HTTP API example:
 ```bash
 cargo run -- example-er/my-api/server.er
 ```
-The server will start on port `3000` (or as configured in `example-er/my-api/config.er`). You can edit `server.er` at any time, and the runtime will automatically reload the code on the next HTTP request!
+The server will start on port `3000` (or as configured in `example-er/my-api/eronom.toml`). You can edit `server.er` at any time, and the runtime will automatically reload the code on the next HTTP request!
 
