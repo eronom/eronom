@@ -1,7 +1,7 @@
 import { createServer } from "std/http"
 
 let todos = [
-  { id: 1, text: "NodeJS compat API works perfectly!", done: true }
+  { id: 1, text: "Hey Eronom", done: true }
 ]
 
 let server = createServer((req, res) => {
