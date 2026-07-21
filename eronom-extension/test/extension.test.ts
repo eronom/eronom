@@ -1,4 +1,5 @@
-import { expect, test, describe } from "bun:test";
+import { test, describe } from "node:test";
+import assert from "node:assert";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -8,11 +9,11 @@ describe("Eronom Extension Configuration Tests", () => {
   const packageJsonPath = path.join(extensionDir, "package.json");
 
   test("package.json exists and is valid JSON", () => {
-    expect(fs.existsSync(packageJsonPath)).toBe(true);
+    assert.strictEqual(fs.existsSync(packageJsonPath), true);
     const content = fs.readFileSync(packageJsonPath, "utf8");
     const pkg = JSON.parse(content);
-    expect(pkg.name).toBe("eronom-extension");
-    expect(pkg.main).toBe("./dist/extension.js");
+    assert.strictEqual(pkg.name, "eronom-extension");
+    assert.strictEqual(pkg.main, "./dist/extension.js");
   });
 
   test("All contributed files exist", () => {
@@ -21,34 +22,34 @@ describe("Eronom Extension Configuration Tests", () => {
 
     // Check languages configurations
     const languages = pkg.contributes.languages;
-    expect(languages).toBeArray();
+    assert.ok(Array.isArray(languages));
     for (const lang of languages) {
       const configPath = path.resolve(extensionDir, lang.configuration);
-      expect(fs.existsSync(configPath)).toBe(true);
-      expect(() => JSON.parse(fs.readFileSync(configPath, "utf-8"))).not.toThrow();
+      assert.strictEqual(fs.existsSync(configPath), true);
+      assert.doesNotThrow(() => JSON.parse(fs.readFileSync(configPath, "utf-8")));
     }
 
     // Check grammars
     const grammars = pkg.contributes.grammars;
-    expect(grammars).toBeArray();
+    assert.ok(Array.isArray(grammars));
     for (const grammar of grammars) {
       const grammarPath = path.resolve(extensionDir, grammar.path);
-      expect(fs.existsSync(grammarPath)).toBe(true);
-      expect(() => JSON.parse(fs.readFileSync(grammarPath, "utf-8"))).not.toThrow();
+      assert.strictEqual(fs.existsSync(grammarPath), true);
+      assert.doesNotThrow(() => JSON.parse(fs.readFileSync(grammarPath, "utf-8")));
     }
 
     // Check snippets
     const snippets = pkg.contributes.snippets;
-    expect(snippets).toBeArray();
+    assert.ok(Array.isArray(snippets));
     for (const snippet of snippets) {
       const snippetPath = path.resolve(extensionDir, snippet.path);
-      expect(fs.existsSync(snippetPath)).toBe(true);
-      expect(() => JSON.parse(fs.readFileSync(snippetPath, "utf-8"))).not.toThrow();
+      assert.strictEqual(fs.existsSync(snippetPath), true);
+      assert.doesNotThrow(() => JSON.parse(fs.readFileSync(snippetPath, "utf-8")));
     }
   });
 
   test("Compiled output exists", () => {
     const distPath = path.join(extensionDir, "dist", "extension.js");
-    expect(fs.existsSync(distPath)).toBe(true);
+    assert.strictEqual(fs.existsSync(distPath), true);
   });
 });

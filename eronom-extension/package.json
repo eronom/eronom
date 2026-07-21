@@ -2,10 +2,21 @@
   "name": "eronom-extension",
   "displayName": "Eronom",
   "description": "Language support for the Eronom framework including syntax highlighting, snippets, and commands for .er and .erm files.",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "publisher": "eronom",
+  "icon": "icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eronom/eronom.git",
+    "directory": "eronom-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/eronom/eronom/issues"
+  },
+  "homepage": "https://github.com/eronom/eronom/tree/main/eronom-extension#readme",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": ">=1.75.0"
   },
   "categories": [
     "Programming Languages",
@@ -73,16 +84,17 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "bun run package",
-    "compile": "bun esbuild.js",
-    "watch": "bun esbuild.js --watch",
-    "package": "bun esbuild.js --production",
-    "test": "bun test"
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "test": "node --import tsx --test test/extension.test.ts"
   },
   "devDependencies": {
     "@types/vscode": "^1.75.0",
     "@types/node": "^18.11.18",
     "typescript": "^5.0.0",
-    "esbuild": "^0.18.0"
+    "esbuild": "^0.18.0",
+    "tsx": "^4.7.0"
   }
 }
