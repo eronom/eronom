@@ -1310,15 +1310,57 @@ pub fn native_set_timeout(args: Vec<Value>) -> Value {
     Value::null()
 }
 
-use std::sync::OnceLock;
+fn perform_native_fetch(url: &str) -> Result<String, String> {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("http", url));
+    let (host_port, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, "/"),
+    };
+    let (host, port) = if let Some((h, p)) = host_port.split_once(':') {
+        (h, p.parse::<u16>().map_err(|e| e.to_string())?)
+    } else {
+        let default_port = match scheme {
+            "http" => 80,
+            "https" => 443,
+            _ => 80,
+        };
+        (host_port, default_port)
+    };
 
-fn get_http_agent() -> &'static ureq::Agent {
-    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
-    AGENT.get_or_init(|| {
-        ureq::AgentBuilder::new()
-            .user_agent("Eronom/0.1.0")
-            .build()
-    })
+    use std::io::{Read, Write};
+    use std::net::ToSocketAddrs;
+
+    let addr_str = format!("{}:{}", host, port);
+    let socket_addr = addr_str
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS resolution error for {}: {}", host, e))?
+        .next()
+        .ok_or_else(|| format!("Could not resolve host {}", host))?;
+
+    let mut stream = std::net::TcpStream::connect_timeout(
+        &socket_addr,
+        std::time::Duration::from_secs(10),
+    ).map_err(|e| format!("Connection error to {}: {}", host, e))?;
+
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
+    stream.set_write_timeout(Some(std::time::Duration::from_secs(10))).ok();
+
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Eronom/0.1.0\r\nConnection: close\r\n\r\n",
+        path, host
+    );
+    stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
+
+    let mut response_bytes = Vec::new();
+    stream.read_to_end(&mut response_bytes).map_err(|e| e.to_string())?;
+
+    let d_crlf = b"\r\n\r\n";
+    if let Some(pos) = response_bytes.windows(4).position(|w| w == d_crlf) {
+        let body_bytes = &response_bytes[pos + 4..];
+        Ok(String::from_utf8_lossy(body_bytes).into_owned())
+    } else {
+        Ok(String::from_utf8_lossy(&response_bytes).into_owned())
+    }
 }
 
 pub fn native_fetch_async(args: Vec<Value>) -> Value {
@@ -1366,11 +1408,7 @@ pub fn native_fetch_async(args: Vec<Value>) -> Value {
     active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     std::thread::spawn(move || {
-        let agent = get_http_agent();
-        let res = match agent.get(&url_str).call() {
-            Ok(resp) => resp.into_string().map_err(|e| e.to_string()),
-            Err(e) => Err(e.to_string()),
-        };
+        let res = perform_native_fetch(&url_str);
 
         let mut q = queue.lock().unwrap();
         q.push(crate::vm::execute::EventLoopTask {
@@ -1406,23 +1444,14 @@ pub fn native_fetch_sync(args: Vec<Value>) -> Value {
         }
     };
 
-    let agent = get_http_agent();
-    match agent.get(&url_str).call() {
-        Ok(resp) => {
-            match resp.into_string() {
-                Ok(body_str) => {
-                    let mut map = crate::vm::gc::get_pooled_map(2);
-                    let body_key = crate::vm::gc::get_or_create_string("_body");
-                    let body_val = crate::vm::gc::get_or_create_string(&body_str);
-                    map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
-                    let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
-                    Value::object(ptr)
-                }
-                Err(e) => {
-                    eprintln!("[FetchSync] Error reading body: {}", e);
-                    Value::null()
-                }
-            }
+    match perform_native_fetch(&url_str) {
+        Ok(body_str) => {
+            let mut map = crate::vm::gc::get_pooled_map(2);
+            let body_key = crate::vm::gc::get_or_create_string("_body");
+            let body_val = crate::vm::gc::get_or_create_string(&body_str);
+            map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
+            let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
+            Value::object(ptr)
         }
         Err(e) => {
             eprintln!("[FetchSync] Error: {}", e);
@@ -1487,11 +1516,7 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
     // 4. Spawn background thread to fetch URL
     std::thread::spawn(move || {
         let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
-        let agent = get_http_agent();
-        let res = match agent.get(&url_str).call() {
-            Ok(resp) => resp.into_string().map_err(|e| e.to_string()),
-            Err(e) => Err(e.to_string()),
-        };
+        let res = perform_native_fetch(&url_str);
 
         // Post ResolveFetchPromise back to event loop
         let mut q = queue.lock().unwrap();
