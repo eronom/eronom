@@ -1349,10 +1349,15 @@ fn perform_native_fetch(url: &str) -> Result<String, String> {
         "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Eronom/0.1.0\r\nConnection: close\r\n\r\n",
         path, host
     );
-    stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
 
-    let mut response_bytes = Vec::new();
-    stream.read_to_end(&mut response_bytes).map_err(|e| e.to_string())?;
+    let response_bytes = if scheme == "https" || port == 443 {
+        crate::vm::tls::fetch_tls(host, &request, &mut stream)?
+    } else {
+        let mut response_bytes = Vec::new();
+        stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
+        stream.read_to_end(&mut response_bytes).map_err(|e| e.to_string())?;
+        response_bytes
+    };
 
     let d_crlf = b"\r\n\r\n";
     if let Some(pos) = response_bytes.windows(4).position(|w| w == d_crlf) {
