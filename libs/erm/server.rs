@@ -408,7 +408,6 @@ fn execute_api_route(
     vm.register_global("render", Value::native_function(native_render));
     vm.register_global("fetch", Value::native_function(crate::vm::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
-    vm.register_global("fetchAsync", Value::native_function(crate::vm::er_http::native_fetch_async));
     vm.register_global("fetchSync", Value::native_function(crate::vm::er_http::native_fetch_sync));
     vm.register_global("fetchEvented", Value::native_function(crate::vm::er_http::native_fetch_evented));
     vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
