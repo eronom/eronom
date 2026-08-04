@@ -1,0 +1,15 @@
+const taskA = (url) => {
+    print("Starting fetch A...")
+    fetch(url)
+    print("Completed fetch A!")
+}
+
+const taskB = (url) => {
+    print("Starting fetch B...")
+    fetch(url)
+    print("Completed fetch B!")
+}
+
+// Execute sequentially (Task A finishes completely before Task B starts)
+taskA("https://jsonplaceholder.typicode.com/todos/1")
+taskB("https://jsonplaceholder.typicode.com/todos/2")

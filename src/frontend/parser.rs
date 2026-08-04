@@ -76,7 +76,7 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        matches!(self.peek().ty, TokenType::Identifier(_))
+        matches!(self.peek().ty, TokenType::Identifier(_)) || self.peek().ty == TokenType::Spawn || self.peek().ty == TokenType::Concurrent
     }
 
     fn match_token(&mut self, types: &[TokenType]) -> bool {
@@ -100,8 +100,11 @@ impl Parser {
     fn consume_ident(&mut self, msg: &str) -> Result<String, String> {
         if self.check_ident() {
             let tok = self.advance();
-            if let TokenType::Identifier(name) = &tok.ty {
-                return Ok(name.clone());
+            match &tok.ty {
+                TokenType::Identifier(name) => return Ok(name.clone()),
+                TokenType::Spawn => return Ok("spawn".to_string()),
+                TokenType::Concurrent => return Ok("concurrent".to_string()),
+                _ => {}
             }
         }
         Err(format!("Error at line {}: {}", self.peek().line, msg))
@@ -405,6 +408,9 @@ impl Parser {
                 None
             };
             Ok(Stmt::Return(value))
+        } else if self.match_token(&[TokenType::Concurrent]) {
+            let body = Box::new(self.statement()?);
+            Ok(Stmt::Concurrent(body))
         } else {
             Ok(Stmt::Expr(self.expression()?))
         }
@@ -496,6 +502,10 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
+        if self.match_token(&[TokenType::Spawn]) {
+            let expr = self.call()?;
+            return Ok(Expr::Spawn(Box::new(expr)));
+        }
         self.primary()
     }
 

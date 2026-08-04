@@ -46,6 +46,8 @@ pub enum TokenType {
     Struct,
     Embed,
     Interface,
+    Concurrent,
+    Spawn,
     Eof,
 }
 

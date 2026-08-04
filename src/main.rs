@@ -478,6 +478,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("fetchEvented", Value::native_function(backend::er_http::native_fetch_evented));
     vm.register_global("futureAwait", Value::native_function(backend::er_http::native_future_await));
     vm.register_global("arrayLen", Value::native_function(backend::er_http::native_array_len));
+    vm.register_global("arrayPush", Value::native_function(backend::er_http::native_array_push));
     vm.register_global("sleep", Value::native_function(backend::er_http::native_sleep));
     vm.register_global("createPromisePair", Value::native_function(backend::er_http::native_create_promise_pair));
     vm.register_global("setIoMode", Value::native_function(backend::er_http::native_set_io_mode));

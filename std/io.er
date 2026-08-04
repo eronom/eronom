@@ -11,6 +11,33 @@ const callWithArity = (func, args) => {
   return func()
 }
 
+export struct ConcurrentScope {
+  handles: array,
+  fn spawn(func, args) {
+    let taskArgs = args
+    if (taskArgs == null) { taskArgs = [] }
+    let h = Io.spawn(func, taskArgs)
+    arrayPush(this.handles, h)
+    return h
+  }
+}
+
+export const concurrent = (block) => {
+  const scope = ConcurrentScope({ handles: [] })
+  block(scope)
+  const handles = scope.handles
+  const len = arrayLen(handles)
+  if (len > 0) {
+    for i in 0..len {
+      Io.wait(handles[i])
+    }
+  }
+}
+
+export const spawn = (func, args) => {
+  return Io.spawn(func, args)
+}
+
 export const Io = {
   setMode: (mode) => {
     setIoMode(mode)
@@ -36,6 +63,9 @@ export const Io = {
     } else {
       return future
     }
+  },
+  concurrent: (block) => {
+    return concurrent(block)
   }
 }
 

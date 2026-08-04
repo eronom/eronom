@@ -1339,6 +1339,7 @@ fn perform_native_fetch(url: &str) -> Result<String, String> {
         std::time::Duration::from_secs(10),
     ).map_err(|e| format!("Connection error to {}: {}", host, e))?;
 
+    stream.set_nodelay(true).ok();
     stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
     stream.set_write_timeout(Some(std::time::Duration::from_secs(10))).ok();
 
@@ -1604,6 +1605,27 @@ pub fn native_array_len(args: Vec<Value>) -> Value {
             _ => Value::number(0.0),
         }
     }
+}
+
+pub fn native_array_push(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let arr_val = args[0];
+    let elem = args[1];
+    if !arr_val.is_array() {
+        return Value::null();
+    }
+    let arr_ptr = arr_val.as_gc_ptr();
+    unsafe {
+        match &mut (*arr_ptr).data {
+            GcData::Array(arr) => {
+                arr.push(elem);
+            }
+            _ => {}
+        }
+    }
+    Value::null()
 }
 
 pub fn native_sleep(args: Vec<Value>) -> Value {

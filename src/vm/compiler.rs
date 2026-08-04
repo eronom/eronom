@@ -33,6 +33,7 @@ pub struct Compiler {
     interfaces: std::collections::HashMap<String, InterfaceInfo>,
     global_types: std::collections::HashMap<String, String>,
     current_struct: Option<String>,
+    concurrent_scopes: Vec<usize>,
 }
 
 struct Local {
@@ -67,6 +68,7 @@ impl Compiler {
             interfaces: std::collections::HashMap::new(),
             global_types: std::collections::HashMap::new(),
             current_struct: None,
+            concurrent_scopes: Vec::new(),
         }
     }
 
@@ -352,7 +354,161 @@ impl Compiler {
                 );
             }
             Stmt::Interface(_, _, _, _) => {}
+            Stmt::Concurrent(body) => {
+                self.begin_scope();
+                let handles_reg = self.locals.len();
+                self.locals.push(Local {
+                    name: format!("*concurrent_handles_{}", self.locals.len()),
+                    depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
+                });
+                self.current_chunk().write_instruction(
+                    OpCode::MakeArray,
+                    handles_reg as u8,
+                    handles_reg as u8,
+                    0,
+                    0,
+                );
+                self.concurrent_scopes.push(handles_reg);
+                self.compile_stmt(body)?;
+                self.concurrent_scopes.pop();
+
+                self.compile_await_handles(handles_reg)?;
+                self.end_scope();
+            }
         }
+        Ok(())
+    }
+
+    fn compile_await_handles(&mut self, handles_reg: usize) -> Result<(), String> {
+        let len_reg = self.locals.len();
+        self.locals.push(Local {
+            name: format!("*handles_len_{}", self.locals.len()),
+            depth: self.scope_depth,
+            is_const: false,
+            loc: crate::frontend::SourceLocation::default(),
+            ty: None,
+        });
+
+        let array_len_idx = self
+            .current_chunk()
+            .add_constant(Value::string(get_or_create_string("arrayLen")));
+        self.current_chunk().write_instruction(
+            OpCode::GetGlobal,
+            len_reg as u8,
+            0,
+            0,
+            array_len_idx as u32,
+        );
+        self.current_chunk().write_instruction(
+            OpCode::Move,
+            (len_reg + 1) as u8,
+            handles_reg as u8,
+            0,
+            0,
+        );
+        self.current_chunk().write_instruction(
+            OpCode::Call,
+            len_reg as u8,
+            len_reg as u8,
+            0,
+            1,
+        );
+
+        let var_reg = self.locals.len();
+        let zero_idx = self.current_chunk().add_constant(Value::number(0.0));
+        self.current_chunk().write_instruction(
+            OpCode::LoadConst,
+            var_reg as u8,
+            0,
+            0,
+            zero_idx as u32,
+        );
+        self.locals.push(Local {
+            name: format!("*await_i_{}", self.locals.len()),
+            depth: self.scope_depth,
+            is_const: false,
+            loc: crate::frontend::SourceLocation::default(),
+            ty: None,
+        });
+
+        let one_reg = self.locals.len();
+        let one_idx = self.current_chunk().add_constant(Value::number(1.0));
+        self.current_chunk().write_instruction(
+            OpCode::LoadConst,
+            one_reg as u8,
+            0,
+            0,
+            one_idx as u32,
+        );
+        self.locals.push(Local {
+            name: format!("*await_one_{}", self.locals.len()),
+            depth: self.scope_depth,
+            is_const: false,
+            loc: crate::frontend::SourceLocation::default(),
+            ty: None,
+        });
+
+        let loop_start = self.current_chunk().code.len();
+        let cond_reg = self.locals.len();
+        self.current_chunk().write_instruction(
+            OpCode::Less,
+            cond_reg as u8,
+            var_reg as u8,
+            len_reg as u8,
+            0,
+        );
+
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+
+        let h_reg = self.locals.len();
+        self.current_chunk().write_instruction(
+            OpCode::GetIndex,
+            h_reg as u8,
+            handles_reg as u8,
+            var_reg as u8,
+            0,
+        );
+
+        let await_fn_reg = h_reg + 1;
+        let await_name_idx = self
+            .current_chunk()
+            .add_constant(Value::string(get_or_create_string("futureAwait")));
+        self.current_chunk().write_instruction(
+            OpCode::GetGlobal,
+            await_fn_reg as u8,
+            0,
+            0,
+            await_name_idx as u32,
+        );
+        self.current_chunk().write_instruction(
+            OpCode::Move,
+            (await_fn_reg + 1) as u8,
+            h_reg as u8,
+            0,
+            0,
+        );
+        self.current_chunk().write_instruction(
+            OpCode::Call,
+            await_fn_reg as u8,
+            await_fn_reg as u8,
+            0,
+            1,
+        );
+
+        self.current_chunk().write_instruction(
+            OpCode::Add,
+            var_reg as u8,
+            var_reg as u8,
+            one_reg as u8,
+            0,
+        );
+
+        self.emit_loop(loop_start);
+        self.patch_jump(exit_jump);
+
         Ok(())
     }
 
@@ -737,6 +893,57 @@ impl Compiler {
                         temp2 as u8,
                         0,
                         0,
+                    );
+                }
+            }
+            Expr::Spawn(inner) => {
+                let (callee, args) = match &**inner {
+                    Expr::Call(callee, args) => (callee.as_ref().clone(), args.clone()),
+                    _ => return Err("spawn expects a function call expression".to_string()),
+                };
+
+                let spawn_call = Expr::Call(
+                    Box::new(Expr::Get(
+                        Box::new(Expr::Variable("Io".to_string(), crate::frontend::SourceLocation::default())),
+                        "spawn".to_string(),
+                    )),
+                    vec![callee, Expr::Array(args)],
+                );
+
+                self.compile_expr(&spawn_call, dest)?;
+
+                if let Some(&handles_reg) = self.concurrent_scopes.last() {
+                    let push_fn_reg = std::cmp::max(self.next_reg, dest + 1);
+                    let push_name_idx = self
+                        .current_chunk()
+                        .add_constant(Value::string(get_or_create_string("arrayPush")));
+                    self.current_chunk().write_instruction(
+                        OpCode::GetGlobal,
+                        push_fn_reg as u8,
+                        0,
+                        0,
+                        push_name_idx as u32,
+                    );
+                    self.current_chunk().write_instruction(
+                        OpCode::Move,
+                        (push_fn_reg + 1) as u8,
+                        handles_reg as u8,
+                        0,
+                        0,
+                    );
+                    self.current_chunk().write_instruction(
+                        OpCode::Move,
+                        (push_fn_reg + 2) as u8,
+                        dest as u8,
+                        0,
+                        0,
+                    );
+                    self.current_chunk().write_instruction(
+                        OpCode::Call,
+                        push_fn_reg as u8,
+                        push_fn_reg as u8,
+                        0,
+                        2,
                     );
                 }
             }
