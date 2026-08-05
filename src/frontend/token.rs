@@ -48,6 +48,7 @@ pub enum TokenType {
     Interface,
     Concurrent,
     Spawn,
+    On,
     Eof,
 }
 

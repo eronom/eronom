@@ -254,6 +254,7 @@ impl<'a> Lexer<'a> {
                     "interface" => TokenType::Interface,
                     "concurrent" => TokenType::Concurrent,
                     "spawn" => TokenType::Spawn,
+                    "on" => TokenType::On,
                     _ => TokenType::Identifier(ident),
                 }
             }

@@ -21,6 +21,9 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
   * Dynamic arrays, objects, and bracket-assign/access (`arr[0] = val`, `obj.key = val`).
   * Range-based loops (`for i in 1..1000`).
 * **Automated GC**: Custom Garbage Collector managing allocations for VM values (Objects, Arrays, Strings).
+* **Colorless Async & Native Structured Concurrency**:
+  * **No Function Color Problem**: Performs asynchronous I/O (`fetch`, timers, socket operations) inside ordinary functions without `async` or `await` modifiers.
+  * **Structured Concurrency Block**: Native `concurrent { on taskA(); on taskB(); }` construct that automatically spawns concurrent tasks and joins them before exiting the scope.
 
 ## 📁 Repository Structure
 
@@ -79,6 +82,25 @@ let todos = [
 app.get('/todos', (c) => {
   return c.json(todos)
 })
+```
+
+### 4. Colorless Structured Concurrency
+```javascript
+import { Io } from "std/io"
+
+const fetchTask = (url) => {
+    print("Fetching URL...")
+    const res = fetch(url) // Non-blocking I/O without async/await!
+    print("Done fetching!")
+}
+
+// Structured Concurrency Scope: Automatically joins all spawned tasks
+concurrent {
+    on fetchTask("https://jsonplaceholder.typicode.com/todos/1")
+    on fetchTask("https://jsonplaceholder.typicode.com/todos/2")
+}
+
+print("Both concurrent tasks completed!")
 ```
 
 ## 🛠️ Getting Started

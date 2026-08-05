@@ -15,8 +15,8 @@ const taskB = (url) => {
 print("--- Native Structured Concurrency Demo ---")
 
 concurrent {
-    spawn taskA("https://jsonplaceholder.typicode.com/todos/1")
-    spawn taskB("https://jsonplaceholder.typicode.com/todos/2")
+    on taskA("https://jsonplaceholder.typicode.com/todos/1")
+    on taskB("https://jsonplaceholder.typicode.com/todos/2")
 }
 
 print("All concurrent tasks finished!")

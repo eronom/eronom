@@ -15,8 +15,8 @@ const taskB = (url) => {
 // Native Structured Concurrency Block:
 // Automatically spawns tasks and waits for all enclosed spawns before continuing!
 concurrent {
-    spawn taskA("https://jsonplaceholder.typicode.com/todos/1")
-    spawn taskB("https://jsonplaceholder.typicode.com/todos/2")
+    on taskA("https://jsonplaceholder.typicode.com/todos/1")
+    on taskB("https://jsonplaceholder.typicode.com/todos/2")
 }
 
 print("Both tasks completed!")

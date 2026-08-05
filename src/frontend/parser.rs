@@ -76,7 +76,10 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        matches!(self.peek().ty, TokenType::Identifier(_)) || self.peek().ty == TokenType::Spawn || self.peek().ty == TokenType::Concurrent
+        matches!(self.peek().ty, TokenType::Identifier(_))
+            || self.peek().ty == TokenType::Spawn
+            || self.peek().ty == TokenType::On
+            || self.peek().ty == TokenType::Concurrent
     }
 
     fn match_token(&mut self, types: &[TokenType]) -> bool {
@@ -103,6 +106,7 @@ impl Parser {
             match &tok.ty {
                 TokenType::Identifier(name) => return Ok(name.clone()),
                 TokenType::Spawn => return Ok("spawn".to_string()),
+                TokenType::On => return Ok("on".to_string()),
                 TokenType::Concurrent => return Ok("concurrent".to_string()),
                 _ => {}
             }
@@ -502,7 +506,7 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
-        if self.match_token(&[TokenType::Spawn]) {
+        if self.match_token(&[TokenType::Spawn, TokenType::On]) {
             let expr = self.call()?;
             return Ok(Expr::Spawn(Box::new(expr)));
         }
