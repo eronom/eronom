@@ -1,0 +1,22 @@
+import { Io } from "std/io"
+
+const taskA = (url) => {
+    print("Starting fetch A...")
+    fetch(url)
+    print("Completed fetch A!")
+}
+
+const taskB = (url) => {
+    print("Starting fetch B...")
+    fetch(url)
+    print("Completed fetch B!")
+}
+
+// Native Structured Concurrency Block:
+// Automatically spawns tasks and waits for all enclosed spawns before continuing!
+concurrent {
+    on taskA("https://jsonplaceholder.typicode.com/todos/1")
+    on taskB("https://jsonplaceholder.typicode.com/todos/2")
+}
+
+print("Both tasks completed!")

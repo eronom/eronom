@@ -36,7 +36,6 @@ use std::sync::atomic::AtomicUsize;
 
 pub enum AsyncResult {
     Timeout,
-    Fetch(Result<String, String>),
     ResolvePromise(*mut crate::vm::gc::GcObject, Value),
     ResolveFetchPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
     ResolveTextPromise(*mut crate::vm::gc::GcObject, Result<String, String>),
@@ -1782,23 +1781,6 @@ impl VM {
                 let mut args = Vec::new();
                 match task.result {
                     AsyncResult::Timeout => {
-                        args.extend(task.args);
-                    }
-                    AsyncResult::Fetch(res) => {
-                        match res {
-                            Ok(body_str) => {
-                                let mut map = crate::vm::gc::get_pooled_map(2);
-                                let body_key = crate::vm::gc::get_or_create_string("_body");
-                                let body_val = crate::vm::gc::get_or_create_string(&body_str);
-                                map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
-                                let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
-                                args.push(Value::object(ptr));
-                            }
-                            Err(e) => {
-                                eprintln!("[FetchAsync] Error: {}", e);
-                                args.push(Value::null());
-                            }
-                        }
                         args.extend(task.args);
                     }
                     _ => {}

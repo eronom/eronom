@@ -4,13 +4,12 @@ setTimeout(() => {
   print("Timeout callback executed after 200ms!")
 }, 200)
 
-fetchAsync("https://jsonplaceholder.typicode.com/todos/1", (res) => {
-  if (res == null) {
-    print("Fetch failed")
-  } else {
-    print("Fetch result:")
-    print(res.json())
-  }
-})
+const res = fetch("https://jsonplaceholder.typicode.com/todos/1")
+if (res == null) {
+  print("Fetch failed")
+} else {
+  print("Fetch result:")
+  print(res.json())
+}
 
 print("End of main script flow (event loop should continue...)")

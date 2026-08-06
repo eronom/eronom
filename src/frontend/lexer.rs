@@ -252,6 +252,9 @@ impl<'a> Lexer<'a> {
                     "struct" => TokenType::Struct,
                     "embed" => TokenType::Embed,
                     "interface" => TokenType::Interface,
+                    "concurrent" => TokenType::Concurrent,
+                    "spawn" => TokenType::Spawn,
+                    "on" => TokenType::On,
                     _ => TokenType::Identifier(ident),
                 }
             }

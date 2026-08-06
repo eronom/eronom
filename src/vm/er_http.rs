@@ -1234,9 +1234,6 @@ pub extern "C" fn er_ws_on_close(
 }
 
 pub fn native_fetch(args: Vec<Value>) -> Value {
-    if args.len() >= 2 && (args[1].is_function() || args[1].is_native_function()) {
-        return native_fetch_async(args);
-    }
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     if vm_ptr.is_null() {
         eprintln!("[Fetch] Error: ACTIVE_VM is null");
@@ -1342,6 +1339,7 @@ fn perform_native_fetch(url: &str) -> Result<String, String> {
         std::time::Duration::from_secs(10),
     ).map_err(|e| format!("Connection error to {}: {}", host, e))?;
 
+    stream.set_nodelay(true).ok();
     stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
     stream.set_write_timeout(Some(std::time::Duration::from_secs(10))).ok();
 
@@ -1366,71 +1364,6 @@ fn perform_native_fetch(url: &str) -> Result<String, String> {
     } else {
         Ok(String::from_utf8_lossy(&response_bytes).into_owned())
     }
-}
-
-pub fn native_fetch_async(args: Vec<Value>) -> Value {
-    if args.len() < 2 {
-        eprintln!("[fetchAsync] Error: URL and callback are required");
-        return Value::null();
-    }
-    let url_val = args[0];
-    let callback = args[1];
-    if !url_val.is_string() {
-        eprintln!("[fetchAsync] Error: URL must be a string");
-        return Value::null();
-    }
-    if !callback.is_function() && !callback.is_native_function() {
-        eprintln!("[fetchAsync] Error: callback must be a function");
-        return Value::null();
-    }
-    let url_str = unsafe {
-        match &(*url_val.as_gc_ptr()).data {
-            GcData::String(s) => s.as_ref().to_string(),
-            _ => return Value::null(),
-        }
-    };
-
-    let mut cb_args = Vec::new();
-    if args.len() > 2 {
-        cb_args.extend_from_slice(&args[2..]);
-    }
-
-    let vm_ptr = ACTIVE_VM.with(|active| active.get());
-    if vm_ptr.is_null() {
-        eprintln!("[fetchAsync] Error: ACTIVE_VM is null");
-        return Value::null();
-    }
-    let vm = unsafe { &mut *vm_ptr };
-
-    let queue = vm.event_loop_queue.clone();
-    let active_counter = vm.active_async_tasks.clone();
-    let pending = vm.pending_callbacks.clone();
-
-    pending.lock().unwrap().push(crate::vm::execute::PendingAsync {
-        callback,
-        args: cb_args.clone(),
-    });
-    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    std::thread::spawn(move || {
-        let res = perform_native_fetch(&url_str);
-
-        let mut q = queue.lock().unwrap();
-        q.push(crate::vm::execute::EventLoopTask {
-            callback,
-            args: cb_args,
-            result: crate::vm::execute::AsyncResult::Fetch(res),
-        });
-
-        let mut p = pending.lock().unwrap();
-        if let Some(pos) = p.iter().position(|x| x.callback.0 == callback.0) {
-            p.remove(pos);
-        }
-
-        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    });
-
-    Value::null()
 }
 
 pub fn native_fetch_sync(args: Vec<Value>) -> Value {
@@ -1672,6 +1605,27 @@ pub fn native_array_len(args: Vec<Value>) -> Value {
             _ => Value::number(0.0),
         }
     }
+}
+
+pub fn native_array_push(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let arr_val = args[0];
+    let elem = args[1];
+    if !arr_val.is_array() {
+        return Value::null();
+    }
+    let arr_ptr = arr_val.as_gc_ptr();
+    unsafe {
+        match &mut (*arr_ptr).data {
+            GcData::Array(arr) => {
+                arr.push(elem);
+            }
+            _ => {}
+        }
+    }
+    Value::null()
 }
 
 pub fn native_sleep(args: Vec<Value>) -> Value {

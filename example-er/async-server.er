@@ -7,14 +7,13 @@ app.get("/async", (c) => {
 })
 
 app.get("/todo", (c) => {
-  fetchAsync("https://jsonplaceholder.typicode.com/todos/1", (res, ctx) => {
-    if (res == null) {
-      ctx.json({ error: "Fetch failed" })
-    } else {
-      ctx.json({
-        source: "async-fetch",
-        todo: res.json()
-      })
-    }
-  }, c)
+  const res = fetch("https://jsonplaceholder.typicode.com/todos/1")
+  if (res == null) {
+    c.json({ error: "Fetch failed" })
+  } else {
+    c.json({
+      source: "io-fetch",
+      todo: res.json()
+    })
+  }
 })
