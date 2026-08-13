@@ -20,13 +20,13 @@ The main execution pipeline is divided into:
 
 ## 2. Standard Libraries & CLI (Rust & Eronom)
 * **`libs/erm/`**: Rust library code for compiling templates, handling CLI subcommands, and managing server requests.
-  * `cli.rs`: Command parsing via `clap`.
+  * `cli.rs`: Command parsing via `clap` (`create`, `build`, `dev`, `start`).
   * `compiler.rs`: Compiles Eronom template (`.erm`) files to HTML pages.
   * `server.rs`: Dev and production server logic.
 * **`std/`**: Standard libraries written in Eronom itself.
   * `http.er`: Contains the standard HTTP Router/Server constructs.
   * `io.er`: File and system I/O methods.
-* **`libs/init/`**: Default project template files copied by the `eronom init` command.
+* **`libs/init/`**: Default project template files copied by the `eronom create` command.
   * `core/runtime.js`: Reactivity runtime for template bindings and loops.
   * `core/hmr.js`: Hot Module Reload (HMR) websocket client.
   * `app/pages/` & `app/layouts/`: Base files for web apps.

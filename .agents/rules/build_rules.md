@@ -12,3 +12,4 @@ Follow these rules when building, running, or compiling the Eronom project:
    cargo run -- example-er/my-api/server.er
    ```
    Or use the compiled/cli command `eronom dev` in the appropriate directory.
+4. **Project Creation**: Use `eronom create <dir>` to initialize a fresh Eronom project (`eronom init` is deprecated and replaced by `create`).
