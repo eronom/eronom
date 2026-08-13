@@ -1,0 +1,15 @@
+import { Io } from "std/io"
+
+const taskA = (url) => {
+    fetch(url)
+}
+
+const taskB = (url) => {
+    fetch(url)
+}
+
+concurrent {
+    on taskA("http://127.0.0.1:8989/")
+    on taskB("http://127.0.0.1:8989/")
+}
+print("Done!")

@@ -4,8 +4,6 @@ pub mod gc;
 pub mod compiler;
 pub mod execute;
 pub mod er_http;
-#[path = "../../ext/tls/mod.rs"]
-pub mod tls;
 
 // Re-export key structures to maintain public API compatibility
 pub use value::Value;
