@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # Eronom Codebase Architecture Guide
 
 AI agents working on this project should orient themselves using the following directory layout:
@@ -20,7 +24,7 @@ The main execution pipeline is divided into:
 
 ## 2. Standard Libraries & CLI (Rust & Eronom)
 * **`libs/erm/`**: Rust library code for compiling templates, handling CLI subcommands, and managing server requests.
-  * `cli.rs`: Command parsing via `clap` (`create`, `build`, `dev`, `start`).
+  * `cli.rs`: Command parsing via `clap`.
   * `compiler.rs`: Compiles Eronom template (`.erm`) files to HTML pages.
   * `server.rs`: Dev and production server logic.
 * **`std/`**: Standard libraries written in Eronom itself.
