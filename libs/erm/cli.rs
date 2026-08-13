@@ -25,8 +25,8 @@ pub enum BuildMode {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Initialize a fresh Eronom project
-    Init {
+    /// Create a fresh Eronom project
+    Create {
         /// The root directory of the new project
         #[arg(default_value = ".")]
         dir: String,
@@ -154,7 +154,7 @@ fn resolve_port(dir: &str, port_val: Option<u16>, is_build_or_init: bool) -> any
 
 pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
     match cmd {
-        Commands::Init {
+        Commands::Create {
             dir,
             template,
             branch,
@@ -163,7 +163,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             no_commit,
             ermcss,
         } => {
-            init_project(&dir, template, branch, force, git, no_commit, ermcss)?;
+            create_project(&dir, template, branch, force, git, no_commit, ermcss)?;
         }
         Commands::Build { dir, ssr: _, ssg, ppr } => {
             let mode = if ppr {
@@ -257,15 +257,13 @@ impl Spinner {
         }
     }
 
-    pub fn finish_with_success(&mut self, success_msg: &str) {
+    pub fn finish_and_clear(&mut self) {
         self.stop();
-        let mut stdout = io::stdout();
         if self.is_tty {
-            let _ = writeln!(stdout, "\r\x1b[K\x1b[32m✔\x1b[0m {}", success_msg);
-        } else {
-            let _ = writeln!(stdout, "✔ {}", success_msg);
+            let mut stdout = io::stdout();
+            let _ = write!(stdout, "\r\x1b[K");
+            let _ = stdout.flush();
         }
-        let _ = stdout.flush();
     }
 
     pub fn finish_with_failure(&mut self, fail_msg: &str) {
@@ -298,7 +296,6 @@ impl Drop for Spinner {
 fn run_git_clone_with_spinner(
     args: &[&str],
     start_msg: &str,
-    success_msg: &str,
     fail_msg: &str,
 ) -> anyhow::Result<()> {
     let mut spinner = Spinner::start(start_msg);
@@ -313,7 +310,7 @@ fn run_git_clone_with_spinner(
 
     match git_clone.status() {
         Ok(status) if status.success() => {
-            spinner.finish_with_success(success_msg);
+            spinner.finish_and_clear();
             Ok(())
         }
         Ok(_) => {
@@ -327,7 +324,7 @@ fn run_git_clone_with_spinner(
     }
 }
 
-fn init_project(
+fn create_project(
     dir: &str,
     template: Option<String>,
     branch: Option<String>,
@@ -340,8 +337,8 @@ fn init_project(
 
     if dst_dir.exists() && !is_dir_empty(dst_dir) && !force {
         anyhow::bail!(
-            "Cannot run `init` on a non-empty directory.\n\
-              Run with the `--force` flag to initialize regardless."
+            "Cannot create project in a non-empty directory.\n\
+              Run with the `--force` flag to create regardless."
         );
     }
 
@@ -376,12 +373,10 @@ fn init_project(
 
         run_git_clone_with_spinner(
             &clone_args,
-            &format!("Cloning template from {}", template_url),
-            &format!("Cloned template from {}", template_url),
+            "Initializing a git repository...",
             &format!("Failed to clone template from {}", template_url),
         )?;
 
-        println!("Copying template files...");
         copy_dir_all(&temp_dir, dst_dir)?;
 
         if ermcss {
@@ -398,8 +393,7 @@ fn init_project(
 
             if run_git_clone_with_spinner(
                 &clone_args,
-                "Cloning ermcss framework...",
-                "Cloned ermcss framework",
+                "Initializing a git repository...",
                 "Failed to clone ermcss framework",
             ).is_ok() {
                 let ermcss_src = eronom_temp_dir.join("libs/ermcss");
@@ -426,8 +420,7 @@ fn init_project(
 
         let clone_res = run_git_clone_with_spinner(
             &clone_args,
-            "Cloning template (@libs/init)...",
-            "Cloned template (@libs/init)",
+            "Initializing a git repository...",
             "Failed to clone template from https://github.com/eronom/eronom.git",
         );
 
@@ -440,21 +433,6 @@ fn init_project(
                 if ermcss_src.exists() {
                     let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
                 }
-            }
-            
-            // Get commit hash
-            let mut commit_hash = String::new();
-            let mut git_rev = std::process::Command::new("git");
-            git_rev.arg("rev-parse").arg("HEAD").current_dir(&temp_dir);
-            if let Ok(output) = git_rev.output() {
-                if output.status.success() {
-                    commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                }
-            }
-            if !commit_hash.is_empty() {
-                println!("    Installed template commit={}", commit_hash);
-            } else {
-                println!("    Installed template");
             }
             let _ = fs::remove_dir_all(&temp_dir);
         } else {
@@ -475,14 +453,9 @@ fn init_project(
             toml_content.push_str("\n[package]\nermcss = true\n\n[ermcss]\ncontent = [\n    \"./app/**/*.erm\",\n    \"./pages/**/*.erm\",\n    \"./components/**/*.erm\"\n]\n\n[ermcss.theme.extend.colors]\nprimary = \"#2563eb\"\n");
             let _ = fs::write(&toml_path, toml_content);
         }
-        println!("    Added ermcss capability");
     }
 
-
-
     if git {
-        // Initialize git repo if not already inside one, or if we want a fresh repo
-        println!("Initializing git repository...");
         let mut git_init = std::process::Command::new("git");
         git_init.arg("init")
             .arg("-b").arg("main")
@@ -502,9 +475,9 @@ fn init_project(
 
                 let mut git_commit = std::process::Command::new("git");
                 let commit_msg = if let Some(ref t) = template {
-                    format!("chore: init from {}", t)
+                    format!("chore: create from {}", t)
                 } else {
-                    "chore: eronom init".to_string()
+                    "chore: eronom create".to_string()
                 };
                 git_commit.arg("commit").arg("-m").arg(commit_msg)
                     .stdout(std::process::Stdio::null())
@@ -515,8 +488,14 @@ fn init_project(
         }
     }
 
+    let abs_path = dst_dir.canonicalize().unwrap_or_else(|_| dst_dir.to_path_buf());
+    let dir_name = dst_dir.file_name().and_then(|n| n.to_str()).unwrap_or(dir);
 
-    println!("Fresh Eronom project initialized successfully under {}", dst_dir.display());
+    if io::stdout().is_terminal() {
+        println!("\x1b[32m✔\x1b[0m Success! Created {} at {}", dir_name, abs_path.display());
+    } else {
+        println!("✔ Success! Created {} at {}", dir_name, abs_path.display());
+    }
     Ok(())
 }
 
