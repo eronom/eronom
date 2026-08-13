@@ -1,0 +1,82 @@
+<script>
+    export let activeTheme = useState('light');
+    let users = useState(1280);
+    let clicks = useState(4820);
+    let status = useState('Online');
+    let notificationCount = useState(3);
+    
+    function handleAlert() {
+        alert("Ermcss utility actions work flawlessly!");
+    }
+</script>
+
+<Header />
+
+<div class="p-6 bg-gray-50">
+    <div class="max-w-4xl mx-auto">
+        <!-- Top Banner / Header Card -->
+        <div class="rounded-xl bg-white p-6 shadow-md border border-gray-200 mb-6 transition hover:shadow-lg">
+            <h2 class="text-3xl font-bold text-gray-800">Ermcss Styling Showcase</h2>
+            <p class="mt-2 text-gray-600">
+                This page demonstrates utility classes compiled on-the-fly via <code>ermcss</code>. 
+                Everything below is styled purely using standard layout, size, color, hover, and responsive utility class tags.
+            </p>
+            <div class="mt-4 flex flex-row gap-4 items-center">
+                <span class="rounded-full bg-green-100 text-green-800 px-3 py-1 text-sm font-semibold">
+                    System: {status}
+                </span>
+                <span class="rounded-full bg-blue-100 text-blue-800 px-3 py-1 text-sm font-semibold">
+                    Pending Alerts: {notificationCount}
+                </span>
+            </div>
+        </div>
+
+        <!-- Dashboard Stats Grid -->
+        <div class="grid md:flex md:flex-row gap-6 mb-6">
+            <!-- Card 1 -->
+            <div class="flex-1 rounded-xl bg-white p-6 shadow-md border border-gray-200 hover:shadow-lg transition">
+                <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wider">Total Active Users</h3>
+                <p class="mt-2 text-4xl font-bold text-gray-800">{users}</p>
+                <div class="mt-4 flex gap-2">
+                    <button class="rounded-lg bg-blue-600 px-3 py-1.5 text-white text-xs font-semibold hover:bg-blue-700 transition" onClick={() => { users++ }}>
+                        + Add User
+                    </button>
+                    <button class="rounded-lg bg-gray-200 px-3 py-1.5 text-gray-800 text-xs font-semibold hover:bg-gray-300 transition" onClick={() => { if(users > 0) users-- }}>
+                        - Remove
+                    </button>
+                </div>
+            </div>
+
+            <!-- Card 2 -->
+            <div class="flex-1 rounded-xl bg-white p-6 shadow-md border border-gray-200 hover:shadow-lg transition">
+                <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wider">Total Interactions</h3>
+                <p class="mt-2 text-4xl font-bold text-gray-800">{clicks}</p>
+                <div class="mt-4 flex gap-2">
+                    <button class="rounded-lg bg-blue-600 px-3 py-1.5 text-white text-xs font-semibold hover:bg-blue-700 transition" onClick={() => { clicks = clicks + 10 }}>
+                        + Add 10 Clicks
+                    </button>
+                    <button class="rounded-lg bg-gray-200 px-3 py-1.5 text-gray-800 text-xs font-semibold hover:bg-gray-300 transition" onClick={() => { clicks = 0 }}>
+                        Reset
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Interactive Settings / Call to Action -->
+        <div class="rounded-xl bg-white p-6 shadow-md border border-gray-200">
+            <h3 class="text-xl font-bold text-gray-800">Dynamic Theme Control</h3>
+            <p class="mt-1 text-gray-600 text-sm">
+                Control notifications and toggle styles.
+            </p>
+            <div class="mt-4 flex flex-col gap-3">
+                <button class="rounded-lg bg-primary px-4 py-2 text-white font-semibold hover:bg-blue-700 transition cursor-pointer text-center" onClick={handleAlert}>
+                    Trigger System Notification
+                </button>
+                <button class="rounded-lg bg-gray-200 px-4 py-2 text-gray-800 font-semibold hover:bg-gray-300 transition cursor-pointer text-center" onClick={() => { notificationCount = 0 }}>
+                    Clear Notification Badge
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<Footer />

@@ -19,4 +19,6 @@ concurrent {
     on taskB("https://jsonplaceholder.typicode.com/todos/2")
 }
 
+
+
 print("Both tasks completed!")

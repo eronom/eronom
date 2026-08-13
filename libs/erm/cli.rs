@@ -211,6 +211,122 @@ fn is_dir_empty(path: &Path) -> bool {
     }
 }
 
+use std::io::{self, Write, IsTerminal};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+
+struct Spinner {
+    running: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    is_tty: bool,
+}
+
+impl Spinner {
+    pub fn start(msg: impl Into<String>) -> Self {
+        let msg = msg.into();
+        let is_tty = io::stdout().is_terminal();
+        let running = Arc::new(AtomicBool::new(true));
+
+        let handle = if is_tty {
+            let running_clone = running.clone();
+            let msg_clone = msg.clone();
+            Some(thread::spawn(move || {
+                let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                let mut i = 0;
+                let mut stdout = io::stdout();
+                while running_clone.load(Ordering::Relaxed) {
+                    let frame = frames[i % frames.len()];
+                    let _ = write!(stdout, "\r\x1b[K\x1b[36m{}\x1b[0m {}", frame, msg_clone);
+                    let _ = stdout.flush();
+                    i += 1;
+                    thread::sleep(std::time::Duration::from_millis(80));
+                }
+            }))
+        } else {
+            let mut stdout = io::stdout();
+            let _ = writeln!(stdout, "{}...", msg);
+            let _ = stdout.flush();
+            None
+        };
+
+        Self {
+            running,
+            handle,
+            is_tty,
+        }
+    }
+
+    pub fn finish_with_success(&mut self, success_msg: &str) {
+        self.stop();
+        let mut stdout = io::stdout();
+        if self.is_tty {
+            let _ = writeln!(stdout, "\r\x1b[K\x1b[32m✔\x1b[0m {}", success_msg);
+        } else {
+            let _ = writeln!(stdout, "✔ {}", success_msg);
+        }
+        let _ = stdout.flush();
+    }
+
+    pub fn finish_with_failure(&mut self, fail_msg: &str) {
+        self.stop();
+        let mut stdout = io::stdout();
+        if self.is_tty {
+            let _ = writeln!(stdout, "\r\x1b[K\x1b[31m✖\x1b[0m {}", fail_msg);
+        } else {
+            let _ = writeln!(stdout, "✖ {}", fail_msg);
+        }
+        let _ = stdout.flush();
+    }
+
+    fn stop(&mut self) {
+        if self.handle.is_some() {
+            self.running.store(false, Ordering::Relaxed);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn run_git_clone_with_spinner(
+    args: &[&str],
+    start_msg: &str,
+    success_msg: &str,
+    fail_msg: &str,
+) -> anyhow::Result<()> {
+    let mut spinner = Spinner::start(start_msg);
+
+    let mut git_clone = std::process::Command::new("git");
+    git_clone.arg("clone");
+    for arg in args {
+        git_clone.arg(arg);
+    }
+    git_clone.stdout(std::process::Stdio::null());
+    git_clone.stderr(std::process::Stdio::null());
+
+    match git_clone.status() {
+        Ok(status) if status.success() => {
+            spinner.finish_with_success(success_msg);
+            Ok(())
+        }
+        Ok(_) => {
+            spinner.finish_with_failure(fail_msg);
+            anyhow::bail!("{}", fail_msg);
+        }
+        Err(e) => {
+            spinner.finish_with_failure(fail_msg);
+            anyhow::bail!("{}: {}", fail_msg, e);
+        }
+    }
+}
+
 fn init_project(
     dir: &str,
     template: Option<String>,
@@ -249,18 +365,21 @@ fn init_project(
         );
         let temp_dir = std::env::temp_dir().join(temp_dir_name);
 
-        println!("Cloning template from {}...", template_url);
-        let mut git_clone = std::process::Command::new("git");
-        git_clone.arg("clone").arg("--depth").arg("1");
+        let mut clone_args = vec!["--depth", "1"];
         if let Some(ref b) = branch {
-            git_clone.arg("-b").arg(b);
+            clone_args.push("-b");
+            clone_args.push(b);
         }
-        git_clone.arg(&template_url).arg(&temp_dir);
+        let temp_dir_str = temp_dir.to_str().unwrap_or("");
+        clone_args.push(&template_url);
+        clone_args.push(temp_dir_str);
 
-        let status = git_clone.status()?;
-        if !status.success() {
-            anyhow::bail!("Failed to clone template from {}", template_url);
-        }
+        run_git_clone_with_spinner(
+            &clone_args,
+            &format!("Cloning template from {}", template_url),
+            &format!("Cloned template from {}", template_url),
+            &format!("Failed to clone template from {}", template_url),
+        )?;
 
         println!("Copying template files...");
         copy_dir_all(&temp_dir, dst_dir)?;
@@ -274,18 +393,18 @@ fn init_project(
                     .unwrap_or(0)
             );
             let eronom_temp_dir = std::env::temp_dir().join(eronom_temp_dir_name);
-            let mut git_clone = std::process::Command::new("git");
-            git_clone.arg("clone")
-                .arg("--depth").arg("1")
-                .arg("https://github.com/eronom/eronom.git")
-                .arg(&eronom_temp_dir);
-            
-            if let Ok(status) = git_clone.status() {
-                if status.success() {
-                    let ermcss_src = eronom_temp_dir.join("libs/ermcss");
-                    if ermcss_src.exists() {
-                        let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
-                    }
+            let eronom_temp_dir_str = eronom_temp_dir.to_str().unwrap_or("");
+            let clone_args = vec!["--depth", "1", "https://github.com/eronom/eronom.git", eronom_temp_dir_str];
+
+            if run_git_clone_with_spinner(
+                &clone_args,
+                "Cloning ermcss framework...",
+                "Cloned ermcss framework",
+                "Failed to clone ermcss framework",
+            ).is_ok() {
+                let ermcss_src = eronom_temp_dir.join("libs/ermcss");
+                if ermcss_src.exists() {
+                    let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
                 }
             }
             let _ = fs::remove_dir_all(&eronom_temp_dir);
@@ -302,20 +421,17 @@ fn init_project(
                 .unwrap_or(0)
         );
         let temp_dir = std::env::temp_dir().join(temp_dir_name);
-        let mut git_clone = std::process::Command::new("git");
-        git_clone.arg("clone")
-            .arg("--depth").arg("1")
-            .arg("https://github.com/eronom/eronom.git")
-            .arg(&temp_dir);
-        
-        let mut cloned = false;
-        if let Ok(status) = git_clone.status() {
-            if status.success() && temp_dir.join("libs/init").exists() {
-                cloned = true;
-            }
-        }
+        let temp_dir_str = temp_dir.to_str().unwrap_or("");
+        let clone_args = vec!["--depth", "1", "https://github.com/eronom/eronom.git", temp_dir_str];
 
-        if cloned {
+        let clone_res = run_git_clone_with_spinner(
+            &clone_args,
+            "Cloning template (@libs/init)...",
+            "Cloned template (@libs/init)",
+            "Failed to clone template from https://github.com/eronom/eronom.git",
+        );
+
+        if clone_res.is_ok() && temp_dir.join("libs/init").exists() {
             let repo_init = temp_dir.join("libs/init");
             copy_dir_all(&repo_init, dst_dir)?;
 
