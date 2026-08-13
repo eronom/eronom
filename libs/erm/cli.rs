@@ -333,6 +333,7 @@ fn create_project(
     no_commit: bool,
     ermcss: bool,
 ) -> anyhow::Result<()> {
+    let start_time = std::time::Instant::now();
     let dst_dir = Path::new(dir);
 
     if dst_dir.exists() && !is_dir_empty(dst_dir) && !force {
@@ -490,11 +491,12 @@ fn create_project(
 
     let abs_path = dst_dir.canonicalize().unwrap_or_else(|_| dst_dir.to_path_buf());
     let dir_name = dst_dir.file_name().and_then(|n| n.to_str()).unwrap_or(dir);
+    let elapsed = start_time.elapsed().as_secs_f64();
 
     if io::stdout().is_terminal() {
-        println!("\x1b[32m✔\x1b[0m Success! Created {} at {}", dir_name, abs_path.display());
+        println!("\x1b[32m✔\x1b[0m Success! Created {} at {} in {:.2}s", dir_name, abs_path.display(), elapsed);
     } else {
-        println!("✔ Success! Created {} at {}", dir_name, abs_path.display());
+        println!("✔ Success! Created {} at {} in {:.2}s", dir_name, abs_path.display(), elapsed);
     }
     Ok(())
 }
