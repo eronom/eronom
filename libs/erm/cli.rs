@@ -374,7 +374,7 @@ fn create_project(
 
         run_git_clone_with_spinner(
             &clone_args,
-            "Initializing a git repository...",
+            "Initializing an eronom project...",
             &format!("Failed to clone template from {}", template_url),
         )?;
 
@@ -394,7 +394,7 @@ fn create_project(
 
             if run_git_clone_with_spinner(
                 &clone_args,
-                "Initializing a git repository...",
+                "Initializing an eronom project...",
                 "Failed to clone ermcss framework",
             ).is_ok() {
                 let ermcss_src = eronom_temp_dir.join("libs/ermcss");
@@ -421,7 +421,7 @@ fn create_project(
 
         let clone_res = run_git_clone_with_spinner(
             &clone_args,
-            "Initializing a git repository...",
+            "Initializing an eronom project...",
             "Failed to clone template from https://github.com/eronom/eronom.git",
         );
 
