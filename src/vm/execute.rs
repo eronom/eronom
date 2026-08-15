@@ -31,7 +31,7 @@ use super::gc::{
     GC_STATE, GC_ROOTS, GC_NEEDS_STEP, GcColor, GcPhase, GcData, GcObject
 };
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::AtomicUsize;
 
 pub enum AsyncResult {
@@ -81,6 +81,7 @@ pub struct VM {
     
     // Event loop fields
     pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
+    pub event_loop_condvar: Arc<Condvar>,
     pub active_async_tasks: Arc<AtomicUsize>,
     pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
 }
@@ -126,6 +127,7 @@ impl VM {
             last_matched_descriptor: None,
             last_matched_offsets: Vec::new(),
             event_loop_queue: Arc::new(Mutex::new(Vec::new())),
+            event_loop_condvar: Arc::new(Condvar::new()),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
         }
@@ -1799,7 +1801,10 @@ impl VM {
                 }
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            let queue = self.event_loop_queue.lock().unwrap();
+            if queue.is_empty() {
+                let _ = self.event_loop_condvar.wait_timeout(queue, Duration::from_millis(10));
+            }
         }
         Ok(())
     }

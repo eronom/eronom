@@ -1307,63 +1307,23 @@ pub fn native_set_timeout(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+fn get_ureq_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        let config = ureq::config::Config::builder()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .user_agent("Eronom/0.9.2")
+            .max_idle_connections(100)
+            .max_idle_connections_per_host(100)
+            .build();
+        config.new_agent()
+    })
+}
+
 fn perform_native_fetch(url: &str) -> Result<String, String> {
-    let (scheme, rest) = url.split_once("://").unwrap_or(("http", url));
-    let (host_port, path) = match rest.find('/') {
-        Some(idx) => (&rest[..idx], &rest[idx..]),
-        None => (rest, "/"),
-    };
-    let (host, port) = if let Some((h, p)) = host_port.split_once(':') {
-        (h, p.parse::<u16>().map_err(|e| e.to_string())?)
-    } else {
-        let default_port = match scheme {
-            "http" => 80,
-            "https" => 443,
-            _ => 80,
-        };
-        (host_port, default_port)
-    };
-
-    use std::io::{Read, Write};
-    use std::net::ToSocketAddrs;
-
-    let addr_str = format!("{}:{}", host, port);
-    let socket_addr = addr_str
-        .to_socket_addrs()
-        .map_err(|e| format!("DNS resolution error for {}: {}", host, e))?
-        .next()
-        .ok_or_else(|| format!("Could not resolve host {}", host))?;
-
-    let mut stream = std::net::TcpStream::connect_timeout(
-        &socket_addr,
-        std::time::Duration::from_secs(10),
-    ).map_err(|e| format!("Connection error to {}: {}", host, e))?;
-
-    stream.set_nodelay(true).ok();
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(10))).ok();
-
-    let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Eronom/0.1.0\r\nConnection: close\r\n\r\n",
-        path, host
-    );
-
-    let response_bytes = if scheme == "https" || port == 443 {
-        crate::vm::tls::fetch_tls(host, &request, &mut stream)?
-    } else {
-        let mut response_bytes = Vec::new();
-        stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
-        stream.read_to_end(&mut response_bytes).map_err(|e| e.to_string())?;
-        response_bytes
-    };
-
-    let d_crlf = b"\r\n\r\n";
-    if let Some(pos) = response_bytes.windows(4).position(|w| w == d_crlf) {
-        let body_bytes = &response_bytes[pos + 4..];
-        Ok(String::from_utf8_lossy(body_bytes).into_owned())
-    } else {
-        Ok(String::from_utf8_lossy(&response_bytes).into_owned())
-    }
+    let agent = get_ureq_agent();
+    let mut resp = agent.get(url).call().map_err(|e| e.to_string())?;
+    resp.body_mut().read_to_string().map_err(|e| e.to_string())
 }
 
 pub fn native_fetch_sync(args: Vec<Value>) -> Value {
@@ -1447,6 +1407,7 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
     // 3. Increment active async tasks counter
     let active_counter = vm.active_async_tasks.clone();
     let queue = vm.event_loop_queue.clone();
+    let condvar = vm.event_loop_condvar.clone();
     active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     let promise_ptr_usize = promise_ptr as usize;
@@ -1457,12 +1418,15 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
         let res = perform_native_fetch(&url_str);
 
         // Post ResolveFetchPromise back to event loop
-        let mut q = queue.lock().unwrap();
-        q.push(crate::vm::execute::EventLoopTask {
-            callback: Value::null(),
-            args: Vec::new(),
-            result: crate::vm::execute::AsyncResult::ResolveFetchPromise(promise_ptr, res),
-        });
+        {
+            let mut q = queue.lock().unwrap();
+            q.push(crate::vm::execute::EventLoopTask {
+                callback: Value::null(),
+                args: Vec::new(),
+                result: crate::vm::execute::AsyncResult::ResolveFetchPromise(promise_ptr, res),
+            });
+            condvar.notify_one();
+        }
 
         active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     });

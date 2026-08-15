@@ -2158,7 +2158,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
         assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
-        assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/core/runtime.js';\n");
+        assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/modules/erm/runtime.js';\n");
         assets.push_str("{\n");
         for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
         assets.push_str("}\n");
@@ -2168,7 +2168,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
     
     if !is_prod {
-        let hmr_script = "<script src=\"/core/hmr.js\"></script>";
+        let hmr_script = "<script src=\"/modules/erm/hmr.js\"></script>";
         if let Some(pos) = output.find("<head>") {
             output.insert_str(pos + 6, hmr_script);
         } else {

@@ -613,7 +613,7 @@ fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &st
       min-height: 100vh;
     }}
   </style>
-  <script src="/core/hmr.js"></script>
+  <script src="/modules/erm/hmr.js"></script>
 </head>
 <body data-compile-error-file="{}" data-compile-error-message="{}">
 </body>

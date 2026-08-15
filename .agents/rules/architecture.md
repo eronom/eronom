@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # Eronom Codebase Architecture Guide
 
 AI agents working on this project should orient themselves using the following directory layout:
@@ -27,6 +31,6 @@ The main execution pipeline is divided into:
   * `http.er`: Contains the standard HTTP Router/Server constructs.
   * `io.er`: File and system I/O methods.
 * **`libs/init/`**: Default project template files copied by the `eronom init` command.
-  * `core/runtime.js`: Reactivity runtime for template bindings and loops.
-  * `core/hmr.js`: Hot Module Reload (HMR) websocket client.
+  * `modules/erm/runtime.js`: Reactivity runtime for template bindings and loops.
+  * `modules/erm/hmr.js`: Hot Module Reload (HMR) websocket client.
   * `app/pages/` & `app/layouts/`: Base files for web apps.
