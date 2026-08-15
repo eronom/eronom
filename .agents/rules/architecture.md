@@ -30,7 +30,7 @@ The main execution pipeline is divided into:
 * **`std/`**: Standard libraries written in Eronom itself.
   * `http.er`: Contains the standard HTTP Router/Server constructs.
   * `io.er`: File and system I/O methods.
-* **`libs/init/`**: Default project template files copied by the `eronom create` command.
-  * `core/runtime.js`: Reactivity runtime for template bindings and loops.
-  * `core/hmr.js`: Hot Module Reload (HMR) websocket client.
+* **`libs/init/`**: Default project template files copied by the `eronom init` command.
+  * `modules/erm/runtime.js`: Reactivity runtime for template bindings and loops.
+  * `modules/erm/hmr.js`: Hot Module Reload (HMR) websocket client.
   * `app/pages/` & `app/layouts/`: Base files for web apps.

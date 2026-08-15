@@ -25,8 +25,8 @@ pub enum BuildMode {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Create a fresh Eronom project
-    Create {
+    /// Initialize a fresh Eronom project
+    Init {
         /// The root directory of the new project
         #[arg(default_value = ".")]
         dir: String,
@@ -154,7 +154,7 @@ fn resolve_port(dir: &str, port_val: Option<u16>, is_build_or_init: bool) -> any
 
 pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
     match cmd {
-        Commands::Create {
+        Commands::Init {
             dir,
             template,
             branch,
@@ -163,7 +163,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             no_commit,
             ermcss,
         } => {
-            create_project(&dir, template, branch, force, git, no_commit, ermcss)?;
+            init_project(&dir, template, branch, force, git, no_commit, ermcss)?;
         }
         Commands::Build { dir, ssr: _, ssg, ppr } => {
             let mode = if ppr {
@@ -324,7 +324,7 @@ fn run_git_clone_with_spinner(
     }
 }
 
-fn create_project(
+fn init_project(
     dir: &str,
     template: Option<String>,
     branch: Option<String>,
@@ -338,8 +338,8 @@ fn create_project(
 
     if dst_dir.exists() && !is_dir_empty(dst_dir) && !force {
         anyhow::bail!(
-            "Cannot create project in a non-empty directory.\n\
-              Run with the `--force` flag to create regardless."
+            "Cannot initialize project in a non-empty directory.\n\
+              Run with the `--force` flag to initialize regardless."
         );
     }
 
@@ -476,9 +476,9 @@ fn create_project(
 
                 let mut git_commit = std::process::Command::new("git");
                 let commit_msg = if let Some(ref t) = template {
-                    format!("chore: create from {}", t)
+                    format!("chore: init from {}", t)
                 } else {
-                    "chore: eronom create".to_string()
+                    "chore: eronom init".to_string()
                 };
                 git_commit.arg("commit").arg("-m").arg(commit_msg)
                     .stdout(std::process::Stdio::null())
@@ -494,9 +494,9 @@ fn create_project(
     let elapsed = start_time.elapsed().as_secs_f64();
 
     if io::stdout().is_terminal() {
-        println!("\x1b[32m✔\x1b[0m Success! Created {} at {} in {:.2}s", dir_name, abs_path.display(), elapsed);
+        println!("\x1b[32m✔\x1b[0m Success! Initialized {} at {} in {:.2}s", dir_name, abs_path.display(), elapsed);
     } else {
-        println!("✔ Success! Created {} at {} in {:.2}s", dir_name, abs_path.display(), elapsed);
+        println!("✔ Success! Initialized {} at {} in {:.2}s", dir_name, abs_path.display(), elapsed);
     }
     Ok(())
 }
