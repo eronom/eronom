@@ -13,3 +13,8 @@ Follow these rules when building, running, or compiling the Eronom project:
    ```
    Or use the compiled/cli command `eronom dev` in the appropriate directory.
 4. **Project Creation**: Use `eronom create <dir>` to initialize a fresh Eronom project (`eronom init` is deprecated and replaced by `create`).
+5. **Rust Modifications & Binary Deployment**: Whenever any Rust (`.rs`) file is changed, always run `cargo build` at the end and copy the compiled `eronom` binary from `target/debug/eronom` to the home directory's `eronom` folder (`~/eronom/` / `/home/vishnus/eronom/`):
+   ```bash
+   cargo build && cp target/debug/eronom ~/eronom/
+   ```
+
