@@ -9,7 +9,7 @@ const taskB = (url) => {
 }
 
 concurrent {
-    on taskA("http://127.0.0.1:8989/")
-    on taskB("http://127.0.0.1:8989/")
+    taskA("http://127.0.0.1:8989/")
+    taskB("http://127.0.0.1:8989/")
 }
 print("Done!")

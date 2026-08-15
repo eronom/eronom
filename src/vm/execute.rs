@@ -2133,4 +2133,46 @@ mod tests {
         
         assert_eq!(vm.get_global("result").unwrap().as_number(), 52.0);
     }
+
+    #[test]
+    fn test_concurrent_structured_syntax() {
+        gc_free_all();
+        let source = "
+            import { Io } from \"std/io\"
+            let counter = 0
+            const taskA = () => {
+                counter = counter + 10
+            }
+            const taskB = () => {
+                counter = counter + 20
+            }
+            concurrent {
+                taskA()
+                taskB()
+            }
+        ";
+        let temp_dir = std::env::temp_dir().join(format!("eronom_conc_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("test.er");
+        std::fs::write(&test_file, source).unwrap();
+
+        let stmts = crate::frontend::parse_and_resolve_imports(&test_file).unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+        vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
+        vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
+        vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
+        vm.register_global("arrayLen", Value::native_function(crate::vm::er_http::native_array_len));
+        vm.register_global("setIoMode", Value::native_function(crate::vm::er_http::native_set_io_mode));
+        vm.register_global("getIoMode", Value::native_function(crate::vm::er_http::native_get_io_mode));
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+        vm.run_event_loop().unwrap();
+
+        assert_eq!(vm.get_global("counter").unwrap().as_number(), 30.0);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

@@ -23,7 +23,7 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
 * **Automated GC**: Custom Garbage Collector managing allocations for VM values (Objects, Arrays, Strings).
 * **Colorless Async & Native Structured Concurrency**:
   * **No Function Color Problem**: Performs asynchronous I/O (`fetch`, timers, socket operations) inside ordinary functions without `async` or `await` modifiers.
-  * **Structured Concurrency Block**: Native `concurrent { on taskA(); on taskB(); }` construct that automatically spawns concurrent tasks and joins them before exiting the scope.
+  * **Structured Concurrency Block**: Native `concurrent { taskA(); taskB(); }` construct that automatically spawns concurrent tasks and joins them before exiting the scope.
 
 ## 📁 Repository Structure
 
