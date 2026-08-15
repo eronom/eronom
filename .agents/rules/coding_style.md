@@ -1,16 +1,24 @@
-# Eronom Coding Style and Constraints
+---
+trigger: always_on
+---
 
-Ensure all code changes adhere to the following constraints:
+# Eronom Coding Style & Runtime Constraints
 
-## 1. Networking and Dependency Rules
-* **No Heavy Async**: Eronom runs a blocking, single-threaded execution model for script handlers. Do not introduce `tokio` or async dependencies like `reqwest` in the Rust core.
-* **HTTP Client**: Use the `ureq` crate (with TLS features) for HTTP requests in the VM native bindings (`src/vm/er_http.rs`).
-* **Web Server**: The high-performance HTTP web server is powered by native C++ `uWebSockets` FFI bindings. Modify `src/vm/er_http.cpp` and `src/vm/er_http.rs` if change to server FFI is required.
+Ensure all code changes adhere strictly to the following architectural constraints:
 
-## 2. Memory Management (Rust Garbage Collector)
-* **GC Allocations**: Eronom utilizes a custom mark-and-sweep garbage collector in `src/vm/gc.rs` for heap-allocated VM `Value`s (such as objects, arrays, and strings).
-* **Pooled Maps**: When constructing new Eronom objects in FFI bindings, use `crate::vm::gc::get_pooled_map(capacity)` to allocate a standard HashMap pool instead of manually instantiating new maps.
+## 1. Single-Threaded Event Loop & Networking Rules
+- **No Tokio/Async Runtimes**: Eronom uses a single-threaded, blocking execution model for script handlers. Do NOT add heavy async dependencies like `tokio` or async HTTP clients like `reqwest` to the core VM runtime.
+- **Outbound HTTP Client**: Use the `ureq` crate (with TLS features enabled) for synchronous HTTP requests inside native VM bindings (`src/vm/er_http.rs`).
+- **High-Performance Inbound Server**: The HTTP web server engine is powered by native C++ `uWebSockets` FFI bindings. Modifications to web server networking must be implemented in `src/vm/er_http.cpp` and `src/vm/er_http.rs`.
 
-## 3. Template Separation
-* **External Assets**: The client-side template runtime (`runtime.js`) and HMR scripts (`hmr.js`) must be kept in the `libs/init/core/` folder. Do not inline them directly into the compiler Rust source.
-* **Reactive Templates**: Template interpolation variables are wrapped in single curly braces `{expr}`. Loops are marked with `{#for ...}` and conditionals with `{#if ...}`.
+## 2. Memory Management & Garbage Collector Rules
+- **Mark-and-Sweep GC**: Dynamic heap values (Objects, Arrays, Strings, Structs, Closures) are managed by the custom Garbage Collector in `src/vm/gc.rs`.
+- **Pooled HashMaps**: When constructing new Eronom objects inside FFI or VM bindings, use `crate::vm::gc::get_pooled_map(capacity)` to fetch a pre-allocated map from the GC pool instead of instantiating `std::collections::HashMap::new()`.
+- **GC Tracing**: Ensure any new heap-allocated VM value type correctly implements GC trace pointers to prevent memory leaks or dangling reference bugs during collection cycles.
+
+## 3. Template Engine & Reactive Components (`.erm`)
+- **External Asset Location**: Client-side reactive JavaScript utilities (`runtime.js`) and HMR scripts (`hmr.js`) must remain in `libs/init/modules/erm/`. Never inline static JS directly into compiler Rust strings.
+- **Template Syntax**:
+  - Interpolation: `{expression}`
+  - Conditionals: `{#if condition} ... {/#if}` or `{#if condition} ... {:else} ... {/#if}`
+  - Loops: `{#for item in list} ... {/#for}`
