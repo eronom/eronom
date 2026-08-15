@@ -19,23 +19,10 @@ export const Io = {
     return getIoMode()
   },
   spawn: (func, args) => {
-    if (getIoMode() == "evented") {
-      const pair = createPromisePair()
-      setTimeout((f, a, resolve) => {
-        const res = callWithArity(f, a)
-        resolve(res)
-      }, 0, func, args, pair.resolve)
-      return pair.promise
-    } else {
-      return callWithArity(func, args)
-    }
+    return spawnTask(func, args)
   },
   wait: (future) => {
-    if (getIoMode() == "evented") {
-      return futureAwait(future)
-    } else {
-      return future
-    }
+    return futureAwait(future)
   }
 }
 

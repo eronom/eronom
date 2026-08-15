@@ -27,8 +27,10 @@ Follow these mandatory rules when building, compiling, running, or deploying the
 ## 4. Mandatory Post-Rust Modification Binary Deployment Rule
 - **Rebuild & Deploy Rule**: Whenever any Rust source file (`.rs`) in `src/` or `libs/` is modified, you MUST perform the following post-change workflow:
   1. Run `cargo build` to compile the debug binary.
-  2. Copy the resulting `eronom` binary from `target/debug/eronom` to the `eronom` folder in the user's home path (`~/eronom/` / `/home/vishnus/eronom/`).
+  2. Copy the resulting `eronom` binary from `target/debug/eronom` to:
+     - The `eronom` folder in the user's home path (`~/eronom/` / `/home/vishnus/eronom/`)
+     - The `example-er/` folder in the workspace root (`example-er/`)
 
 ```bash
-cargo build && cp target/debug/eronom ~/eronom/
+cargo build && cp target/debug/eronom ~/eronom/ && cp target/debug/eronom example-er/
 ```

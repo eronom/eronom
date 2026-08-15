@@ -915,10 +915,7 @@ impl Compiler {
                 };
 
                 let spawn_call = Expr::Call(
-                    Box::new(Expr::Get(
-                        Box::new(Expr::Variable("Io".to_string(), crate::frontend::SourceLocation::default())),
-                        "spawn".to_string(),
-                    )),
+                    Box::new(Expr::Variable("spawnTask".to_string(), crate::frontend::SourceLocation::default())),
                     vec![callee, Expr::Array(args)],
                 );
 
