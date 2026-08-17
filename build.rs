@@ -3,6 +3,9 @@ use std::path::Path;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let is_windows = target_os == "windows";
+
     let mir_dir = Path::new(&manifest_dir).join("ext").join("mir");
 
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir.c").display());
@@ -17,6 +20,8 @@ fn main() {
         .warnings(false)
         .compile("mir");
 
+    let wepoll_dir = Path::new(&manifest_dir).join("ext").join("wepoll");
+
     // Compile uSockets C files
     let u_sockets_dir = Path::new(&manifest_dir).join("ext").join("uWebSockets").join("uSockets");
     let mut u_sockets_build = cc::Build::new();
@@ -29,9 +34,17 @@ fn main() {
         .file(u_sockets_dir.join("src").join("eventing").join("epoll_kqueue.c"))
         .include(u_sockets_dir.join("src"))
         .define("LIBUS_NO_SSL", None)
+        .define("LIBUS_USE_EPOLL", None)
         .warnings(false)
-        .opt_level(3)
-        .compile("usockets");
+        .opt_level(3);
+
+    if is_windows {
+        u_sockets_build
+            .file(wepoll_dir.join("wepoll.c"))
+            .include(&wepoll_dir);
+    }
+
+    u_sockets_build.compile("usockets");
 
     // Compile uWebSockets C++ wrapper
     let u_websockets_dir = Path::new(&manifest_dir).join("ext").join("uWebSockets");
@@ -45,7 +58,23 @@ fn main() {
         .include(u_sockets_dir.join("src"))
         .define("LIBUS_NO_SSL", None)
         .define("UWS_NO_ZLIB", None)
+        .define("LIBUS_USE_EPOLL", None)
         .warnings(false)
-        .opt_level(3)
-        .compile("er_http");
+        .opt_level(3);
+
+    if is_windows {
+        u_websockets_build.include(&wepoll_dir);
+    }
+
+    u_websockets_build.compile("er_http");
+
+    if is_windows {
+        println!("cargo:rustc-link-lib=ws2_32");
+        println!("cargo:rustc-link-lib=userenv");
+        println!("cargo:rustc-link-lib=iphlpapi");
+        println!("cargo:rustc-link-lib=psapi");
+        println!("cargo:rustc-link-lib=shell32");
+        println!("cargo:rustc-link-lib=ole32");
+        println!("cargo:rustc-link-lib=advapi32");
+    }
 }

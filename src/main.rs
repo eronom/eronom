@@ -21,6 +21,7 @@ fn native_print(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+#[cfg(unix)]
 #[repr(C)]
 struct Tm {
     tm_sec: std::ffi::c_int,
@@ -36,11 +37,13 @@ struct Tm {
     tm_zone: *const std::ffi::c_char,
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn time(time: *mut std::ffi::c_long) -> std::ffi::c_long;
     fn localtime_r(timep: *const std::ffi::c_long, result: *mut Tm) -> *mut Tm;
 }
 
+#[cfg(unix)]
 fn get_local_time_string() -> String {
     unsafe {
         let mut t: std::ffi::c_long = 0;
@@ -50,6 +53,40 @@ fn get_local_time_string() -> String {
         let hour = tm_val.tm_hour;
         let min = tm_val.tm_min;
         let sec = tm_val.tm_sec;
+        let am_pm = if hour >= 12 { "PM" } else { "AM" };
+        let display_hour = if hour == 0 {
+            12
+        } else if hour > 12 {
+            hour - 12
+        } else {
+            hour
+        };
+        format!("{:02}:{:02}:{:02} {}", display_hour, min, sec, am_pm)
+    }
+}
+
+#[cfg(windows)]
+fn get_local_time_string() -> String {
+    #[repr(C)]
+    struct SystemTime {
+        w_year: u16,
+        w_month: u16,
+        w_day_of_week: u16,
+        w_day: u16,
+        w_hour: u16,
+        w_minute: u16,
+        w_second: u16,
+        w_milliseconds: u16,
+    }
+    unsafe extern "system" {
+        fn GetLocalTime(lp_system_time: *mut SystemTime);
+    }
+    unsafe {
+        let mut st = std::mem::zeroed::<SystemTime>();
+        GetLocalTime(&mut st);
+        let hour = st.w_hour as i32;
+        let min = st.w_minute;
+        let sec = st.w_second;
         let am_pm = if hour >= 12 { "PM" } else { "AM" };
         let display_hour = if hour == 0 {
             12
