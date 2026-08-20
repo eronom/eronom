@@ -1,3 +1,6 @@
 [submodule "ext/mir"]
 	path = ext/mir
 	url = https://github.com/eronom/mir.git
+[submodule "ext/uWebSockets"]
+	path = ext/uWebSockets
+	url = https://github.com/uNetworking/uWebSockets.git
