@@ -29,9 +29,11 @@ fn main() {
         libuv_build
             .include(libuv_dir.join("include"))
             .include(&libuv_src)
+            .include(&libuv_win)
             .define("_WIN32_WINNT", "0x0A00")
             .define("WIN32_LEAN_AND_MEAN", None)
             .define("_CRT_DECLARE_NONSTDC_NAMES", "0")
+            .define("_CRT_SECURE_NO_WARNINGS", None)
             .warnings(false)
             .opt_level(3)
             // Common files
@@ -41,6 +43,7 @@ fn main() {
             .file(libuv_src.join("random.c"))
             .file(libuv_src.join("strscpy.c"))
             .file(libuv_src.join("strtok.c"))
+            .file(libuv_src.join("thread-common.c"))
             .file(libuv_src.join("threadpool.c"))
             .file(libuv_src.join("timer.c"))
             .file(libuv_src.join("uv-common.c"))
@@ -93,6 +96,8 @@ fn main() {
         u_sockets_build.file(u_sockets_dir.join("src").join("eventing").join("libuv.c"));
         u_sockets_build.include(libuv_dir.join("include"));
         u_sockets_build.define("LIBUS_USE_LIBUV", None);
+        u_sockets_build.define("WIN32_LEAN_AND_MEAN", None);
+        u_sockets_build.define("_CRT_SECURE_NO_WARNINGS", None);
     } else {
         u_sockets_build.file(u_sockets_dir.join("src").join("eventing").join("epoll_kqueue.c"));
     }
@@ -117,6 +122,9 @@ fn main() {
     if is_windows {
         u_websockets_build.define("LIBUS_USE_LIBUV", None);
         u_websockets_build.include(libuv_dir.join("include"));
+        u_websockets_build.define("WIN32_LEAN_AND_MEAN", None);
+        u_websockets_build.define("NOMINMAX", None);
+        u_websockets_build.define("_CRT_SECURE_NO_WARNINGS", None);
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
         println!("cargo:rustc-link-lib=advapi32");
