@@ -240,6 +240,23 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 "${{ env.RELEASE_TAG }}^" 2>/dev/null || git tag --sort=-creatordate | grep -v "${{ env.RELEASE_TAG }}" | head -n 1 || echo "")
+          echo "## Changes in ${{ env.RELEASE_TAG }}" > release_notes.md
+          echo "" >> release_notes.md
+          if [ -n "$PREV_TAG" ]; then
+            echo "Commits since **$PREV_TAG**:" >> release_notes.md
+            echo "" >> release_notes.md
+            git log "${PREV_TAG}..HEAD" --pretty=format:"* %s (%h)" --no-merges >> release_notes.md
+          else
+            git log -n 25 --pretty=format:"* %s (%h)" --no-merges >> release_notes.md
+          fi
+          echo "" >> release_notes.md
+          cat release_notes.md
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -262,6 +279,7 @@ jobs:
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           make_latest: ${{ env.IS_LATEST == 'true' && 'true' || 'false' }}
           generate_release_notes: true
+          body_path: release_notes.md
           files: |
             dist/*.tar.gz
             dist/*.zip
