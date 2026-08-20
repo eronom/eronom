@@ -246,19 +246,12 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Aggregate artifacts and compute SHA256SUMS.txt
+      - name: Aggregate release archives
         run: |
           mkdir -p dist
-          find release-artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.vsix" \) -exec cp {} dist/ \;
-
-          cd dist
-          # Combine all sha256 checksums into one standard SHA256SUMS.txt file
-          find ../release-artifacts -type f -name "*.sha256" -exec cat {} + > SHA256SUMS.txt || true
-          if [ ! -s SHA256SUMS.txt ]; then
-            sha256sum eronom-* > SHA256SUMS.txt 2>/dev/null || true
-          fi
+          find release-artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} dist/ \;
           echo "Release assets ready:"
-          ls -lh
+          ls -lh dist/
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -272,8 +265,6 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*.vsix
-            dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -363,10 +354,10 @@ jobs:
           LINUX_X64_URL="https://github.com/${REPO}/releases/download/${TAG}/eronom-${TAG}-linux-x64.tar.gz"
           LINUX_ARM64_URL="https://github.com/${REPO}/releases/download/${TAG}/eronom-${TAG}-linux-arm64.tar.gz"
 
-          DARWIN_X64_SHA=$(curl -sL "${DARWIN_X64_URL}.sha256" | awk '{print $1}')
-          DARWIN_ARM64_SHA=$(curl -sL "${DARWIN_ARM64_URL}.sha256" | awk '{print $1}')
-          LINUX_X64_SHA=$(curl -sL "${LINUX_X64_URL}.sha256" | awk '{print $1}')
-          LINUX_ARM64_SHA=$(curl -sL "${LINUX_ARM64_URL}.sha256" | awk '{print $1}')
+          DARWIN_X64_SHA=$(curl -sL "${DARWIN_X64_URL}" | sha256sum | awk '{print $1}')
+          DARWIN_ARM64_SHA=$(curl -sL "${DARWIN_ARM64_URL}" | sha256sum | awk '{print $1}')
+          LINUX_X64_SHA=$(curl -sL "${LINUX_X64_URL}" | sha256sum | awk '{print $1}')
+          LINUX_ARM64_SHA=$(curl -sL "${LINUX_ARM64_URL}" | sha256sum | awk '{print $1}')
 
           cat <<EOF > Formula/eronom.rb
           class Eronom < Formula
