@@ -1,4 +1,3 @@
-import { Io } from "std/io"
 
 const taskA = (url) => {
     print("Starting fetch A...")
@@ -15,8 +14,8 @@ const taskB = (url) => {
 print("--- Native Structured Concurrency Demo ---")
 
 concurrent {
-    on taskA("https://jsonplaceholder.typicode.com/todos/1")
-    on taskB("https://jsonplaceholder.typicode.com/todos/2")
+    taskA("https://jsonplaceholder.typicode.com/todos/1")
+    taskB("https://jsonplaceholder.typicode.com/todos/2")
 }
 
 print("All concurrent tasks finished!")

@@ -1635,6 +1635,7 @@ pub fn native_sleep(args: Vec<Value>) -> Value {
 
     promise_val
 }
+
 pub fn native_create_promise_pair(_args: Vec<Value>) -> Value {
     let prom = crate::vm::gc::GcPromise {
         state: std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending)),
@@ -2154,6 +2155,40 @@ pub fn register_eronom_file_api(vm: &mut VM) -> Result<(), String> {
     vm.register_global("stringLength", Value::native_function(native_string_length));
     vm.register_global("stringCharAt", Value::native_function(native_string_char_at));
     vm.register_global("stringIndexOf", Value::native_function(native_string_index_of));
+
+    // 4. Register core structured concurrency runtime
+    let preamble = r#"
+        const callWithArity = (func, args) => {
+            const length = arrayLen(args)
+            if (length == 0) { return func() }
+            if (length == 1) { return func(args[0]) }
+            if (length == 2) { return func(args[0], args[1]) }
+            if (length == 3) { return func(args[0], args[1], args[2]) }
+            if (length == 4) { return func(args[0], args[1], args[2], args[3]) }
+            if (length == 5) { return func(args[0], args[1], args[2], args[3], args[4]) }
+            return func()
+        }
+
+        const spawnTask = (func, args) => {
+            const pair = createPromisePair()
+            setTimeout((f, a, resolve) => {
+                const res = callWithArity(f, a)
+                resolve(res)
+            }, 0, func, args, pair.resolve)
+            return pair.promise
+        }
+
+        const spawn = spawnTask
+    "#;
+
+    let tokens = crate::frontend::lex(preamble);
+    let mut parser = crate::frontend::Parser::new(tokens);
+    if let Ok(stmts) = parser.parse() {
+        let compiler = crate::vm::compiler::Compiler::new();
+        if let Ok(func) = compiler.compile(&stmts) {
+            let _ = vm.run(func);
+        }
+    }
 
     Ok(())
 }

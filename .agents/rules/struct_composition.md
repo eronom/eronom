@@ -1,42 +1,56 @@
-# Eronom Struct Composition and Embedding Rules
+---
+trigger: always_on
+---
 
-When working with structures (structs) in the Eronom scripting language, follow these language design rules:
+# Eronom Struct Composition and Embedding Specification
 
-## 1. Composition (Explicit Composition)
-Use standard composition when a struct has a "Has-A" relationship with another struct and the child struct needs a named sub-object.
-* **Syntax**: Define standard fields with types matching the other struct.
-* **Initialization**: Must use nested curly braces.
-* **Access**: Access via full path traversal (e.g., `p.pos.x` or `p.pos.printPos()`).
-* **Memory**: Allocates multiple heap objects (separate allocation for the inner struct).
+When declaring or working with data structures (`struct`) in Eronom script, follow these language design rules:
+
+## 1. Explicit Struct Composition ("Has-A" Relationship)
+Use explicit composition when a struct contains a sub-object as a distinct named field.
+- **Syntax**: Declare named fields using other struct types.
+- **Initialization**: Requires nested object literals.
+- **Field & Method Access**: Accessed via full field path traversal (e.g., `player.pos.x` or `player.pos.printPos()`).
+- **Heap Layout**: Allocates separate heap objects for the outer struct and inner struct.
 
 ```rust
 struct Position {
     x: int,
     y: int,
 }
+
 struct Player {
     pos: Position, // Explicit composition
     name: string,
 }
-// Nested initialization required:
-let p = Player { pos: { x: 10, y: 20 }, name: "player1" }
+
+// Requires nested initialization:
+let player = Player { pos: { x: 10, y: 20 }, name: "Hero" }
 ```
 
-## 2. Embedding (Flattened Composition)
-Use embedding when you want fields and methods from a parent struct to be directly merged (promoted) into the child struct without nested fields.
-* **Syntax**: Use the `embed` keyword in the struct definition: `struct Child embed Parent { ... }`.
-* **Initialization**: Must use flat initialization. Embedded fields are listed alongside local child fields.
-* **Access**: Accessible directly on the instance (e.g., `p.parentField`).
-* **Shadowed Methods**: If a method is shadowed by the child struct, the parent method can be invoked using the `super` keyword (e.g., `super.print()`).
-* **Memory**: Flattened heap object layout (single allocation containing both parent and child fields for CPU cache locality and zero pointer indirection).
+---
+
+## 2. Flattened Struct Embedding (`embed` Keyword)
+Use struct embedding when fields and methods of a parent struct should be directly promoted into the child struct without nested field access.
+- **Syntax**: Use the `embed` keyword in the struct definition: `struct Child embed Parent { ... }`.
+- **Initialization**: Uses flat initialization syntax. Parent fields are supplied alongside child fields at top-level.
+- **Field & Method Access**: Fields and methods of the embedded parent are directly accessible on the child instance (e.g., `player.x` instead of `player.pos.x`).
+- **Method Shadowing**: If the child struct defines a method with the same name as the parent, the parent method can be invoked via the `super` keyword (e.g., `super.print()`).
+- **Heap Layout**: Single, flattened memory allocation containing both parent and child fields, maximizing CPU cache locality and eliminating pointer indirection.
 
 ```rust
-struct AnoStr {
-    nameAno: string,
+struct Transform {
+    x: int,
+    y: int,
 }
-struct Player embed AnoStr {
+
+struct Player embed Transform {
     name: string,
 }
-// Flat initialization required:
-let p = Player { nameAno: "promoted", name: "player1" }
+
+// Uses flat initialization:
+let player = Player { x: 100, y: 200, name: "Hero" }
+
+// Direct access to embedded fields:
+print(player.x) // 100
 ```

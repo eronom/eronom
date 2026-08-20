@@ -1,10 +1,14 @@
-## graphify
+---
+trigger: always_on
+---
 
-This project has a graphify knowledge graph at graphify-out/.
+# Graphify Knowledge Graph Integration Guidelines
 
-Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- If the graphify MCP server is active, utilize tools like `query_graph`, `get_node`, and `shortest_path` for precise architecture navigation instead of falling back to `grep`
-- If the MCP server is not active, the CLI equivalents are `graphify query "<question>"`, `graphify path "<A>" "<B>"`, and `graphify explain "<concept>"` — prefer these over grep for cross-module questions
-- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
+This project utilizes a graphify knowledge graph stored at `graphify-out/`.
+
+## Navigation & Query Rules
+1. **Architecture Discovery**: Read `graphify-out/GRAPH_REPORT.md` to understand central nodes and community structure before answering complex architectural questions.
+2. **Wiki Traversal**: If `graphify-out/wiki/index.md` exists, navigate it instead of inspecting raw source files directly.
+3. **MCP Tools**: If the graphify MCP server is active, use tools like `query_graph`, `get_node`, and `shortest_path` for navigation.
+4. **CLI Tools**: If the MCP server is inactive, use `graphify query "<question>"`, `graphify path "<A>" "<B>"`, and `graphify explain "<concept>"` to trace cross-module relationships.
+5. **Graph Maintenance**: After modifying source files in a session, run `graphify update .` to update the AST graph.

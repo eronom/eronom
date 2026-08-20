@@ -434,6 +434,29 @@ impl VM {
     }
 
     pub fn call_function_reentrant(&mut self, callee: Value, args: Vec<Value>) -> Result<Value, String> {
+        if callee.is_method_resolve() {
+            let promise_ptr = callee.as_gc_ptr();
+            let arg = args.first().copied().unwrap_or(Value::null());
+            let queue = self.event_loop_queue.clone();
+            let condvar = self.event_loop_condvar.clone();
+            let mut q = queue.lock().unwrap();
+            q.push(crate::vm::execute::EventLoopTask {
+                callback: Value::null(),
+                args: Vec::new(),
+                result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, arg),
+            });
+            condvar.notify_one();
+            return Ok(Value::null());
+        }
+
+        if !callee.is_function() {
+            if callee.is_native_function() {
+                let func = callee.as_native_fn();
+                return Ok(func(args));
+            }
+            return Err("Callee is not a function".to_string());
+        }
+
         let func_ptr = callee.as_gc_ptr();
         
         let old_frames = std::mem::take(&mut self.frames);
@@ -2132,5 +2155,43 @@ mod tests {
         vm.run_event_loop().unwrap();
         
         assert_eq!(vm.get_global("result").unwrap().as_number(), 52.0);
+    }
+
+    #[test]
+    fn test_concurrent_structured_syntax() {
+        gc_free_all();
+        let source = "
+            let counter = 0
+            const taskA = () => {
+                counter = counter + 10
+            }
+            const taskB = () => {
+                counter = counter + 20
+            }
+            concurrent {
+                taskA()
+                taskB()
+            }
+        ";
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+        vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
+        vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
+        vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
+        vm.register_global("arrayLen", Value::native_function(crate::vm::er_http::native_array_len));
+        vm.register_global("setIoMode", Value::native_function(crate::vm::er_http::native_set_io_mode));
+        vm.register_global("getIoMode", Value::native_function(crate::vm::er_http::native_get_io_mode));
+        crate::vm::er_http::register_eronom_file_api(&mut vm).unwrap();
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+        vm.run_event_loop().unwrap();
+
+        assert_eq!(vm.get_global("counter").unwrap().as_number(), 30.0);
     }
 }

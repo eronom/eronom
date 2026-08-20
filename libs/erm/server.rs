@@ -200,21 +200,39 @@ struct Tm {
     tm_wday: std::ffi::c_int,
     tm_yday: std::ffi::c_int,
     tm_isdst: std::ffi::c_int,
+    #[cfg(unix)]
     tm_gmtoff: std::ffi::c_long,
+    #[cfg(unix)]
     tm_zone: *const std::ffi::c_char,
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn time(time: *mut std::ffi::c_long) -> std::ffi::c_long;
     fn localtime_r(timep: *const std::ffi::c_long, result: *mut Tm) -> *mut Tm;
 }
 
+#[cfg(windows)]
+unsafe extern "C" {
+    fn _time64(time: *mut i64) -> i64;
+    fn _localtime64_s(result: *mut Tm, timep: *const i64) -> std::ffi::c_int;
+}
+
 fn get_local_time_string() -> String {
     unsafe {
-        let mut t: std::ffi::c_long = 0;
-        time(&mut t);
         let mut tm_val = std::mem::zeroed::<Tm>();
-        localtime_r(&t, &mut tm_val);
+        #[cfg(unix)]
+        {
+            let mut t: std::ffi::c_long = 0;
+            time(&mut t);
+            localtime_r(&t, &mut tm_val);
+        }
+        #[cfg(windows)]
+        {
+            let mut t: i64 = 0;
+            _time64(&mut t);
+            _localtime64_s(&mut tm_val, &t);
+        }
         let hour = tm_val.tm_hour;
         let min = tm_val.tm_min;
         let sec = tm_val.tm_sec;

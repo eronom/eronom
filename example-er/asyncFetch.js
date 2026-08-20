@@ -9,7 +9,7 @@ const taskB = async (url) => {
     await fetch(url);
     console.log("Completed fetch B!");
 };
-// Equivalent to Eronom's `concurrent { on taskA(...) on taskB(...) }`
+// Equivalent to Eronom's `concurrent { taskA(...) taskB(...) }`
 await Promise.all([
     taskA("https://jsonplaceholder.typicode.com/todos/1"),
     taskB("https://jsonplaceholder.typicode.com/todos/2")

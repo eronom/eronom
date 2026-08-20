@@ -101,7 +101,19 @@ impl Compiler {
         self.next_reg = self.locals.len();
         match stmt {
             Stmt::Expr(expr) => {
-                self.compile_expr(expr, self.next_reg)?;
+                if self.concurrent_scopes.last().is_some() {
+                    match expr {
+                        Expr::Call(_, _) => {
+                            let spawn_expr = Expr::Spawn(Box::new(expr.clone()));
+                            self.compile_expr(&spawn_expr, self.next_reg)?;
+                        }
+                        _ => {
+                            self.compile_expr(expr, self.next_reg)?;
+                        }
+                    }
+                } else {
+                    self.compile_expr(expr, self.next_reg)?;
+                }
             }
             Stmt::Print(expr) => {
                 let callee_reg = self.next_reg;
@@ -903,10 +915,7 @@ impl Compiler {
                 };
 
                 let spawn_call = Expr::Call(
-                    Box::new(Expr::Get(
-                        Box::new(Expr::Variable("Io".to_string(), crate::frontend::SourceLocation::default())),
-                        "spawn".to_string(),
-                    )),
+                    Box::new(Expr::Variable("spawnTask".to_string(), crate::frontend::SourceLocation::default())),
                     vec![callee, Expr::Array(args)],
                 );
 
