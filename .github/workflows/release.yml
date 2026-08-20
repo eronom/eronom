@@ -70,35 +70,30 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive-suffix: linux-x64
             binary-name: eronom
-            use-cross: false
 
           # Linux aarch64 (ARM64)
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive-suffix: linux-arm64
             binary-name: eronom
-            use-cross: false
 
           # macOS Intel (x86_64)
           - os: macos-13
             target: x86_64-apple-darwin
             archive-suffix: darwin-x64
             binary-name: eronom
-            use-cross: false
 
           # macOS Apple Silicon (arm64)
           - os: macos-14
             target: aarch64-apple-darwin
             archive-suffix: darwin-arm64
             binary-name: eronom
-            use-cross: false
 
           # Windows x86_64 (MSVC)
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive-suffix: windows-x64
             binary-name: eronom.exe
-            use-cross: false
 
     steps:
       - name: Checkout repository with submodules
@@ -208,20 +203,31 @@ jobs:
           path: eronom-extension-*.vsix
           if-no-files-found: error
 
-      # Optional: Publish to VS Code Marketplace & Open VSX if tokens are provided
+      # Optional: Publish to VS Code Marketplace if token is provided
       - name: Publish to VS Code Marketplace
-        if: ${{ env.IS_PRERELEASE == 'false' && secrets.VSCE_PAT != '' }}
+        if: ${{ env.IS_PRERELEASE == 'false' }}
         working-directory: eronom-extension
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx @vscode/vsce publish -p "$VSCE_PAT"
+        run: |
+          if [ -n "$VSCE_PAT" ]; then
+            npx @vscode/vsce publish -p "$VSCE_PAT"
+          else
+            echo "VSCE_PAT secret not provided, skipping Marketplace publish."
+          fi
 
+      # Optional: Publish to Open VSX if token is provided
       - name: Publish to Open VSX Registry
-        if: ${{ env.IS_PRERELEASE == 'false' && secrets.OVSX_PAT != '' }}
+        if: ${{ env.IS_PRERELEASE == 'false' }}
         working-directory: eronom-extension
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: npx ovsx publish -p "$OVSX_PAT"
+        run: |
+          if [ -n "$OVSX_PAT" ]; then
+            npx ovsx publish -p "$OVSX_PAT"
+          else
+            echo "OVSX_PAT secret not provided, skipping Open VSX publish."
+          fi
 
   # =========================================================================
   # 3. CREATE GITHUB RELEASE & ATTACH ASSETS
@@ -278,7 +284,7 @@ jobs:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
     needs: github-release
-    if: ${{ github.event.inputs.use-docker == 'true' || (github.event_name == 'release' && secrets.DOCKER_USERNAME != '') }}
+    if: ${{ github.event.inputs.use-docker == 'true' || github.event_name == 'release' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -292,11 +298,15 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        if: ${{ secrets.DOCKER_USERNAME != '' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
+            echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          else
+            echo "Docker Hub credentials not provided, skipping Docker Hub login."
+          fi
 
       - name: Login to GitHub Container Registry (ghcr.io)
         uses: docker/login-action@v3
@@ -310,7 +320,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ secrets.DOCKER_USERNAME != '' && format('{0}/eronom', secrets.DOCKER_USERNAME) || '' }}
             ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable=${{ env.IS_LATEST == 'true' }}
@@ -334,7 +343,7 @@ jobs:
     name: Update Homebrew Tap
     runs-on: ubuntu-latest
     needs: github-release
-    if: ${{ github.event.inputs.use-homebrew == 'true' || (github.event_name == 'release' && secrets.HOMEBREW_TAP_TOKEN != '') }}
+    if: ${{ github.event.inputs.use-homebrew == 'true' || github.event_name == 'release' }}
     steps:
       - name: Checkout Homebrew Tap
         uses: actions/checkout@v4
@@ -398,6 +407,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p Formula
           git add Formula/eronom.rb
           git diff --quiet && exit 0 || git commit -m "chore(formula): bump eronom to ${TAG}"
           git push origin main
