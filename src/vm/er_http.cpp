@@ -62,36 +62,37 @@ extern "C" void er_ws_register_route(const char* path) {
     
     std::string path_str(path);
     
-    g_app->ws<PerSocketData>(path_str, {
-        .compression = uWS::CompressOptions(uWS::SHARED_COMPRESSOR),
-        .maxPayloadLength = 16 * 1024 * 1024,
-        .idleTimeout = 120,
-        .maxBackpressure = 16 * 1024 * 1024,
-        .closeOnBackpressureLimit = false,
-        .resetIdleTimeoutOnSend = false,
-        .sendPingsAutomatically = true,
-        .open = [path_str](auto* ws) {
-            if (g_ws_open_cb) {
-                g_ws_open_cb(ws, path_str.data(), path_str.length());
-            } else {
-                er_ws_on_open(ws, path_str.data(), path_str.length());
-            }
-        },
-        .message = [path_str](auto* ws, std::string_view message, uWS::OpCode opCode) {
-            if (g_ws_message_cb) {
-                g_ws_message_cb(ws, path_str.data(), path_str.length(), message.data(), message.length());
-            } else {
-                er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length());
-            }
-        },
-        .close = [path_str](auto* ws, int code, std::string_view message) {
-            if (g_ws_close_cb) {
-                g_ws_close_cb(ws, path_str.data(), path_str.length(), code, message.data(), message.length());
-            } else {
-                er_ws_on_close(ws, path_str.data(), path_str.length(), code, message.data(), message.length());
-            }
+    uWS::App::WebSocketBehavior<PerSocketData> ws_behavior;
+    ws_behavior.compression = uWS::CompressOptions(uWS::SHARED_COMPRESSOR);
+    ws_behavior.maxPayloadLength = 16 * 1024 * 1024;
+    ws_behavior.idleTimeout = 120;
+    ws_behavior.maxBackpressure = 16 * 1024 * 1024;
+    ws_behavior.closeOnBackpressureLimit = false;
+    ws_behavior.resetIdleTimeoutOnSend = false;
+    ws_behavior.sendPingsAutomatically = true;
+    ws_behavior.open = [path_str](auto* ws) {
+        if (g_ws_open_cb) {
+            g_ws_open_cb(ws, path_str.data(), path_str.length());
+        } else {
+            er_ws_on_open(ws, path_str.data(), path_str.length());
         }
-    });
+    };
+    ws_behavior.message = [path_str](auto* ws, std::string_view message, uWS::OpCode opCode) {
+        if (g_ws_message_cb) {
+            g_ws_message_cb(ws, path_str.data(), path_str.length(), message.data(), message.length());
+        } else {
+            er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length());
+        }
+    };
+    ws_behavior.close = [path_str](auto* ws, int code, std::string_view message) {
+        if (g_ws_close_cb) {
+            g_ws_close_cb(ws, path_str.data(), path_str.length(), code, message.data(), message.length());
+        } else {
+            er_ws_on_close(ws, path_str.data(), path_str.length(), code, message.data(), message.length());
+        }
+    };
+
+    g_app->ws<PerSocketData>(path_str, std::move(ws_behavior));
 }
 
 extern "C" void er_ws_send(void* ws, const char* message, size_t message_len) {
