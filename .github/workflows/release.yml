@@ -78,7 +78,7 @@ jobs:
             binary-name: eronom
 
           # macOS Intel (x86_64)
-          - os: macos-13
+          - os: macos-14
             target: x86_64-apple-darwin
             archive-suffix: darwin-x64
             binary-name: eronom
