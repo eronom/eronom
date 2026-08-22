@@ -1,5 +1,5 @@
 use super::token::{Token, TokenType};
-use super::ast::{Expr, LiteralValue, Stmt, SourceLocation};
+use super::ast::{Expr, LiteralValue, Stmt, SourceLocation, SwitchCase};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -80,6 +80,7 @@ impl Parser {
             || self.peek().ty == TokenType::Spawn
             || self.peek().ty == TokenType::On
             || self.peek().ty == TokenType::Concurrent
+            || self.peek().ty == TokenType::Underscore
     }
 
     fn match_token(&mut self, types: &[TokenType]) -> bool {
@@ -108,6 +109,7 @@ impl Parser {
                 TokenType::Spawn => return Ok("spawn".to_string()),
                 TokenType::On => return Ok("on".to_string()),
                 TokenType::Concurrent => return Ok("concurrent".to_string()),
+                TokenType::Underscore => return Ok("_".to_string()),
                 _ => {}
             }
         }
@@ -385,17 +387,159 @@ impl Parser {
                 None
             };
             Ok(Stmt::If(condition, then_branch, else_branch))
+        } else if self.match_token(&[TokenType::While]) {
+            let has_paren = self.match_token(&[TokenType::LeftParen]);
+            let condition = self.expression()?;
+            if has_paren {
+                self.consume(TokenType::RightParen, "Expected ')' after while condition.")?;
+            }
+            let body = Box::new(self.statement()?);
+            Ok(Stmt::While(condition, body))
+        } else if self.match_token(&[TokenType::Break]) {
+            Ok(Stmt::Break)
+        } else if self.match_token(&[TokenType::Continue]) {
+            Ok(Stmt::Continue)
+        } else if self.match_token(&[TokenType::Throw]) {
+            let value = self.expression()?;
+            Ok(Stmt::Throw(value))
+        } else if self.match_token(&[TokenType::Try]) {
+            let try_body = Box::new(self.statement()?);
+            let mut catch_clause = None;
+            if self.match_token(&[TokenType::Catch]) {
+                let mut err_name = "err".to_string();
+                if self.match_token(&[TokenType::LeftParen]) {
+                    err_name = self.consume_ident("Expected variable name for catch parameter.")?;
+                    self.consume(TokenType::RightParen, "Expected ')' after catch parameter.")?;
+                }
+                self.push_scope();
+                self.declare_variable(err_name.clone());
+                let catch_body = Box::new(self.statement()?);
+                self.pop_scope();
+                catch_clause = Some((err_name, catch_body));
+            }
+            let mut finally_body = None;
+            if self.match_token(&[TokenType::Finally]) {
+                finally_body = Some(Box::new(self.statement()?));
+            }
+            if catch_clause.is_none() && finally_body.is_none() {
+                return Err("Expected 'catch' or 'finally' after 'try' block.".to_string());
+            }
+            Ok(Stmt::Try(try_body, catch_clause, finally_body))
+        } else if self.match_token(&[TokenType::Switch]) {
+            let has_paren = self.match_token(&[TokenType::LeftParen]);
+            let target = self.expression()?;
+            if has_paren {
+                self.consume(TokenType::RightParen, "Expected ')' after switch target expression.")?;
+            }
+            self.consume(TokenType::LeftBrace, "Expected '{' after switch expression.")?;
+            let mut cases = Vec::new();
+            let mut default_body = None;
+            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                if self.match_token(&[TokenType::Case]) {
+                    let mut values = Vec::new();
+                    loop {
+                        values.push(self.expression()?);
+                        if !self.match_token(&[TokenType::Comma]) {
+                            break;
+                        }
+                    }
+                    self.consume(TokenType::Colon, "Expected ':' after case value(s).")?;
+                    let mut case_stmts = Vec::new();
+                    if self.check(&TokenType::LeftBrace) {
+                        case_stmts.push(self.statement()?);
+                    } else {
+                        while !self.check(&TokenType::Case) && !self.check(&TokenType::Default) && !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                            case_stmts.push(self.declaration()?);
+                        }
+                    }
+                    let body = if case_stmts.len() == 1 {
+                        Box::new(case_stmts.pop().unwrap())
+                    } else {
+                        Box::new(Stmt::Block(case_stmts))
+                    };
+                    cases.push(SwitchCase { values, body });
+                } else if self.match_token(&[TokenType::Default]) {
+                    self.consume(TokenType::Colon, "Expected ':' after default.")?;
+                    let mut default_stmts = Vec::new();
+                    if self.check(&TokenType::LeftBrace) {
+                        default_stmts.push(self.statement()?);
+                    } else {
+                        while !self.check(&TokenType::Case) && !self.check(&TokenType::Default) && !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                            default_stmts.push(self.declaration()?);
+                        }
+                    }
+                    let body = if default_stmts.len() == 1 {
+                        Box::new(default_stmts.pop().unwrap())
+                    } else {
+                        Box::new(Stmt::Block(default_stmts))
+                    };
+                    default_body = Some(body);
+                } else {
+                    return Err(format!("Error at line {}: Expected 'case' or 'default' in switch body.", self.peek().line));
+                }
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after switch body.")?;
+            Ok(Stmt::Switch(target, cases, default_body))
+        } else if self.match_token(&[TokenType::Match]) {
+            let has_paren = self.match_token(&[TokenType::LeftParen]);
+            let target = self.expression()?;
+            if has_paren {
+                self.consume(TokenType::RightParen, "Expected ')' after match target expression.")?;
+            }
+            self.consume(TokenType::LeftBrace, "Expected '{' after match expression.")?;
+            let mut cases = Vec::new();
+            let mut default_body = None;
+            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                if self.match_token(&[TokenType::Underscore]) || self.match_token(&[TokenType::Default]) {
+                    if !self.match_token(&[TokenType::Arrow, TokenType::Colon]) {
+                        return Err(format!("Error at line {}: Expected '=>' after wildcard pattern.", self.peek().line));
+                    }
+                    let body = Box::new(self.statement()?);
+                    self.match_token(&[TokenType::Comma]);
+                    default_body = Some(body);
+                } else {
+                    let mut values = Vec::new();
+                    loop {
+                        values.push(self.expression()?);
+                        if !self.match_token(&[TokenType::Comma]) {
+                            break;
+                        }
+                    }
+                    if !self.match_token(&[TokenType::Arrow, TokenType::Colon]) {
+                        return Err(format!("Error at line {}: Expected '=>' after match pattern.", self.peek().line));
+                    }
+                    let body = Box::new(self.statement()?);
+                    self.match_token(&[TokenType::Comma]);
+                    cases.push(SwitchCase { values, body });
+                }
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after match body.")?;
+            Ok(Stmt::Switch(target, cases, default_body))
         } else if self.match_token(&[TokenType::For]) {
+            let has_paren = self.match_token(&[TokenType::LeftParen]);
             let var_name = self.consume_ident("Expected loop variable name.")?;
             self.consume(TokenType::In, "Expected 'in' after variable name.")?;
-            let start = self.expression()?;
-            self.consume(TokenType::DotDot, "Expected '..' in for loop range.")?;
-            let end = self.expression()?;
-            self.push_scope();
-            self.declare_variable(var_name.clone());
-            let body = Box::new(self.statement()?);
-            self.pop_scope();
-            Ok(Stmt::For(var_name, start, end, body))
+            let first_expr = self.expression()?;
+            if self.match_token(&[TokenType::DotDot]) {
+                let end = self.expression()?;
+                if has_paren {
+                    self.consume(TokenType::RightParen, "Expected ')' after for loop range.")?;
+                }
+                self.push_scope();
+                self.declare_variable(var_name.clone());
+                let body = Box::new(self.statement()?);
+                self.pop_scope();
+                Ok(Stmt::For(var_name, first_expr, end, body))
+            } else {
+                if has_paren {
+                    self.consume(TokenType::RightParen, "Expected ')' after for loop expression.")?;
+                }
+                self.push_scope();
+                self.declare_variable(var_name.clone());
+                let body = Box::new(self.statement()?);
+                self.pop_scope();
+                Ok(Stmt::ForIn(var_name, first_expr, body))
+            }
         } else if self.match_token(&[TokenType::Return]) {
             let value = if !self.check(&TokenType::RightBrace) && !self.is_at_end() {
                 // simple check
@@ -425,17 +569,73 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, String> {
-        let expr = self.or()?;
-        if self.match_token(&[TokenType::Equal]) {
+        let expr = self.ternary()?;
+        if self.match_token(&[
+            TokenType::Equal,
+            TokenType::PlusEqual,
+            TokenType::MinusEqual,
+            TokenType::StarEqual,
+            TokenType::SlashEqual,
+            TokenType::PercentEqual,
+        ]) {
+            let op_tok = self.previous().ty.clone();
             let value = self.assignment()?;
-            if let Expr::Variable(name, loc) = expr {
-                return Ok(Expr::Assign(name, Box::new(value), loc));
-            } else if let Expr::Get(obj, name) = expr {
-                return Ok(Expr::Set(obj, name, Box::new(value)));
-            } else if let Expr::GetIndex(obj, index) = expr {
-                return Ok(Expr::SetIndex(obj, index, Box::new(value)));
+
+            let binary_op = match op_tok {
+                TokenType::Equal => None,
+                TokenType::PlusEqual => Some(TokenType::Plus),
+                TokenType::MinusEqual => Some(TokenType::Minus),
+                TokenType::StarEqual => Some(TokenType::Star),
+                TokenType::SlashEqual => Some(TokenType::Slash),
+                TokenType::PercentEqual => Some(TokenType::Percent),
+                _ => None,
+            };
+
+            if let Some(bin_op) = binary_op {
+                if let Expr::Variable(ref name, ref loc) = expr {
+                    let bin_expr = Expr::Binary(
+                        Box::new(Expr::Variable(name.clone(), loc.clone())),
+                        bin_op,
+                        Box::new(value),
+                    );
+                    return Ok(Expr::Assign(name.clone(), Box::new(bin_expr), loc.clone()));
+                } else if let Expr::Get(ref obj, ref name) = expr {
+                    let bin_expr = Expr::Binary(
+                        Box::new(Expr::Get(obj.clone(), name.clone())),
+                        bin_op,
+                        Box::new(value),
+                    );
+                    return Ok(Expr::Set(obj.clone(), name.clone(), Box::new(bin_expr)));
+                } else if let Expr::GetIndex(ref obj, ref index) = expr {
+                    let bin_expr = Expr::Binary(
+                        Box::new(Expr::GetIndex(obj.clone(), index.clone())),
+                        bin_op,
+                        Box::new(value),
+                    );
+                    return Ok(Expr::SetIndex(obj.clone(), index.clone(), Box::new(bin_expr)));
+                }
+                return Err("Invalid assignment target.".to_string());
+            } else {
+                if let Expr::Variable(name, loc) = expr {
+                    return Ok(Expr::Assign(name, Box::new(value), loc));
+                } else if let Expr::Get(obj, name) = expr {
+                    return Ok(Expr::Set(obj, name, Box::new(value)));
+                } else if let Expr::GetIndex(obj, index) = expr {
+                    return Ok(Expr::SetIndex(obj, index, Box::new(value)));
+                }
+                return Err("Invalid assignment target.".to_string());
             }
-            return Err("Invalid assignment target.".to_string());
+        }
+        Ok(expr)
+    }
+
+    fn ternary(&mut self) -> Result<Expr, String> {
+        let mut expr = self.or()?;
+        if self.match_token(&[TokenType::Question]) {
+            let then_branch = self.expression()?;
+            self.consume(TokenType::Colon, "Expected ':' after then expression in ternary operator.")?;
+            let else_branch = self.ternary()?;
+            expr = Expr::Ternary(Box::new(expr), Box::new(then_branch), Box::new(else_branch));
         }
         Ok(expr)
     }
@@ -451,11 +651,41 @@ impl Parser {
     }
 
     fn and(&mut self) -> Result<Expr, String> {
-        let mut expr = self.equality()?;
+        let mut expr = self.bitwise_or()?;
         while self.match_token(&[TokenType::And]) {
             let operator = self.previous().ty.clone();
-            let right = self.equality()?;
+            let right = self.bitwise_or()?;
             expr = Expr::Logical(Box::new(expr), operator, Box::new(right));
+        }
+        Ok(expr)
+    }
+
+    fn bitwise_or(&mut self) -> Result<Expr, String> {
+        let mut expr = self.bitwise_xor()?;
+        while self.match_token(&[TokenType::Pipe]) {
+            let operator = self.previous().ty.clone();
+            let right = self.bitwise_xor()?;
+            expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
+        }
+        Ok(expr)
+    }
+
+    fn bitwise_xor(&mut self) -> Result<Expr, String> {
+        let mut expr = self.bitwise_and()?;
+        while self.match_token(&[TokenType::Caret]) {
+            let operator = self.previous().ty.clone();
+            let right = self.bitwise_and()?;
+            expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
+        }
+        Ok(expr)
+    }
+
+    fn bitwise_and(&mut self) -> Result<Expr, String> {
+        let mut expr = self.equality()?;
+        while self.match_token(&[TokenType::Ampersand]) {
+            let operator = self.previous().ty.clone();
+            let right = self.equality()?;
+            expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
         }
         Ok(expr)
     }
@@ -471,13 +701,23 @@ impl Parser {
     }
 
     fn comparison(&mut self) -> Result<Expr, String> {
-        let mut expr = self.term()?;
+        let mut expr = self.shift()?;
         while self.match_token(&[
             TokenType::Greater,
             TokenType::GreaterEqual,
             TokenType::Less,
             TokenType::LessEqual,
         ]) {
+            let operator = self.previous().ty.clone();
+            let right = self.shift()?;
+            expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
+        }
+        Ok(expr)
+    }
+
+    fn shift(&mut self) -> Result<Expr, String> {
+        let mut expr = self.term()?;
+        while self.match_token(&[TokenType::LessLess, TokenType::GreaterGreater]) {
             let operator = self.previous().ty.clone();
             let right = self.term()?;
             expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
@@ -496,25 +736,35 @@ impl Parser {
     }
 
     fn factor(&mut self) -> Result<Expr, String> {
-        let mut expr = self.call()?;
-        while self.match_token(&[TokenType::Slash, TokenType::Star]) {
+        let mut expr = self.unary()?;
+        while self.match_token(&[TokenType::Slash, TokenType::Star, TokenType::Percent]) {
             let operator = self.previous().ty.clone();
-            let right = self.call()?;
+            let right = self.unary()?;
             expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
         }
         Ok(expr)
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
+        if self.match_token(&[TokenType::Bang, TokenType::Minus, TokenType::Tilde, TokenType::Typeof]) {
+            let operator = self.previous().ty.clone();
+            let expr = self.unary()?;
+            return Ok(Expr::Unary(operator, Box::new(expr)));
+        }
+        if self.match_token(&[TokenType::PlusPlus, TokenType::MinusMinus]) {
+            let operator = self.previous().ty.clone();
+            let expr = self.unary()?;
+            return Ok(Expr::Prefix(operator, Box::new(expr)));
+        }
         if self.match_token(&[TokenType::Spawn, TokenType::On]) {
             let expr = self.call()?;
             return Ok(Expr::Spawn(Box::new(expr)));
         }
-        self.primary()
+        self.call()
     }
 
     fn call(&mut self) -> Result<Expr, String> {
-        let mut expr = self.unary()?;
+        let mut expr = self.primary()?;
         loop {
             if self.match_token(&[TokenType::LeftParen]) {
                 let mut arguments = Vec::new();
@@ -545,6 +795,9 @@ impl Parser {
                 let index = self.expression()?;
                 self.consume(TokenType::RightBracket, "Expected ']' after index.")?;
                 expr = Expr::GetIndex(Box::new(expr), Box::new(index));
+            } else if self.match_token(&[TokenType::PlusPlus, TokenType::MinusMinus]) {
+                let operator = self.previous().ty.clone();
+                expr = Expr::Postfix(operator, Box::new(expr));
             } else {
                 break;
             }

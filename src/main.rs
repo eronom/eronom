@@ -312,6 +312,48 @@ fn has_http_import_in_stmt(stmt: &Stmt) -> bool {
                 }
             }
         }
+        Stmt::While(_, body) => {
+            if has_http_import_in_stmt(body) {
+                return true;
+            }
+        }
+        Stmt::For(_, _, _, body) => {
+            if has_http_import_in_stmt(body) {
+                return true;
+            }
+        }
+        Stmt::ForIn(_, _, body) => {
+            if has_http_import_in_stmt(body) {
+                return true;
+            }
+        }
+        Stmt::Try(try_body, catch_clause, finally_body) => {
+            if has_http_import_in_stmt(try_body) {
+                return true;
+            }
+            if let Some((_, catch_b)) = catch_clause {
+                if has_http_import_in_stmt(catch_b) {
+                    return true;
+                }
+            }
+            if let Some(finally_b) = finally_body {
+                if has_http_import_in_stmt(finally_b) {
+                    return true;
+                }
+            }
+        }
+        Stmt::Switch(_, cases, default_body) => {
+            for c in cases {
+                if has_http_import_in_stmt(&c.body) {
+                    return true;
+                }
+            }
+            if let Some(def_b) = default_body {
+                if has_http_import_in_stmt(def_b) {
+                    return true;
+                }
+            }
+        }
         Stmt::Export(inner) => {
             if has_http_import_in_stmt(inner) {
                 return true;
@@ -337,67 +379,61 @@ fn find_listen_port_in_expr(expr: &Expr) -> Option<i32> {
                     return Some(port);
                 }
             }
+            None
         }
-        Expr::Assign(_, val, _) => return find_listen_port_in_expr(val),
+        Expr::Assign(_, val, _) => find_listen_port_in_expr(val),
         Expr::Binary(left, _, right) => {
-            if let Some(p) = find_listen_port_in_expr(left) {
-                return Some(p);
-            }
-            return find_listen_port_in_expr(right);
+            find_listen_port_in_expr(left).or_else(|| find_listen_port_in_expr(right))
         }
         Expr::Logical(left, _, right) => {
-            if let Some(p) = find_listen_port_in_expr(left) {
-                return Some(p);
-            }
-            return find_listen_port_in_expr(right);
+            find_listen_port_in_expr(left).or_else(|| find_listen_port_in_expr(right))
+        }
+        Expr::Unary(_, inner) => find_listen_port_in_expr(inner),
+        Expr::Prefix(_, inner) => find_listen_port_in_expr(inner),
+        Expr::Postfix(_, inner) => find_listen_port_in_expr(inner),
+        Expr::Ternary(cond, then_b, else_b) => {
+            find_listen_port_in_expr(cond)
+                .or_else(|| find_listen_port_in_expr(then_b))
+                .or_else(|| find_listen_port_in_expr(else_b))
         }
         Expr::Get(obj, _) => return find_listen_port_in_expr(obj),
-        Expr::Set(obj, _, val) => {
-            if let Some(p) = find_listen_port_in_expr(obj) {
-                return Some(p);
-            }
-            return find_listen_port_in_expr(val);
+        Expr::Set(target, _, val) => {
+            find_listen_port_in_expr(target).or_else(|| find_listen_port_in_expr(val))
         }
-        Expr::Array(items) => {
-            for item in items {
-                if let Some(port) = find_listen_port_in_expr(item) {
+        Expr::Array(elements) => {
+            for el in elements {
+                if let Some(port) = find_listen_port_in_expr(el) {
                     return Some(port);
                 }
             }
+            None
         }
-        Expr::Object(pairs) => {
-            for (_, val) in pairs {
+        Expr::Object(entries) => {
+            for (_, val) in entries {
                 if let Some(port) = find_listen_port_in_expr(val) {
                     return Some(port);
                 }
             }
+            None
         }
-        Expr::Function(_, body) => return find_listen_port_in_stmt(body),
-        Expr::GetIndex(obj, idx) => {
-            if let Some(p) = find_listen_port_in_expr(obj) {
-                return Some(p);
-            }
-            return find_listen_port_in_expr(idx);
+        Expr::Function(_, body) => find_listen_port_in_stmt(body),
+        Expr::GetIndex(target, index) => {
+            find_listen_port_in_expr(target).or_else(|| find_listen_port_in_expr(index))
         }
-        Expr::SetIndex(obj, idx, val) => {
-            if let Some(p) = find_listen_port_in_expr(obj) {
-                return Some(p);
-            }
-            if let Some(p) = find_listen_port_in_expr(idx) {
-                return Some(p);
-            }
-            return find_listen_port_in_expr(val);
-        }
+        Expr::SetIndex(target, index, val) => find_listen_port_in_expr(target)
+            .or_else(|| find_listen_port_in_expr(index))
+            .or_else(|| find_listen_port_in_expr(val)),
         Expr::StructInst(_, fields, _) => {
             for (_, val) in fields {
                 if let Some(port) = find_listen_port_in_expr(val) {
                     return Some(port);
                 }
             }
+            None
         }
-        _ => {}
+        Expr::Spawn(inner) => find_listen_port_in_expr(inner),
+        _ => None,
     }
-    None
 }
 
 fn find_listen_port_in_stmt(stmt: &Stmt) -> Option<i32> {
@@ -427,6 +463,15 @@ fn find_listen_port_in_stmt(stmt: &Stmt) -> Option<i32> {
             }
             None
         }
+        Stmt::While(cond, body) => {
+            if let Some(p) = find_listen_port_in_expr(cond) {
+                return Some(p);
+            }
+            if let Some(p) = find_listen_port_in_stmt(body) {
+                return Some(p);
+            }
+            None
+        }
         Stmt::For(_, start, end, body) => {
             if let Some(p) = find_listen_port_in_expr(start) {
                 return Some(p);
@@ -436,6 +481,53 @@ fn find_listen_port_in_stmt(stmt: &Stmt) -> Option<i32> {
             }
             if let Some(p) = find_listen_port_in_stmt(body) {
                 return Some(p);
+            }
+            None
+        }
+        Stmt::ForIn(_, iterable, body) => {
+            if let Some(p) = find_listen_port_in_expr(iterable) {
+                return Some(p);
+            }
+            if let Some(p) = find_listen_port_in_stmt(body) {
+                return Some(p);
+            }
+            None
+        }
+        Stmt::Throw(expr) => find_listen_port_in_expr(expr),
+        Stmt::Try(try_body, catch_clause, finally_body) => {
+            if let Some(p) = find_listen_port_in_stmt(try_body) {
+                return Some(p);
+            }
+            if let Some((_, catch_b)) = catch_clause {
+                if let Some(p) = find_listen_port_in_stmt(catch_b) {
+                    return Some(p);
+                }
+            }
+            if let Some(finally_b) = finally_body {
+                if let Some(p) = find_listen_port_in_stmt(finally_b) {
+                    return Some(p);
+                }
+            }
+            None
+        }
+        Stmt::Switch(target, cases, default_body) => {
+            if let Some(p) = find_listen_port_in_expr(target) {
+                return Some(p);
+            }
+            for c in cases {
+                for v in &c.values {
+                    if let Some(p) = find_listen_port_in_expr(v) {
+                        return Some(p);
+                    }
+                }
+                if let Some(p) = find_listen_port_in_stmt(&c.body) {
+                    return Some(p);
+                }
+            }
+            if let Some(def_b) = default_body {
+                if let Some(p) = find_listen_port_in_stmt(def_b) {
+                    return Some(p);
+                }
             }
             None
         }

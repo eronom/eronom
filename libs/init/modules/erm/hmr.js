@@ -1,4 +1,4 @@
-(function() {
+(function () {
   if (window.__hmr_initialized) return;
   window.__hmr_initialized = true;
   console.log("[HMR] Initialized");
@@ -77,9 +77,9 @@
       if (!trimmed) continue;
       if (scriptMode) {
         const startsWithMarkup = trimmed.startsWith('<') ||
-                                 trimmed.startsWith('if ') ||
-                                 trimmed.startsWith('for ') ||
-                                 trimmed.startsWith('return');
+          trimmed.startsWith('if ') ||
+          trimmed.startsWith('for ') ||
+          trimmed.startsWith('return');
         if (startsWithMarkup) {
           scriptMode = false;
         }
@@ -120,24 +120,24 @@
           idx++;
           continue;
         }
-        
+
         let isClosing = false;
         if (idx + 1 < chars.length && chars[idx + 1] === '/') {
           isClosing = true;
           idx++;
         }
-        
+
         idx++;
         let tagContent = '';
         while (idx < chars.length && chars[idx] !== '>') {
           tagContent += chars[idx];
           idx++;
         }
-        
+
         if (chars[idx] === '>') {
           idx++;
         }
-        
+
         let isSelfClosing = false;
         if (!isClosing) {
           if (tagContent.trim().endsWith('/')) {
@@ -397,7 +397,7 @@
 }
   `;
 
-  window.__erm_show_error_overlay = function(err) {
+  window.__erm_show_error_overlay = function (err) {
     let overlay = document.getElementById('erm-error-overlay');
     if (overlay) overlay.remove();
 
@@ -446,7 +446,7 @@
       const stackTitle = document.createElement('div');
       stackTitle.className = 'erm-error-stack-title';
       stackTitle.textContent = 'Call Stack';
-      
+
       const stack = document.createElement('pre');
       stack.className = 'erm-error-stack';
       stack.textContent = err.stack;
@@ -466,7 +466,7 @@
     card.appendChild(body);
     card.appendChild(footer);
     overlay.appendChild(card);
-    
+
     const escHandler = (e) => {
       if (e.key === 'Escape') {
         overlay.remove();
@@ -482,7 +482,7 @@
     if (window.__erm_filename && err.file) {
       let resolvePromise;
       let compiledCol = 0;
-      
+
       if (err.origLine !== undefined && err.origLine !== null) {
         const colMatch = err.file.match(/:(\d+)(?::(\d+))?$/) || (err.stack && err.stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m));
         if (colMatch) {
@@ -494,7 +494,7 @@
         if (match) {
           const compiledLine = parseInt(match[1], 10);
           compiledCol = match[2] ? parseInt(match[2], 10) : 0;
-          
+
           resolvePromise = fetch(location.href)
             .then(r => r.text())
             .then(html => {
@@ -512,7 +512,7 @@
             });
         }
       }
-      
+
       if (resolvePromise) {
         resolvePromise
           .then(origLine => {
@@ -523,7 +523,7 @@
                   const srcLines = src.split('\n');
                   const start = Math.max(0, origLine - 3);
                   const end = Math.min(srcLines.length, origLine + 2);
-                  
+
                   let snippetHtml = '';
                   for (let i = start; i < end; i++) {
                     const ln = i + 1;
@@ -535,23 +535,23 @@
                       `<span class="erm-snippet-code">${escapeHtml(lineText)}</span>` +
                       `</div>`;
                   }
-                  
+
                   const fileEl = card.querySelector('.erm-error-file');
                   if (fileEl) {
                     fileEl.textContent = `${window.__erm_filename}:${origLine}${compiledCol ? ':' + compiledCol : ''}`;
                   }
-                  
+
                   const bodyEl = card.querySelector('.erm-error-body');
                   let snippetContainer = bodyEl.querySelector('.erm-snippet-container');
                   if (!snippetContainer) {
                     snippetContainer = document.createElement('div');
                     snippetContainer.className = 'erm-snippet-container';
-                    
+
                     const snippetTitle = document.createElement('div');
                     snippetTitle.className = 'erm-error-stack-title';
                     snippetTitle.textContent = 'Source Code';
                     snippetContainer.appendChild(snippetTitle);
-                    
+
                     const snippetPre = document.createElement('pre');
                     snippetPre.className = 'erm-error-stack';
                     snippetPre.style.background = '#09090b';
@@ -559,7 +559,7 @@
                     snippetPre.style.padding = '12px';
                     snippetPre.style.maxHeight = 'none';
                     snippetContainer.appendChild(snippetPre);
-                    
+
                     const stackTitle = bodyEl.querySelector('.erm-error-stack-title');
                     if (stackTitle) {
                       bodyEl.insertBefore(snippetContainer, stackTitle);
@@ -567,7 +567,7 @@
                       bodyEl.appendChild(snippetContainer);
                     }
                   }
-                  
+
                   snippetContainer.querySelector('pre').innerHTML = snippetHtml;
                 });
             }
@@ -578,7 +578,7 @@
   };
 
   if (window.__erm_filename) {
-    validateSourceAndRun(() => {});
+    validateSourceAndRun(() => { });
   }
 
   window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
@@ -592,7 +592,7 @@
 
   window.__hmr_intervals = window.__hmr_intervals || [];
   const originalSetInterval = window.setInterval;
-  window.setInterval = function(fn, t) {
+  window.setInterval = function (fn, t) {
     let id = originalSetInterval(fn, t);
     window.__hmr_intervals.push(id);
     return id;
@@ -600,19 +600,19 @@
 
   window.__hmr_listeners = window.__hmr_listeners || [];
   const originalDocAddEventListener = document.addEventListener;
-  document.addEventListener = function(type, listener, options) {
+  document.addEventListener = function (type, listener, options) {
     window.__hmr_listeners.push({ target: document, type, listener, options });
     return originalDocAddEventListener.call(document, type, listener, options);
   };
 
   const originalWinAddEventListener = window.addEventListener;
-  window.addEventListener = function(type, listener, options) {
+  window.addEventListener = function (type, listener, options) {
     window.__hmr_listeners.push({ target: window, type, listener, options });
     return originalWinAddEventListener.call(window, type, listener, options);
   };
 
   const originalElementAddEventListener = Element.prototype.addEventListener;
-  Element.prototype.addEventListener = function(type, listener, options) {
+  Element.prototype.addEventListener = function (type, listener, options) {
     window.__hmr_listeners.push({ target: this, type, listener, options });
     return originalElementAddEventListener.call(this, type, listener, options);
   };
@@ -628,15 +628,15 @@
       console.log("[HMR] Update received for: " + path);
 
       if (path.endsWith('.css')) {
-          let links = document.querySelectorAll('link[rel="stylesheet"]');
-          let found = false;
-          links.forEach(link => {
-              if (link.href.includes(path)) {
-                  link.href = path + '?t=' + new Date().getTime();
-                  found = true;
-              }
-          });
-          if (found) return;
+        let links = document.querySelectorAll('link[rel="stylesheet"]');
+        let found = false;
+        links.forEach(link => {
+          if (link.href.includes(path)) {
+            link.href = path + '?t=' + new Date().getTime();
+            found = true;
+          }
+        });
+        if (found) return;
       }
 
       validateSourceAndRun((wasError) => {
@@ -678,137 +678,137 @@
             const doc = parser.parseFromString(html, 'text/html');
             document.title = doc.title;
 
-          function morph(oldNode, newNode) {
-            if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
-              oldNode.replaceWith(newNode.cloneNode(true));
-              return;
-            }
-            if (oldNode.nodeType === Node.TEXT_NODE) {
-              if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
-              return;
-            }
-            const oldAttrs = oldNode.attributes;
-            const newAttrs = newNode.attributes;
-            if (oldAttrs && newAttrs) {
-              for (let i = 0; i < newAttrs.length; i++) {
-                const attr = newAttrs[i];
-                if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
+            function morph(oldNode, newNode) {
+              if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
+                oldNode.replaceWith(newNode.cloneNode(true));
+                return;
               }
-              for (let i = 0; i < oldAttrs.length; i++) {
-                const attr = oldAttrs[i];
-                if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
+              if (oldNode.nodeType === Node.TEXT_NODE) {
+                if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
+                return;
+              }
+              const oldAttrs = oldNode.attributes;
+              const newAttrs = newNode.attributes;
+              if (oldAttrs && newAttrs) {
+                for (let i = 0; i < newAttrs.length; i++) {
+                  const attr = newAttrs[i];
+                  if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
+                }
+                for (let i = 0; i < oldAttrs.length; i++) {
+                  const attr = oldAttrs[i];
+                  if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
+                }
+              }
+              const oldChildren = Array.from(oldNode.childNodes);
+              const newChildren = Array.from(newNode.childNodes);
+              const max = Math.max(oldChildren.length, newChildren.length);
+              for (let i = 0; i < max; i++) {
+                if (i >= oldChildren.length) {
+                  oldNode.appendChild(newChildren[i].cloneNode(true));
+                } else if (i >= newChildren.length) {
+                  oldNode.removeChild(oldChildren[i]);
+                } else {
+                  morph(oldChildren[i], newChildren[i]);
+                }
               }
             }
-            const oldChildren = Array.from(oldNode.childNodes);
-            const newChildren = Array.from(newNode.childNodes);
-            const max = Math.max(oldChildren.length, newChildren.length);
-            for (let i = 0; i < max; i++) {
-              if (i >= oldChildren.length) {
-                oldNode.appendChild(newChildren[i].cloneNode(true));
-              } else if (i >= newChildren.length) {
-                oldNode.removeChild(oldChildren[i]);
-              } else {
-                morph(oldChildren[i], newChildren[i]);
-              }
-            }
-          }
 
-          const newStyles = doc.querySelectorAll('style');
-          if (newStyles.length > 0) {
+            const newStyles = doc.querySelectorAll('style');
+            if (newStyles.length > 0) {
               let styleContainer = document.getElementById('__erm_styles');
               if (!styleContainer) {
-                  styleContainer = document.createElement('div');
-                  styleContainer.id = '__erm_styles';
-                  document.head.appendChild(styleContainer);
+                styleContainer = document.createElement('div');
+                styleContainer.id = '__erm_styles';
+                document.head.appendChild(styleContainer);
               }
               styleContainer.innerHTML = '';
               newStyles.forEach(s => styleContainer.appendChild(s.cloneNode(true)));
-          }
+            }
 
-          window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch(err) {} });
-          window.__hmr_hooks.dispose = [];
-          
-          const oldAccepts = window.__hmr_hooks.accept;
-          window.__hmr_hooks.accept = [];
+            window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch (err) { } });
+            window.__hmr_hooks.dispose = [];
 
-          window.__hmr_intervals.forEach(clearInterval);
-          window.__hmr_intervals = [];
-          window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
-            target.removeEventListener(type, listener, options);
-            if (target.__erm_listener_added) delete target.__erm_listener_added;
-          });
-          window.__hmr_listeners = [];
+            const oldAccepts = window.__hmr_hooks.accept;
+            window.__hmr_hooks.accept = [];
 
-          // Clean up old erm scripts
-          document.querySelectorAll('script.__erm_script').forEach(s => s.remove());
+            window.__hmr_intervals.forEach(clearInterval);
+            window.__hmr_intervals = [];
+            window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
+              target.removeEventListener(type, listener, options);
+              if (target.__erm_listener_added) delete target.__erm_listener_added;
+            });
+            window.__hmr_listeners = [];
 
-          morph(document.body, doc.body);
+            // Clean up old erm scripts
+            document.querySelectorAll('script.__erm_script').forEach(s => s.remove());
 
-          const newScripts = doc.querySelectorAll('script');
-          newScripts.forEach(s => {
-            if (s.textContent.includes("__hmr_initialized")) return;
-            const newScript = document.createElement('script');
-            newScript.text = s.innerHTML;
-            if (s.className) newScript.className = s.className;
-            const sType = s.getAttribute('type');
-            if (sType) newScript.type = sType;
-            try {
-              if (s.src) {
-                let sUrl = new URL(s.src, location.href);
-                sUrl.searchParams.set('t', new Date().getTime());
-                newScript.src = sUrl.href;
-                document.head.appendChild(newScript);
-              } else if (sType === 'module') {
-                document.head.appendChild(newScript);
-              } else {
-                (0, eval)(s.innerHTML);
-              }
-            } catch (err) {
-              console.error("[HMR] Script evaluation failed:", err);
-              if (typeof window.__erm_show_error_overlay === 'function') {
-                let file = window.__erm_filename || location.pathname;
-                let stack = err.stack || '';
-                let origLine = null;
-                const match = stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m) || stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/);
-                if (match) {
-                  const inlineLine = parseInt(match[1], 10);
-                  const inlineCol = match[2] ? parseInt(match[2], 10) : 0;
-                  const scriptLines = s.innerHTML.split('\n');
-                  for (let idx = inlineLine - 1; idx >= 0; idx--) {
-                    const lineContent = scriptLines[idx] || '';
-                    const commentMatch = lineContent.match(/\/\/\s*line:(\d+)\s*$/);
-                    if (commentMatch) {
-                      origLine = parseInt(commentMatch[1], 10);
-                      break;
+            morph(document.body, doc.body);
+
+            const newScripts = doc.querySelectorAll('script');
+            newScripts.forEach(s => {
+              if (s.textContent.includes("__hmr_initialized")) return;
+              const newScript = document.createElement('script');
+              newScript.text = s.innerHTML;
+              if (s.className) newScript.className = s.className;
+              const sType = s.getAttribute('type');
+              if (sType) newScript.type = sType;
+              try {
+                if (s.src) {
+                  let sUrl = new URL(s.src, location.href);
+                  sUrl.searchParams.set('t', new Date().getTime());
+                  newScript.src = sUrl.href;
+                  document.head.appendChild(newScript);
+                } else if (sType === 'module') {
+                  document.head.appendChild(newScript);
+                } else {
+                  (0, eval)(s.innerHTML);
+                }
+              } catch (err) {
+                console.error("[HMR] Script evaluation failed:", err);
+                if (typeof window.__erm_show_error_overlay === 'function') {
+                  let file = window.__erm_filename || location.pathname;
+                  let stack = err.stack || '';
+                  let origLine = null;
+                  const match = stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m) || stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/);
+                  if (match) {
+                    const inlineLine = parseInt(match[1], 10);
+                    const inlineCol = match[2] ? parseInt(match[2], 10) : 0;
+                    const scriptLines = s.innerHTML.split('\n');
+                    for (let idx = inlineLine - 1; idx >= 0; idx--) {
+                      const lineContent = scriptLines[idx] || '';
+                      const commentMatch = lineContent.match(/\/\/\s*line:(\d+)\s*$/);
+                      if (commentMatch) {
+                        origLine = parseInt(commentMatch[1], 10);
+                        break;
+                      }
+                    }
+                    if (origLine !== null) {
+                      file = `${file}:${origLine}${inlineCol ? ':' + inlineCol : ''}`;
                     }
                   }
-                  if (origLine !== null) {
-                    file = `${file}:${origLine}${inlineCol ? ':' + inlineCol : ''}`;
-                  }
+                  window.__erm_show_error_overlay({
+                    type: 'Runtime Error',
+                    file: file,
+                    title: err.name || 'SyntaxError',
+                    message: err.message || 'Invalid or unexpected token',
+                    stack: stack,
+                    origLine: origLine
+                  });
                 }
-                window.__erm_show_error_overlay({
-                  type: 'Runtime Error',
-                  file: file,
-                  title: err.name || 'SyntaxError',
-                  message: err.message || 'Invalid or unexpected token',
-                  stack: stack,
-                  origLine: origLine
-                });
               }
+            });
+            document.dispatchEvent(new Event('DOMContentLoaded'));
+            window.dispatchEvent(new Event('load'));
+
+            oldAccepts.forEach(cb => { try { cb(); } catch (err) { } });
+
+            if (window.__erm_update) window.__erm_update();
+          })
+          .catch(err => {
+            if (err.message !== "Compilation error overlay shown") {
+              console.error("[HMR] Update failed:", err);
             }
           });
-          document.dispatchEvent(new Event('DOMContentLoaded'));
-          window.dispatchEvent(new Event('load'));
-          
-          oldAccepts.forEach(cb => { try { cb(); } catch(err) {} });
-          
-          if (window.__erm_update) window.__erm_update();
-        })
-        .catch(err => {
-          if (err.message !== "Compilation error overlay shown") {
-            console.error("[HMR] Update failed:", err);
-          }
-        });
       });
     }
   };

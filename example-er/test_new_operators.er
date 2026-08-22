@@ -1,0 +1,149 @@
+// Full Integration Test for Eronom New Operators & Collection Iteration
+
+print("=== 1. Testing Unary Operators ===");
+let a = 10;
+let negA = -a;
+print("negA: " + negA);
+let doubleNeg = -(-25);
+print("doubleNeg: " + doubleNeg);
+
+let isTrue = true;
+let isFalse = !isTrue;
+let notFalse = !false;
+let notNull = !null;
+print("!true: " + isFalse);
+print("!false: " + notFalse);
+print("!null: " + notNull);
+
+print("=== 2. Testing typeof Operator ===");
+let t1 = typeof 42;
+print("typeof 42: " + t1);
+let t2 = typeof 3.14;
+print("typeof 3.14: " + t2);
+let t3 = typeof "hello";
+print("typeof hello: " + t3);
+let t4 = typeof true;
+print("typeof true: " + t4);
+let t5 = typeof null;
+print("typeof null: " + t5);
+let t6 = typeof [1, 2];
+print("typeof arr: " + t6);
+let t7 = typeof { x: 1 };
+print("typeof obj: " + t7);
+
+print("=== 3. Testing Increment & Decrement Operators ===");
+let x = 5;
+let preInc = ++x;
+print("preInc (should be 6): " + preInc + " x: " + x);
+let preDec = --x;
+print("preDec (should be 5): " + preDec + " x: " + x);
+
+let postInc = x++;
+print("postInc (should be 5): " + postInc + " x (should be 6): " + x);
+let postDec = x--;
+print("postDec (should be 6): " + postDec + " x (should be 5): " + x);
+
+let obj = { count: 10 };
+let objPreInc = ++obj.count;
+print("++obj.count (should be 11): " + objPreInc + " obj.count: " + obj.count);
+let objPostInc = obj.count++;
+print("obj.count++ (should be 11): " + objPostInc + " obj.count (should be 12): " + obj.count);
+let objPreDec = --obj.count;
+print("--obj.count (should be 11): " + objPreDec + " obj.count: " + obj.count);
+let objPostDec = obj.count--;
+print("obj.count-- (should be 11): " + objPostDec + " obj.count (should be 10): " + obj.count);
+
+let arr = [100, 200];
+let arrPreInc = ++arr[0];
+print("++arr[0] (should be 101): " + arrPreInc + " arr[0]: " + arr[0]);
+let arrPostInc = arr[0]++;
+print("arr[0]++ (should be 101): " + arrPostInc + " arr[0] (should be 102): " + arr[0]);
+
+print("=== 4. Testing Compound Assignment Operators ===");
+let num = 10;
+num += 5;
+print("num += 5: " + num);
+num -= 3;
+print("num -= 3: " + num);
+num *= 2;
+print("num *= 2: " + num);
+num /= 4;
+print("num /= 4: " + num);
+num %= 4;
+print("num %= 4: " + num);
+
+let text = "Hello";
+text += " World";
+print("text += ' World': " + text);
+
+let map = { val: 50 };
+map.val += 25;
+print("map.val += 25: " + map.val);
+map.val %= 30;
+print("map.val %= 30: " + map.val);
+
+let list = [10, 20, 30];
+list[1] += 5;
+print("list[1] += 5: " + list[1]);
+list[1] *= 2;
+print("list[1] *= 2: " + list[1]);
+
+print("=== 5. Testing Bitwise Operators ===");
+let b1 = 12; // 1100 in binary
+let b2 = 10; // 1010 in binary
+
+let bitAnd = b1 & b2;
+print("12 & 10 (should be 8): " + bitAnd);
+let bitOr = b1 | b2;
+print("12 | 10 (should be 14): " + bitOr);
+let bitXor = b1 ^ b2;
+print("12 ^ 10 (should be 6): " + bitXor);
+let bitNot = ~b1;
+print("~12 (should be -13): " + bitNot);
+let shl = 1 << 4;
+print("1 << 4 (should be 16): " + shl);
+let shr = 16 >> 2;
+print("16 >> 2 (should be 4): " + shr);
+
+print("=== 6. Testing Ternary Operator ===");
+let age = 20;
+let status = age >= 18 ? "Adult" : "Minor";
+print("age 20 status: " + status);
+
+let minorStatus = 15 >= 18 ? "Adult" : "Minor";
+print("age 15 status: " + minorStatus);
+
+let nested = age > 100 ? "Centenarian" : (age >= 18 ? "Adult" : "Minor");
+print("nested ternary: " + nested);
+
+print("=== 7. Testing Collection Iteration (for in) ===");
+let fruits = ["Apple", "Banana", "Cherry"];
+print("Iterating array:");
+for fruit in fruits {
+    print("  Fruit: " + fruit);
+}
+
+print("Iterating array with break & continue:");
+let numbers = [1, 2, 3, 4, 5, 6];
+for n in numbers {
+    if (n == 2) {
+        continue;
+    }
+    if (n == 5) {
+        break;
+    }
+    print("  Num: " + n);
+}
+
+print("Iterating object keys:");
+let person = { name: "Alice", role: "Engineer", city: "Tokyo" };
+for key in person {
+    print("  Key: " + key + " Val: " + person[key]);
+}
+
+print("Testing existing range for loop (backward compatibility):");
+for i in 1..4 {
+    print("  Range i: " + i);
+}
+
+print("=== All New Operator & Collection Tests Passed! ===");

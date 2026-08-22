@@ -557,11 +557,11 @@ impl VM {
                 self.gc_trigger();
                 reload_stack!();
 
-                let is_async = match &(*frame.function).data {
-                    GcData::Function(f) => f.is_async,
-                    _ => false,
+                let (is_async, has_handlers) = match &(*frame.function).data {
+                    GcData::Function(f) => (f.is_async, !f.chunk.handlers.is_empty()),
+                    _ => (false, false),
                 };
-                if is_async {
+                if is_async || has_handlers {
                     return self.execute_loop_interpreter(0);
                 }
 
@@ -744,9 +744,49 @@ impl VM {
                     frame.ip = ip_out;
                     return Ok(Value::null());
                 } else {
-                    // RuntimeError or JIT compilation/execution error.
-                    let err_msg = self.error.take().unwrap_or_else(|| "JIT execution error".into());
-                    return Err(err_msg);
+                    // RuntimeError, JIT Throw, or JIT execution error.
+                    let thrown = if !ret_val_out.is_null() {
+                        ret_val_out
+                    } else if let Some(err_msg) = self.error.take() {
+                        let ptr = super::gc::get_or_create_string(&err_msg);
+                        Value::string(ptr)
+                    } else {
+                        let ptr = super::gc::get_or_create_string("JIT execution error");
+                        Value::string(ptr)
+                    };
+
+                    let initial_frame_idx = self.frames.len() - 1;
+                    while !self.frames.is_empty() {
+                        let frame_idx = self.frames.len() - 1;
+                        let curr_ip = if frame_idx == initial_frame_idx {
+                            ip_out
+                        } else {
+                            let f_ip = self.frames[frame_idx].ip;
+                            if f_ip > 0 { f_ip - 1 } else { 0 }
+                        };
+                        let curr_func = get_func!(self.frames[frame_idx].function);
+                        if let Some(handler) = curr_func.chunk.find_handler(curr_ip).cloned() {
+                            while self.frames.len() > frame_idx + 1 {
+                                self.frames.pop();
+                            }
+                            let frame_slots_target = self.stack.as_mut_ptr().add(self.frames[frame_idx].slots_offset);
+                            *frame_slots_target.add(handler.err_reg as usize) = thrown;
+                            self.frames[frame_idx].ip = handler.catch_ip;
+                            return self.execute_loop_interpreter(0);
+                        } else {
+                            if self.frames.len() > 1 {
+                                self.frames.pop();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    let err_str = match thrown.as_str() {
+                        Some(s) => s.to_string(),
+                        None => format!("{}", thrown),
+                    };
+                    return Err(format!("Uncaught exception: {}", err_str));
                 }
             }
         }
@@ -787,6 +827,73 @@ impl VM {
                     stack_start = self.stack.as_mut_ptr();
                     frame_slots = stack_start.add(slots_offset);
                 };
+            }
+
+            macro_rules! handle_exception {
+                ($thrown_val:expr) => {{
+                    let thrown: Value = $thrown_val;
+                    let mut handled = false;
+
+                    let initial_frame_idx = self.frames.len() - 1;
+                    while !self.frames.is_empty() {
+                        let frame_idx = self.frames.len() - 1;
+                        let curr_ip = if frame_idx == initial_frame_idx {
+                            let offset = ip.offset_from(code_ptr) as usize;
+                            if offset > 0 { offset - 1 } else { 0 }
+                        } else {
+                            let f_ip = self.frames[frame_idx].ip;
+                            if f_ip > 0 { f_ip - 1 } else { 0 }
+                        };
+                        let curr_func = get_func!(self.frames[frame_idx].function);
+
+                        if let Some(handler) = curr_func.chunk.find_handler(curr_ip).cloned() {
+                            while self.frames.len() > frame_idx + 1 {
+                                self.frames.pop();
+                            }
+                            frame_ptr = {
+                                let len = self.frames.len();
+                                self.frames.as_mut_ptr().add(len - 1)
+                            };
+                            frame = &mut *frame_ptr;
+                            func = get_func!(frame.function);
+                            code_ptr = func.chunk.code.as_ptr();
+                            constants_ptr = func.chunk.constants.as_ptr();
+                            slots_offset = frame.slots_offset;
+                            reload_stack!();
+
+                            *frame_slots.add(handler.err_reg as usize) = thrown;
+                            ip = code_ptr.add(handler.catch_ip);
+                            handled = true;
+                            break;
+                        } else {
+                            if self.frames.len() > 1 {
+                                self.frames.pop();
+                                if !self.frames.is_empty() {
+                                    frame_ptr = {
+                                        let len = self.frames.len();
+                                        self.frames.as_mut_ptr().add(len - 1)
+                                    };
+                                    frame = &mut *frame_ptr;
+                                    func = get_func!(frame.function);
+                                    code_ptr = func.chunk.code.as_ptr();
+                                    constants_ptr = func.chunk.constants.as_ptr();
+                                    slots_offset = frame.slots_offset;
+                                    reload_stack!();
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    if !handled {
+                        let err_str = match thrown.as_str() {
+                            Some(s) => s.to_string(),
+                            None => format!("{}", thrown),
+                        };
+                        return Err(format!("Uncaught exception: {}", err_str));
+                    }
+                }};
             }
 
             loop {
@@ -926,6 +1033,157 @@ impl VM {
                             *frame_slots.add(dest) = Value::number_unchecked(a.as_number() / b.as_number());
                         } else {
                             return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::Mod => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::number_unchecked(a.as_number() % b.as_number());
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitAnd => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let res = ((a.as_number() as i64) & (b.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitOr => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let res = ((a.as_number() as i64) | (b.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitXor => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let res = ((a.as_number() as i64) ^ (b.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitNot => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        if a.is_number() {
+                            let res = (!(a.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operand must be a number".into());
+                        }
+                    }
+                    OpCode::ShiftLeft => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let shift = (b.as_number() as u32) & 63;
+                            let res = ((a.as_number() as i64).wrapping_shl(shift)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::ShiftRight => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let shift = (b.as_number() as u32) & 63;
+                            let res = ((a.as_number() as i64).wrapping_shr(shift)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::TypeOf => {
+                        let dest = instruction.ra as usize;
+                        let val = *frame_slots.add(instruction.rb as usize);
+                        let type_str = if val.is_number() {
+                            "number"
+                        } else if val.is_string() {
+                            "string"
+                        } else if val.is_boolean() {
+                            "boolean"
+                        } else if val.is_null() {
+                            "null"
+                        } else if val.is_array() {
+                            "array"
+                        } else if val.is_object() {
+                            "object"
+                        } else if val.is_function() || val.is_native_function() {
+                            "function"
+                        } else {
+                            "object"
+                        };
+                        let ptr = super::gc::get_or_create_string(type_str);
+                        *frame_slots.add(dest) = Value::string(ptr);
+                    }
+                    OpCode::ToIter => {
+                        let dest = instruction.ra as usize;
+                        let src = instruction.rb as usize;
+                        let val = *frame_slots.add(src);
+                        if val.is_array() {
+                            *frame_slots.add(dest) = val;
+                        } else if val.is_object() {
+                            let obj_ptr = val.as_gc_ptr();
+                            sync_stack!();
+                            self.gc_trigger();
+                            reload_stack!();
+                            let keys: Vec<Value> = match &(*obj_ptr).data {
+                                GcData::Object(map) => map.keys().map(|k| k.0).collect(),
+                                GcData::Struct(s) => s.descriptor.field_indices.keys().map(|k| k.0).collect(),
+                                _ => Vec::new(),
+                            };
+                            let arr_ptr = gc_allocate(GcData::Array(keys));
+                            *frame_slots.add(dest) = Value::array(arr_ptr);
+                        } else if val.is_string() {
+                            let s_ptr = val.as_gc_ptr();
+                            sync_stack!();
+                            self.gc_trigger();
+                            reload_stack!();
+                            let chars: Vec<Value> = match &(*s_ptr).data {
+                                GcData::String(s) => s.chars().map(|c| {
+                                    let cp = super::gc::get_or_create_string(&c.to_string());
+                                    Value::string(cp)
+                                }).collect(),
+                                _ => Vec::new(),
+                            };
+                            let arr_ptr = gc_allocate(GcData::Array(chars));
+                            *frame_slots.add(dest) = Value::array(arr_ptr);
+                        } else {
+                            return Err("Cannot iterate over non-iterable value".into());
+                        }
+                    }
+                    OpCode::ArrayLen => {
+                        let dest = instruction.ra as usize;
+                        let src = instruction.rb as usize;
+                        let val = *frame_slots.add(src);
+                        if val.is_array() {
+                            let arr_ptr = val.as_gc_ptr();
+                            let len = match &(*arr_ptr).data {
+                                GcData::Array(arr) => arr.len(),
+                                _ => 0,
+                            };
+                            *frame_slots.add(dest) = Value::number(len as f64);
+                        } else {
+                            return Err("Expected array for length".into());
                         }
                     }
                     OpCode::Equal => {
@@ -1663,6 +1921,10 @@ impl VM {
                         ip = code_ptr.add(frame.ip);
 
                         *frame_slots.add(caller_dest_reg) = result;
+                    }
+                    OpCode::Throw => {
+                        let thrown = *frame_slots.add(instruction.ra as usize);
+                        handle_exception!(thrown);
                     }
                 }
             }

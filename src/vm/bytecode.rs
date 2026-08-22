@@ -28,6 +28,16 @@ pub enum OpCode {
     Sub,
     Mul,
     Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+    ShiftLeft,
+    ShiftRight,
+    TypeOf,
+    ToIter,
+    ArrayLen,
     Equal,
     Greater,
     Less,
@@ -47,6 +57,16 @@ pub enum OpCode {
     Await,
     Return,
     DefineStruct,
+    Throw,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExceptionHandler {
+    pub try_start: usize,
+    pub try_end: usize,
+    pub catch_ip: usize,
+    pub err_reg: u8,
+    pub finally_ip: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -62,6 +82,7 @@ pub struct Instruction {
 pub struct Chunk {
     pub code: Vec<Instruction>,
     pub constants: Vec<Value>,
+    pub handlers: Vec<ExceptionHandler>,
 }
 
 impl Chunk {
@@ -78,5 +99,12 @@ impl Chunk {
             rc,
             operand,
         });
+    }
+
+    pub fn find_handler(&self, ip: usize) -> Option<&ExceptionHandler> {
+        self.handlers
+            .iter()
+            .filter(|h| ip >= h.try_start && ip < h.try_end)
+            .min_by_key(|h| h.try_end - h.try_start)
     }
 }

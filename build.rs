@@ -3,7 +3,7 @@ use std::path::Path;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let mir_dir = Path::new(&manifest_dir).join("ext").join("mir");
+    let mir_dir = Path::new(&manifest_dir).join("deps").join("mir");
 
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir.c").display());
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir-gen.c").display());
@@ -20,7 +20,7 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let is_windows = target_os == "windows";
 
-    let libuv_dir = Path::new(&manifest_dir).join("ext").join("libuv");
+    let libuv_dir = Path::new(&manifest_dir).join("deps").join("libuv");
     if is_windows {
         let mut libuv_build = cc::Build::new();
         let libuv_src = libuv_dir.join("src");
@@ -79,7 +79,7 @@ fn main() {
     }
 
     // Compile uSockets C files
-    let u_sockets_dir = Path::new(&manifest_dir).join("ext").join("uWebSockets").join("uSockets");
+    let u_sockets_dir = Path::new(&manifest_dir).join("deps").join("uWebSockets").join("uSockets");
     let mut u_sockets_build = cc::Build::new();
     u_sockets_build
         .file(u_sockets_dir.join("src").join("bsd.c"))
@@ -105,7 +105,7 @@ fn main() {
     u_sockets_build.compile("usockets");
 
     // Compile uWebSockets C++ wrapper
-    let u_websockets_dir = Path::new(&manifest_dir).join("ext").join("uWebSockets");
+    let u_websockets_dir = Path::new(&manifest_dir).join("deps").join("uWebSockets");
     let mut u_websockets_build = cc::Build::new();
     println!("cargo:rerun-if-changed=src/vm/er_http.cpp");
     u_websockets_build

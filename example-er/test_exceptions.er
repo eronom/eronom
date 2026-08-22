@@ -1,0 +1,77 @@
+// Test 1: Basic try / catch
+let caught_msg = ""
+try {
+    throw "An intentional error!"
+} catch (err) {
+    caught_msg = err
+}
+print("Caught error message: " + caught_msg)
+
+// Test 2: try / catch / finally when exception is thrown
+let finally_ran = false
+let result = ""
+try {
+    throw "Fatal crash"
+} catch (e) {
+    result = "Handled: " + e
+} finally {
+    finally_ran = true
+}
+print("Result: " + result)
+print("Finally executed on throw: " + finally_ran)
+
+// Test 3: try / catch / finally when NO exception is thrown
+let clean_finally = false
+try {
+    let x = 10 + 20
+} catch (e) {
+    print("Should not run")
+} finally {
+    clean_finally = true
+}
+print("Finally executed on normal flow: " + clean_finally)
+
+// Test 4: Exception across function calls (stack unwinding)
+fn dangerous_operation(level) {
+    if (level > 0) {
+        throw "Failed at depth " + level
+    }
+    return 42
+}
+
+fn wrapper(level) {
+    return dangerous_operation(level)
+}
+
+let unwound_err = ""
+try {
+    wrapper(3)
+} catch (err) {
+    unwound_err = err
+}
+print("Unwound error: " + unwound_err)
+
+// Test 5: Throwing object
+let obj_err_code = 0
+try {
+    let err_obj = { code: 404, message: "Not Found" }
+    throw err_obj
+} catch (err) {
+    obj_err_code = err.code
+}
+print("Caught object error code: " + obj_err_code)
+
+// Test 6: Nested try / finally re-throw
+let outer_caught = ""
+let inner_finally = false
+try {
+    try {
+        throw "Inner error"
+    } finally {
+        inner_finally = true
+    }
+} catch (e) {
+    outer_caught = e
+}
+print("Inner finally ran: " + inner_finally)
+print("Outer caught re-thrown error: " + outer_caught)

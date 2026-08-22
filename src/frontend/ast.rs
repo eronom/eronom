@@ -14,6 +14,10 @@ pub enum Expr {
     Assign(String, Box<Expr>, SourceLocation),
     Binary(Box<Expr>, TokenType, Box<Expr>),
     Logical(Box<Expr>, TokenType, Box<Expr>),
+    Unary(TokenType, Box<Expr>),
+    Prefix(TokenType, Box<Expr>),
+    Postfix(TokenType, Box<Expr>),
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     Get(Box<Expr>, String),
     Set(Box<Expr>, String, Box<Expr>),
@@ -35,13 +39,26 @@ pub enum LiteralValue {
 }
 
 #[derive(Debug, Clone)]
+pub struct SwitchCase {
+    pub values: Vec<Expr>,
+    pub body: Box<Stmt>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
     VarDecl(String, Option<String>, bool, Expr, SourceLocation), // name, type_annotation, is_const, initializer, location
     Block(Vec<Stmt>),
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
-    For(String, Expr, Expr, Box<Stmt>), // var, start, end, body
+    While(Expr, Box<Stmt>),
+    For(String, Expr, Expr, Box<Stmt>), // var, start, end, body (range)
+    ForIn(String, Expr, Box<Stmt>), // var, iterable, body (collection)
+    Break,
+    Continue,
+    Throw(Expr),
+    Try(Box<Stmt>, Option<(String, Box<Stmt>)>, Option<Box<Stmt>>), // try_body, catch_clause (param_name, catch_body), finally_body
+    Switch(Expr, Vec<SwitchCase>, Option<Box<Stmt>>), // target_expr, cases, default_body
     Return(Option<Expr>),
     Import(Vec<String>, String), // imported names, source path
     Export(Box<Stmt>), // exported declaration statement

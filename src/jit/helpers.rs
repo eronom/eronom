@@ -140,6 +140,170 @@ pub extern "C" fn er_jit_div(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn er_jit_mod(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
+    unsafe {
+        if val_b.is_number() && val_c.is_number() {
+            Value::number_unchecked(val_b.as_number() % val_c.as_number())
+        } else {
+            (*vm).error = Some("Operands must be numbers".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_bit_and(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
+    unsafe {
+        if val_b.is_number() && val_c.is_number() {
+            let res = ((val_b.as_number() as i64) & (val_c.as_number() as i64)) as f64;
+            Value::number_unchecked(res)
+        } else {
+            (*vm).error = Some("Operands must be numbers".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_bit_or(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
+    unsafe {
+        if val_b.is_number() && val_c.is_number() {
+            let res = ((val_b.as_number() as i64) | (val_c.as_number() as i64)) as f64;
+            Value::number_unchecked(res)
+        } else {
+            (*vm).error = Some("Operands must be numbers".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_bit_xor(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
+    unsafe {
+        if val_b.is_number() && val_c.is_number() {
+            let res = ((val_b.as_number() as i64) ^ (val_c.as_number() as i64)) as f64;
+            Value::number_unchecked(res)
+        } else {
+            (*vm).error = Some("Operands must be numbers".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_bit_not(vm: *mut VM, val: Value) -> Value {
+    unsafe {
+        if val.is_number() {
+            let res = (!(val.as_number() as i64)) as f64;
+            Value::number_unchecked(res)
+        } else {
+            (*vm).error = Some("Operand must be a number".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_shift_left(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
+    unsafe {
+        if val_b.is_number() && val_c.is_number() {
+            let shift = (val_c.as_number() as u32) & 63;
+            let res = ((val_b.as_number() as i64).wrapping_shl(shift)) as f64;
+            Value::number_unchecked(res)
+        } else {
+            (*vm).error = Some("Operands must be numbers".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_shift_right(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
+    unsafe {
+        if val_b.is_number() && val_c.is_number() {
+            let shift = (val_c.as_number() as u32) & 63;
+            let res = ((val_b.as_number() as i64).wrapping_shr(shift)) as f64;
+            Value::number_unchecked(res)
+        } else {
+            (*vm).error = Some("Operands must be numbers".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_typeof(_vm: *mut VM, val: Value) -> Value {
+    let type_str = if val.is_number() {
+        "number"
+    } else if val.is_string() {
+        "string"
+    } else if val.is_boolean() {
+        "boolean"
+    } else if val.is_null() {
+        "null"
+    } else if val.is_array() {
+        "array"
+    } else if val.is_object() {
+        "object"
+    } else if val.is_function() || val.is_native_function() {
+        "function"
+    } else {
+        "object"
+    };
+    let ptr = get_or_create_string(type_str);
+    Value::string(ptr)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_to_iter(vm: *mut VM, val: Value) -> Value {
+    unsafe {
+        if val.is_array() {
+            val
+        } else if val.is_object() {
+            let obj_ptr = val.as_gc_ptr();
+            let keys: Vec<Value> = match &(*obj_ptr).data {
+                GcData::Object(map) => map.keys().map(|k| k.0).collect(),
+                GcData::Struct(s) => s.descriptor.field_indices.keys().map(|k| k.0).collect(),
+                _ => Vec::new(),
+            };
+            let arr_ptr = gc_allocate(GcData::Array(keys));
+            Value::array(arr_ptr)
+        } else if val.is_string() {
+            let s_ptr = val.as_gc_ptr();
+            let chars: Vec<Value> = match &(*s_ptr).data {
+                GcData::String(s) => s.chars().map(|c| {
+                    let cp = get_or_create_string(&c.to_string());
+                    Value::string(cp)
+                }).collect(),
+                _ => Vec::new(),
+            };
+            let arr_ptr = gc_allocate(GcData::Array(chars));
+            Value::array(arr_ptr)
+        } else {
+            (*vm).error = Some("Cannot iterate over non-iterable value".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_array_len_op(vm: *mut VM, val: Value) -> Value {
+    unsafe {
+        if val.is_array() {
+            let arr_ptr = val.as_gc_ptr();
+            let len = match &(*arr_ptr).data {
+                GcData::Array(arr) => arr.len(),
+                _ => 0,
+            };
+            Value::number(len as f64)
+        } else {
+            (*vm).error = Some("Expected array for length".into());
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn er_jit_equal(_vm: *mut VM, val_b: Value, val_c: Value) -> Value {
     Value::boolean(val_b == val_c)
 }

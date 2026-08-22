@@ -23,6 +23,13 @@ pub struct InterfaceInfo {
     pub methods: Vec<(String, Vec<String>)>,
 }
 
+#[derive(Clone, Debug)]
+struct LoopContext {
+    break_jumps: Vec<usize>,
+    continue_jumps: Vec<usize>,
+    is_switch: bool,
+}
+
 pub struct Compiler {
     function: Function,
     locals: Vec<Local>,
@@ -34,6 +41,7 @@ pub struct Compiler {
     global_types: std::collections::HashMap<String, String>,
     current_struct: Option<String>,
     concurrent_scopes: Vec<usize>,
+    loop_stack: Vec<LoopContext>,
 }
 
 struct Local {
@@ -69,6 +77,7 @@ impl Compiler {
             global_types: std::collections::HashMap::new(),
             current_struct: None,
             concurrent_scopes: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -217,6 +226,34 @@ impl Compiler {
                     self.patch_jump(then_jump);
                 }
             }
+            Stmt::While(cond, body) => {
+                let loop_start = self.current_chunk().code.len();
+                self.loop_stack.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    is_switch: false,
+                });
+
+                let cond_reg = self.next_reg;
+                self.compile_expr(cond, cond_reg)?;
+                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+
+                self.compile_stmt(body)?;
+
+                let continue_target = self.current_chunk().code.len();
+                let loop_ctx = self.loop_stack.pop().unwrap();
+                for c_jump in loop_ctx.continue_jumps {
+                    self.patch_jump_to(c_jump, continue_target);
+                }
+
+                self.emit_loop(loop_start);
+                self.patch_jump(exit_jump);
+
+                let end_ip = self.current_chunk().code.len();
+                for b_jump in loop_ctx.break_jumps {
+                    self.patch_jump_to(b_jump, end_ip);
+                }
+            }
             Stmt::For(var_name, start, end, body) => {
                 self.begin_scope();
                 let var_reg = self.locals.len();
@@ -259,6 +296,11 @@ impl Compiler {
                 });
 
                 let loop_start = self.current_chunk().code.len();
+                self.loop_stack.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    is_switch: false,
+                });
 
                 let cond_reg = self.locals.len();
                 self.current_chunk().write_instruction(
@@ -273,6 +315,12 @@ impl Compiler {
 
                 self.compile_stmt(body)?;
 
+                let continue_target = self.current_chunk().code.len();
+                let loop_ctx = self.loop_stack.pop().unwrap();
+                for c_jump in loop_ctx.continue_jumps {
+                    self.patch_jump_to(c_jump, continue_target);
+                }
+
                 self.current_chunk().write_instruction(
                     OpCode::Add,
                     var_reg as u8,
@@ -283,6 +331,322 @@ impl Compiler {
 
                 self.emit_loop(loop_start);
                 self.patch_jump(exit_jump);
+
+                let end_ip = self.current_chunk().code.len();
+                for b_jump in loop_ctx.break_jumps {
+                    self.patch_jump_to(b_jump, end_ip);
+                }
+                self.end_scope();
+            }
+            Stmt::ForIn(var_name, iterable, body) => {
+                self.begin_scope();
+                let iter_reg = self.locals.len();
+                self.compile_expr(iterable, iter_reg)?;
+                self.current_chunk().write_instruction(
+                    OpCode::ToIter,
+                    iter_reg as u8,
+                    iter_reg as u8,
+                    0,
+                    0,
+                );
+                let temp_iter_name = format!("*loop_iter_{}", self.locals.len());
+                self.locals.push(Local {
+                    name: temp_iter_name,
+                    depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
+                });
+
+                let len_reg = self.locals.len();
+                self.current_chunk().write_instruction(
+                    OpCode::ArrayLen,
+                    len_reg as u8,
+                    iter_reg as u8,
+                    0,
+                    0,
+                );
+                let temp_len_name = format!("*loop_len_{}", self.locals.len());
+                self.locals.push(Local {
+                    name: temp_len_name,
+                    depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
+                });
+
+                let idx_reg = self.locals.len();
+                let zero_idx = self.current_chunk().add_constant(Value::number(0.0));
+                self.current_chunk().write_instruction(
+                    OpCode::LoadConst,
+                    idx_reg as u8,
+                    0,
+                    0,
+                    zero_idx as u32,
+                );
+                let temp_idx_name = format!("*loop_idx_{}", self.locals.len());
+                self.locals.push(Local {
+                    name: temp_idx_name,
+                    depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
+                });
+
+                let one_reg = self.locals.len();
+                let one_idx = self.current_chunk().add_constant(Value::number(1.0));
+                self.current_chunk().write_instruction(
+                    OpCode::LoadConst,
+                    one_reg as u8,
+                    0,
+                    0,
+                    one_idx as u32,
+                );
+                let temp_one_name = format!("*loop_one_{}", self.locals.len());
+                self.locals.push(Local {
+                    name: temp_one_name,
+                    depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
+                });
+
+                let var_reg = self.locals.len();
+                self.current_chunk().write_instruction(
+                    OpCode::LoadNull,
+                    var_reg as u8,
+                    0,
+                    0,
+                    0,
+                );
+                self.locals.push(Local {
+                    name: var_name.clone(),
+                    depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
+                });
+
+                let loop_start = self.current_chunk().code.len();
+                self.loop_stack.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    is_switch: false,
+                });
+
+                let cond_reg = self.locals.len();
+                self.current_chunk().write_instruction(
+                    OpCode::Less,
+                    cond_reg as u8,
+                    idx_reg as u8,
+                    len_reg as u8,
+                    0,
+                );
+
+                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+
+                self.current_chunk().write_instruction(
+                    OpCode::GetIndex,
+                    var_reg as u8,
+                    iter_reg as u8,
+                    idx_reg as u8,
+                    0,
+                );
+
+                self.compile_stmt(body)?;
+
+                let continue_target = self.current_chunk().code.len();
+                let loop_ctx = self.loop_stack.pop().unwrap();
+                for c_jump in loop_ctx.continue_jumps {
+                    self.patch_jump_to(c_jump, continue_target);
+                }
+
+                self.current_chunk().write_instruction(
+                    OpCode::Add,
+                    idx_reg as u8,
+                    idx_reg as u8,
+                    one_reg as u8,
+                    0,
+                );
+
+                self.emit_loop(loop_start);
+                self.patch_jump(exit_jump);
+
+                let end_ip = self.current_chunk().code.len();
+                for b_jump in loop_ctx.break_jumps {
+                    self.patch_jump_to(b_jump, end_ip);
+                }
+                self.end_scope();
+            }
+            Stmt::Break => {
+                if self.loop_stack.is_empty() {
+                    return Err("Cannot use 'break' outside of a loop or switch statement".to_string());
+                }
+                let jmp = self.emit_jump(OpCode::Jump, 0);
+                self.loop_stack.last_mut().unwrap().break_jumps.push(jmp);
+            }
+            Stmt::Continue => {
+                let target_idx = self.loop_stack.iter().rposition(|c| !c.is_switch);
+                if let Some(idx) = target_idx {
+                    let jmp = self.emit_jump(OpCode::Jump, 0);
+                    self.loop_stack[idx].continue_jumps.push(jmp);
+                } else {
+                    return Err("Cannot use 'continue' outside of a loop".to_string());
+                }
+            }
+            Stmt::Throw(expr) => {
+                let reg = self.next_reg;
+                self.compile_expr(expr, reg)?;
+                self.current_chunk().write_instruction(OpCode::Throw, reg as u8, 0, 0, 0);
+            }
+            Stmt::Try(try_body, catch_clause, finally_body) => {
+                if catch_clause.is_none() && finally_body.is_none() {
+                    return Err("try statement requires a 'catch' or 'finally' block".to_string());
+                }
+
+                let try_start = self.current_chunk().code.len();
+                self.compile_stmt(try_body)?;
+                let try_exit_jump = self.emit_jump(OpCode::Jump, 0);
+                let try_end = self.current_chunk().code.len();
+
+                let mut catch_exit_jump = None;
+
+                if let Some((err_var_name, catch_body)) = catch_clause {
+                    let catch_start = self.current_chunk().code.len();
+                    self.begin_scope();
+                    let err_reg = self.locals.len();
+                    self.locals.push(Local {
+                        name: err_var_name.clone(),
+                        depth: self.scope_depth,
+                        is_const: false,
+                        loc: crate::frontend::SourceLocation::default(),
+                        ty: None,
+                    });
+
+                    self.current_chunk().handlers.push(crate::vm::bytecode::ExceptionHandler {
+                        try_start,
+                        try_end,
+                        catch_ip: catch_start,
+                        err_reg: err_reg as u8,
+                        finally_ip: None,
+                    });
+
+                    self.compile_stmt(catch_body)?;
+                    self.end_scope();
+
+                    catch_exit_jump = Some(self.emit_jump(OpCode::Jump, 0));
+                } else if let Some(finally_b) = finally_body {
+                    let rethrow_handler_start = self.current_chunk().code.len();
+                    self.begin_scope();
+                    let err_reg = self.locals.len();
+                    self.locals.push(Local {
+                        name: "*finally_err".to_string(),
+                        depth: self.scope_depth,
+                        is_const: false,
+                        loc: crate::frontend::SourceLocation::default(),
+                        ty: None,
+                    });
+
+                    self.current_chunk().handlers.push(crate::vm::bytecode::ExceptionHandler {
+                        try_start,
+                        try_end,
+                        catch_ip: rethrow_handler_start,
+                        err_reg: err_reg as u8,
+                        finally_ip: Some(rethrow_handler_start),
+                    });
+
+                    self.compile_stmt(finally_b)?;
+                    self.current_chunk().write_instruction(OpCode::Throw, err_reg as u8, 0, 0, 0);
+                    self.end_scope();
+                }
+
+                let normal_finally_start = self.current_chunk().code.len();
+                self.patch_jump_to(try_exit_jump, normal_finally_start);
+                if let Some(c_jump) = catch_exit_jump {
+                    self.patch_jump_to(c_jump, normal_finally_start);
+                }
+
+                if let Some(finally_b) = finally_body {
+                    self.compile_stmt(finally_b)?;
+                }
+            }
+            Stmt::Switch(target_expr, cases, default_body) => {
+                self.begin_scope();
+                let target_reg = self.locals.len();
+                self.compile_expr(target_expr, target_reg)?;
+                self.locals.push(Local {
+                    name: format!("*switch_target_{}", self.locals.len()),
+                    depth: self.scope_depth,
+                    is_const: false,
+                    loc: crate::frontend::SourceLocation::default(),
+                    ty: None,
+                });
+
+                self.loop_stack.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                    is_switch: true,
+                });
+
+                let mut end_jumps = Vec::new();
+
+                for case in cases {
+                    let mut match_jumps = Vec::new();
+                    let mut next_case_jumps = Vec::new();
+
+                    let val_count = case.values.len();
+                    for (i, val_expr) in case.values.iter().enumerate() {
+                        let val_reg = self.locals.len();
+                        self.compile_expr(val_expr, val_reg)?;
+                        let cond_reg = val_reg + 1;
+                        self.current_chunk().write_instruction(
+                            OpCode::Equal,
+                            cond_reg as u8,
+                            target_reg as u8,
+                            val_reg as u8,
+                            0,
+                        );
+
+                        if i + 1 < val_count {
+                            let skip_test = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+                            let to_body = self.emit_jump(OpCode::Jump, 0);
+                            match_jumps.push(to_body);
+                            self.patch_jump(skip_test);
+                        } else {
+                            let to_next_case = self.emit_jump(OpCode::JumpIfFalse, cond_reg);
+                            next_case_jumps.push(to_next_case);
+                        }
+                    }
+
+                    let case_body_start = self.current_chunk().code.len();
+                    for mj in match_jumps {
+                        self.patch_jump_to(mj, case_body_start);
+                    }
+
+                    self.compile_stmt(&case.body)?;
+                    let to_end = self.emit_jump(OpCode::Jump, 0);
+                    end_jumps.push(to_end);
+
+                    let next_case_start = self.current_chunk().code.len();
+                    for ncj in next_case_jumps {
+                        self.patch_jump_to(ncj, next_case_start);
+                    }
+                }
+
+                if let Some(def_b) = default_body {
+                    self.compile_stmt(def_b)?;
+                }
+
+                let end_ip = self.current_chunk().code.len();
+                for ej in end_jumps {
+                    self.patch_jump_to(ej, end_ip);
+                }
+
+                let loop_ctx = self.loop_stack.pop().unwrap();
+                for bj in loop_ctx.break_jumps {
+                    self.patch_jump_to(bj, end_ip);
+                }
+
                 self.end_scope();
             }
             Stmt::Return(expr) => {
@@ -620,27 +984,374 @@ impl Compiler {
                     );
                 }
             }
+            Expr::Unary(op, inner) => {
+                self.compile_expr(inner, dest)?;
+                match op {
+                    TokenType::Bang => {
+                        self.current_chunk().write_instruction(
+                            OpCode::Not,
+                            dest as u8,
+                            dest as u8,
+                            0,
+                            0,
+                        );
+                    }
+                    TokenType::Minus => {
+                        self.current_chunk().write_instruction(
+                            OpCode::Negate,
+                            dest as u8,
+                            dest as u8,
+                            0,
+                            0,
+                        );
+                    }
+                    TokenType::Tilde => {
+                        self.current_chunk().write_instruction(
+                            OpCode::BitNot,
+                            dest as u8,
+                            dest as u8,
+                            0,
+                            0,
+                        );
+                    }
+                    TokenType::Typeof => {
+                        self.current_chunk().write_instruction(
+                            OpCode::TypeOf,
+                            dest as u8,
+                            dest as u8,
+                            0,
+                            0,
+                        );
+                    }
+                    _ => return Err(format!("Unsupported unary operator: {:?}", op)),
+                }
+            }
+            Expr::Prefix(op, inner) => {
+                let is_plus = match op {
+                    TokenType::PlusPlus => true,
+                    TokenType::MinusMinus => false,
+                    _ => return Err("Invalid prefix operator".into()),
+                };
+                let update_op = if is_plus { OpCode::Add } else { OpCode::Sub };
+
+                let one_reg = std::cmp::max(self.next_reg, dest + 1);
+                let one_idx = self.current_chunk().add_constant(Value::number(1.0));
+                self.current_chunk().write_instruction(
+                    OpCode::LoadConst,
+                    one_reg as u8,
+                    0,
+                    0,
+                    one_idx as u32,
+                );
+
+                match &**inner {
+                    Expr::Variable(name, loc) => {
+                        if let Some(idx) = self.resolve_local(name) {
+                            if self.locals[idx].is_const {
+                                return Err(self.format_const_assign_error(name, loc, &self.locals[idx].loc));
+                            }
+                            self.current_chunk().write_instruction(
+                                update_op,
+                                idx as u8,
+                                idx as u8,
+                                one_reg as u8,
+                                0,
+                            );
+                            if dest != idx {
+                                self.current_chunk().write_instruction(
+                                    OpCode::Move,
+                                    dest as u8,
+                                    idx as u8,
+                                    0,
+                                    0,
+                                );
+                            }
+                        } else {
+                            if let Some(decl_loc) = self.const_globals.borrow().get(name).cloned() {
+                                return Err(self.format_const_assign_error(name, loc, &decl_loc));
+                            }
+                            let name_idx = self
+                                .current_chunk()
+                                .add_constant(Value::string(get_or_create_string(name.as_str())));
+                            self.current_chunk().write_instruction(
+                                OpCode::GetGlobal,
+                                dest as u8,
+                                0,
+                                0,
+                                name_idx as u32,
+                            );
+                            self.current_chunk().write_instruction(
+                                update_op,
+                                dest as u8,
+                                dest as u8,
+                                one_reg as u8,
+                                0,
+                            );
+                            self.current_chunk().write_instruction(
+                                OpCode::SetGlobal,
+                                dest as u8,
+                                0,
+                                0,
+                                name_idx as u32,
+                            );
+                        }
+                    }
+                    Expr::Get(obj, prop) => {
+                        let obj_reg = one_reg + 1;
+                        self.compile_expr(obj, obj_reg)?;
+                        let name_idx = self
+                            .current_chunk()
+                            .add_constant(Value::string(get_or_create_string(prop.as_str())));
+                        self.current_chunk().write_instruction(
+                            OpCode::GetProperty,
+                            dest as u8,
+                            obj_reg as u8,
+                            0,
+                            name_idx as u32,
+                        );
+                        self.current_chunk().write_instruction(
+                            update_op,
+                            dest as u8,
+                            dest as u8,
+                            one_reg as u8,
+                            0,
+                        );
+                        self.current_chunk().write_instruction(
+                            OpCode::SetProperty,
+                            obj_reg as u8,
+                            dest as u8,
+                            0,
+                            name_idx as u32,
+                        );
+                    }
+                    Expr::GetIndex(obj, idx_expr) => {
+                        let obj_reg = one_reg + 1;
+                        self.compile_expr(obj, obj_reg)?;
+                        let idx_reg = obj_reg + 1;
+                        self.compile_expr(idx_expr, idx_reg)?;
+                        self.current_chunk().write_instruction(
+                            OpCode::GetIndex,
+                            dest as u8,
+                            obj_reg as u8,
+                            idx_reg as u8,
+                            0,
+                        );
+                        self.current_chunk().write_instruction(
+                            update_op,
+                            dest as u8,
+                            dest as u8,
+                            one_reg as u8,
+                            0,
+                        );
+                        self.current_chunk().write_instruction(
+                            OpCode::SetIndex,
+                            obj_reg as u8,
+                            idx_reg as u8,
+                            dest as u8,
+                            0,
+                        );
+                    }
+                    _ => return Err("Invalid target for prefix increment/decrement".into()),
+                }
+            }
+            Expr::Postfix(op, inner) => {
+                let is_plus = match op {
+                    TokenType::PlusPlus => true,
+                    TokenType::MinusMinus => false,
+                    _ => return Err("Invalid postfix operator".into()),
+                };
+                let update_op = if is_plus { OpCode::Add } else { OpCode::Sub };
+
+                let one_reg = std::cmp::max(self.next_reg, dest + 1);
+                let one_idx = self.current_chunk().add_constant(Value::number(1.0));
+                self.current_chunk().write_instruction(
+                    OpCode::LoadConst,
+                    one_reg as u8,
+                    0,
+                    0,
+                    one_idx as u32,
+                );
+
+                match &**inner {
+                    Expr::Variable(name, loc) => {
+                        if let Some(idx) = self.resolve_local(name) {
+                            if self.locals[idx].is_const {
+                                return Err(self.format_const_assign_error(name, loc, &self.locals[idx].loc));
+                            }
+                            if dest != idx {
+                                self.current_chunk().write_instruction(
+                                    OpCode::Move,
+                                    dest as u8,
+                                    idx as u8,
+                                    0,
+                                    0,
+                                );
+                            }
+                            self.current_chunk().write_instruction(
+                                update_op,
+                                idx as u8,
+                                idx as u8,
+                                one_reg as u8,
+                                0,
+                            );
+                        } else {
+                            if let Some(decl_loc) = self.const_globals.borrow().get(name).cloned() {
+                                return Err(self.format_const_assign_error(name, loc, &decl_loc));
+                            }
+                            let name_idx = self
+                                .current_chunk()
+                                .add_constant(Value::string(get_or_create_string(name.as_str())));
+                            self.current_chunk().write_instruction(
+                                OpCode::GetGlobal,
+                                dest as u8,
+                                0,
+                                0,
+                                name_idx as u32,
+                            );
+                            let temp_reg = one_reg + 1;
+                            self.current_chunk().write_instruction(
+                                update_op,
+                                temp_reg as u8,
+                                dest as u8,
+                                one_reg as u8,
+                                0,
+                            );
+                            self.current_chunk().write_instruction(
+                                OpCode::SetGlobal,
+                                temp_reg as u8,
+                                0,
+                                0,
+                                name_idx as u32,
+                            );
+                        }
+                    }
+                    Expr::Get(obj, prop) => {
+                        let obj_reg = one_reg + 1;
+                        self.compile_expr(obj, obj_reg)?;
+                        let name_idx = self
+                            .current_chunk()
+                            .add_constant(Value::string(get_or_create_string(prop.as_str())));
+                        self.current_chunk().write_instruction(
+                            OpCode::GetProperty,
+                            dest as u8,
+                            obj_reg as u8,
+                            0,
+                            name_idx as u32,
+                        );
+                        let temp_reg = obj_reg + 1;
+                        self.current_chunk().write_instruction(
+                            update_op,
+                            temp_reg as u8,
+                            dest as u8,
+                            one_reg as u8,
+                            0,
+                        );
+                        self.current_chunk().write_instruction(
+                            OpCode::SetProperty,
+                            obj_reg as u8,
+                            temp_reg as u8,
+                            0,
+                            name_idx as u32,
+                        );
+                    }
+                    Expr::GetIndex(obj, idx_expr) => {
+                        let obj_reg = one_reg + 1;
+                        self.compile_expr(obj, obj_reg)?;
+                        let idx_reg = obj_reg + 1;
+                        self.compile_expr(idx_expr, idx_reg)?;
+                        self.current_chunk().write_instruction(
+                            OpCode::GetIndex,
+                            dest as u8,
+                            obj_reg as u8,
+                            idx_reg as u8,
+                            0,
+                        );
+                        let temp_reg = idx_reg + 1;
+                        self.current_chunk().write_instruction(
+                            update_op,
+                            temp_reg as u8,
+                            dest as u8,
+                            one_reg as u8,
+                            0,
+                        );
+                        self.current_chunk().write_instruction(
+                            OpCode::SetIndex,
+                            obj_reg as u8,
+                            idx_reg as u8,
+                            temp_reg as u8,
+                            0,
+                        );
+                    }
+                    _ => return Err("Invalid target for postfix increment/decrement".into()),
+                }
+            }
+            Expr::Ternary(cond, then_b, else_b) => {
+                self.compile_expr(cond, dest)?;
+                let else_jump = self.emit_jump(OpCode::JumpIfFalse, dest);
+                self.compile_expr(then_b, dest)?;
+                let end_jump = self.emit_jump(OpCode::Jump, 0);
+                self.patch_jump(else_jump);
+                self.compile_expr(else_b, dest)?;
+                self.patch_jump(end_jump);
+            }
             Expr::Binary(left, op, right) => {
                 self.compile_expr(left, dest)?;
                 let temp = std::cmp::max(self.next_reg, dest + 1);
                 self.compile_expr(right, temp)?;
-                let code = match op {
-                    TokenType::Plus => OpCode::Add,
-                    TokenType::Minus => OpCode::Sub,
-                    TokenType::Star => OpCode::Mul,
-                    TokenType::Slash => OpCode::Div,
-                    TokenType::EqualEqual => OpCode::Equal,
-                    TokenType::Greater => OpCode::Greater,
-                    TokenType::Less => OpCode::Less,
-                    _ => return Err("Invalid binary operator".into()),
-                };
-                self.current_chunk().write_instruction(
-                    code,
-                    dest as u8,
-                    dest as u8,
-                    temp as u8,
-                    0,
-                );
+                match op {
+                    TokenType::Plus => {
+                        self.current_chunk().write_instruction(OpCode::Add, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::Minus => {
+                        self.current_chunk().write_instruction(OpCode::Sub, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::Star => {
+                        self.current_chunk().write_instruction(OpCode::Mul, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::Slash => {
+                        self.current_chunk().write_instruction(OpCode::Div, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::Percent => {
+                        self.current_chunk().write_instruction(OpCode::Mod, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::Ampersand => {
+                        self.current_chunk().write_instruction(OpCode::BitAnd, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::Pipe => {
+                        self.current_chunk().write_instruction(OpCode::BitOr, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::Caret => {
+                        self.current_chunk().write_instruction(OpCode::BitXor, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::LessLess => {
+                        self.current_chunk().write_instruction(OpCode::ShiftLeft, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::GreaterGreater => {
+                        self.current_chunk().write_instruction(OpCode::ShiftRight, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::EqualEqual => {
+                        self.current_chunk().write_instruction(OpCode::Equal, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::BangEqual => {
+                        self.current_chunk().write_instruction(OpCode::Equal, dest as u8, dest as u8, temp as u8, 0);
+                        self.current_chunk().write_instruction(OpCode::Not, dest as u8, dest as u8, 0, 0);
+                    }
+                    TokenType::Greater => {
+                        self.current_chunk().write_instruction(OpCode::Greater, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::GreaterEqual => {
+                        self.current_chunk().write_instruction(OpCode::Less, dest as u8, dest as u8, temp as u8, 0);
+                        self.current_chunk().write_instruction(OpCode::Not, dest as u8, dest as u8, 0, 0);
+                    }
+                    TokenType::Less => {
+                        self.current_chunk().write_instruction(OpCode::Less, dest as u8, dest as u8, temp as u8, 0);
+                    }
+                    TokenType::LessEqual => {
+                        self.current_chunk().write_instruction(OpCode::Greater, dest as u8, dest as u8, temp as u8, 0);
+                        self.current_chunk().write_instruction(OpCode::Not, dest as u8, dest as u8, 0, 0);
+                    }
+                    _ => return Err(format!("Invalid binary operator: {:?}", op)),
+                }
             }
             Expr::Logical(left, op, right) => {
                 if op == &TokenType::Or {
@@ -997,6 +1708,15 @@ impl Compiler {
         }
     }
 
+    fn patch_jump_to(&mut self, offset: usize, target_ip: usize) {
+        let jump = target_ip - 1 - offset;
+        let inst = &mut self.current_chunk().code[offset];
+        match inst.op {
+            OpCode::JumpIfFalse | OpCode::Jump => inst.operand = jump as u32,
+            _ => unreachable!(),
+        }
+    }
+
     fn emit_loop(&mut self, loop_start: usize) {
         let offset = self.current_chunk().code.len() - loop_start + 1;
         self.current_chunk().write_instruction(OpCode::Loop, 0, 0, 0, offset as u32);
@@ -1059,8 +1779,31 @@ fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, R
                     collect_structs(std::slice::from_ref(eb), map);
                 }
             }
+            Stmt::While(_, body) => {
+                collect_structs(std::slice::from_ref(body), map);
+            }
             Stmt::For(_, _, _, body) => {
                 collect_structs(std::slice::from_ref(body), map);
+            }
+            Stmt::ForIn(_, _, body) => {
+                collect_structs(std::slice::from_ref(body), map);
+            }
+            Stmt::Try(try_body, catch_clause, finally_body) => {
+                collect_structs(std::slice::from_ref(try_body), map);
+                if let Some((_, catch_b)) = catch_clause {
+                    collect_structs(std::slice::from_ref(catch_b), map);
+                }
+                if let Some(finally_b) = finally_body {
+                    collect_structs(std::slice::from_ref(finally_b), map);
+                }
+            }
+            Stmt::Switch(_, cases, default_body) => {
+                for c in cases {
+                    collect_structs(std::slice::from_ref(&c.body), map);
+                }
+                if let Some(def_b) = default_body {
+                    collect_structs(std::slice::from_ref(def_b), map);
+                }
             }
             Stmt::Export(inner) => {
                 collect_structs(std::slice::from_ref(inner), map);
@@ -1088,8 +1831,31 @@ fn collect_interfaces(stmts: &[Stmt], map: &mut std::collections::HashMap<String
                     collect_interfaces(std::slice::from_ref(eb), map);
                 }
             }
+            Stmt::While(_, body) => {
+                collect_interfaces(std::slice::from_ref(body), map);
+            }
             Stmt::For(_, _, _, body) => {
                 collect_interfaces(std::slice::from_ref(body), map);
+            }
+            Stmt::ForIn(_, _, body) => {
+                collect_interfaces(std::slice::from_ref(body), map);
+            }
+            Stmt::Try(try_body, catch_clause, finally_body) => {
+                collect_interfaces(std::slice::from_ref(try_body), map);
+                if let Some((_, catch_b)) = catch_clause {
+                    collect_interfaces(std::slice::from_ref(catch_b), map);
+                }
+                if let Some(finally_b) = finally_body {
+                    collect_interfaces(std::slice::from_ref(finally_b), map);
+                }
+            }
+            Stmt::Switch(_, cases, default_body) => {
+                for c in cases {
+                    collect_interfaces(std::slice::from_ref(&c.body), map);
+                }
+                if let Some(def_b) = default_body {
+                    collect_interfaces(std::slice::from_ref(def_b), map);
+                }
             }
             Stmt::Export(inner) => {
                 collect_interfaces(std::slice::from_ref(inner), map);
