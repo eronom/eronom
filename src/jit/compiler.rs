@@ -244,7 +244,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
         let mut successors = Vec::new();
         match inst.op {
-            OpCode::Return => {}
+            OpCode::Return | OpCode::Throw => {}
             OpCode::Jump => {
                 let target = (pc as i32 + 1 + inst.operand as i32) as usize;
                 successors.push(target);
@@ -1333,6 +1333,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 }
                 mir.push_str("          ret 1\n");
             }
+            OpCode::Throw => {
+                mir.push_str(&format!("          mov i64:(ret_val_out), r{}\n", ra));
+                mir.push_str("          ret -1\n");
+            }
             OpCode::Await => {}
         }
     }
@@ -1425,7 +1429,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                     gen_set[pc][ra] = true;
                 }
             }
-            OpCode::Return => {
+            OpCode::Return | OpCode::Throw => {
                 if ra < num_regs {
                     gen_set[pc][ra] = true;
                 }
@@ -1506,7 +1510,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
         let mut successors = Vec::new();
         let inst = &code[pc];
         match inst.op {
-            OpCode::Return => {}
+            OpCode::Return | OpCode::Throw => {}
             OpCode::Jump => {
                 let target = (pc as i32 + 1 + inst.operand as i32) as usize;
                 successors.push(target);
@@ -1567,7 +1571,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                 let p_inst = &code[pred];
                 let mut is_pred = false;
                 match p_inst.op {
-                    OpCode::Return => {}
+                    OpCode::Return | OpCode::Throw => {}
                     OpCode::Jump => {
                         let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
                         if target == pc {

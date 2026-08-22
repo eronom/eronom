@@ -49,6 +49,18 @@ pub enum TokenType {
     Concurrent,
     Spawn,
     On,
+    While,
+    Break,
+    Continue,
+    Try,
+    Catch,
+    Finally,
+    Throw,
+    Switch,
+    Case,
+    Default,
+    Match,
+    Underscore,
     Eof,
 }
 

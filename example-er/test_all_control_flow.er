@@ -1,0 +1,83 @@
+// Comprehensive Control Flow Integration Test
+
+// 1. While Loop
+let w = 0
+let sum_w = 0
+while (w < 10) {
+    w = w + 1
+    if (w == 5) {
+        continue
+    }
+    if (w == 9) {
+        break
+    }
+    sum_w = sum_w + w
+}
+print("1. While with break/continue sum: " + sum_w) // 1+2+3+4+6+7+8 = 31
+
+// 2. For Loop
+let sum_f = 0
+for i in 0..10 {
+    if (i == 3) {
+        continue
+    }
+    if (i == 8) {
+        break
+    }
+    sum_f = sum_f + i
+}
+print("2. For with break/continue sum: " + sum_f) // 0+1+2+4+5+6+7 = 25
+
+// 3. Exception Handling across Call Stack
+fn compute(n) {
+    if (n < 0) {
+        throw "Negative value not allowed: " + n
+    }
+    return n * 2
+}
+
+fn process(list) {
+    let acc = 0
+    let list_len = arrayLen(list)
+    for idx in 0..list_len {
+        let val = list[idx]
+        try {
+            acc = acc + compute(val)
+        } catch (err) {
+            acc = acc + 100
+        }
+    }
+    return acc
+}
+
+let test_list = [10, 0 - 5, 20, 0 - 1, 30]
+// 10*2=20, -5->+100, 20*2=40, -1->+100, 30*2=60 -> Total: 20+100+40+100+60 = 320
+let final_acc = process(test_list)
+print("3. Process with try-catch in loop acc: " + final_acc)
+
+// 4. Switch and Match
+fn classify(x) {
+    let result = ""
+    match (x) {
+        1, 2 => {
+            result = "small"
+        },
+        10, 20, 30 => {
+            result = "medium"
+        },
+        100 => {
+            result = "large"
+        },
+        _ => {
+            result = "other"
+        }
+    }
+    return result
+}
+
+print("4a. Classify 2: " + classify(2))
+print("4b. Classify 20: " + classify(20))
+print("4c. Classify 100: " + classify(100))
+print("4d. Classify 999: " + classify(999))
+
+print("ALL CONTROL FLOW TESTS COMPLETED SUCCESSFULLY!")

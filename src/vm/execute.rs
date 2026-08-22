@@ -557,11 +557,11 @@ impl VM {
                 self.gc_trigger();
                 reload_stack!();
 
-                let is_async = match &(*frame.function).data {
-                    GcData::Function(f) => f.is_async,
-                    _ => false,
+                let (is_async, has_handlers) = match &(*frame.function).data {
+                    GcData::Function(f) => (f.is_async, !f.chunk.handlers.is_empty()),
+                    _ => (false, false),
                 };
-                if is_async {
+                if is_async || has_handlers {
                     return self.execute_loop_interpreter(0);
                 }
 
@@ -744,9 +744,49 @@ impl VM {
                     frame.ip = ip_out;
                     return Ok(Value::null());
                 } else {
-                    // RuntimeError or JIT compilation/execution error.
-                    let err_msg = self.error.take().unwrap_or_else(|| "JIT execution error".into());
-                    return Err(err_msg);
+                    // RuntimeError, JIT Throw, or JIT execution error.
+                    let thrown = if !ret_val_out.is_null() {
+                        ret_val_out
+                    } else if let Some(err_msg) = self.error.take() {
+                        let ptr = super::gc::get_or_create_string(&err_msg);
+                        Value::string(ptr)
+                    } else {
+                        let ptr = super::gc::get_or_create_string("JIT execution error");
+                        Value::string(ptr)
+                    };
+
+                    let initial_frame_idx = self.frames.len() - 1;
+                    while !self.frames.is_empty() {
+                        let frame_idx = self.frames.len() - 1;
+                        let curr_ip = if frame_idx == initial_frame_idx {
+                            ip_out
+                        } else {
+                            let f_ip = self.frames[frame_idx].ip;
+                            if f_ip > 0 { f_ip - 1 } else { 0 }
+                        };
+                        let curr_func = get_func!(self.frames[frame_idx].function);
+                        if let Some(handler) = curr_func.chunk.find_handler(curr_ip).cloned() {
+                            while self.frames.len() > frame_idx + 1 {
+                                self.frames.pop();
+                            }
+                            let frame_slots_target = self.stack.as_mut_ptr().add(self.frames[frame_idx].slots_offset);
+                            *frame_slots_target.add(handler.err_reg as usize) = thrown;
+                            self.frames[frame_idx].ip = handler.catch_ip;
+                            return self.execute_loop_interpreter(0);
+                        } else {
+                            if self.frames.len() > 1 {
+                                self.frames.pop();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    let err_str = match thrown.as_str() {
+                        Some(s) => s.to_string(),
+                        None => format!("{}", thrown),
+                    };
+                    return Err(format!("Uncaught exception: {}", err_str));
                 }
             }
         }
@@ -787,6 +827,73 @@ impl VM {
                     stack_start = self.stack.as_mut_ptr();
                     frame_slots = stack_start.add(slots_offset);
                 };
+            }
+
+            macro_rules! handle_exception {
+                ($thrown_val:expr) => {{
+                    let thrown: Value = $thrown_val;
+                    let mut handled = false;
+
+                    let initial_frame_idx = self.frames.len() - 1;
+                    while !self.frames.is_empty() {
+                        let frame_idx = self.frames.len() - 1;
+                        let curr_ip = if frame_idx == initial_frame_idx {
+                            let offset = ip.offset_from(code_ptr) as usize;
+                            if offset > 0 { offset - 1 } else { 0 }
+                        } else {
+                            let f_ip = self.frames[frame_idx].ip;
+                            if f_ip > 0 { f_ip - 1 } else { 0 }
+                        };
+                        let curr_func = get_func!(self.frames[frame_idx].function);
+
+                        if let Some(handler) = curr_func.chunk.find_handler(curr_ip).cloned() {
+                            while self.frames.len() > frame_idx + 1 {
+                                self.frames.pop();
+                            }
+                            frame_ptr = {
+                                let len = self.frames.len();
+                                self.frames.as_mut_ptr().add(len - 1)
+                            };
+                            frame = &mut *frame_ptr;
+                            func = get_func!(frame.function);
+                            code_ptr = func.chunk.code.as_ptr();
+                            constants_ptr = func.chunk.constants.as_ptr();
+                            slots_offset = frame.slots_offset;
+                            reload_stack!();
+
+                            *frame_slots.add(handler.err_reg as usize) = thrown;
+                            ip = code_ptr.add(handler.catch_ip);
+                            handled = true;
+                            break;
+                        } else {
+                            if self.frames.len() > 1 {
+                                self.frames.pop();
+                                if !self.frames.is_empty() {
+                                    frame_ptr = {
+                                        let len = self.frames.len();
+                                        self.frames.as_mut_ptr().add(len - 1)
+                                    };
+                                    frame = &mut *frame_ptr;
+                                    func = get_func!(frame.function);
+                                    code_ptr = func.chunk.code.as_ptr();
+                                    constants_ptr = func.chunk.constants.as_ptr();
+                                    slots_offset = frame.slots_offset;
+                                    reload_stack!();
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    if !handled {
+                        let err_str = match thrown.as_str() {
+                            Some(s) => s.to_string(),
+                            None => format!("{}", thrown),
+                        };
+                        return Err(format!("Uncaught exception: {}", err_str));
+                    }
+                }};
             }
 
             loop {
@@ -1663,6 +1770,10 @@ impl VM {
                         ip = code_ptr.add(frame.ip);
 
                         *frame_slots.add(caller_dest_reg) = result;
+                    }
+                    OpCode::Throw => {
+                        let thrown = *frame_slots.add(instruction.ra as usize);
+                        handle_exception!(thrown);
                     }
                 }
             }

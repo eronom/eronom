@@ -255,6 +255,18 @@ impl<'a> Lexer<'a> {
                     "concurrent" => TokenType::Concurrent,
                     "spawn" => TokenType::Spawn,
                     "on" => TokenType::On,
+                    "while" => TokenType::While,
+                    "break" => TokenType::Break,
+                    "continue" => TokenType::Continue,
+                    "try" => TokenType::Try,
+                    "catch" => TokenType::Catch,
+                    "finally" => TokenType::Finally,
+                    "throw" => TokenType::Throw,
+                    "switch" => TokenType::Switch,
+                    "case" => TokenType::Case,
+                    "default" => TokenType::Default,
+                    "match" => TokenType::Match,
+                    "_" => TokenType::Underscore,
                     _ => TokenType::Identifier(ident),
                 }
             }

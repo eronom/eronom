@@ -1,0 +1,86 @@
+// Test 1: Standard switch statement with default
+let status = 200
+let status_text = ""
+switch (status) {
+    case 200:
+        status_text = "OK"
+        break
+    case 404:
+        status_text = "Not Found"
+        break
+    case 500:
+        status_text = "Internal Server Error"
+        break
+    default:
+        status_text = "Unknown"
+}
+print("Status 200 text: " + status_text)
+
+// Test 2: Switch with strings and multi-value case
+let role = "admin"
+let permission = ""
+switch (role) {
+    case "guest", "anonymous":
+        permission = "read_only"
+        break
+    case "editor", "moderator":
+        permission = "edit_content"
+        break
+    case "admin", "superadmin", "owner":
+        permission = "full_access"
+        break
+    default:
+        permission = "none"
+}
+print("Admin permissions: " + permission)
+
+// Test 3: Switch default branch fallback
+let unknown_role = "hacker"
+let unknown_perm = ""
+switch (unknown_role) {
+    case "user":
+        unknown_perm = "user_access"
+        break
+    default:
+        unknown_perm = "denied"
+}
+print("Unknown role permissions: " + unknown_perm)
+
+// Test 4: Rust-style match syntax
+let fruit = "apple"
+let fruit_color = ""
+match (fruit) {
+    "banana" => {
+        fruit_color = "yellow"
+    },
+    "apple", "cherry" => {
+        fruit_color = "red"
+    },
+    "lime" => {
+        fruit_color = "green"
+    },
+    _ => {
+        fruit_color = "unknown"
+    }
+}
+print("Apple color: " + fruit_color)
+
+// Test 5: Switch inside a while loop with break
+let num = 0
+let sum_matched = 0
+while (num < 5) {
+    num = num + 1
+    switch (num) {
+        case 1:
+            sum_matched = sum_matched + 10
+            break
+        case 2, 3:
+            sum_matched = sum_matched + 20
+            break
+        default:
+            sum_matched = sum_matched + 1
+            break
+    }
+}
+// num=1 -> +10, num=2 -> +20, num=3 -> +20, num=4 -> +1, num=5 -> +1 (Total: 52)
+print("Switch inside loop sum: " + sum_matched)

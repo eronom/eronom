@@ -9,3 +9,7 @@ eronom
 
 # temporary compiled MIR output
 temp_compiled.mir
+
+# graphify
+graphify-out/
+newptest/

@@ -1,0 +1,29 @@
+// Test 1: Basic while loop
+let i = 0
+let sum = 0
+while (i < 5) {
+    sum = sum + i
+    i = i + 1
+}
+print("Sum 0..4: " + sum) // Expected: 10
+
+// Test 2: while with bare condition (no parens)
+let count = 3
+while count > 0 {
+    print("Countdown: " + count)
+    count = count - 1
+}
+print("Blast off!")
+
+// Test 3: Nested while loops
+let outer = 0
+let total = 0
+while (outer < 3) {
+    let inner = 0
+    while (inner < 3) {
+        total = total + 1
+        inner = inner + 1
+    }
+    outer = outer + 1
+}
+print("Nested total (3x3): " + total) // Expected: 9

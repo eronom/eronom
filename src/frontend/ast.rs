@@ -35,13 +35,25 @@ pub enum LiteralValue {
 }
 
 #[derive(Debug, Clone)]
+pub struct SwitchCase {
+    pub values: Vec<Expr>,
+    pub body: Box<Stmt>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
     VarDecl(String, Option<String>, bool, Expr, SourceLocation), // name, type_annotation, is_const, initializer, location
     Block(Vec<Stmt>),
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
+    While(Expr, Box<Stmt>),
     For(String, Expr, Expr, Box<Stmt>), // var, start, end, body
+    Break,
+    Continue,
+    Throw(Expr),
+    Try(Box<Stmt>, Option<(String, Box<Stmt>)>, Option<Box<Stmt>>), // try_body, catch_clause (param_name, catch_body), finally_body
+    Switch(Expr, Vec<SwitchCase>, Option<Box<Stmt>>), // target_expr, cases, default_body
     Return(Option<Expr>),
     Import(Vec<String>, String), // imported names, source path
     Export(Box<Stmt>), // exported declaration statement
