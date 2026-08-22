@@ -10,5 +10,16 @@ Follow these safety rules when executing Git commands in the workspace:
 2. **Conventional Commit Format**: Format all commit messages using standard conventional commit style:
    - `feat(scope): ...` for new capabilities.
    - `fix(scope): ...` for bug fixes.
-   - `docs(agents): ...` for agent memory and documentation updates.
+   - `refactor(scope): ...` for structural refactoring without behavior changes.
+   - `perf(scope): ...` for performance optimizations.
+   - `test(scope): ...` for test suites and benchmarks.
+   - `docs(scope): ...` for documentation and agent memory updates.
 3. **Cumulative Pull Request Summaries**: When creating or updating a Pull Request for a branch that builds on top of other unmerged branches, always inspect the full commit log against the target branch (e.g., `git log origin/main..HEAD`) and ensure all changes, features, and commits included in the PR range are explicitly documented in the Pull Request title and summary.
+4. **Clean Staging & No Scratch Files**: Always inspect `git status` before `git add` to avoid staging temporary debug scripts, scratch files, core dumps, logs, or unneeded binary outputs. Keep repository trees clean.
+5. **No Destructive Operations**: Never execute destructive commands (`git reset --hard`, `git clean -fd`, `git checkout -- .`, `git push --force`) without explicit confirmation from the user to prevent accidental data or work loss.
+6. **Descriptive Branch Naming**: Name feature and fix branches with clear semantic prefixes:
+   - `feat/<feature-name>` (e.g. `feat/operators-and-collection-iteration`)
+   - `fix/<bug-description>` (e.g. `fix/const-assignment-panic`)
+   - `refactor/<subsystem>` (e.g. `refactor/vendor-native-deps`)
+7. **Pre-Commit Verification**: Ensure the codebase builds cleanly (`cargo build`) and tests pass before committing to ensure the commit history remains in a green, working state.
+8. **Credential & Secret Protection**: Never commit environment files (`.env`), API keys, access tokens, credentials, or private keys to the repository. Ensure sensitive files remain in `.gitignore`.
