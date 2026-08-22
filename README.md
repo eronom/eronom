@@ -41,7 +41,7 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
 * **`src/jit/`**: Just-In-Time compiler.
   * `compiler.rs`: Generates MIR intermediate representation from Eronom bytecode.
   * `bindings.rs` & `helpers.rs`: Rust interfaces to the C-based MIR engine.
-* **`deps/`**: Vendored native C/C++ dependencies:
+* **`vendor/`**: Vendored native C/C++ dependencies:
   * `mir`: Vladimir Makarov's lightweight JIT compiler.
   * `uWebSockets`: The high-performance C++ uWebSockets & uSockets library.
   * `libuv`: Windows eventing backend for uSockets.
