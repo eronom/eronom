@@ -89,7 +89,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_jit_define_struct\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_jit_define_struct\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -104,6 +104,16 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_sub: proto i64, p:vm, i64:b, i64:c\n");
     mir.push_str("p_mul: proto i64, p:vm, i64:b, i64:c\n");
     mir.push_str("p_div: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_mod: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_bit_and: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_bit_or: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_bit_xor: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_bit_not: proto i64, p:vm, i64:src\n");
+    mir.push_str("p_shift_left: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_shift_right: proto i64, p:vm, i64:b, i64:c\n");
+    mir.push_str("p_typeof: proto i64, p:vm, i64:src\n");
+    mir.push_str("p_to_iter: proto i64, p:vm, i64:src\n");
+    mir.push_str("p_array_len_op: proto i64, p:vm, i64:src\n");
     mir.push_str("p_equal: proto i64, p:vm, i64:b, i64:c\n");
     mir.push_str("p_greater: proto i64, p:vm, i64:b, i64:c\n");
     mir.push_str("p_less: proto i64, p:vm, i64:b, i64:c\n");
@@ -226,7 +236,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     };
                 }
             }
-            OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Negate => {
+            OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Negate |
+            OpCode::Mod | OpCode::BitAnd | OpCode::BitOr | OpCode::BitXor | OpCode::BitNot | OpCode::ShiftLeft | OpCode::ShiftRight | OpCode::ArrayLen => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Double;
                 }
@@ -234,7 +245,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
-            OpCode::MakeArray | OpCode::MakeObject => {
+            OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Unknown;
                 }
@@ -383,7 +394,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     };
                 }
             }
-            OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Negate => {
+            OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Negate |
+            OpCode::Mod | OpCode::BitAnd | OpCode::BitOr | OpCode::BitXor | OpCode::BitNot | OpCode::ShiftLeft | OpCode::ShiftRight | OpCode::ArrayLen => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Double;
                 }
@@ -391,7 +403,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
-            OpCode::MakeArray | OpCode::MakeObject => {
+            OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Unknown;
                 }
@@ -463,15 +475,15 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 if rb_is_double {
                     mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
                 } else {
-                    mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
+                    mir.push_str(&format!("          mov tmp1, {}\n", TAG_FALSE));
                     mir.push_str(&format!("          beq done_not_{}, r{}, {}\n", idx, rb, TAG_TRUE));
-                    mir.push_str(&format!("          mov tmp1, {}\n", TAG_TRUE));
                     mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_FALSE));
                     mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_NULL));
                     mir.push_str(&format!("          jmp done_not_{}\n", idx));
                     mir.push_str(&format!("set_true_{}:\n", idx));
-                    mir.push_str(&format!("          mov r{}, tmp1\n", ra));
+                    mir.push_str(&format!("          mov tmp1, {}\n", TAG_TRUE));
                     mir.push_str(&format!("done_not_{}:\n", idx));
+                    mir.push_str(&format!("          mov r{}, tmp1\n", ra));
                 }
             }
             OpCode::Add => {
@@ -700,6 +712,198 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
                     }
                     mir.push_str(&format!("done_div_{}:\n", idx));
+                }
+            }
+            OpCode::Mod => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                if rc_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                }
+                mir.push_str(&format!("          call p_mod, er_jit_mod, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                }
+            }
+            OpCode::BitAnd => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                if rc_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                }
+                mir.push_str(&format!("          call p_bit_and, er_jit_bit_and, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                }
+            }
+            OpCode::BitOr => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                if rc_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                }
+                mir.push_str(&format!("          call p_bit_or, er_jit_bit_or, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                }
+            }
+            OpCode::BitXor => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                if rc_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                }
+                mir.push_str(&format!("          call p_bit_xor, er_jit_bit_xor, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                }
+            }
+            OpCode::BitNot => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                mir.push_str(&format!("          call p_bit_not, er_jit_bit_not, r{}, vm, r{}\n", ra, rb));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset2));
+                }
+            }
+            OpCode::ShiftLeft => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                if rc_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                }
+                mir.push_str(&format!("          call p_shift_left, er_jit_shift_left, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                }
+            }
+            OpCode::ShiftRight => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let offset3 = ((idx * 3 + 2) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                if rc_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                }
+                mir.push_str(&format!("          call p_shift_right, er_jit_shift_right, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                }
+            }
+            OpCode::TypeOf => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                mir.push_str(&format!("          call p_typeof, er_jit_typeof, r{}, vm, r{}\n", ra, rb));
+            }
+            OpCode::ToIter => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                mir.push_str(&format!("          call p_to_iter, er_jit_to_iter, r{}, vm, r{}\n", ra, rb));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+            }
+            OpCode::ArrayLen => {
+                let offset1 = ((idx * 3) % 24) * 8;
+                let offset2 = ((idx * 3 + 1) % 24) * 8;
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                }
+                mir.push_str(&format!("          call p_array_len_op, er_jit_array_len_op, r{}, vm, r{}\n", ra, rb));
+                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_ra_is_double {
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset2));
                 }
             }
             OpCode::Equal => {
@@ -1405,7 +1609,8 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                     kill[pc][ra] = true;
                 }
             }
-            OpCode::Move | OpCode::Negate | OpCode::Not | OpCode::Await => {
+            OpCode::Move | OpCode::Negate | OpCode::Not | OpCode::Await |
+            OpCode::BitNot | OpCode::TypeOf | OpCode::ToIter | OpCode::ArrayLen => {
                 if rb < num_regs {
                     gen_set[pc][rb] = true;
                 }
@@ -1413,7 +1618,9 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                     kill[pc][ra] = true;
                 }
             }
-            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Equal | OpCode::Greater | OpCode::Less | OpCode::GetIndex => {
+            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mod |
+            OpCode::BitAnd | OpCode::BitOr | OpCode::BitXor | OpCode::ShiftLeft | OpCode::ShiftRight |
+            OpCode::Equal | OpCode::Greater | OpCode::Less | OpCode::GetIndex => {
                 if rb < num_regs {
                     gen_set[pc][rb] = true;
                 }
@@ -1636,6 +1843,16 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         ("er_jit_sub", helpers::er_jit_sub as *mut c_void),
         ("er_jit_mul", helpers::er_jit_mul as *mut c_void),
         ("er_jit_div", helpers::er_jit_div as *mut c_void),
+        ("er_jit_mod", helpers::er_jit_mod as *mut c_void),
+        ("er_jit_bit_and", helpers::er_jit_bit_and as *mut c_void),
+        ("er_jit_bit_or", helpers::er_jit_bit_or as *mut c_void),
+        ("er_jit_bit_xor", helpers::er_jit_bit_xor as *mut c_void),
+        ("er_jit_bit_not", helpers::er_jit_bit_not as *mut c_void),
+        ("er_jit_shift_left", helpers::er_jit_shift_left as *mut c_void),
+        ("er_jit_shift_right", helpers::er_jit_shift_right as *mut c_void),
+        ("er_jit_typeof", helpers::er_jit_typeof as *mut c_void),
+        ("er_jit_to_iter", helpers::er_jit_to_iter as *mut c_void),
+        ("er_jit_array_len_op", helpers::er_jit_array_len_op as *mut c_void),
         ("er_jit_equal", helpers::er_jit_equal as *mut c_void),
         ("er_jit_greater", helpers::er_jit_greater as *mut c_void),
         ("er_jit_less", helpers::er_jit_less as *mut c_void),

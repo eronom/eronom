@@ -1035,6 +1035,157 @@ impl VM {
                             return Err("Operands must be numbers".into());
                         }
                     }
+                    OpCode::Mod => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            *frame_slots.add(dest) = Value::number_unchecked(a.as_number() % b.as_number());
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitAnd => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let res = ((a.as_number() as i64) & (b.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitOr => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let res = ((a.as_number() as i64) | (b.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitXor => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let res = ((a.as_number() as i64) ^ (b.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::BitNot => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        if a.is_number() {
+                            let res = (!(a.as_number() as i64)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operand must be a number".into());
+                        }
+                    }
+                    OpCode::ShiftLeft => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let shift = (b.as_number() as u32) & 63;
+                            let res = ((a.as_number() as i64).wrapping_shl(shift)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::ShiftRight => {
+                        let dest = instruction.ra as usize;
+                        let a = *frame_slots.add(instruction.rb as usize);
+                        let b = *frame_slots.add(instruction.rc as usize);
+                        if a.is_number() && b.is_number() {
+                            let shift = (b.as_number() as u32) & 63;
+                            let res = ((a.as_number() as i64).wrapping_shr(shift)) as f64;
+                            *frame_slots.add(dest) = Value::number_unchecked(res);
+                        } else {
+                            return Err("Operands must be numbers".into());
+                        }
+                    }
+                    OpCode::TypeOf => {
+                        let dest = instruction.ra as usize;
+                        let val = *frame_slots.add(instruction.rb as usize);
+                        let type_str = if val.is_number() {
+                            "number"
+                        } else if val.is_string() {
+                            "string"
+                        } else if val.is_boolean() {
+                            "boolean"
+                        } else if val.is_null() {
+                            "null"
+                        } else if val.is_array() {
+                            "array"
+                        } else if val.is_object() {
+                            "object"
+                        } else if val.is_function() || val.is_native_function() {
+                            "function"
+                        } else {
+                            "object"
+                        };
+                        let ptr = super::gc::get_or_create_string(type_str);
+                        *frame_slots.add(dest) = Value::string(ptr);
+                    }
+                    OpCode::ToIter => {
+                        let dest = instruction.ra as usize;
+                        let src = instruction.rb as usize;
+                        let val = *frame_slots.add(src);
+                        if val.is_array() {
+                            *frame_slots.add(dest) = val;
+                        } else if val.is_object() {
+                            let obj_ptr = val.as_gc_ptr();
+                            sync_stack!();
+                            self.gc_trigger();
+                            reload_stack!();
+                            let keys: Vec<Value> = match &(*obj_ptr).data {
+                                GcData::Object(map) => map.keys().map(|k| k.0).collect(),
+                                GcData::Struct(s) => s.descriptor.field_indices.keys().map(|k| k.0).collect(),
+                                _ => Vec::new(),
+                            };
+                            let arr_ptr = gc_allocate(GcData::Array(keys));
+                            *frame_slots.add(dest) = Value::array(arr_ptr);
+                        } else if val.is_string() {
+                            let s_ptr = val.as_gc_ptr();
+                            sync_stack!();
+                            self.gc_trigger();
+                            reload_stack!();
+                            let chars: Vec<Value> = match &(*s_ptr).data {
+                                GcData::String(s) => s.chars().map(|c| {
+                                    let cp = super::gc::get_or_create_string(&c.to_string());
+                                    Value::string(cp)
+                                }).collect(),
+                                _ => Vec::new(),
+                            };
+                            let arr_ptr = gc_allocate(GcData::Array(chars));
+                            *frame_slots.add(dest) = Value::array(arr_ptr);
+                        } else {
+                            return Err("Cannot iterate over non-iterable value".into());
+                        }
+                    }
+                    OpCode::ArrayLen => {
+                        let dest = instruction.ra as usize;
+                        let src = instruction.rb as usize;
+                        let val = *frame_slots.add(src);
+                        if val.is_array() {
+                            let arr_ptr = val.as_gc_ptr();
+                            let len = match &(*arr_ptr).data {
+                                GcData::Array(arr) => arr.len(),
+                                _ => 0,
+                            };
+                            *frame_slots.add(dest) = Value::number(len as f64);
+                        } else {
+                            return Err("Expected array for length".into());
+                        }
+                    }
                     OpCode::Equal => {
                         let dest = instruction.ra as usize;
                         let a = *frame_slots.add(instruction.rb as usize);

@@ -317,6 +317,16 @@ fn has_http_import_in_stmt(stmt: &Stmt) -> bool {
                 return true;
             }
         }
+        Stmt::For(_, _, _, body) => {
+            if has_http_import_in_stmt(body) {
+                return true;
+            }
+        }
+        Stmt::ForIn(_, _, body) => {
+            if has_http_import_in_stmt(body) {
+                return true;
+            }
+        }
         Stmt::Try(try_body, catch_clause, finally_body) => {
             if has_http_import_in_stmt(try_body) {
                 return true;
@@ -377,6 +387,14 @@ fn find_listen_port_in_expr(expr: &Expr) -> Option<i32> {
         }
         Expr::Logical(left, _, right) => {
             find_listen_port_in_expr(left).or_else(|| find_listen_port_in_expr(right))
+        }
+        Expr::Unary(_, inner) => find_listen_port_in_expr(inner),
+        Expr::Prefix(_, inner) => find_listen_port_in_expr(inner),
+        Expr::Postfix(_, inner) => find_listen_port_in_expr(inner),
+        Expr::Ternary(cond, then_b, else_b) => {
+            find_listen_port_in_expr(cond)
+                .or_else(|| find_listen_port_in_expr(then_b))
+                .or_else(|| find_listen_port_in_expr(else_b))
         }
         Expr::Get(obj, _) => return find_listen_port_in_expr(obj),
         Expr::Set(target, _, val) => {
@@ -459,6 +477,15 @@ fn find_listen_port_in_stmt(stmt: &Stmt) -> Option<i32> {
                 return Some(p);
             }
             if let Some(p) = find_listen_port_in_expr(end) {
+                return Some(p);
+            }
+            if let Some(p) = find_listen_port_in_stmt(body) {
+                return Some(p);
+            }
+            None
+        }
+        Stmt::ForIn(_, iterable, body) => {
+            if let Some(p) = find_listen_port_in_expr(iterable) {
                 return Some(p);
             }
             if let Some(p) = find_listen_port_in_stmt(body) {

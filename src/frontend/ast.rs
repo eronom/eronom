@@ -14,6 +14,10 @@ pub enum Expr {
     Assign(String, Box<Expr>, SourceLocation),
     Binary(Box<Expr>, TokenType, Box<Expr>),
     Logical(Box<Expr>, TokenType, Box<Expr>),
+    Unary(TokenType, Box<Expr>),
+    Prefix(TokenType, Box<Expr>),
+    Postfix(TokenType, Box<Expr>),
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     Get(Box<Expr>, String),
     Set(Box<Expr>, String, Box<Expr>),
@@ -48,7 +52,8 @@ pub enum Stmt {
     Block(Vec<Stmt>),
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
     While(Expr, Box<Stmt>),
-    For(String, Expr, Expr, Box<Stmt>), // var, start, end, body
+    For(String, Expr, Expr, Box<Stmt>), // var, start, end, body (range)
+    ForIn(String, Expr, Box<Stmt>), // var, iterable, body (collection)
     Break,
     Continue,
     Throw(Expr),

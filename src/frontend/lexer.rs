@@ -97,10 +97,50 @@ impl<'a> Lexer<'a> {
             ']' => TokenType::RightBracket,
             ',' => TokenType::Comma,
             ':' => TokenType::Colon,
-            '-' => TokenType::Minus,
-            '+' => TokenType::Plus,
-            '*' => TokenType::Star,
-            '/' => TokenType::Slash,
+            '-' => {
+                if self.match_char('-') {
+                    TokenType::MinusMinus
+                } else if self.match_char('=') {
+                    TokenType::MinusEqual
+                } else {
+                    TokenType::Minus
+                }
+            }
+            '+' => {
+                if self.match_char('+') {
+                    TokenType::PlusPlus
+                } else if self.match_char('=') {
+                    TokenType::PlusEqual
+                } else {
+                    TokenType::Plus
+                }
+            }
+            '*' => {
+                if self.match_char('=') {
+                    TokenType::StarEqual
+                } else {
+                    TokenType::Star
+                }
+            }
+            '/' => {
+                if self.match_char('=') {
+                    TokenType::SlashEqual
+                } else {
+                    TokenType::Slash
+                }
+            }
+            '%' => {
+                if self.match_char('=') {
+                    TokenType::PercentEqual
+                } else {
+                    TokenType::Percent
+                }
+            }
+            '&' => TokenType::Ampersand,
+            '|' => TokenType::Pipe,
+            '^' => TokenType::Caret,
+            '~' => TokenType::Tilde,
+            '?' => TokenType::Question,
             '.' => {
                 if self.match_char('.') {
                     TokenType::DotDot
@@ -125,14 +165,18 @@ impl<'a> Lexer<'a> {
                 }
             }
             '<' => {
-                if self.match_char('=') {
+                if self.match_char('<') {
+                    TokenType::LessLess
+                } else if self.match_char('=') {
                     TokenType::LessEqual
                 } else {
                     TokenType::Less
                 }
             }
             '>' => {
-                if self.match_char('=') {
+                if self.match_char('>') {
+                    TokenType::GreaterGreater
+                } else if self.match_char('=') {
                     TokenType::GreaterEqual
                 } else {
                     TokenType::Greater
@@ -266,6 +310,7 @@ impl<'a> Lexer<'a> {
                     "case" => TokenType::Case,
                     "default" => TokenType::Default,
                     "match" => TokenType::Match,
+                    "typeof" => TokenType::Typeof,
                     "_" => TokenType::Underscore,
                     _ => TokenType::Identifier(ident),
                 }
