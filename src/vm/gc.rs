@@ -82,6 +82,23 @@ impl GcStruct {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum UpvalueLocation {
+    Open(usize),
+    Closed(Value),
+}
+
+#[derive(Clone, Debug)]
+pub struct GcUpvalue {
+    pub location: UpvalueLocation,
+}
+
+#[derive(Clone)]
+pub struct GcClosure {
+    pub function: *mut GcObject,
+    pub upvalues: Vec<*mut GcObject>,
+}
+
 pub enum GcData {
     Empty,
     String(Rc<str>),
@@ -92,6 +109,8 @@ pub enum GcData {
     Struct(GcStruct),
     BoundMethod(GcBoundMethod),
     StructConstructor(Rc<StructDescriptor>),
+    Closure(GcClosure),
+    Upvalue(GcUpvalue),
 }
 
 pub struct GcObject {
@@ -348,6 +367,17 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
                 gc_mark_object(bm.function);
             }
             GcData::StructConstructor(_) => {}
+            GcData::Closure(c) => {
+                gc_mark_object(c.function);
+                for &upval_ptr in &c.upvalues {
+                    gc_mark_object(upval_ptr);
+                }
+            }
+            GcData::Upvalue(u) => {
+                if let UpvalueLocation::Closed(ref val) = u.location {
+                    gc_mark_value(val);
+                }
+            }
         }
     }
 }

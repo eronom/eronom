@@ -245,7 +245,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
-            OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter => {
+            OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter |
+            OpCode::GetUpvalue | OpCode::Closure => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Unknown;
                 }
@@ -1541,7 +1542,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          mov i64:(ret_val_out), r{}\n", ra));
                 mir.push_str("          ret -1\n");
             }
-            OpCode::Await => {}
+            OpCode::Await | OpCode::GetUpvalue | OpCode::SetUpvalue | OpCode::Closure | OpCode::CloseUpvalue => {}
         }
     }
 
@@ -1604,7 +1605,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
         let rc = inst.rc as usize;
 
         match inst.op {
-            OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadBool | OpCode::GetGlobal => {
+            OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadBool | OpCode::GetGlobal | OpCode::GetUpvalue | OpCode::Closure => {
                 if ra < num_regs {
                     kill[pc][ra] = true;
                 }
@@ -1631,7 +1632,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                     kill[pc][ra] = true;
                 }
             }
-            OpCode::DefineGlobal | OpCode::SetGlobal | OpCode::JumpIfFalse => {
+            OpCode::DefineGlobal | OpCode::SetGlobal | OpCode::JumpIfFalse | OpCode::SetUpvalue => {
                 if ra < num_regs {
                     gen_set[pc][ra] = true;
                 }
@@ -1641,7 +1642,7 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                     gen_set[pc][ra] = true;
                 }
             }
-            OpCode::Loop | OpCode::Jump | OpCode::DefineStruct => {}
+            OpCode::Loop | OpCode::Jump | OpCode::DefineStruct | OpCode::CloseUpvalue => {}
             OpCode::Call => {
                 if rb < num_regs {
                     gen_set[pc][rb] = true;

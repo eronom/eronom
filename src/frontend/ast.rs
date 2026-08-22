@@ -7,6 +7,12 @@ pub struct SourceLocation {
     pub col: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnParam {
+    pub name: String,
+    pub ty: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(LiteralValue),
@@ -23,7 +29,7 @@ pub enum Expr {
     Set(Box<Expr>, String, Box<Expr>),
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
-    Function(Vec<String>, Box<Stmt>), // params, body
+    Function(Vec<FnParam>, Option<String>, Box<Stmt>), // params, return_type, body
     GetIndex(Box<Expr>, Box<Expr>),
     SetIndex(Box<Expr>, Box<Expr>, Box<Expr>),
     StructInst(String, Vec<(String, Expr)>, SourceLocation),
@@ -59,7 +65,7 @@ pub enum Stmt {
     Throw(Expr),
     Try(Box<Stmt>, Option<(String, Box<Stmt>)>, Option<Box<Stmt>>), // try_body, catch_clause (param_name, catch_body), finally_body
     Switch(Expr, Vec<SwitchCase>, Option<Box<Stmt>>), // target_expr, cases, default_body
-    Return(Option<Expr>),
+    Return(Option<Expr>, SourceLocation),
     Import(Vec<String>, String), // imported names, source path
     Export(Box<Stmt>), // exported declaration statement
     Struct(String, Vec<String>, Vec<(String, String)>, Vec<(String, Vec<String>, Stmt)>, SourceLocation), // name, composed, fields (name, type), methods (name, params, body), location

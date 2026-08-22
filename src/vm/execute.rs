@@ -78,6 +78,7 @@ pub struct VM {
     pub last_matched_keys: Vec<Value>,
     pub last_matched_descriptor: Option<Rc<super::gc::StructDescriptor>>,
     pub last_matched_offsets: Vec<usize>,
+    pub open_upvalues: Vec<*mut GcObject>,
     
     // Event loop fields
     pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
@@ -126,10 +127,66 @@ impl VM {
             last_matched_keys: Vec::new(),
             last_matched_descriptor: None,
             last_matched_offsets: Vec::new(),
+            open_upvalues: Vec::new(),
             event_loop_queue: Arc::new(Mutex::new(Vec::new())),
             event_loop_condvar: Arc::new(Condvar::new()),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn capture_upvalue(&mut self, abs_slot: usize) -> *mut GcObject {
+        for &upval_ptr in &self.open_upvalues {
+            unsafe {
+                if let GcData::Upvalue(ref u) = (*upval_ptr).data {
+                    if let super::gc::UpvalueLocation::Open(slot) = u.location {
+                        if slot == abs_slot {
+                            return upval_ptr;
+                        }
+                    }
+                }
+            }
+        }
+        let upval_ptr = super::gc::gc_allocate(GcData::Upvalue(super::gc::GcUpvalue {
+            location: super::gc::UpvalueLocation::Open(abs_slot),
+        }));
+        self.open_upvalues.push(upval_ptr);
+        upval_ptr
+    }
+
+    pub fn close_upvalues(&mut self, from_slot: usize) {
+        let mut i = 0;
+        while i < self.open_upvalues.len() {
+            let upval_ptr = self.open_upvalues[i];
+            unsafe {
+                let should_close = match &(*upval_ptr).data {
+                    GcData::Upvalue(u) => match u.location {
+                        super::gc::UpvalueLocation::Open(slot) => slot >= from_slot,
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if should_close {
+                    let slot = match &(*upval_ptr).data {
+                        GcData::Upvalue(u) => match u.location {
+                            super::gc::UpvalueLocation::Open(s) => s,
+                            _ => 0,
+                        },
+                        _ => 0,
+                    };
+                    let val = if slot < self.stack.len() {
+                        self.stack[slot]
+                    } else {
+                        Value::null()
+                    };
+                    (*upval_ptr).data = GcData::Upvalue(super::gc::GcUpvalue {
+                        location: super::gc::UpvalueLocation::Closed(val),
+                    });
+                    self.open_upvalues.swap_remove(i);
+                } else {
+                    i += 1;
+                }
+            }
         }
     }
 
@@ -242,6 +299,9 @@ impl VM {
                         }
                         for frame in &self.frames {
                             mark_value(&Value::function(frame.function));
+                        }
+                        for &upval_ptr in &self.open_upvalues {
+                            super::gc::mark_object(upval_ptr);
                         }
                         if let Ok(queue) = self.event_loop_queue.lock() {
                             for task in queue.iter() {
@@ -532,6 +592,10 @@ impl VM {
                 ($func_ptr:expr) => {
                     match &(*$func_ptr).data {
                         GcData::Function(func) => func,
+                        GcData::Closure(c) => match &(*c.function).data {
+                            GcData::Function(func) => func,
+                            _ => unreachable!(),
+                        },
                         _ => unreachable!(),
                     }
                 };
@@ -557,11 +621,16 @@ impl VM {
                 self.gc_trigger();
                 reload_stack!();
 
-                let (is_async, has_handlers) = match &(*frame.function).data {
-                    GcData::Function(f) => (f.is_async, !f.chunk.handlers.is_empty()),
-                    _ => (false, false),
+                let (is_async, has_handlers, has_upvalues) = match &(*frame.function).data {
+                    GcData::Function(f) => (
+                        f.is_async,
+                        !f.chunk.handlers.is_empty(),
+                        !f.upvalues.is_empty() || f.chunk.code.iter().any(|inst| matches!(inst.op, OpCode::Closure | OpCode::GetUpvalue | OpCode::SetUpvalue | OpCode::CloseUpvalue)),
+                    ),
+                    GcData::Closure(_) => (false, false, true),
+                    _ => (false, false, false),
                 };
-                if is_async || has_handlers {
+                if is_async || has_handlers || has_upvalues {
                     return self.execute_loop_interpreter(0);
                 }
 
@@ -804,6 +873,10 @@ impl VM {
                 ($func_ptr:expr) => {
                     match &(*$func_ptr).data {
                         GcData::Function(func) => func,
+                        GcData::Closure(c) => match &(*c.function).data {
+                            GcData::Function(func) => func,
+                            _ => unreachable!(),
+                        },
                         _ => unreachable!(),
                     }
                 };
@@ -1899,9 +1972,80 @@ impl VM {
                         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
                         self.globals.insert(name_rc, Value::object(ptr));
                     }
+                    OpCode::GetUpvalue => {
+                        let dest = instruction.ra as usize;
+                        let upval_idx = instruction.operand as usize;
+                        let upval_ptr = match &(*frame.function).data {
+                            GcData::Closure(c) => c.upvalues[upval_idx],
+                            _ => unreachable!(),
+                        };
+                        let val = match &(*upval_ptr).data {
+                            GcData::Upvalue(u) => match u.location {
+                                super::gc::UpvalueLocation::Open(slot) => *stack_start.add(slot),
+                                super::gc::UpvalueLocation::Closed(val) => val,
+                            },
+                            _ => unreachable!(),
+                        };
+                        *frame_slots.add(dest) = val;
+                    }
+                    OpCode::SetUpvalue => {
+                        let src = instruction.ra as usize;
+                        let upval_idx = instruction.operand as usize;
+                        let val = *frame_slots.add(src);
+                        let upval_ptr = match &(*frame.function).data {
+                            GcData::Closure(c) => c.upvalues[upval_idx],
+                            _ => unreachable!(),
+                        };
+                        match &mut (*upval_ptr).data {
+                            GcData::Upvalue(u) => match u.location {
+                                super::gc::UpvalueLocation::Open(slot) => {
+                                    *stack_start.add(slot) = val;
+                                }
+                                super::gc::UpvalueLocation::Closed(ref mut v) => {
+                                    *v = val;
+                                }
+                            },
+                            _ => unreachable!(),
+                        }
+                    }
+                    OpCode::Closure => {
+                        let dest = instruction.ra as usize;
+                        let const_idx = instruction.operand as usize;
+                        let raw_fn_val = *constants_ptr.add(const_idx);
+                        let raw_fn_ptr = raw_fn_val.as_gc_ptr();
+                        let fn_proto = match &(*raw_fn_ptr).data {
+                            GcData::Function(f) => f,
+                            _ => unreachable!(),
+                        };
+                        let mut upvalue_ptrs = Vec::with_capacity(fn_proto.upvalues.len());
+                        for uv_desc in &fn_proto.upvalues {
+                            if uv_desc.is_local {
+                                let abs_slot = slots_offset + uv_desc.index as usize;
+                                let uv_ptr = self.capture_upvalue(abs_slot);
+                                upvalue_ptrs.push(uv_ptr);
+                            } else {
+                                let parent_uv_ptr = match &(*frame.function).data {
+                                    GcData::Closure(c) => c.upvalues[uv_desc.index as usize],
+                                    _ => unreachable!(),
+                                };
+                                upvalue_ptrs.push(parent_uv_ptr);
+                            }
+                        }
+                        let closure_ptr = super::gc::gc_allocate(GcData::Closure(super::gc::GcClosure {
+                            function: raw_fn_ptr,
+                            upvalues: upvalue_ptrs,
+                        }));
+                        *frame_slots.add(dest) = Value::function(closure_ptr);
+                    }
+                    OpCode::CloseUpvalue => {
+                        let slot = slots_offset + instruction.operand as usize;
+                        self.close_upvalues(slot);
+                    }
                     OpCode::Return => {
                         let result = *frame_slots.add(instruction.ra as usize);
                         let caller_dest_reg = frame.dest_reg;
+
+                        self.close_upvalues(frame.slots_offset);
 
                         self.frames.pop();
                         if self.frames.is_empty() {

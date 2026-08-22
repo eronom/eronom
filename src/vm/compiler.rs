@@ -31,14 +31,18 @@ struct LoopContext {
 }
 
 pub struct Compiler {
+    parent: Option<*mut Compiler>,
     function: Function,
     locals: Vec<Local>,
+    upvalues: Vec<super::bytecode::UpvalueDescriptor>,
+    upvalue_names: Vec<(String, bool, crate::frontend::SourceLocation, Option<String>)>,
     scope_depth: usize,
     next_reg: usize,
     const_globals: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, crate::frontend::SourceLocation>>>,
     structs: std::collections::HashMap<String, FlattenedStructInfo>,
     interfaces: std::collections::HashMap<String, InterfaceInfo>,
     global_types: std::collections::HashMap<String, String>,
+    current_return_type: Option<String>,
     current_struct: Option<String>,
     concurrent_scopes: Vec<usize>,
     loop_stack: Vec<LoopContext>,
@@ -61,20 +65,25 @@ impl Default for Compiler {
 impl Compiler {
     pub fn new() -> Self {
         Self {
+            parent: None,
             function: Function {
                 name: None,
                 chunk: Chunk::default(),
                 arity: 0,
                 jit_ptr: std::cell::Cell::new(None),
                 is_async: false,
+                upvalues: Vec::new(),
             },
             locals: Vec::new(),
+            upvalues: Vec::new(),
+            upvalue_names: Vec::new(),
             scope_depth: 0,
             next_reg: 0,
             const_globals: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             structs: std::collections::HashMap::new(),
             interfaces: std::collections::HashMap::new(),
             global_types: std::collections::HashMap::new(),
+            current_return_type: None,
             current_struct: None,
             concurrent_scopes: Vec::new(),
             loop_stack: Vec::new(),
@@ -649,11 +658,19 @@ impl Compiler {
 
                 self.end_scope();
             }
-            Stmt::Return(expr) => {
+            Stmt::Return(expr, loc) => {
                 let reg = self.next_reg;
                 if let Some(e) = expr {
+                    if let Some(ref ret_ty) = self.current_return_type {
+                        check_type(e, ret_ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, loc)?;
+                    }
                     self.compile_expr(e, reg)?;
                 } else {
+                    if let Some(ref ret_ty) = self.current_return_type {
+                        if ret_ty != "void" && ret_ty != "null" {
+                            return Err(format!("error: Expected return type \"{}\" but got void/null\n    at {}:{}:{}", ret_ty, loc.file_path, loc.line, loc.col));
+                        }
+                    }
                     self.current_chunk().write_instruction(OpCode::LoadNull, reg as u8, 0, 0, 0);
                 }
                 self.current_chunk().write_instruction(OpCode::Return, reg as u8, 0, 0, 0);
@@ -939,6 +956,14 @@ impl Compiler {
                             0,
                         );
                     }
+                } else if let Some(upval_idx) = self.resolve_upvalue(name) {
+                    self.current_chunk().write_instruction(
+                        OpCode::GetUpvalue,
+                        dest as u8,
+                        0,
+                        0,
+                        upval_idx as u32,
+                    );
                 } else {
                     let idx = self
                         .current_chunk()
@@ -957,6 +982,9 @@ impl Compiler {
                     if self.locals[idx].is_const {
                         return Err(self.format_const_assign_error(name, assign_loc, &self.locals[idx].loc));
                     }
+                    if let Some(ref ty) = self.locals[idx].ty.clone() {
+                        check_type(val, ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, assign_loc)?;
+                    }
                     self.compile_expr(val, dest)?;
                     if dest != idx {
                         self.current_chunk().write_instruction(
@@ -967,9 +995,38 @@ impl Compiler {
                             0,
                         );
                     }
+                } else if let Some(upval_idx) = self.resolve_upvalue(name) {
+                    let (_, is_const, ref decl_loc, ref ty_opt) = self.upvalue_names[upval_idx];
+                    if is_const {
+                        return Err(self.format_const_assign_error(name, assign_loc, decl_loc));
+                    }
+                    if let Some(ref ty) = ty_opt.clone() {
+                        check_type(val, ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, assign_loc)?;
+                    }
+                    let temp = std::cmp::max(self.next_reg, dest);
+                    self.compile_expr(val, temp)?;
+                    self.current_chunk().write_instruction(
+                        OpCode::SetUpvalue,
+                        temp as u8,
+                        0,
+                        0,
+                        upval_idx as u32,
+                    );
+                    if dest != temp {
+                        self.current_chunk().write_instruction(
+                            OpCode::Move,
+                            dest as u8,
+                            temp as u8,
+                            0,
+                            0,
+                        );
+                    }
                 } else {
                     if let Some(decl_loc) = self.const_globals.borrow().get(name).cloned() {
                         return Err(self.format_const_assign_error(name, assign_loc, &decl_loc));
+                    }
+                    if let Some(ty) = self.global_types.get(name).cloned() {
+                        check_type(val, &ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, assign_loc)?;
                     }
                     self.compile_expr(val, dest)?;
                     let idx = self
@@ -1062,6 +1119,42 @@ impl Compiler {
                                     OpCode::Move,
                                     dest as u8,
                                     idx as u8,
+                                    0,
+                                    0,
+                                );
+                            }
+                        } else if let Some(upval_idx) = self.resolve_upvalue(name) {
+                            let (_, is_const, ref decl_loc, _) = self.upvalue_names[upval_idx];
+                            if is_const {
+                                return Err(self.format_const_assign_error(name, loc, decl_loc));
+                            }
+                            let temp = std::cmp::max(self.next_reg, dest + 1);
+                            self.current_chunk().write_instruction(
+                                OpCode::GetUpvalue,
+                                temp as u8,
+                                0,
+                                0,
+                                upval_idx as u32,
+                            );
+                            self.current_chunk().write_instruction(
+                                update_op,
+                                temp as u8,
+                                temp as u8,
+                                one_reg as u8,
+                                0,
+                            );
+                            self.current_chunk().write_instruction(
+                                OpCode::SetUpvalue,
+                                temp as u8,
+                                0,
+                                0,
+                                upval_idx as u32,
+                            );
+                            if dest != temp {
+                                self.current_chunk().write_instruction(
+                                    OpCode::Move,
+                                    dest as u8,
+                                    temp as u8,
                                     0,
                                     0,
                                 );
@@ -1193,6 +1286,33 @@ impl Compiler {
                                 idx as u8,
                                 one_reg as u8,
                                 0,
+                            );
+                        } else if let Some(upval_idx) = self.resolve_upvalue(name) {
+                            let (_, is_const, ref decl_loc, _) = self.upvalue_names[upval_idx];
+                            if is_const {
+                                return Err(self.format_const_assign_error(name, loc, decl_loc));
+                            }
+                            self.current_chunk().write_instruction(
+                                OpCode::GetUpvalue,
+                                dest as u8,
+                                0,
+                                0,
+                                upval_idx as u32,
+                            );
+                            let temp = std::cmp::max(self.next_reg, dest + 1);
+                            self.current_chunk().write_instruction(
+                                update_op,
+                                temp as u8,
+                                dest as u8,
+                                one_reg as u8,
+                                0,
+                            );
+                            self.current_chunk().write_instruction(
+                                OpCode::SetUpvalue,
+                                temp as u8,
+                                0,
+                                0,
+                                upval_idx as u32,
                             );
                         } else {
                             if let Some(decl_loc) = self.const_globals.borrow().get(name).cloned() {
@@ -1547,37 +1667,40 @@ impl Compiler {
                     pairs.len() as u32,
                 );
             }
-            Expr::Function(params, body) => {
+            Expr::Function(params, return_type, body) => {
                 let mut compiler = Compiler::new();
+                compiler.parent = Some(self as *mut Compiler);
                 compiler.const_globals = self.const_globals.clone();
                 compiler.structs = self.structs.clone();
                 compiler.interfaces = self.interfaces.clone();
                 compiler.global_types = self.global_types.clone();
                 compiler.current_struct = self.current_struct.clone();
+                compiler.current_return_type = return_type.clone();
                 compiler.function.arity = params.len();
                 compiler.function.is_async = false;
                 compiler.next_reg = params.len();
                 compiler.begin_scope();
                 for param in params {
                     compiler.locals.push(Local {
-                        name: param.clone(),
+                        name: param.name.clone(),
                         depth: compiler.scope_depth,
                         is_const: false,
                         loc: crate::frontend::SourceLocation::default(),
-                        ty: None,
+                        ty: param.ty.clone(),
                     });
                 }
                 compiler.compile_stmt(body)?;
                 compiler.current_chunk().write_instruction(OpCode::LoadNull, 0, 0, 0, 0);
                 compiler.current_chunk().write_instruction(OpCode::Return, 0, 0, 0, 0);
 
-                let func = compiler.function;
+                let mut func = compiler.function;
+                func.upvalues = compiler.upvalues;
                 let func_ptr = gc_allocate(GcData::Function(func));
                 let idx = self
                     .current_chunk()
                     .add_constant(Value::function(func_ptr));
                 self.current_chunk().write_instruction(
-                    OpCode::LoadConst,
+                    OpCode::Closure,
                     dest as u8,
                     0,
                     0,
@@ -1692,6 +1815,39 @@ impl Compiler {
             .enumerate()
             .rev()
             .find_map(|(i, local)| if local.name == name { Some(i) } else { None })
+    }
+
+    fn add_upvalue(&mut self, is_local: bool, index: u8, name: &str, is_const: bool, loc: crate::frontend::SourceLocation, ty: Option<String>) -> usize {
+        for (i, uv) in self.upvalues.iter().enumerate() {
+            if uv.is_local == is_local && uv.index == index {
+                return i;
+            }
+        }
+        self.upvalues.push(super::bytecode::UpvalueDescriptor { is_local, index });
+        self.upvalue_names.push((name.to_string(), is_const, loc, ty));
+        self.upvalues.len() - 1
+    }
+
+    fn resolve_upvalue(&mut self, name: &str) -> Option<usize> {
+        if let Some(parent_ptr) = self.parent {
+            unsafe {
+                let parent = &mut *parent_ptr;
+                if let Some(local_idx) = parent.resolve_local(name) {
+                    let is_const = parent.locals[local_idx].is_const;
+                    let loc = parent.locals[local_idx].loc.clone();
+                    let ty = parent.locals[local_idx].ty.clone();
+                    return Some(self.add_upvalue(true, local_idx as u8, name, is_const, loc, ty));
+                }
+                if let Some(parent_upval_idx) = parent.resolve_upvalue(name) {
+                    let (ref u_name, is_const, ref loc, ref ty) = parent.upvalue_names[parent_upval_idx];
+                    let loc_clone = loc.clone();
+                    let ty_clone = ty.clone();
+                    let u_name_clone = u_name.clone();
+                    return Some(self.add_upvalue(false, parent_upval_idx as u8, &u_name_clone, is_const, loc_clone, ty_clone));
+                }
+            }
+        }
+        None
     }
 
     fn emit_jump(&mut self, op: OpCode, cond_reg: usize) -> usize {
@@ -1921,8 +2077,22 @@ fn get_expr_type(
     locals: &[Local],
     global_types: &std::collections::HashMap<String, String>,
     structs: &std::collections::HashMap<String, FlattenedStructInfo>,
+    interfaces: &std::collections::HashMap<String, InterfaceInfo>,
 ) -> Option<String> {
     match expr {
+        Expr::Literal(LiteralValue::Number(_)) => Some("int".to_string()),
+        Expr::Literal(LiteralValue::String(_)) => Some("string".to_string()),
+        Expr::Literal(LiteralValue::Boolean(_)) => Some("boolean".to_string()),
+        Expr::Literal(LiteralValue::Null) => Some("null".to_string()),
+        Expr::Array(_) => Some("array".to_string()),
+        Expr::Object(_) => Some("object".to_string()),
+        Expr::Function(_, ret_type, _) => {
+            if let Some(r) = ret_type {
+                Some(format!("function:{}", r))
+            } else {
+                Some("function".to_string())
+            }
+        }
         Expr::Variable(name, _) => {
             if let Some(local) = locals.iter().rev().find(|l| &l.name == name) {
                 return local.ty.clone();
@@ -1938,11 +2108,144 @@ fn get_expr_type(
                 if structs.contains_key(name) {
                     return Some(name.clone());
                 }
+                if let Some(ty) = global_types.get(name) {
+                    if ty.starts_with("function:") {
+                        return Some(ty["function:".len()..].to_string());
+                    }
+                }
             }
             None
         }
+        Expr::Binary(left, op, right) => {
+            match op {
+                TokenType::Plus => {
+                    let left_ty = get_expr_type(left, locals, global_types, structs, interfaces);
+                    let right_ty = get_expr_type(right, locals, global_types, structs, interfaces);
+                    if left_ty.as_deref() == Some("string") || right_ty.as_deref() == Some("string") {
+                        Some("string".to_string())
+                    } else {
+                        Some("int".to_string())
+                    }
+                }
+                TokenType::Minus | TokenType::Star | TokenType::Slash | TokenType::Percent |
+                TokenType::Ampersand | TokenType::Pipe | TokenType::Caret |
+                TokenType::LessLess | TokenType::GreaterGreater => Some("int".to_string()),
+                TokenType::EqualEqual | TokenType::BangEqual | TokenType::Less | TokenType::LessEqual |
+                TokenType::Greater | TokenType::GreaterEqual | TokenType::And | TokenType::Or => Some("boolean".to_string()),
+                _ => None,
+            }
+        }
+        Expr::Unary(op, _) => {
+            match op {
+                TokenType::Bang => Some("boolean".to_string()),
+                TokenType::Minus | TokenType::Tilde => Some("int".to_string()),
+                TokenType::Typeof => Some("string".to_string()),
+                _ => None,
+            }
+        }
+        Expr::Prefix(_, _) | Expr::Postfix(_, _) => Some("int".to_string()),
+        Expr::Ternary(_, then_branch, else_branch) => {
+            let then_ty = get_expr_type(then_branch, locals, global_types, structs, interfaces);
+            let else_ty = get_expr_type(else_branch, locals, global_types, structs, interfaces);
+            if then_ty == else_ty {
+                then_ty
+            } else {
+                None
+            }
+        }
         _ => None,
     }
+}
+
+fn is_type_compatible(
+    expected: &str,
+    actual: &str,
+    structs: &std::collections::HashMap<String, FlattenedStructInfo>,
+    interfaces: &std::collections::HashMap<String, InterfaceInfo>,
+) -> bool {
+    let exp_lower = expected.to_lowercase();
+    let act_lower = actual.to_lowercase();
+
+    if exp_lower == act_lower {
+        return true;
+    }
+
+    if act_lower == "null" {
+        return true;
+    }
+
+    // Number types
+    let is_exp_num = matches!(exp_lower.as_str(), "int" | "number" | "float" | "i32" | "i64" | "f32" | "f64");
+    let is_act_num = matches!(act_lower.as_str(), "int" | "number" | "float" | "i32" | "i64" | "f32" | "f64");
+    if is_exp_num && is_act_num {
+        return true;
+    }
+
+    // Boolean types
+    let is_exp_bool = matches!(exp_lower.as_str(), "bool" | "boolean");
+    let is_act_bool = matches!(act_lower.as_str(), "bool" | "boolean");
+    if is_exp_bool && is_act_bool {
+        return true;
+    }
+
+    // String types
+    let is_exp_str = matches!(exp_lower.as_str(), "str" | "string");
+    let is_act_str = matches!(act_lower.as_str(), "str" | "string");
+    if is_exp_str && is_act_str {
+        return true;
+    }
+
+    // Function types
+    if (exp_lower == "function" || exp_lower == "fn") && (act_lower == "function" || act_lower == "fn" || act_lower.starts_with("function:")) {
+        return true;
+    }
+
+    // Array types
+    if exp_lower == "array" && act_lower == "array" {
+        return true;
+    }
+
+    // Object types
+    if exp_lower == "object" && act_lower == "object" {
+        return true;
+    }
+
+    // Struct embedding / inheritance polymorphism
+    if let Some(act_struct) = structs.get(actual) {
+        if act_struct.composed.contains(&expected.to_string()) {
+            return true;
+        }
+    }
+
+    // Interface satisfaction
+    if interfaces.contains_key(expected) {
+        if let Some(struct_info) = structs.get(actual) {
+            let iface = interfaces.get(expected).unwrap();
+            let struct_fields: std::collections::HashMap<String, String> = struct_info.fields.iter().cloned().collect();
+            for (f_name, f_ty) in &iface.fields {
+                if let Some(sf_ty) = struct_fields.get(f_name) {
+                    if !is_type_compatible(f_ty, sf_ty, structs, interfaces) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            let struct_methods: std::collections::HashMap<String, usize> = struct_info.methods.iter().map(|(m, p, _)| (m.clone(), p.len())).collect();
+            for (m_name, m_params) in &iface.methods {
+                if let Some(&param_count) = struct_methods.get(m_name) {
+                    if param_count != m_params.len() {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    false
 }
 
 fn check_type(
@@ -1954,7 +2257,14 @@ fn check_type(
     global_types: &std::collections::HashMap<String, String>,
     loc: &crate::frontend::SourceLocation,
 ) -> Result<(), String> {
-    if let Expr::StructInst(struct_name, pairs, loc) = expr {
+    // 1. If it's a struct instantiation or object literal checked against struct
+    if let Expr::StructInst(struct_name, pairs, s_loc) = expr {
+        if struct_name != expected_type && !is_type_compatible(expected_type, struct_name, structs, interfaces) {
+            return Err(format!(
+                "error: Expected type \"{}\" but got struct \"{}\"\n    at {}:{}:{}",
+                expected_type, struct_name, s_loc.file_path, s_loc.line, s_loc.col
+            ));
+        }
         if let Some(s_info) = structs.get(struct_name) {
             let mut object_fields = std::collections::HashMap::new();
             for (k, v) in pairs {
@@ -1962,11 +2272,11 @@ fn check_type(
             }
             for (field_name, field_type) in &s_info.fields {
                 if let Some(field_val_expr) = object_fields.remove(field_name) {
-                    check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
+                    check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, s_loc)?;
                 } else {
                     return Err(format!(
                         "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
-                        field_name, field_type, struct_name, loc.file_path, loc.line, loc.col
+                        field_name, field_type, struct_name, s_loc.file_path, s_loc.line, s_loc.col
                     ));
                 }
             }
@@ -1974,17 +2284,46 @@ fn check_type(
                 let extra_fields: Vec<String> = object_fields.keys().cloned().collect();
                 return Err(format!(
                     "error: Extra fields {:?} not declared in struct \"{}\"\n    at {}:{}:{}",
-                    extra_fields, struct_name, loc.file_path, loc.line, loc.col
+                    extra_fields, struct_name, s_loc.file_path, s_loc.line, s_loc.col
                 ));
             }
-        } else {
-            return Err(format!(
-                "error: Unknown struct type \"{}\"\n    at {}:{}:{}",
-                struct_name, loc.file_path, loc.line, loc.col
-            ));
+        }
+        return Ok(());
+    }
+
+    // 2. Struct expected with object literal
+    if let Some(struct_info) = structs.get(expected_type) {
+        match expr {
+            Expr::Object(pairs) => {
+                let mut object_fields = std::collections::HashMap::new();
+                for (k, v) in pairs {
+                    object_fields.insert(k.clone(), v);
+                }
+                for (field_name, field_type) in &struct_info.fields {
+                    if let Some(field_val_expr) = object_fields.remove(field_name) {
+                        check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
+                    } else {
+                        return Err(format!(
+                            "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
+                            field_name, field_type, expected_type, loc.file_path, loc.line, loc.col
+                        ));
+                    }
+                }
+                if !object_fields.is_empty() {
+                    let extra_fields: Vec<String> = object_fields.keys().cloned().collect();
+                    return Err(format!(
+                        "error: Extra fields {:?} not declared in struct \"{}\"\n    at {}:{}:{}",
+                        extra_fields, expected_type, loc.file_path, loc.line, loc.col
+                    ));
+                }
+                return Ok(());
+            }
+            Expr::Literal(LiteralValue::Null) => return Ok(()),
+            _ => {}
         }
     }
 
+    // 3. Interface expected
     if let Some(interface_info) = interfaces.get(expected_type) {
         if let Expr::Object(pairs) = expr {
             if !interface_info.methods.is_empty() {
@@ -2011,213 +2350,42 @@ fn check_type(
             }
             return Ok(());
         }
+    }
 
-        if let Some(src_type) = get_expr_type(expr, locals, global_types, structs) {
-            if src_type == expected_type {
-                return Ok(());
-            }
-
-            if let Some(struct_info) = structs.get(&src_type) {
-                let struct_fields: std::collections::HashMap<String, String> = struct_info.fields.iter().cloned().collect();
-                for (field_name, field_type) in &interface_info.fields {
-                    if let Some(struct_field_type) = struct_fields.get(field_name) {
-                        if struct_field_type != field_type {
-                            return Err(format!(
-                                "error: Type mismatch for field \"{}\" in struct \"{}\" (expected \"{}\" from interface \"{}\" but got \"{}\")\n    at {}:{}:{}",
-                                field_name, src_type, field_type, expected_type, struct_field_type, loc.file_path, loc.line, loc.col
-                            ));
-                        }
-                    } else {
-                        return Err(format!(
-                            "error: Struct \"{}\" does not implement interface \"{}\" because it is missing field \"{}\"\n    at {}:{}:{}",
-                            src_type, expected_type, field_name, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                }
-
-                let struct_methods: std::collections::HashMap<String, Vec<String>> = struct_info.methods.iter().map(|(m_name, m_params, _)| (m_name.clone(), m_params.clone())).collect();
-                for (method_name, method_params) in &interface_info.methods {
-                    if let Some(struct_method_params) = struct_methods.get(method_name) {
-                        if struct_method_params.len() != method_params.len() {
-                            return Err(format!(
-                                "error: Method \"{}\" in struct \"{}\" has {} parameters, but interface \"{}\" expects {}\n    at {}:{}:{}",
-                                method_name, src_type, struct_method_params.len(), expected_type, method_params.len(), loc.file_path, loc.line, loc.col
-                            ));
-                        }
-                    } else {
-                        return Err(format!(
-                            "error: Struct \"{}\" does not implement interface \"{}\" because it is missing method \"{}\"\n    at {}:{}:{}",
-                            src_type, expected_type, method_name, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                }
-
-                return Ok(());
-            }
-
-            if let Some(src_interface_info) = interfaces.get(&src_type) {
-                let src_fields: std::collections::HashMap<String, String> = src_interface_info.fields.iter().cloned().collect();
-                for (field_name, field_type) in &interface_info.fields {
-                    if let Some(src_field_type) = src_fields.get(field_name) {
-                        if src_field_type != field_type {
-                            return Err(format!(
-                                "error: Type mismatch for field \"{}\" (expected \"{}\" but got \"{}\")\n    at {}:{}:{}",
-                                field_name, field_type, src_field_type, loc.file_path, loc.line, loc.col
-                            ));
-                        }
-                    } else {
-                        return Err(format!(
-                            "error: Interface \"{}\" does not satisfy interface \"{}\" because it is missing field \"{}\"\n    at {}:{}:{}",
-                            src_type, expected_type, field_name, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                }
-
-                let src_methods: std::collections::HashMap<String, Vec<String>> = src_interface_info.methods.iter().cloned().collect();
-                for (method_name, method_params) in &interface_info.methods {
-                    if let Some(src_method_params) = src_methods.get(method_name) {
-                        if src_method_params.len() != method_params.len() {
-                            return Err(format!(
-                                "error: Method \"{}\" has parameter count mismatch (expected {} but got {})\n    at {}:{}:{}",
-                                method_name, method_params.len(), src_method_params.len(), loc.file_path, loc.line, loc.col
-                            ));
-                        }
-                    } else {
-                        return Err(format!(
-                            "error: Interface \"{}\" does not satisfy interface \"{}\" because it is missing method \"{}\"\n    at {}:{}:{}",
-                            src_type, expected_type, method_name, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                }
-
-                return Ok(());
-            }
-
+    // 4. Inferred expression type check
+    if let Some(actual_type) = get_expr_type(expr, locals, global_types, structs, interfaces) {
+        if is_type_compatible(expected_type, &actual_type, structs, interfaces) {
+            return Ok(());
+        } else {
+            let got_str = match expr {
+                Expr::Literal(LiteralValue::Number(n)) => n.to_string(),
+                Expr::Literal(LiteralValue::String(s)) => format!("\"{}\"", s),
+                Expr::Literal(LiteralValue::Boolean(b)) => b.to_string(),
+                Expr::Literal(LiteralValue::Null) => "null".to_string(),
+                _ => format!("type \"{}\"", actual_type),
+            };
             return Err(format!(
-                "error: Expected interface \"{}\" but got unknown type \"{}\"\n    at {}:{}:{}",
-                expected_type, src_type, loc.file_path, loc.line, loc.col
+                "error: Expected type \"{}\" but got {}\n    at {}:{}:{}",
+                expected_type, got_str, loc.file_path, loc.line, loc.col
             ));
         }
-
-        if let Expr::Literal(LiteralValue::Null) = expr {
-            return Ok(());
-        }
-
-        return Ok(());
     }
 
-    if let Some(struct_info) = structs.get(expected_type) {
-        let struct_fields = &struct_info.fields;
-        match expr {
-            Expr::Object(pairs) => {
-                let mut object_fields = std::collections::HashMap::new();
-                for (k, v) in pairs {
-                    object_fields.insert(k.clone(), v);
-                }
-
-                for (field_name, field_type) in struct_fields {
-                    if let Some(field_val_expr) = object_fields.remove(field_name) {
-                        check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
-                    } else {
-                        return Err(format!(
-                            "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
-                            field_name, field_type, expected_type, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                }
-
-                if !object_fields.is_empty() {
-                    let extra_fields: Vec<String> = object_fields.keys().cloned().collect();
-                    return Err(format!(
-                        "error: Extra fields {:?} not declared in struct \"{}\"\n    at {}:{}:{}",
-                        extra_fields, expected_type, loc.file_path, loc.line, loc.col
-                    ));
-                }
-            }
-            Expr::StructInst(struct_name, _, loc) => {
-                if struct_name != expected_type {
-                    return Err(format!(
-                        "error: Expected struct \"{}\" but got struct \"{}\"\n    at {}:{}:{}",
-                        expected_type, struct_name, loc.file_path, loc.line, loc.col
-                    ));
-                }
-            }
-            Expr::Literal(LiteralValue::Null) => {}
-            Expr::Literal(val) => {
-                let got_str = match val {
-                    LiteralValue::Number(n) => n.to_string(),
-                    LiteralValue::String(s) => format!("\"{}\"", s),
-                    LiteralValue::Boolean(b) => b.to_string(),
-                    LiteralValue::Null => "null".to_string(),
-                };
-                return Err(format!(
-                    "error: Expected struct \"{}\" but got {}\n    at {}:{}:{}",
-                    expected_type, got_str, loc.file_path, loc.line, loc.col
-                ));
-            }
-            _ => {}
-        }
-    } else {
-        match expected_type {
-            "string" => {
-                match expr {
-                    Expr::Literal(LiteralValue::String(_)) => {}
-                    Expr::Literal(LiteralValue::Null) => {}
-                    Expr::Literal(val) => {
-                        let got_str = match val {
-                            LiteralValue::Number(n) => n.to_string(),
-                            LiteralValue::String(s) => format!("\"{}\"", s),
-                            LiteralValue::Boolean(b) => b.to_string(),
-                            LiteralValue::Null => "null".to_string(),
-                        };
-                        return Err(format!(
-                            "error: Expected type \"string\" but got {}\n    at {}:{}:{}",
-                            got_str, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-            "int" | "number" | "float" => {
-                match expr {
-                    Expr::Literal(LiteralValue::Number(_)) => {}
-                    Expr::Literal(LiteralValue::Null) => {}
-                    Expr::Literal(val) => {
-                        let got_str = match val {
-                            LiteralValue::Number(n) => n.to_string(),
-                            LiteralValue::String(s) => format!("\"{}\"", s),
-                            LiteralValue::Boolean(b) => b.to_string(),
-                            LiteralValue::Null => "null".to_string(),
-                        };
-                        return Err(format!(
-                            "error: Expected type \"{}\" but got {}\n    at {}:{}:{}",
-                            expected_type, got_str, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-            "bool" | "boolean" => {
-                match expr {
-                    Expr::Literal(LiteralValue::Boolean(_)) => {}
-                    Expr::Literal(LiteralValue::Null) => {}
-                    Expr::Literal(val) => {
-                        let got_str = match val {
-                            LiteralValue::Number(n) => n.to_string(),
-                            LiteralValue::String(s) => format!("\"{}\"", s),
-                            LiteralValue::Boolean(b) => b.to_string(),
-                            LiteralValue::Null => "null".to_string(),
-                        };
-                        return Err(format!(
-                            "error: Expected type \"{}\" but got {}\n    at {}:{}:{}",
-                            expected_type, got_str, loc.file_path, loc.line, loc.col
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
+    // 5. Literal check fallback
+    if let Expr::Literal(val) = expr {
+        let (actual_name, got_str) = match val {
+            LiteralValue::Number(n) => ("number", n.to_string()),
+            LiteralValue::String(s) => ("string", format!("\"{}\"", s)),
+            LiteralValue::Boolean(b) => ("boolean", b.to_string()),
+            LiteralValue::Null => ("null", "null".to_string()),
+        };
+        if !is_type_compatible(expected_type, actual_name, structs, interfaces) {
+            return Err(format!(
+                "error: Expected type \"{}\" but got {}\n    at {}:{}:{}",
+                expected_type, got_str, loc.file_path, loc.line, loc.col
+            ));
         }
     }
+
     Ok(())
 }

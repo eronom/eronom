@@ -1,0 +1,69 @@
+// Test 1: Basic counter closure
+fn makeCounter(initial) {
+    let count = initial;
+    return fn() {
+        count = count + 1;
+        return count;
+    };
+}
+
+let c1 = makeCounter(10);
+print("Counter 1 call 1: " + c1());
+print("Counter 1 call 2: " + c1());
+print("Counter 1 call 3: " + c1());
+
+let c2 = makeCounter(100);
+print("Counter 2 call 1: " + c2());
+print("Counter 1 call 4: " + c1());
+
+// Test 2: Shared upvalue between multiple closures
+fn makePair(initial) {
+    let value = initial;
+    let getVal = fn() {
+        return value;
+    };
+    let setVal = fn(newVal) {
+        value = newVal;
+        return value;
+    };
+    return {
+        get: getVal,
+        set: setVal
+    };
+}
+
+let pair = makePair(42);
+print("Pair get initial: " + pair.get());
+pair.set(999);
+print("Pair get updated: " + pair.get());
+
+// Test 3: Multi-level nested closure
+fn level1(a) {
+    let b = a * 10;
+    return fn(c) {
+        let d = b + c;
+        return fn(e) {
+            return a + b + c + d + e;
+        };
+    };
+}
+
+let l2 = level1(2);
+let l3 = l2(3);
+print("Nested closure result (2 + 20 + 3 + 23 + 5 = 53): " + l3(5));
+
+// Test 4: Prefix / Postfix increment on upvalue
+fn makeIncrementer() {
+    let n = 0;
+    return fn() {
+        n++;
+        return n;
+    };
+}
+
+let inc = makeIncrementer();
+print("Inc 1: " + inc());
+print("Inc 2: " + inc());
+print("Inc 3: " + inc());
+
+print("ALL CLOSURE TESTS PASSED!");

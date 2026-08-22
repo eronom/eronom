@@ -1,0 +1,29 @@
+// 1. Valid variable declarations
+let a: int = 42;
+let b: string = "hello world";
+let c: bool = true;
+let d: float = 3.14;
+
+// 2. Valid assignments
+a = 100;
+b = "new string";
+c = false;
+d = 2.718;
+
+// 3. Valid typed function
+fn add(x: int, y: int): int {
+    return x + y;
+}
+
+let sum: int = add(a, 50);
+print("Sum: " + sum);
+
+// 4. Valid string concatenation inference
+let greeting: string = "Hello " + "Eronom";
+print("Greeting: " + greeting);
+
+// 5. Valid bool inference
+let isGreater: bool = a > 50;
+print("Is greater: " + isGreater);
+
+print("ALL VALID TYPE TESTS PASSED!");

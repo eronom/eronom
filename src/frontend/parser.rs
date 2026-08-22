@@ -116,6 +116,16 @@ impl Parser {
         Err(format!("Error at line {}: {}", self.peek().line, msg))
     }
 
+    fn parse_fn_param(&mut self) -> Result<crate::frontend::ast::FnParam, String> {
+        let name = self.consume_ident("Expected parameter name.")?;
+        let ty = if self.match_token(&[TokenType::Colon]) {
+            Some(self.consume_ident("Expected type name after ':'.")?)
+        } else {
+            None
+        };
+        Ok(crate::frontend::ast::FnParam { name, ty })
+    }
+
     pub fn parse(&mut self) -> Result<Vec<Stmt>, String> {
         let mut statements = Vec::new();
         while !self.is_at_end() {
@@ -302,7 +312,7 @@ impl Parser {
             let mut params = Vec::new();
             if !self.check(&TokenType::RightParen) {
                 loop {
-                    let param = self.consume_ident("Expected parameter name.")?;
+                    let param = self.parse_fn_param()?;
                     params.push(param);
                     if !self.match_token(&[TokenType::Comma]) {
                         break;
@@ -310,14 +320,24 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+            let return_type = if self.match_token(&[TokenType::Colon]) {
+                Some(self.consume_ident("Expected return type name after ':'.")?)
+            } else {
+                None
+            };
             self.push_scope();
             for param in &params {
-                self.declare_variable(param.clone());
+                self.declare_variable(param.name.clone());
             }
             let body = if self.match_token(&[TokenType::Arrow]) {
                 let body_stmt = self.statement()?;
+                let body_loc = SourceLocation {
+                    file_path: self.file_path.clone(),
+                    line: name_tok.line,
+                    col: name_tok.col,
+                };
                 match body_stmt {
-                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr), body_loc),
                     other => other,
                 }
             } else {
@@ -335,7 +355,7 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, Box::new(body)), loc))
+            Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, return_type, Box::new(body)), loc))
         } else if self.check_ident() && {
             // Check for assignment or short variable declaration: ident = expr
             self.current + 1 < self.tokens.len()
@@ -541,11 +561,8 @@ impl Parser {
                 Ok(Stmt::ForIn(var_name, first_expr, body))
             }
         } else if self.match_token(&[TokenType::Return]) {
+            let ret_tok = self.previous().clone();
             let value = if !self.check(&TokenType::RightBrace) && !self.is_at_end() {
-                // simple check
-                // Might have return value
-                // In a proper parser we check if there's a semicolon or a block end.
-                // We'll just try to parse an expression if we are not at end of block.
                 let next = &self.peek().ty;
                 if next != &TokenType::RightBrace && next != &TokenType::Eof {
                     Some(self.expression()?)
@@ -555,7 +572,12 @@ impl Parser {
             } else {
                 None
             };
-            Ok(Stmt::Return(value))
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: ret_tok.line,
+                col: ret_tok.col,
+            };
+            Ok(Stmt::Return(value, loc))
         } else if self.match_token(&[TokenType::Concurrent]) {
             let body = Box::new(self.statement()?);
             Ok(Stmt::Concurrent(body))
@@ -816,7 +838,7 @@ impl Parser {
             let mut params = Vec::new();
             if !self.check(&TokenType::RightParen) {
                 loop {
-                    let param = self.consume_ident("Expected parameter name.")?;
+                    let param = self.parse_fn_param()?;
                     params.push(param);
                     if !self.match_token(&[TokenType::Comma]) {
                         break;
@@ -824,17 +846,28 @@ impl Parser {
                 }
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+            let return_type = if self.match_token(&[TokenType::Colon]) {
+                Some(self.consume_ident("Expected return type name after ':'.")?)
+            } else {
+                None
+            };
             self.push_scope();
             if let Some(ref n) = name {
                 self.declare_variable(n.clone());
             }
             for param in &params {
-                self.declare_variable(param.clone());
+                self.declare_variable(param.name.clone());
             }
             let body = if self.match_token(&[TokenType::Arrow]) {
+                let arrow_tok = self.previous().clone();
                 let body_stmt = self.statement()?;
+                let body_loc = SourceLocation {
+                    file_path: self.file_path.clone(),
+                    line: arrow_tok.line,
+                    col: arrow_tok.col,
+                };
                 match body_stmt {
-                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr), body_loc),
                     other => other,
                 }
             } else {
@@ -847,7 +880,7 @@ impl Parser {
                 Stmt::Block(stmts)
             };
             self.pop_scope();
-            return Ok(Expr::Function(params, Box::new(body)));
+            return Ok(Expr::Function(params, return_type, Box::new(body)));
         }
 
         if self.match_token(&[TokenType::False]) {
@@ -882,74 +915,96 @@ impl Parser {
         }
 
         if self.match_token(&[TokenType::LeftParen]) {
-            if self.check(&TokenType::RightParen) {
-                let temp = self.current;
-                if temp + 1 < self.tokens.len() && self.tokens[temp + 1].ty == TokenType::Arrow {
-                    self.advance(); // consume RightParen
-                    self.advance(); // consume Arrow
-                    self.push_scope();
-                    let body = self.statement()?;
-                    let body = match body {
-                        Stmt::Expr(expr) => Stmt::Return(Some(expr)),
-                        other => other,
-                    };
-                    self.pop_scope();
-                    return Ok(Expr::Function(Vec::new(), Box::new(body)));
-                }
-            }
+            let save_pos = self.current;
             let mut params = Vec::new();
-            if self.check_ident() {
-                let save_pos = self.current;
-                let mut is_arrow = false;
+            let mut is_arrow = false;
+            let mut return_type = None;
 
-                if !self.check(&TokenType::RightParen) {
-                    loop {
-                        if let Ok(name) = self.consume_ident("Expected parameter name") {
-                            params.push(name);
-                        } else {
-                            break;
-                        }
-                        if !self.match_token(&[TokenType::Comma]) {
-                            break;
-                        }
+            if self.match_token(&[TokenType::RightParen]) {
+                if self.match_token(&[TokenType::Colon]) {
+                    if let Ok(rt) = self.consume_ident("Expected return type") {
+                        return_type = Some(rt);
                     }
                 }
-
-                if self.match_token(&[TokenType::RightParen])
-                    && self.match_token(&[TokenType::Arrow])
-                {
+                if self.match_token(&[TokenType::Arrow]) {
                     is_arrow = true;
                 }
-
-                if is_arrow {
-                    self.push_scope();
-                    for param in &params {
-                        self.declare_variable(param.clone());
+            } else if self.check_ident() {
+                let mut valid_params = true;
+                loop {
+                    match self.parse_fn_param() {
+                        Ok(p) => params.push(p),
+                        Err(_) => {
+                            valid_params = false;
+                            break;
+                        }
                     }
-                    let body = self.statement()?;
-                    let body = match body {
-                        Stmt::Expr(expr) => Stmt::Return(Some(expr)),
-                        other => other,
-                    };
-                    self.pop_scope();
-                    return Ok(Expr::Function(params, Box::new(body)));
-                } else {
-                    self.current = save_pos;
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
                 }
+                if valid_params && self.match_token(&[TokenType::RightParen]) {
+                    if self.match_token(&[TokenType::Colon]) {
+                        if let Ok(rt) = self.consume_ident("Expected return type") {
+                            return_type = Some(rt);
+                        }
+                    }
+                    if self.match_token(&[TokenType::Arrow]) {
+                        is_arrow = true;
+                    }
+                }
+            }
+
+            if is_arrow {
+                let arrow_tok = self.previous().clone();
+                self.push_scope();
+                for param in &params {
+                    self.declare_variable(param.name.clone());
+                }
+                let body = self.statement()?;
+                let body_loc = SourceLocation {
+                    file_path: self.file_path.clone(),
+                    line: arrow_tok.line,
+                    col: arrow_tok.col,
+                };
+                let body = match body {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr), body_loc),
+                    other => other,
+                };
+                self.pop_scope();
+                return Ok(Expr::Function(params, return_type, Box::new(body)));
+            } else {
+                self.current = save_pos;
             }
 
             let expr = self.expression()?;
             self.consume(TokenType::RightParen, "Expected ')' after expression.")?;
 
+            let return_type = if self.match_token(&[TokenType::Colon]) {
+                Some(self.consume_ident("Expected return type")?)
+            } else {
+                None
+            };
+
             if self.match_token(&[TokenType::Arrow]) {
+                let arrow_tok = self.previous().clone();
                 self.push_scope();
                 let body = self.statement()?;
+                let body_loc = SourceLocation {
+                    file_path: self.file_path.clone(),
+                    line: arrow_tok.line,
+                    col: arrow_tok.col,
+                };
                 let body = match body {
-                    Stmt::Expr(expr) => Stmt::Return(Some(expr)),
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr), body_loc),
                     other => other,
                 };
                 self.pop_scope();
-                return Ok(Expr::Function(vec![], Box::new(body)));
+                let params = match expr {
+                    Expr::Variable(name, _) => vec![crate::frontend::ast::FnParam { name, ty: None }],
+                    _ => vec![],
+                };
+                return Ok(Expr::Function(params, return_type, Box::new(body)));
             }
 
             return Ok(expr);

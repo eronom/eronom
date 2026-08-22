@@ -416,7 +416,7 @@ fn find_listen_port_in_expr(expr: &Expr) -> Option<i32> {
             }
             None
         }
-        Expr::Function(_, body) => find_listen_port_in_stmt(body),
+        Expr::Function(_, _, body) => find_listen_port_in_stmt(body),
         Expr::GetIndex(target, index) => {
             find_listen_port_in_expr(target).or_else(|| find_listen_port_in_expr(index))
         }
@@ -531,7 +531,7 @@ fn find_listen_port_in_stmt(stmt: &Stmt) -> Option<i32> {
             }
             None
         }
-        Stmt::Return(expr_opt) => {
+        Stmt::Return(expr_opt, _) => {
             if let Some(expr) = expr_opt {
                 find_listen_port_in_expr(expr)
             } else {

@@ -6,6 +6,12 @@ pub enum ArrayMethodType {
     Pop,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct UpvalueDescriptor {
+    pub is_local: bool,
+    pub index: u8,
+}
+
 #[derive(Clone, Default)]
 pub struct Function {
     pub name: Option<String>,
@@ -13,6 +19,7 @@ pub struct Function {
     pub arity: usize,
     pub jit_ptr: std::cell::Cell<Option<*const std::ffi::c_void>>,
     pub is_async: bool,
+    pub upvalues: Vec<UpvalueDescriptor>,
 }
 
 #[repr(u8)]
@@ -44,6 +51,10 @@ pub enum OpCode {
     DefineGlobal,
     GetGlobal,
     SetGlobal,
+    GetUpvalue,
+    SetUpvalue,
+    Closure,
+    CloseUpvalue,
     Jump,
     JumpIfFalse,
     Loop,

@@ -1,0 +1,3 @@
+fn getNum(): int {
+    return "not a number";
+}
