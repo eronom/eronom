@@ -32,7 +32,7 @@ use super::gc::{
 };
 
 use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub enum AsyncResult {
     Timeout,
@@ -279,19 +279,12 @@ impl VM {
             match phase {
                 GcPhase::Pause => {
                     if state.alloc_count >= 10000 {
-                        super::gc::gc_clear_string_cache();
                         state.phase = GcPhase::Mark;
                         state.gray_stack.clear();
 
-                        let stack_len = if let Some(last_frame) = self.frames.last() {
-                            (last_frame.slots_offset + 256).min(self.stack.len())
-                        } else {
-                            self.stack.len()
-                        };
-                        
                         drop(state);
                         
-                        for val in &self.stack[..stack_len] {
+                        for val in &self.stack {
                             mark_value(val);
                         }
                         for val in self.globals.values() {
@@ -344,12 +337,7 @@ impl VM {
                     
                     drop(state);
                     
-                    let stack_len = if let Some(last_frame) = self.frames.last() {
-                        (last_frame.slots_offset + 256).min(self.stack.len())
-                    } else {
-                        self.stack.len()
-                    };
-                    for val in &self.stack[..stack_len] {
+                    for val in &self.stack {
                         mark_value(val);
                     }
                     for val in self.globals.values() {
@@ -357,6 +345,25 @@ impl VM {
                     }
                     for frame in &self.frames {
                         mark_value(&Value::function(frame.function));
+                    }
+                    for &upval_ptr in &self.open_upvalues {
+                        super::gc::mark_object(upval_ptr);
+                    }
+                    if let Ok(queue) = self.event_loop_queue.lock() {
+                        for task in queue.iter() {
+                            mark_value(&task.callback);
+                            for arg in task.args.iter() {
+                                mark_value(arg);
+                            }
+                        }
+                    }
+                    if let Ok(pending) = self.pending_callbacks.lock() {
+                        for item in pending.iter() {
+                            mark_value(&item.callback);
+                            for arg in item.args.iter() {
+                                mark_value(arg);
+                            }
+                        }
                     }
                     GC_ROOTS.with(|roots| {
                         if let Ok(borrowed) = roots.try_borrow() {
@@ -374,6 +381,7 @@ impl VM {
                             break;
                         }
                     }
+                    super::gc::gc_sweep_string_cache();
                 }
                 GcPhase::Sweep => {
                     for _ in 0..5 {
@@ -381,7 +389,7 @@ impl VM {
                         if curr.is_null() {
                             state.phase = GcPhase::Pause;
                             state.alloc_count = 0;
-                            unsafe { GC_NEEDS_STEP = false; }
+                            GC_NEEDS_STEP.store(false, Ordering::Relaxed);
                             break;
                         }
 
@@ -411,19 +419,13 @@ impl VM {
 
     pub fn collect_garbage(&mut self) {
         let start_time = Instant::now();
-        super::gc::gc_clear_string_cache();
         GC_STATE.with(|state| {
             let mut state = state.borrow_mut();
             state.gray_stack.clear();
         });
 
         // 1. Mark phase: mark roots
-        let stack_len = if let Some(last_frame) = self.frames.last() {
-            (last_frame.slots_offset + 256).min(self.stack.len())
-        } else {
-            self.stack.len()
-        };
-        for val in &self.stack[..stack_len] {
+        for val in &self.stack {
             mark_value(val);
         }
         for val in self.globals.values() {
@@ -431,6 +433,25 @@ impl VM {
         }
         for frame in &self.frames {
             mark_value(&Value::function(frame.function));
+        }
+        for &upval_ptr in &self.open_upvalues {
+            super::gc::mark_object(upval_ptr);
+        }
+        if let Ok(queue) = self.event_loop_queue.lock() {
+            for task in queue.iter() {
+                mark_value(&task.callback);
+                for arg in task.args.iter() {
+                    mark_value(arg);
+                }
+            }
+        }
+        if let Ok(pending) = self.pending_callbacks.lock() {
+            for item in pending.iter() {
+                mark_value(&item.callback);
+                for arg in item.args.iter() {
+                    mark_value(arg);
+                }
+            }
         }
         GC_ROOTS.with(|roots| {
             if let Ok(borrowed) = roots.try_borrow() {
@@ -449,6 +470,9 @@ impl VM {
                 break;
             }
         }
+
+        // Evict dead entries from STRING_CACHE before sweeping
+        super::gc::gc_sweep_string_cache();
 
         // 3. Sweep phase: sweep the entire linked list in one go
         GC_STATE.with(|state| {
@@ -482,13 +506,13 @@ impl VM {
             state.sweep_ptr = std::ptr::null_mut();
             state.prev_sweep_ptr = std::ptr::null_mut();
         });
-        unsafe { GC_NEEDS_STEP = false; }
+        GC_NEEDS_STEP.store(false, Ordering::Relaxed);
         GC_TIME.with(|t| t.set(t.get() + start_time.elapsed()));
     }
 
     #[inline(always)]
     pub fn gc_trigger(&mut self) {
-        if unsafe { GC_NEEDS_STEP } {
+        if GC_NEEDS_STEP.load(Ordering::Relaxed) {
             self.collect_garbage();
         }
     }
@@ -817,10 +841,10 @@ impl VM {
                     let thrown = if !ret_val_out.is_null() {
                         ret_val_out
                     } else if let Some(err_msg) = self.error.take() {
-                        let ptr = super::gc::get_or_create_string(&err_msg);
+                        let ptr = super::gc::gc_alloc_string(&err_msg);
                         Value::string(ptr)
                     } else {
-                        let ptr = super::gc::get_or_create_string("JIT execution error");
+                        let ptr = super::gc::intern_string("JIT execution error");
                         Value::string(ptr)
                     };
 
@@ -1048,7 +1072,7 @@ impl VM {
                                     } else {
                                         let _ = write!(&mut s_ref, "{}", b);
                                     }
-                                    super::gc::get_or_create_string(s_ref.as_str())
+                                    super::gc::gc_alloc_string(s_ref.as_str())
                                 });
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else if b.is_string() {
@@ -1070,7 +1094,7 @@ impl VM {
                                         let _ = write!(&mut s_ref, "{}", a);
                                     }
                                     s_ref.push_str(sb_str);
-                                    super::gc::get_or_create_string(s_ref.as_str())
+                                    super::gc::gc_alloc_string(s_ref.as_str())
                                 });
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else {
@@ -1233,7 +1257,7 @@ impl VM {
                             reload_stack!();
                             let chars: Vec<Value> = match &(*s_ptr).data {
                                 GcData::String(s) => s.chars().map(|c| {
-                                    let cp = super::gc::get_or_create_string(&c.to_string());
+                                    let cp = super::gc::gc_alloc_string(&c.to_string());
                                     Value::string(cp)
                                 }).collect(),
                                 _ => Vec::new(),
@@ -2105,8 +2129,8 @@ impl VM {
                                 match res {
                                     Ok(body_str) => {
                                         let mut map = crate::vm::gc::get_pooled_map(2);
-                                        let body_key = crate::vm::gc::get_or_create_string("_body");
-                                        let body_val = crate::vm::gc::get_or_create_string(&body_str);
+                                        let body_key = crate::vm::gc::intern_string("_body");
+                                        let body_val = crate::vm::gc::gc_alloc_string(&body_str);
                                         map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
                                         let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
                                         Value::object(ptr)
@@ -2120,7 +2144,7 @@ impl VM {
                             AsyncResult::ResolveTextPromise(_, res) => {
                                 match res {
                                     Ok(content) => {
-                                        let ptr = crate::vm::gc::get_or_create_string(&content);
+                                        let ptr = crate::vm::gc::gc_alloc_string(&content);
                                         Value::string(ptr)
                                     }
                                     Err(e) => {
@@ -2493,6 +2517,102 @@ mod tests {
         }
         assert!(found_parent, "Parent should be alive");
         assert!(!found_garbage, "Garbage should be collected");
+
+        gc_free_all();
+    }
+
+    #[test]
+    fn test_gc_stack_roots_deep_no_truncation() {
+        gc_free_all();
+
+        let mut vm = VM::new();
+        // Fill stack with 500 null values (> 256)
+        for _ in 0..500 {
+            vm.stack.push(Value::null());
+        }
+
+        // Place a live object at slot 450 (which would have been ignored by 256 truncation)
+        let deep_ptr = gc_allocate(GcData::Array(vec![Value::number(42.0)]));
+        vm.stack[450] = Value::array(deep_ptr);
+
+        let garbage_ptr = gc_allocate(GcData::Array(vec![Value::number(999.0)]));
+        let _garbage = Value::array(garbage_ptr);
+
+        // Run full GC collection
+        vm.collect_garbage();
+
+        let mut found_deep = false;
+        let mut found_garbage = false;
+        unsafe {
+            let mut curr = GC_STATE.with(|s| s.borrow().head);
+            while !curr.is_null() {
+                if curr == deep_ptr {
+                    found_deep = true;
+                }
+                if curr == garbage_ptr {
+                    found_garbage = true;
+                }
+                curr = (*curr).next;
+            }
+        }
+        assert!(found_deep, "Deep stack object (>256 slots) MUST be kept alive");
+        assert!(!found_garbage, "Unreferenced garbage object must be reclaimed");
+
+        gc_free_all();
+    }
+
+    #[test]
+    fn test_gc_string_cache_sweep() {
+        gc_free_all();
+
+        let mut vm = VM::new();
+
+        let live_ptr = crate::vm::gc::intern_string("live_constant_identifier");
+        let _dead_ptr = crate::vm::gc::intern_string("transient_dead_identifier");
+
+        // Reference live_ptr in global variables
+        vm.globals.insert("live_id".into(), Value::string(live_ptr));
+
+        // Ensure both are in cache initially
+        crate::vm::gc::STRING_CACHE.with(|cache| {
+            let c = cache.borrow();
+            assert!(c.contains_key("live_constant_identifier"));
+            assert!(c.contains_key("transient_dead_identifier"));
+        });
+
+        // Run GC collection
+        vm.collect_garbage();
+
+        // Verify cache sweeping: live retained, dead evicted
+        crate::vm::gc::STRING_CACHE.with(|cache| {
+            let c = cache.borrow();
+            assert!(c.contains_key("live_constant_identifier"), "Live interned string must be retained");
+            assert!(!c.contains_key("transient_dead_identifier"), "Dead interned string must be evicted");
+        });
+
+        // Verify that re-interning live string returns identical pointer
+        let live_ptr_2 = crate::vm::gc::intern_string("live_constant_identifier");
+        assert_eq!(live_ptr, live_ptr_2);
+
+        gc_free_all();
+    }
+
+    #[test]
+    fn test_gc_atomic_flag() {
+        gc_free_all();
+
+        assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), false);
+
+        for _ in 0..10000 {
+            gc_allocate(GcData::Array(vec![]));
+        }
+
+        assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), true);
+
+        let mut vm = VM::new();
+        vm.collect_garbage();
+
+        assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), false);
 
         gc_free_all();
     }

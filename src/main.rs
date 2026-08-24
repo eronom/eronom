@@ -90,7 +90,7 @@ fn native_now(_args: Vec<Value>) -> Value {
 
 fn native_local_time_string(_args: Vec<Value>) -> Value {
     let time_str = get_local_time_string();
-    let ptr = backend::gc::get_or_create_string(&time_str);
+    let ptr = backend::gc::gc_alloc_string(&time_str);
     Value::string(ptr)
 }
 
@@ -254,13 +254,13 @@ fn native_render(args: Vec<Value>) -> Value {
             params_js.push_str("};");
             final_content = final_content.replace("window.__erm_params = {};", &params_js);
         }
-        let ptr = backend::gc::get_or_create_string(&final_content);
+        let ptr = backend::gc::gc_alloc_string(&final_content);
         return Value::string(ptr);
     }
     
     match eronom::compiler::process_erm_component(resolved_path.to_str().unwrap_or(&base_dir), &content, true, &params_map) {
         Ok(html) => {
-            let ptr = backend::gc::get_or_create_string(&html);
+            let ptr = backend::gc::gc_alloc_string(&html);
             Value::string(ptr)
         }
         Err(e) => {
