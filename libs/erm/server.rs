@@ -30,11 +30,11 @@ unsafe extern "C" {
             usize,
         ),
         ws_open_cb: extern "C" fn(*mut c_void, *const c_char, usize),
-        ws_message_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
+        ws_message_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize, i32),
         ws_close_cb: extern "C" fn(*mut c_void, *const c_char, usize, i32, *const c_char, usize),
     );
     fn er_ws_register_route(path: *const c_char);
-    fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
+    fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize, is_binary: i32);
     fn er_http_listen_and_run(port: i32);
     
     fn er_http_response_write_status(res: *mut c_void, status_str: *const c_char, status_len: usize) -> bool;
@@ -138,6 +138,7 @@ extern "C" fn dev_ws_message_callback(
     _path_len: usize,
     _msg_ptr: *const c_char,
     _msg_len: usize,
+    _is_binary: i32,
 ) {
 }
 
@@ -163,7 +164,7 @@ extern "C" fn check_hmr_queue(_timer: *mut c_void) {
             for msg in queue.iter() {
                 let msg_c = CString::new(msg.as_str()).unwrap();
                 unsafe {
-                    er_ws_send(ws as *mut c_void, msg_c.as_ptr(), msg_c.as_bytes().len());
+                    er_ws_send(ws as *mut c_void, msg_c.as_ptr(), msg_c.as_bytes().len(), 0);
                 }
             }
         }

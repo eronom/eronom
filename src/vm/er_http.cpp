@@ -10,14 +10,14 @@
 extern "C" {
     void er_http_on_request(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
     void er_ws_on_open(void* ws, const char* path, size_t path_len);
-    void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
+    void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len, int is_binary);
     void er_ws_on_close(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
     void er_http_on_listening();
 }
 
 typedef void (*HttpRequestCallback)(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
 typedef void (*WsOpenCallback)(void* ws, const char* path, size_t path_len);
-typedef void (*WsMessageCallback)(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
+typedef void (*WsMessageCallback)(void* ws, const char* path, size_t path_len, const char* message, size_t message_len, int is_binary);
 typedef void (*WsCloseCallback)(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
 
 static HttpRequestCallback g_http_req_cb = nullptr;
@@ -138,10 +138,11 @@ extern "C" void er_ws_register_route(const char* path) {
         }
     };
     ws_behavior.message = [path_str](auto* ws, std::string_view message, uWS::OpCode opCode) {
+        int is_binary = (opCode == uWS::OpCode::BINARY) ? 1 : 0;
         if (g_ws_message_cb) {
-            g_ws_message_cb(ws, path_str.data(), path_str.length(), message.data(), message.length());
+            g_ws_message_cb(ws, path_str.data(), path_str.length(), message.data(), message.length(), is_binary);
         } else {
-            er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length());
+            er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length(), is_binary);
         }
     };
     ws_behavior.close = [path_str](auto* ws, int code, std::string_view message) {
@@ -155,14 +156,63 @@ extern "C" void er_ws_register_route(const char* path) {
     g_app->ws<PerSocketData>(path_str, std::move(ws_behavior));
 }
 
-extern "C" void er_ws_send(void* ws, const char* message, size_t message_len) {
+extern "C" void er_ws_send(void* ws, const char* message, size_t message_len, int is_binary) {
+    if (!ws || !message) return;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    web_socket->send(std::string_view(message, message_len), uWS::OpCode::TEXT, false);
+    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+    web_socket->send(std::string_view(message, message_len), op, false);
 }
 
 extern "C" void er_ws_close(void* ws) {
+    if (!ws) return;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     web_socket->close();
+}
+
+extern "C" void er_ws_close_with_code(void* ws, int code, const char* message, size_t message_len) {
+    if (!ws) return;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    if (code > 0 || message_len > 0) {
+        web_socket->end(code, std::string_view(message ? message : "", message_len));
+    } else {
+        web_socket->close();
+    }
+}
+
+extern "C" bool er_ws_subscribe(void* ws, const char* topic, size_t topic_len) {
+    if (!ws || !topic) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    return web_socket->subscribe(std::string_view(topic, topic_len));
+}
+
+extern "C" bool er_ws_unsubscribe(void* ws, const char* topic, size_t topic_len) {
+    if (!ws || !topic) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    return web_socket->unsubscribe(std::string_view(topic, topic_len));
+}
+
+extern "C" bool er_ws_is_subscribed(void* ws, const char* topic, size_t topic_len) {
+    if (!ws || !topic) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    return web_socket->isSubscribed(std::string_view(topic, topic_len));
+}
+
+extern "C" bool er_ws_publish(void* ws, const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
+    if (!ws || !topic || !message) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+    return web_socket->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+}
+
+extern "C" bool er_app_publish(const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
+    if (!g_app || !topic || !message) return false;
+    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+    return g_app->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+}
+
+extern "C" unsigned int er_app_num_subscribers(const char* topic, size_t topic_len) {
+    if (!g_app || !topic) return 0;
+    return g_app->numSubscribers(std::string_view(topic, topic_len));
 }
 
 extern "C" void er_http_register_route(const char* method, const char* path) {

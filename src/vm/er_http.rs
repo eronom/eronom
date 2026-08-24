@@ -90,14 +90,21 @@ unsafe extern "C" {
     fn er_http_response_release(res: *mut c_void);
     
     fn er_ws_register_route(path: *const c_char);
-    fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
+    fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize, is_binary: i32);
     fn er_ws_close(ws: *mut c_void);
+    fn er_ws_close_with_code(ws: *mut c_void, code: i32, message: *const c_char, message_len: usize);
+    fn er_ws_subscribe(ws: *mut c_void, topic: *const c_char, topic_len: usize) -> bool;
+    fn er_ws_unsubscribe(ws: *mut c_void, topic: *const c_char, topic_len: usize) -> bool;
+    fn er_ws_is_subscribed(ws: *mut c_void, topic: *const c_char, topic_len: usize) -> bool;
+    fn er_ws_publish(ws: *mut c_void, topic: *const c_char, topic_len: usize, message: *const c_char, message_len: usize, is_binary: i32) -> bool;
+    fn er_app_publish(topic: *const c_char, topic_len: usize, message: *const c_char, message_len: usize, is_binary: i32) -> bool;
+    fn er_app_num_subscribers(topic: *const c_char, topic_len: usize) -> u32;
 
     fn er_http_create_timer(ms: i32, cb: extern "C" fn(*mut c_void));
 }
 
 pub fn native_route(_args: Vec<Value>) -> Value {
-    let router_obj = crate::vm::gc::get_pooled_map(15);
+    let router_obj = crate::vm::gc::get_pooled_map(18);
     
     let get_name = get_or_create_string("get");
     let post_name = get_or_create_string("post");
@@ -114,6 +121,8 @@ pub fn native_route(_args: Vec<Value>) -> Value {
     let listen_name = get_or_create_string("listen");
     let static_name = get_or_create_string("static");
     let serve_static_name = get_or_create_string("serveStatic");
+    let publish_name = get_or_create_string("publish");
+    let num_subscribers_name = get_or_create_string("numSubscribers");
     
     let get_fn = Value::native_function(native_router_get);
     let post_fn = Value::native_function(native_router_post);
@@ -130,6 +139,8 @@ pub fn native_route(_args: Vec<Value>) -> Value {
     let listen_fn = Value::native_function(native_router_listen);
     let static_fn = Value::native_function(native_router_static);
     let serve_static_fn = Value::native_function(native_router_static);
+    let publish_fn = Value::native_function(native_router_publish);
+    let num_subscribers_fn = Value::native_function(native_router_num_subscribers);
     
     let mut map = router_obj;
     map.insert(crate::vm::value::MapKey(Value::string(get_name)), get_fn);
@@ -147,9 +158,51 @@ pub fn native_route(_args: Vec<Value>) -> Value {
     map.insert(crate::vm::value::MapKey(Value::string(listen_name)), listen_fn);
     map.insert(crate::vm::value::MapKey(Value::string(static_name)), static_fn);
     map.insert(crate::vm::value::MapKey(Value::string(serve_static_name)), serve_static_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(publish_name)), publish_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(num_subscribers_name)), num_subscribers_fn);
     
     let ptr = gc_allocate(GcData::Object(map));
     Value::object(ptr)
+}
+
+pub fn native_router_publish(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let topic_str = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::boolean(false),
+    };
+    let is_binary_arg = if args.len() > 2 {
+        args[2].as_boolean() || (args[2].is_number() && args[2].as_number() != 0.0)
+    } else {
+        false
+    };
+    let (bytes, is_binary) = extract_bytes_from_value(args[1], is_binary_arg);
+    let result = unsafe {
+        er_app_publish(
+            topic_str.as_ptr() as *const c_char,
+            topic_str.len(),
+            bytes.as_ptr() as *const c_char,
+            bytes.len(),
+            if is_binary { 1 } else { 0 },
+        )
+    };
+    Value::boolean(result)
+}
+
+pub fn native_router_num_subscribers(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::number(0.0);
+    }
+    let topic_str = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::number(0.0),
+    };
+    let count = unsafe {
+        er_app_num_subscribers(topic_str.as_ptr() as *const c_char, topic_str.len())
+    };
+    Value::number(count as f64)
 }
 
 pub fn native_router_listen(args: Vec<Value>) -> Value {
@@ -244,28 +297,56 @@ pub fn native_router_ws(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+pub fn extract_bytes_from_value(val: Value, force_binary: bool) -> (Vec<u8>, bool) {
+    if val.is_array() {
+        let ptr = val.as_gc_ptr();
+        let bytes = unsafe {
+            match &(*ptr).data {
+                GcData::Array(arr) => {
+                    arr.iter().map(|v| {
+                        if v.is_number() {
+                            v.as_number() as u8
+                        } else {
+                            0
+                        }
+                    }).collect()
+                }
+                _ => Vec::new(),
+            }
+        };
+        (bytes, true)
+    } else if val.is_string() {
+        let s = unsafe {
+            match &(*val.as_gc_ptr()).data {
+                GcData::String(s) => s.as_bytes().to_vec(),
+                _ => Vec::new(),
+            }
+        };
+        (s, force_binary)
+    } else {
+        let s = val.to_string();
+        (s.into_bytes(), force_binary)
+    }
+}
+
 pub fn native_ws_send(args: Vec<Value>) -> Value {
     if args.is_empty() {
         return Value::null();
     }
     let message_val = args[0];
-    let message_str = if message_val.is_string() {
-        unsafe {
-            match &(*message_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref().to_string(),
-                _ => return Value::null(),
-            }
-        }
+    let is_binary_arg = if args.len() > 1 {
+        args[1].as_boolean() || (args[1].is_number() && args[1].as_number() != 0.0)
     } else {
-        message_val.to_string()
+        false
     };
+    
+    let (bytes, is_binary) = extract_bytes_from_value(message_val, is_binary_arg);
     
     ACTIVE_WEBSOCKET.with(|active| {
         let ptr = active.get();
         if !ptr.is_null() {
-            let c_str = CString::new(message_str).unwrap();
             unsafe {
-                er_ws_send(ptr, c_str.as_ptr(), c_str.as_bytes().len());
+                er_ws_send(ptr, bytes.as_ptr() as *const c_char, bytes.len(), if is_binary { 1 } else { 0 });
             }
         } else {
             eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling send()");
@@ -275,12 +356,27 @@ pub fn native_ws_send(args: Vec<Value>) -> Value {
     Value::null()
 }
 
-pub fn native_ws_close(_args: Vec<Value>) -> Value {
+pub fn native_ws_close(args: Vec<Value>) -> Value {
+    let mut code = 0i32;
+    let mut reason = String::new();
+    if !args.is_empty() && args[0].is_number() {
+        code = args[0].as_number() as i32;
+    }
+    if args.len() > 1 {
+        if let Some(s) = args[1].as_str() {
+            reason = s.to_string();
+        }
+    }
     ACTIVE_WEBSOCKET.with(|active| {
         let ptr = active.get();
         if !ptr.is_null() {
             unsafe {
-                er_ws_close(ptr);
+                if code > 0 || !reason.is_empty() {
+                    let c_str = CString::new(reason).unwrap();
+                    er_ws_close_with_code(ptr, code, c_str.as_ptr(), c_str.as_bytes().len());
+                } else {
+                    er_ws_close(ptr);
+                }
             }
         } else {
             eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling close()");
@@ -289,18 +385,135 @@ pub fn native_ws_close(_args: Vec<Value>) -> Value {
     Value::null()
 }
 
+pub fn native_ws_subscribe(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::boolean(false);
+    }
+    let topic_str = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::boolean(false),
+    };
+    let mut result = false;
+    ACTIVE_WEBSOCKET.with(|active| {
+        let ptr = active.get();
+        if !ptr.is_null() {
+            unsafe {
+                result = er_ws_subscribe(ptr, topic_str.as_ptr() as *const c_char, topic_str.len());
+            }
+        } else {
+            eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling ws.subscribe()");
+        }
+    });
+    Value::boolean(result)
+}
+
+pub fn native_ws_unsubscribe(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::boolean(false);
+    }
+    let topic_str = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::boolean(false),
+    };
+    let mut result = false;
+    ACTIVE_WEBSOCKET.with(|active| {
+        let ptr = active.get();
+        if !ptr.is_null() {
+            unsafe {
+                result = er_ws_unsubscribe(ptr, topic_str.as_ptr() as *const c_char, topic_str.len());
+            }
+        } else {
+            eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling ws.unsubscribe()");
+        }
+    });
+    Value::boolean(result)
+}
+
+pub fn native_ws_is_subscribed(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::boolean(false);
+    }
+    let topic_str = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::boolean(false),
+    };
+    let mut result = false;
+    ACTIVE_WEBSOCKET.with(|active| {
+        let ptr = active.get();
+        if !ptr.is_null() {
+            unsafe {
+                result = er_ws_is_subscribed(ptr, topic_str.as_ptr() as *const c_char, topic_str.len());
+            }
+        } else {
+            eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling ws.isSubscribed()");
+        }
+    });
+    Value::boolean(result)
+}
+
+pub fn native_ws_publish(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::boolean(false);
+    }
+    let topic_str = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::boolean(false),
+    };
+    let is_binary_arg = if args.len() > 2 {
+        args[2].as_boolean() || (args[2].is_number() && args[2].as_number() != 0.0)
+    } else {
+        false
+    };
+    let (bytes, is_binary) = extract_bytes_from_value(args[1], is_binary_arg);
+    let mut result = false;
+    ACTIVE_WEBSOCKET.with(|active| {
+        let ptr = active.get();
+        if !ptr.is_null() {
+            unsafe {
+                result = er_ws_publish(
+                    ptr,
+                    topic_str.as_ptr() as *const c_char,
+                    topic_str.len(),
+                    bytes.as_ptr() as *const c_char,
+                    bytes.len(),
+                    if is_binary { 1 } else { 0 },
+                );
+            }
+        } else {
+            eprintln!("[WS] Error: ACTIVE_WEBSOCKET is null when calling ws.publish()");
+        }
+    });
+    Value::boolean(result)
+}
+
 fn create_ws_object(_ws: *mut c_void) -> Value {
-    let ws_map = crate::vm::gc::get_pooled_map(2);
+    let ws_map = crate::vm::gc::get_pooled_map(8);
     
     let send_name = get_or_create_string("send");
     let send_fn = Value::native_function(native_ws_send);
     
     let close_name = get_or_create_string("close");
     let close_fn = Value::native_function(native_ws_close);
+
+    let subscribe_name = get_or_create_string("subscribe");
+    let subscribe_fn = Value::native_function(native_ws_subscribe);
+
+    let unsubscribe_name = get_or_create_string("unsubscribe");
+    let unsubscribe_fn = Value::native_function(native_ws_unsubscribe);
+
+    let is_subscribed_name = get_or_create_string("isSubscribed");
+    let is_subscribed_fn = Value::native_function(native_ws_is_subscribed);
+
+    let publish_name = get_or_create_string("publish");
+    let publish_fn = Value::native_function(native_ws_publish);
     
     let mut map = ws_map;
     map.insert(crate::vm::value::MapKey(Value::string(send_name)), send_fn);
     map.insert(crate::vm::value::MapKey(Value::string(close_name)), close_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(subscribe_name)), subscribe_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(unsubscribe_name)), unsubscribe_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(is_subscribed_name)), is_subscribed_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(publish_name)), publish_fn);
     
     let ptr = gc_allocate(GcData::Object(map));
     Value::object(ptr)
@@ -2236,8 +2449,12 @@ pub extern "C" fn er_ws_on_open(
     }
 
     let path = unsafe {
-        let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
-        std::str::from_utf8(slice).unwrap_or("")
+        if path_ptr.is_null() || path_len == 0 {
+            ""
+        } else {
+            let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
+            std::str::from_utf8(slice).unwrap_or("")
+        }
     };
     
     let open_cb = WS_ROUTES.with(|routes| {
@@ -2284,6 +2501,7 @@ pub extern "C" fn er_ws_on_message(
     path_len: usize,
     message_ptr: *const c_char,
     message_len: usize,
+    is_binary: i32,
 ) {
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     if !vm_ptr.is_null() {
@@ -2292,13 +2510,20 @@ pub extern "C" fn er_ws_on_message(
     }
 
     let path = unsafe {
-        let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
-        std::str::from_utf8(slice).unwrap_or("")
+        if path_ptr.is_null() || path_len == 0 {
+            ""
+        } else {
+            let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
+            std::str::from_utf8(slice).unwrap_or("")
+        }
     };
     
-    let msg = unsafe {
-        let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
-        std::str::from_utf8(slice).unwrap_or("")
+    let msg_bytes = unsafe {
+        if message_ptr.is_null() || message_len == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(message_ptr as *const u8, message_len)
+        }
     };
     
     let message_cb = WS_ROUTES.with(|routes| {
@@ -2328,10 +2553,22 @@ pub extern "C" fn er_ws_on_message(
             let vm_ptr = active.get();
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
-                let msg_str = get_or_create_string(msg);
-                let msg_val = Value::string(msg_str);
+                let is_bin_bool = is_binary != 0;
+                let msg_val = if is_bin_bool {
+                    let mut byte_vals = crate::vm::gc::get_pooled_vec(msg_bytes.len());
+                    for &b in msg_bytes {
+                        byte_vals.push(Value::number(b as f64));
+                    }
+                    let arr_ptr = crate::vm::gc::gc_allocate(GcData::Array(byte_vals));
+                    Value::array(arr_ptr)
+                } else {
+                    let msg_str_slice = std::str::from_utf8(msg_bytes).unwrap_or("");
+                    let msg_str = get_or_create_string(msg_str_slice);
+                    Value::string(msg_str)
+                };
+                let is_bin_val = Value::boolean(is_bin_bool);
                 
-                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj, msg_val]) {
+                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj, msg_val, is_bin_val]) {
                     eprintln!("[WS] Error executing message callback: {}", e);
                 }
             }
@@ -2357,13 +2594,21 @@ pub extern "C" fn er_ws_on_close(
     }
 
     let path = unsafe {
-        let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
-        std::str::from_utf8(slice).unwrap_or("")
+        if path_ptr.is_null() || path_len == 0 {
+            ""
+        } else {
+            let slice = std::slice::from_raw_parts(path_ptr as *const u8, path_len);
+            std::str::from_utf8(slice).unwrap_or("")
+        }
     };
     
     let msg = unsafe {
-        let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
-        std::str::from_utf8(slice).unwrap_or("")
+        if message_ptr.is_null() || message_len == 0 {
+            ""
+        } else {
+            let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
+            std::str::from_utf8(slice).unwrap_or("")
+        }
     };
     
     let close_cb = WS_ROUTES.with(|routes| {
