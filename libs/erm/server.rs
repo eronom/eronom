@@ -412,9 +412,11 @@ fn execute_api_route(
         Err(e) => anyhow::bail!("Compile error: {}", e),
     };
 
+    crate::vm::er_http::ROUTER.with(|r| r.borrow_mut().clear());
     crate::vm::er_http::ROUTES.with(|r| r.borrow_mut().clear());
     crate::vm::er_http::WS_ROUTES.with(|w| w.borrow_mut().clear());
     crate::vm::er_http::MIDDLEWARES.with(|m| m.borrow_mut().clear());
+    crate::vm::er_http::STATIC_MOUNTS.with(|s| s.borrow_mut().clear());
     
     crate::vm::er_http::ROUTE_PREFIX.with(|p| {
         *p.borrow_mut() = Some(prefix);

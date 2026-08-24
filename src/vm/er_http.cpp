@@ -177,7 +177,12 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
     if (method_str == "GET") {
         g_app->get(path_str, [](auto* res, auto* req) {
             std::string_view method = "GET";
-            std::string_view path = req->getUrl();
+            std::string full_url = std::string(req->getUrl());
+            std::string_view query = req->getQuery();
+            if (!query.empty()) {
+                full_url.push_back('?');
+                full_url.append(query);
+            }
             
             std::string headers_str;
             for (auto h : *req) {
@@ -190,17 +195,22 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
             auto* token = new HttpResponseToken(res);
             res->onAborted(AbortHandler(token));
             if (g_http_req_cb) {
-                g_http_req_cb(token, method.data(), method.length(), path.data(), path.length(),
+                g_http_req_cb(token, method.data(), method.length(), full_url.data(), full_url.length(),
                               headers_str.data(), headers_str.length(), nullptr, 0);
             } else {
-                er_http_on_request(token, method.data(), method.length(), path.data(), path.length(),
+                er_http_on_request(token, method.data(), method.length(), full_url.data(), full_url.length(),
                                    headers_str.data(), headers_str.length(), nullptr, 0);
             }
         });
     } else if (method_str == "HEAD") {
         g_app->head(path_str, [](auto* res, auto* req) {
             std::string_view method = "HEAD";
-            std::string_view path = req->getUrl();
+            std::string full_url = std::string(req->getUrl());
+            std::string_view query = req->getQuery();
+            if (!query.empty()) {
+                full_url.push_back('?');
+                full_url.append(query);
+            }
             
             std::string headers_str;
             for (auto h : *req) {
@@ -213,10 +223,10 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
             auto* token = new HttpResponseToken(res);
             res->onAborted(AbortHandler(token));
             if (g_http_req_cb) {
-                g_http_req_cb(token, method.data(), method.length(), path.data(), path.length(),
+                g_http_req_cb(token, method.data(), method.length(), full_url.data(), full_url.length(),
                               headers_str.data(), headers_str.length(), nullptr, 0);
             } else {
-                er_http_on_request(token, method.data(), method.length(), path.data(), path.length(),
+                er_http_on_request(token, method.data(), method.length(), full_url.data(), full_url.length(),
                                    headers_str.data(), headers_str.length(), nullptr, 0);
             }
         });
@@ -231,7 +241,12 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
                         c = (char)toupper((unsigned char)c);
                     }
                 }
-                std::string_view path = req->getUrl();
+                std::string full_url = std::string(req->getUrl());
+                std::string_view query = req->getQuery();
+                if (!query.empty()) {
+                    full_url.push_back('?');
+                    full_url.append(query);
+                }
                 
                 std::string headers_str;
                 for (auto h : *req) {
@@ -262,7 +277,7 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
                 };
                 auto ctx = std::make_shared<ReqCtx>(token);
                 ctx->method = std::move(method_name);
-                ctx->path = std::string(path);
+                ctx->path = std::move(full_url);
                 ctx->headers = std::move(headers_str);
                 
                 res->onData([ctx, token](std::string_view chunk, bool isLast) {
@@ -307,7 +322,12 @@ extern "C" void er_http_listen_and_run(int port) {
         for (char &c : method_str) {
             c = (char)toupper((unsigned char)c);
         }
-        std::string_view path = req->getUrl();
+        std::string full_url = std::string(req->getUrl());
+        std::string_view query = req->getQuery();
+        if (!query.empty()) {
+            full_url.push_back('?');
+            full_url.append(query);
+        }
         
         std::string headers_str;
         for (auto h : *req) {
@@ -338,7 +358,7 @@ extern "C" void er_http_listen_and_run(int port) {
         };
         auto ctx = std::make_shared<FallbackCtx>(token);
         ctx->method = std::move(method_str);
-        ctx->path = std::string(path);
+        ctx->path = std::move(full_url);
         ctx->headers = std::move(headers_str);
         
         res->onData([ctx, token](std::string_view chunk, bool isLast) {

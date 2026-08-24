@@ -1,0 +1,67 @@
+const app = router()
+
+// 1. Parameterized Routes
+app.get("/users/:id", fn(c) {
+  c.json({
+    userId: c.req.params.id,
+    route: "/users/:id"
+  })
+})
+
+app.get("/posts/:slug/comments/:commentId", fn(c) {
+  c.json({
+    slug: c.req.params.slug,
+    commentId: c.req.params.commentId,
+    route: "/posts/:slug/comments/:commentId"
+  })
+})
+
+// 2. Query String Parser
+app.get("/search", fn(c) {
+  c.json({
+    query: c.req.query,
+    q: c.req.query.q,
+    limit: c.req.query.limit,
+    rawQuery: c.req.rawQuery
+  })
+})
+
+// 3. Header Accessors & Response Headers
+app.get("/headers-test", fn(c) {
+  const authHeader = c.req.header("authorization")
+  c.header("X-Custom-Server", "Eronom-Engine")
+  c.status(200)
+  c.json({
+    auth: authHeader,
+    receivedHeaders: c.req.headers
+  })
+})
+
+// 4. Cookie Management
+app.get("/cookie-test", fn(c) {
+  const session = c.cookie("session_id")
+  c.setCookie("auth_token", "secret12345", {
+    httpOnly: true,
+    secure: true,
+    maxAge: 3600,
+    sameSite: "Strict"
+  })
+  c.clearCookie("old_session", { path: "/" })
+  c.json({
+    receivedSession: session,
+    allCookies: c.req.cookies
+  })
+})
+
+// 5. Static File Helper on Context
+app.get("/manual-file", fn(c) {
+  c.file("example-er/public/sample.txt")
+})
+
+// 6. Static Asset Directory Mount
+app.static("/public", "example-er/public")
+
+// Listen on port 3088
+app.listen(3088, fn() {
+  print("[Test Server] Listening on http://localhost:3088")
+})

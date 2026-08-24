@@ -2260,6 +2260,12 @@ fn check_type(
     // 1. If it's a struct instantiation or object literal checked against struct
     if let Expr::StructInst(struct_name, pairs, s_loc) = expr {
         if struct_name != expected_type && !is_type_compatible(expected_type, struct_name, structs, interfaces) {
+            if interfaces.contains_key(expected_type) {
+                return Err(format!(
+                    "error: Struct \"{}\" does not implement interface \"{}\"\n    at {}:{}:{}",
+                    struct_name, expected_type, s_loc.file_path, s_loc.line, s_loc.col
+                ));
+            }
             return Err(format!(
                 "error: Expected type \"{}\" but got struct \"{}\"\n    at {}:{}:{}",
                 expected_type, struct_name, s_loc.file_path, s_loc.line, s_loc.col
@@ -2318,6 +2324,7 @@ fn check_type(
                 }
                 return Ok(());
             }
+            Expr::Array(_) => return Ok(()),
             Expr::Literal(LiteralValue::Null) => return Ok(()),
             _ => {}
         }
@@ -2357,6 +2364,12 @@ fn check_type(
         if is_type_compatible(expected_type, &actual_type, structs, interfaces) {
             return Ok(());
         } else {
+            if interfaces.contains_key(expected_type) && structs.contains_key(&actual_type) {
+                return Err(format!(
+                    "error: Struct \"{}\" does not implement interface \"{}\"\n    at {}:{}:{}",
+                    actual_type, expected_type, loc.file_path, loc.line, loc.col
+                ));
+            }
             let got_str = match expr {
                 Expr::Literal(LiteralValue::Number(n)) => n.to_string(),
                 Expr::Literal(LiteralValue::String(s)) => format!("\"{}\"", s),

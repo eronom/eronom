@@ -1,0 +1,9 @@
+Hello Eronom Static File Server!
+This is a sample text file used for static asset serving and HTTP byte range request testing.
+Lines of data:
+1. First line
+2. Second line
+3. Third line
+4. Fourth line
+5. Fifth line
+End of file.

@@ -4,17 +4,20 @@ use std::collections::HashMap;
 use crate::vm::value::Value;
 use crate::vm::execute::VM;
 use crate::vm::gc::{get_or_create_string, gc_allocate, GcData};
+use crate::vm::router::RadixRouter;
 use std::ffi::{c_char, c_void, CString};
 use std::time::SystemTime;
 use std::fs;
 use std::path::Path;
 
+#[derive(Clone)]
 pub struct Route {
     pub method: String,
     pub path: String,
     pub callback: Value,
 }
 
+#[derive(Clone)]
 pub struct WsRoute {
     pub path: String,
     pub open: Option<Value>,
@@ -22,9 +25,37 @@ pub struct WsRoute {
     pub close: Option<Value>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ResponseState {
+    pub status: Option<u16>,
+    pub headers: Vec<(String, String)>,
+    pub cookies: Vec<String>,
+    pub finished: bool,
+}
+
+impl ResponseState {
+    pub fn new() -> Self {
+        Self {
+            status: None,
+            headers: Vec::new(),
+            cookies: Vec::new(),
+            finished: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.status = None;
+        self.headers.clear();
+        self.cookies.clear();
+        self.finished = false;
+    }
+}
+
 thread_local! {
+    pub static ROUTER: RefCell<RadixRouter> = RefCell::new(RadixRouter::new());
     pub static ROUTES: RefCell<Vec<Route>> = RefCell::new(Vec::new());
     pub static WS_ROUTES: RefCell<Vec<WsRoute>> = RefCell::new(Vec::new());
+    pub static STATIC_MOUNTS: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
     pub static MIDDLEWARES: RefCell<Vec<Value>> = RefCell::new(Vec::new());
     pub static ACTIVE_VM: Cell<*mut VM> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
@@ -37,6 +68,12 @@ thread_local! {
     pub static LISTEN_PORT: Cell<Option<i32>> = const { Cell::new(None) };
     pub static LISTEN_CALLBACK: RefCell<Option<Value>> = const { RefCell::new(None) };
     pub static SERVER_RUNNING: Cell<bool> = const { Cell::new(false) };
+
+    pub static ACTIVE_REQUEST_HEADERS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    pub static ACTIVE_REQUEST_COOKIES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    pub static ACTIVE_REQUEST_QUERY: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    pub static ACTIVE_REQUEST_PATH: RefCell<String> = RefCell::new(String::new());
+    pub static ACTIVE_RESPONSE_STATE: RefCell<ResponseState> = RefCell::new(ResponseState::new());
 }
 
 #[allow(dead_code)]
@@ -60,7 +97,7 @@ unsafe extern "C" {
 }
 
 pub fn native_route(_args: Vec<Value>) -> Value {
-    let router_obj = crate::vm::gc::get_pooled_map(13);
+    let router_obj = crate::vm::gc::get_pooled_map(15);
     
     let get_name = get_or_create_string("get");
     let post_name = get_or_create_string("post");
@@ -75,6 +112,8 @@ pub fn native_route(_args: Vec<Value>) -> Value {
     let ws_name = get_or_create_string("ws");
     let use_name = get_or_create_string("use");
     let listen_name = get_or_create_string("listen");
+    let static_name = get_or_create_string("static");
+    let serve_static_name = get_or_create_string("serveStatic");
     
     let get_fn = Value::native_function(native_router_get);
     let post_fn = Value::native_function(native_router_post);
@@ -89,6 +128,8 @@ pub fn native_route(_args: Vec<Value>) -> Value {
     let ws_fn = Value::native_function(native_router_ws);
     let use_fn = Value::native_function(native_router_use);
     let listen_fn = Value::native_function(native_router_listen);
+    let static_fn = Value::native_function(native_router_static);
+    let serve_static_fn = Value::native_function(native_router_static);
     
     let mut map = router_obj;
     map.insert(crate::vm::value::MapKey(Value::string(get_name)), get_fn);
@@ -104,6 +145,8 @@ pub fn native_route(_args: Vec<Value>) -> Value {
     map.insert(crate::vm::value::MapKey(Value::string(ws_name)), ws_fn);
     map.insert(crate::vm::value::MapKey(Value::string(use_name)), use_fn);
     map.insert(crate::vm::value::MapKey(Value::string(listen_name)), listen_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(static_name)), static_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(serve_static_name)), serve_static_fn);
     
     let ptr = gc_allocate(GcData::Object(map));
     Value::object(ptr)
@@ -274,7 +317,7 @@ fn register_route_internal(method: &str, args: Vec<Value>) -> Value {
         eprintln!("[HTTP] Error: Route path must be a string");
         return Value::null();
     }
-    if !callback_val.is_function() {
+    if !callback_val.is_function() && !callback_val.is_native_function() {
         eprintln!("[HTTP] Error: Route callback must be a function");
         return Value::null();
     }
@@ -299,6 +342,10 @@ fn register_route_internal(method: &str, args: Vec<Value>) -> Value {
                 }
             }
         }
+    });
+
+    ROUTER.with(|r| {
+        r.borrow_mut().insert(method, &path_str, callback_val);
     });
     
     ROUTES.with(|routes| {
@@ -344,26 +391,654 @@ pub fn native_router_all(args: Vec<Value>) -> Value {
     register_route_internal("ALL", args)
 }
 
+pub fn native_router_static(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        eprintln!("[HTTP] Error: app.static requires prefix and root directory");
+        return Value::null();
+    }
+    let prefix_str = match args[0].as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
+    };
+    let root_dir_str = match args[1].as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
+    };
+
+    let clean_prefix = if prefix_str.len() > 1 && prefix_str.ends_with('/') {
+        &prefix_str[..prefix_str.len() - 1]
+    } else {
+        &prefix_str
+    };
+
+    STATIC_MOUNTS.with(|mounts| {
+        mounts.borrow_mut().push((clean_prefix.to_string(), root_dir_str.clone()));
+    });
+
+    let pattern_wildcard = if clean_prefix == "/" || clean_prefix.is_empty() {
+        "/*filepath".to_string()
+    } else {
+        format!("{}/*filepath", clean_prefix)
+    };
+
+    let static_handler = Value::native_function(native_static_route_handler);
+
+    register_route_internal("GET", vec![Value::string(get_or_create_string(&pattern_wildcard)), static_handler]);
+    register_route_internal("HEAD", vec![Value::string(get_or_create_string(&pattern_wildcard)), static_handler]);
+
+    if clean_prefix != "/" && !clean_prefix.is_empty() {
+        register_route_internal("GET", vec![Value::string(get_or_create_string(clean_prefix)), static_handler]);
+        register_route_internal("HEAD", vec![Value::string(get_or_create_string(clean_prefix)), static_handler]);
+    }
+
+    Value::null()
+}
+
+pub fn percent_decode(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let input_bytes = input.as_bytes();
+    let mut i = 0;
+    while i < input_bytes.len() {
+        match input_bytes[i] {
+            b'+' => {
+                bytes.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < input_bytes.len() => {
+                let hex_str = std::str::from_utf8(&input_bytes[i+1..i+3]).unwrap_or("");
+                if let Ok(byte) = u8::from_str_radix(hex_str, 16) {
+                    bytes.push(byte);
+                    i += 3;
+                } else {
+                    bytes.push(b'%');
+                    i += 1;
+                }
+            }
+            b => {
+                bytes.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+pub fn parse_query_string(raw: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let query_str = if let Some(pos) = raw.find('?') {
+        &raw[pos + 1..]
+    } else {
+        raw
+    };
+    if query_str.is_empty() {
+        return map;
+    }
+    for pair in query_str.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        if let Some(pos) = pair.find('=') {
+            let k = percent_decode(&pair[..pos]);
+            let v = percent_decode(&pair[pos + 1..]);
+            map.insert(k, v);
+        } else {
+            let k = percent_decode(pair);
+            map.insert(k, "true".to_string());
+        }
+    }
+    map
+}
+
+pub fn parse_cookies(cookie_header: &str) -> HashMap<String, String> {
+    let mut cookies = HashMap::new();
+    for item in cookie_header.split(';') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if let Some(pos) = item.find('=') {
+            let name = item[..pos].trim();
+            let val = percent_decode(item[pos + 1..].trim());
+            cookies.insert(name.to_string(), val);
+        }
+    }
+    cookies
+}
+
+pub fn format_cookie(name: &str, val: &str, options: Option<Value>) -> String {
+    let mut out = format!("{}={}", name, val);
+    let mut path_set = false;
+
+    if let Some(opt) = options {
+        if opt.is_object() {
+            let ptr = opt.as_gc_ptr();
+            unsafe {
+                if let GcData::Object(map) = &(*ptr).data {
+                    for (k, v) in map {
+                        if let Some(key_str) = k.0.as_str() {
+                            let lower = key_str.to_ascii_lowercase();
+                            match lower.as_str() {
+                                "path" => {
+                                    if let Some(p) = v.as_str() {
+                                        out.push_str(&format!("; Path={}", p));
+                                        path_set = true;
+                                    }
+                                }
+                                "domain" => {
+                                    if let Some(d) = v.as_str() {
+                                        out.push_str(&format!("; Domain={}", d));
+                                    }
+                                }
+                                "maxage" | "max_age" => {
+                                    if v.is_number() {
+                                        out.push_str(&format!("; Max-Age={}", v.as_number() as i64));
+                                    }
+                                }
+                                "expires" => {
+                                    if let Some(exp) = v.as_str() {
+                                        out.push_str(&format!("; Expires={}", exp));
+                                    }
+                                }
+                                "httponly" | "http_only" => {
+                                    if v.as_boolean() {
+                                        out.push_str("; HttpOnly");
+                                    }
+                                }
+                                "secure" => {
+                                    if v.as_boolean() {
+                                        out.push_str("; Secure");
+                                    }
+                                }
+                                "samesite" | "same_site" => {
+                                    if let Some(ss) = v.as_str() {
+                                        out.push_str(&format!("; SameSite={}", ss));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !path_set {
+        out.push_str("; Path=/");
+    }
+
+    out
+}
+
+pub fn get_mime_type_for_extension(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" | "cjs" => "application/javascript; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
+        "md" => "text/markdown; charset=utf-8",
+        "xml" => "application/xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        "bmp" => "image/bmp",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "eot" => "application/vnd.ms-fontobject",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "pdf" => "application/pdf",
+        "wasm" => "application/wasm",
+        "zip" => "application/zip",
+        "tar" => "application/x-tar",
+        "gz" => "application/gzip",
+        _ => "application/octet-stream",
+    }
+}
+
+pub fn calculate_etag(size: u64, mtime: SystemTime) -> String {
+    let secs = mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("W/\"{:x}-{:x}\"", size, secs)
+}
+
+pub fn format_http_date(time: SystemTime) -> String {
+    let secs = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let days_since_epoch = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hour = time_of_day / 3600;
+    let min = (time_of_day % 3600) / 60;
+    let sec = time_of_day % 60;
+
+    let day_of_week = match (days_since_epoch + 4) % 7 {
+        0 => "Sun",
+        1 => "Mon",
+        2 => "Tue",
+        3 => "Wed",
+        4 => "Thu",
+        5 => "Fri",
+        6 => "Sat",
+        _ => "Thu",
+    };
+
+    let mut days = days_since_epoch as i64;
+    let mut year = 1970i64;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let days_in_year = if leap { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+
+    let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let days_in_months = [
+        ("Jan", 31),
+        ("Feb", if leap { 29 } else { 28 }),
+        ("Mar", 31),
+        ("Apr", 30),
+        ("May", 31),
+        ("Jun", 30),
+        ("Jul", 31),
+        ("Aug", 31),
+        ("Sep", 30),
+        ("Oct", 31),
+        ("Nov", 30),
+        ("Dec", 31),
+    ];
+
+    let mut month_str = "Jan";
+    let mut day_of_month = days + 1;
+    for &(m, m_days) in &days_in_months {
+        if day_of_month <= m_days {
+            month_str = m;
+            break;
+        }
+        day_of_month -= m_days;
+    }
+
+    format!(
+        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+        day_of_week, day_of_month, month_str, year, hour, min, sec
+    )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RangeHeader {
+    Satisfiable(u64, u64),
+    Unsatisfiable,
+    None,
+}
+
+pub fn parse_range_header(range_str: &str, file_len: u64) -> RangeHeader {
+    let trimmed = range_str.trim();
+    if !trimmed.starts_with("bytes=") {
+        return RangeHeader::None;
+    }
+    let range_spec = &trimmed["bytes=".len()..];
+    let first_range = range_spec.split(',').next().unwrap_or("").trim();
+    if let Some(dash_pos) = first_range.find('-') {
+        let start_str = first_range[..dash_pos].trim();
+        let end_str = first_range[dash_pos + 1..].trim();
+
+        if start_str.is_empty() {
+            if let Ok(suffix_len) = end_str.parse::<u64>() {
+                if suffix_len == 0 {
+                    return RangeHeader::Unsatisfiable;
+                }
+                let start = if suffix_len >= file_len { 0 } else { file_len - suffix_len };
+                let end = if file_len > 0 { file_len - 1 } else { 0 };
+                return RangeHeader::Satisfiable(start, end);
+            }
+        } else if end_str.is_empty() {
+            if let Ok(start) = start_str.parse::<u64>() {
+                if start >= file_len {
+                    return RangeHeader::Unsatisfiable;
+                }
+                let end = if file_len > 0 { file_len - 1 } else { 0 };
+                return RangeHeader::Satisfiable(start, end);
+            }
+        } else if let (Ok(start), Ok(end)) = (start_str.parse::<u64>(), end_str.parse::<u64>()) {
+            if start > end || start >= file_len {
+                return RangeHeader::Unsatisfiable;
+            }
+            let end = end.min(if file_len > 0 { file_len - 1 } else { 0 });
+            return RangeHeader::Satisfiable(start, end);
+        }
+    }
+    RangeHeader::Unsatisfiable
+}
+
+pub fn serve_static_file(
+    res_ptr: *mut c_void,
+    file_path: &Path,
+    req_headers: &HashMap<String, String>,
+) -> bool {
+    if !file_path.exists() || !file_path.is_file() {
+        return false;
+    }
+
+    let metadata = match fs::metadata(file_path) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    let file_len = metadata.len();
+    let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let etag = calculate_etag(file_len, mtime);
+    let last_modified = format_http_date(mtime);
+
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let mime = get_mime_type_for_extension(ext);
+
+    // 1. Conditional GET: If-None-Match
+    if let Some(if_none_match) = req_headers.get("if-none-match") {
+        if if_none_match.contains(&etag) || if_none_match.trim() == "*" {
+            unsafe {
+                let status = CString::new("304 Not Modified").unwrap();
+                er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+                let etag_key = CString::new("ETag").unwrap();
+                let etag_val = CString::new(etag).unwrap();
+                er_http_response_write_header(res_ptr, etag_key.as_ptr(), etag_key.as_bytes().len(), etag_val.as_ptr(), etag_val.as_bytes().len());
+                er_http_response_end(res_ptr, b"".as_ptr() as *const c_char, 0);
+            }
+            return true;
+        }
+    }
+
+    // 2. Conditional GET: If-Modified-Since
+    if let Some(if_mod_since) = req_headers.get("if-modified-since") {
+        if if_mod_since.trim() == last_modified.as_str() {
+            unsafe {
+                let status = CString::new("304 Not Modified").unwrap();
+                er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+                let etag_key = CString::new("ETag").unwrap();
+                let etag_val = CString::new(etag).unwrap();
+                er_http_response_write_header(res_ptr, etag_key.as_ptr(), etag_key.as_bytes().len(), etag_val.as_ptr(), etag_val.as_bytes().len());
+                er_http_response_end(res_ptr, b"".as_ptr() as *const c_char, 0);
+            }
+            return true;
+        }
+    }
+
+    // 3. Range Requests
+    if let Some(range_header) = req_headers.get("range") {
+        match parse_range_header(range_header, file_len) {
+            RangeHeader::Satisfiable(start, end) => {
+                let chunk_len = (end - start + 1) as usize;
+                let mut buffer = vec![0u8; chunk_len];
+                use std::io::{Read, Seek, SeekFrom};
+                if let Ok(mut f) = fs::File::open(file_path) {
+                    if f.seek(SeekFrom::Start(start)).is_ok() && f.read_exact(&mut buffer).is_ok() {
+                        unsafe {
+                            let status = CString::new("206 Partial Content").unwrap();
+                            er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+                            
+                            let ct_k = CString::new("Content-Type").unwrap();
+                            let ct_v = CString::new(mime).unwrap();
+                            er_http_response_write_header(res_ptr, ct_k.as_ptr(), ct_k.as_bytes().len(), ct_v.as_ptr(), ct_v.as_bytes().len());
+                            
+                            let cr_k = CString::new("Content-Range").unwrap();
+                            let cr_v = CString::new(format!("bytes {}-{}/{}", start, end, file_len)).unwrap();
+                            er_http_response_write_header(res_ptr, cr_k.as_ptr(), cr_k.as_bytes().len(), cr_v.as_ptr(), cr_v.as_bytes().len());
+                            
+                            let cl_k = CString::new("Content-Length").unwrap();
+                            let cl_v = CString::new(format!("{}", chunk_len)).unwrap();
+                            er_http_response_write_header(res_ptr, cl_k.as_ptr(), cl_k.as_bytes().len(), cl_v.as_ptr(), cl_v.as_bytes().len());
+
+                            let ar_k = CString::new("Accept-Ranges").unwrap();
+                            let ar_v = CString::new("bytes").unwrap();
+                            er_http_response_write_header(res_ptr, ar_k.as_ptr(), ar_k.as_bytes().len(), ar_v.as_ptr(), ar_v.as_bytes().len());
+
+                            let etag_k = CString::new("ETag").unwrap();
+                            let etag_v = CString::new(etag).unwrap();
+                            er_http_response_write_header(res_ptr, etag_k.as_ptr(), etag_k.as_bytes().len(), etag_v.as_ptr(), etag_v.as_bytes().len());
+
+                            er_http_response_end(res_ptr, buffer.as_ptr() as *const c_char, buffer.len());
+                        }
+                        return true;
+                    }
+                }
+            }
+            RangeHeader::Unsatisfiable => {
+                unsafe {
+                    let status = CString::new("416 Range Not Satisfiable").unwrap();
+                    er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+                    let cr_k = CString::new("Content-Range").unwrap();
+                    let cr_v = CString::new(format!("bytes */{}", file_len)).unwrap();
+                    er_http_response_write_header(res_ptr, cr_k.as_ptr(), cr_k.as_bytes().len(), cr_v.as_ptr(), cr_v.as_bytes().len());
+                    er_http_response_end(res_ptr, b"".as_ptr() as *const c_char, 0);
+                }
+                return true;
+            }
+            RangeHeader::None => {}
+        }
+    }
+
+    // 4. Full file response
+    if let Ok(content) = fs::read(file_path) {
+        unsafe {
+            let status = CString::new("200 OK").unwrap();
+            er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+
+            let ct_k = CString::new("Content-Type").unwrap();
+            let ct_v = CString::new(mime).unwrap();
+            er_http_response_write_header(res_ptr, ct_k.as_ptr(), ct_k.as_bytes().len(), ct_v.as_ptr(), ct_v.as_bytes().len());
+
+            let ar_k = CString::new("Accept-Ranges").unwrap();
+            let ar_v = CString::new("bytes").unwrap();
+            er_http_response_write_header(res_ptr, ar_k.as_ptr(), ar_k.as_bytes().len(), ar_v.as_ptr(), ar_v.as_bytes().len());
+
+            let etag_k = CString::new("ETag").unwrap();
+            let etag_v = CString::new(etag).unwrap();
+            er_http_response_write_header(res_ptr, etag_k.as_ptr(), etag_k.as_bytes().len(), etag_v.as_ptr(), etag_v.as_bytes().len());
+
+            let lm_k = CString::new("Last-Modified").unwrap();
+            let lm_v = CString::new(last_modified).unwrap();
+            er_http_response_write_header(res_ptr, lm_k.as_ptr(), lm_k.as_bytes().len(), lm_v.as_ptr(), lm_v.as_bytes().len());
+
+            let cl_k = CString::new("Content-Length").unwrap();
+            let cl_v = CString::new(format!("{}", content.len())).unwrap();
+            er_http_response_write_header(res_ptr, cl_k.as_ptr(), cl_k.as_bytes().len(), cl_v.as_ptr(), cl_v.as_bytes().len());
+
+            er_http_response_end(res_ptr, content.as_ptr() as *const c_char, content.len());
+        }
+        return true;
+    }
+
+    false
+}
+
+pub fn native_static_route_handler(_args: Vec<Value>) -> Value {
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    let active_headers = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().clone());
+    let req_path = ACTIVE_REQUEST_PATH.with(|p| p.borrow().clone());
+
+    let mut served = false;
+    STATIC_MOUNTS.with(|mounts| {
+        for (prefix, root) in mounts.borrow().iter() {
+            if req_path == *prefix || req_path.starts_with(&format!("{}/", prefix)) {
+                let rel = if req_path == *prefix {
+                    ""
+                } else {
+                    &req_path[prefix.len() + 1..]
+                };
+                
+                let decoded_rel = percent_decode(rel);
+                if decoded_rel.contains("..") {
+                    continue;
+                }
+                
+                let base = Path::new(root);
+                let mut target_path = if decoded_rel.is_empty() {
+                    base.join("index.html")
+                } else {
+                    base.join(&decoded_rel)
+                };
+
+                if target_path.is_dir() {
+                    target_path = target_path.join("index.html");
+                }
+
+                if target_path.exists() && target_path.is_file() {
+                    if serve_static_file(res_ptr, &target_path, &active_headers) {
+                        served = true;
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    if !served {
+        unsafe {
+            let status = CString::new("404 Not Found").unwrap();
+            er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+            let not_found = "404 Not Found";
+            er_http_response_end(res_ptr, not_found.as_ptr() as *const c_char, not_found.len());
+        }
+    }
+
+    Value::null()
+}
+
+pub fn status_code_to_status_line(code: u16) -> &'static str {
+    match code {
+        200 => "200 OK",
+        201 => "201 Created",
+        202 => "202 Accepted",
+        204 => "204 No Content",
+        206 => "206 Partial Content",
+        301 => "301 Moved Permanently",
+        302 => "302 Found",
+        303 => "303 See Other",
+        304 => "304 Not Modified",
+        307 => "307 Temporary Redirect",
+        308 => "308 Permanent Redirect",
+        400 => "400 Bad Request",
+        401 => "401 Unauthorized",
+        403 => "403 Forbidden",
+        404 => "404 Not Found",
+        405 => "405 Method Not Allowed",
+        409 => "409 Conflict",
+        416 => "416 Range Not Satisfiable",
+        429 => "429 Too Many Requests",
+        500 => "500 Internal Server Error",
+        502 => "502 Bad Gateway",
+        503 => "503 Service Unavailable",
+        _ => "200 OK",
+    }
+}
+
+pub fn flush_response(
+    res_ptr: *mut c_void,
+    body: Option<&[u8]>,
+    default_content_type: Option<&str>,
+    default_status: u16,
+) -> bool {
+    if res_ptr.is_null() {
+        return false;
+    }
+
+    let (status_code, headers, cookies, already_finished) = ACTIVE_RESPONSE_STATE.with(|state| {
+        let mut s = state.borrow_mut();
+        if s.finished {
+            return (0, Vec::new(), Vec::new(), true);
+        }
+        s.finished = true;
+        (
+            s.status.unwrap_or(default_status),
+            s.headers.clone(),
+            s.cookies.clone(),
+            false,
+        )
+    });
+
+    if already_finished {
+        return false;
+    }
+
+    unsafe {
+        // 1. Status
+        let status_line = status_code_to_status_line(status_code);
+        let s_c = CString::new(status_line).unwrap();
+        er_http_response_write_status(res_ptr, s_c.as_ptr(), s_c.as_bytes().len());
+
+        // 2. Content-Type
+        let mut has_content_type = false;
+        for (k, _) in &headers {
+            if k.eq_ignore_ascii_case("content-type") {
+                has_content_type = true;
+                break;
+            }
+        }
+        if !has_content_type {
+            if let Some(ct) = default_content_type {
+                let k_c = CString::new("Content-Type").unwrap();
+                let v_c = CString::new(ct).unwrap();
+                er_http_response_write_header(res_ptr, k_c.as_ptr(), k_c.as_bytes().len(), v_c.as_ptr(), v_c.as_bytes().len());
+            }
+        }
+
+        // 3. Headers
+        for (k, v) in headers {
+            let k_c = CString::new(k).unwrap();
+            let v_c = CString::new(v).unwrap();
+            er_http_response_write_header(res_ptr, k_c.as_ptr(), k_c.as_bytes().len(), v_c.as_ptr(), v_c.as_bytes().len());
+        }
+
+        // 4. Cookies
+        for cookie_str in cookies {
+            let k_c = CString::new("Set-Cookie").unwrap();
+            let v_c = CString::new(cookie_str).unwrap();
+            er_http_response_write_header(res_ptr, k_c.as_ptr(), k_c.as_bytes().len(), v_c.as_ptr(), v_c.as_bytes().len());
+        }
+
+        // 5. Body
+        let body_bytes = body.unwrap_or(b"");
+        er_http_response_end(res_ptr, body_bytes.as_ptr() as *const c_char, body_bytes.len());
+    }
+
+    true
+}
+
 pub fn native_context_json(args: Vec<Value>) -> Value {
     if args.is_empty() {
         return Value::null();
     }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
     let data = args[0];
+    if args.len() >= 2 && args[1].is_number() {
+        ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(args[1].as_number() as u16));
+    }
     let json_val = value_to_json(data);
     let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
-    
-    ACTIVE_HTTP_RESPONSE.with(|resp| {
-        let ptr = resp.get();
-        if !ptr.is_null() {
-            let c_str = CString::new(json_str).unwrap();
-            unsafe {
-                er_http_response_end_json(ptr, c_str.as_ptr(), c_str.as_bytes().len());
-            }
-        } else {
-            eprintln!("[HTTP] Error: ACTIVE_HTTP_RESPONSE is null");
-        }
-    });
-    
+    flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
     Value::null()
 }
 
@@ -371,7 +1046,14 @@ pub fn native_context_html(args: Vec<Value>) -> Value {
     if args.is_empty() {
         return Value::null();
     }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
     let html_val = args[0];
+    if args.len() >= 2 && args[1].is_number() {
+        ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(args[1].as_number() as u16));
+    }
     let html_str = if html_val.is_string() {
         unsafe {
             match &(*html_val.as_gc_ptr()).data {
@@ -382,19 +1064,263 @@ pub fn native_context_html(args: Vec<Value>) -> Value {
     } else {
         html_val.to_string()
     };
-    
-    ACTIVE_HTTP_RESPONSE.with(|resp| {
-        let ptr = resp.get();
-        if !ptr.is_null() {
-            let c_str = CString::new(html_str).unwrap();
-            unsafe {
-                er_http_response_end_html(ptr, c_str.as_ptr(), c_str.as_bytes().len());
+    flush_response(res_ptr, Some(html_str.as_bytes()), Some("text/html; charset=utf-8"), 200);
+    Value::null()
+}
+
+pub fn native_context_text(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    let text_val = args[0];
+    if args.len() >= 2 && args[1].is_number() {
+        ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(args[1].as_number() as u16));
+    }
+    let text_str = if text_val.is_string() {
+        unsafe {
+            match &(*text_val.as_gc_ptr()).data {
+                GcData::String(s) => s.as_ref().to_string(),
+                _ => return Value::null(),
             }
-        } else {
-            eprintln!("[HTTP] Error: ACTIVE_HTTP_RESPONSE is null");
         }
+    } else {
+        text_val.to_string()
+    };
+    flush_response(res_ptr, Some(text_str.as_bytes()), Some("text/plain; charset=utf-8"), 200);
+    Value::null()
+}
+
+pub fn native_context_status(args: Vec<Value>) -> Value {
+    if !args.is_empty() && args[0].is_number() {
+        let code = args[0].as_number() as u16;
+        ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(code));
+    }
+    Value::null()
+}
+
+pub fn native_context_header(args: Vec<Value>) -> Value {
+    if args.len() == 1 {
+        let name = match args[0].as_str() {
+            Some(s) => s.to_ascii_lowercase(),
+            None => return Value::null(),
+        };
+        let val_opt = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().get(&name).cloned());
+        if let Some(val) = val_opt {
+            let ptr = get_or_create_string(&val);
+            Value::string(ptr)
+        } else {
+            Value::null()
+        }
+    } else if args.len() >= 2 {
+        let name = match args[0].as_str() {
+            Some(s) => s.to_string(),
+            None => return Value::null(),
+        };
+        let val = match args[1].as_str() {
+            Some(s) => s.to_string(),
+            None => args[1].to_string(),
+        };
+        ACTIVE_RESPONSE_STATE.with(|s| {
+            s.borrow_mut().headers.push((name, val));
+        });
+        Value::null()
+    } else {
+        Value::null()
+    }
+}
+
+pub fn native_req_header(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let name = match args[0].as_str() {
+        Some(s) => s.to_ascii_lowercase(),
+        None => return Value::null(),
+    };
+    let val_opt = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().get(&name).cloned());
+    if let Some(val) = val_opt {
+        let ptr = get_or_create_string(&val);
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
+}
+
+pub fn native_req_cookie(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let name = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let val_opt = ACTIVE_REQUEST_COOKIES.with(|c| c.borrow().get(name).cloned());
+    if let Some(val) = val_opt {
+        let ptr = get_or_create_string(&val);
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
+}
+
+pub fn native_req_query(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let name = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let val_opt = ACTIVE_REQUEST_QUERY.with(|q| q.borrow().get(name).cloned());
+    if let Some(val) = val_opt {
+        let ptr = get_or_create_string(&val);
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
+}
+
+pub fn native_res_get_header(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let name = match args[0].as_str() {
+        Some(s) => s.to_ascii_lowercase(),
+        None => return Value::null(),
+    };
+    let val_opt = ACTIVE_RESPONSE_STATE.with(|s| {
+        for (k, v) in &s.borrow().headers {
+            if k.eq_ignore_ascii_case(&name) {
+                return Some(v.clone());
+            }
+        }
+        None
     });
-    
+    if let Some(val) = val_opt {
+        let ptr = get_or_create_string(&val);
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
+}
+
+pub fn native_context_set_cookie(args: Vec<Value>) -> Value {
+    if args.len() < 2 {
+        return Value::null();
+    }
+    let name = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let val = match args[1].as_str() {
+        Some(s) => s.to_string(),
+        None => args[1].to_string(),
+    };
+    let options = if args.len() >= 3 { Some(args[2]) } else { None };
+    let cookie_str = format_cookie(name, &val, options);
+    ACTIVE_RESPONSE_STATE.with(|s| {
+        s.borrow_mut().cookies.push(cookie_str);
+    });
+    Value::null()
+}
+
+pub fn native_context_clear_cookie(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let name = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let path = if args.len() >= 2 && args[1].is_object() {
+        let ptr = args[1].as_gc_ptr();
+        unsafe {
+            if let GcData::Object(map) = &(*ptr).data {
+                map.get(&crate::vm::value::MapKey(Value::string(get_or_create_string("path"))))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("/")
+            } else {
+                "/"
+            }
+        }
+    } else {
+        "/"
+    };
+    let cookie_str = format!("{}=; Path={}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT", name, path);
+    ACTIVE_RESPONSE_STATE.with(|s| {
+        s.borrow_mut().cookies.push(cookie_str);
+    });
+    Value::null()
+}
+
+pub fn native_context_redirect(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    let url_str = match args[0].as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
+    };
+    let status_code = if args.len() >= 2 && args[1].is_number() {
+        args[1].as_number() as u16
+    } else {
+        302
+    };
+    ACTIVE_RESPONSE_STATE.with(|s| {
+        s.borrow_mut().headers.push(("Location".to_string(), url_str));
+    });
+    flush_response(res_ptr, Some(b""), None, status_code);
+    Value::null()
+}
+
+pub fn native_context_serve_static(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    let path_str = match args[0].as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
+    };
+    let headers = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().clone());
+    let file_path = Path::new(&path_str);
+    if !serve_static_file(res_ptr, file_path, &headers) {
+        unsafe {
+            let status = CString::new("404 Not Found").unwrap();
+            er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+            let not_found = "404 Not Found";
+            er_http_response_end(res_ptr, not_found.as_ptr() as *const c_char, not_found.len());
+        }
+    }
+    Value::null()
+}
+
+pub fn native_res_end(args: Vec<Value>) -> Value {
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    let body_bytes = if !args.is_empty() {
+        if let Some(s) = args[0].as_str() {
+            s.as_bytes().to_vec()
+        } else {
+            args[0].to_string().into_bytes()
+        }
+    } else {
+        Vec::new()
+    };
+    flush_response(res_ptr, Some(&body_bytes), None, 200);
     Value::null()
 }
 
@@ -666,19 +1592,29 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     let old_routes = ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_ws_routes = WS_ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_mws = MIDDLEWARES.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    let old_mounts = STATIC_MOUNTS.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_listen_port = LISTEN_PORT.with(|p| p.replace(None));
     let old_listen_callback = LISTEN_CALLBACK.with(|cb| cb.replace(None));
+    ROUTER.with(|r| r.borrow_mut().clear());
     
     let path_buf = Path::new(&path);
     let stmts = match crate::frontend::parse_and_resolve_imports(path_buf) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[HTTP] Reload error: Parsing/Import resolution failed: {}", e);
-            ROUTES.with(|r| *r.borrow_mut() = old_routes);
+            ROUTES.with(|r| *r.borrow_mut() = old_routes.clone());
             WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
             MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
+            STATIC_MOUNTS.with(|r| *r.borrow_mut() = old_mounts);
             LISTEN_PORT.with(|p| p.set(old_listen_port));
             LISTEN_CALLBACK.with(|cb| *cb.borrow_mut() = old_listen_callback);
+            ROUTER.with(|r| {
+                let mut router = r.borrow_mut();
+                router.clear();
+                for route in &old_routes {
+                    router.insert(&route.method, &route.path, route.callback);
+                }
+            });
             return;
         }
     };
@@ -688,11 +1624,19 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("[HTTP] Reload error: Compilation failed: {}", e);
-            ROUTES.with(|r| *r.borrow_mut() = old_routes);
+            ROUTES.with(|r| *r.borrow_mut() = old_routes.clone());
             WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
             MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
+            STATIC_MOUNTS.with(|r| *r.borrow_mut() = old_mounts);
             LISTEN_PORT.with(|p| p.set(old_listen_port));
             LISTEN_CALLBACK.with(|cb| *cb.borrow_mut() = old_listen_callback);
+            ROUTER.with(|r| {
+                let mut router = r.borrow_mut();
+                router.clear();
+                for route in &old_routes {
+                    router.insert(&route.method, &route.path, route.callback);
+                }
+            });
             return;
         }
     };
@@ -715,11 +1659,19 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
     
     if let Err(e) = vm.run(function) {
         eprintln!("[HTTP] Reload error: Execution failed: {}", e);
-        ROUTES.with(|r| *r.borrow_mut() = old_routes);
+        ROUTES.with(|r| *r.borrow_mut() = old_routes.clone());
         WS_ROUTES.with(|r| *r.borrow_mut() = old_ws_routes);
         MIDDLEWARES.with(|r| *r.borrow_mut() = old_mws);
+        STATIC_MOUNTS.with(|r| *r.borrow_mut() = old_mounts);
         LISTEN_PORT.with(|p| p.set(old_listen_port));
         LISTEN_CALLBACK.with(|cb| *cb.borrow_mut() = old_listen_callback);
+        ROUTER.with(|r| {
+            let mut router = r.borrow_mut();
+            router.clear();
+            for route in &old_routes {
+                router.insert(&route.method, &route.path, route.callback);
+            }
+        });
         return;
     }
     
@@ -974,37 +1926,98 @@ pub extern "C" fn er_http_on_request(
             std::slice::from_raw_parts(body_ptr as *const u8, body_len)
         }
     };
-    
+
+    let (clean_path, raw_query) = match path.find('?') {
+        Some(idx) => (&path[..idx], &path[idx + 1..]),
+        None => (path, ""),
+    };
+
+    ACTIVE_REQUEST_PATH.with(|p| {
+        *p.borrow_mut() = clean_path.to_string();
+    });
+
     let mut extracted_params = HashMap::new();
-    let callback_opt = ROUTES.with(|routes| {
-        for route in routes.borrow().iter() {
-            if route.method == "ALL" || route.method == "*" || route.method.eq_ignore_ascii_case(method) {
-                if let Some(params) = match_route_path(&route.path, path) {
-                    extracted_params = params;
-                    return Some(route.callback);
+    let mut callback_opt = ROUTER.with(|router| {
+        if let Some((handler, params)) = router.borrow().find(method, clean_path) {
+            extracted_params = params;
+            Some(handler)
+        } else {
+            None
+        }
+    });
+
+    if callback_opt.is_none() {
+        callback_opt = ROUTES.with(|routes| {
+            for route in routes.borrow().iter() {
+                if route.method == "ALL" || route.method == "*" || route.method.eq_ignore_ascii_case(method) {
+                    if let Some(params) = match_route_path(&route.path, clean_path) {
+                        extracted_params = params;
+                        return Some(route.callback);
+                    }
                 }
             }
-        }
-        None
+            None
+        });
+    }
+
+    let parsed_query = parse_query_string(raw_query);
+    ACTIVE_REQUEST_QUERY.with(|q| {
+        *q.borrow_mut() = parsed_query.clone();
     });
-    
+
+    let mut headers_map = HashMap::new();
+    for line in headers_str.lines() {
+        if let Some(pos) = line.find(": ") {
+            let key = line[..pos].to_lowercase();
+            let val = line[pos + 2..].to_string();
+            headers_map.insert(key, val);
+        }
+    }
+    ACTIVE_REQUEST_HEADERS.with(|h| {
+        *h.borrow_mut() = headers_map.clone();
+    });
+
+    let cookie_header = headers_map.get("cookie").map(|s| s.as_str()).unwrap_or("");
+    let parsed_cookies = parse_cookies(cookie_header);
+    ACTIVE_REQUEST_COOKIES.with(|c| {
+        *c.borrow_mut() = parsed_cookies.clone();
+    });
+
+    ACTIVE_RESPONSE_STATE.with(|s| {
+        s.borrow_mut().reset();
+    });
+
     if let Some(callback) = callback_opt {
         ACTIVE_HTTP_RESPONSE.with(|resp| {
             resp.set(res);
         });
-        
+
         ACTIVE_VM.with(|active| {
             let vm_ptr = active.get();
             if !vm_ptr.is_null() {
                 let vm = unsafe { &mut *vm_ptr };
-                
-                let mut req_map = crate::vm::gc::get_pooled_map(6);
+
+                let mut req_map = crate::vm::gc::get_pooled_map(14);
                 let url_name = get_or_create_string("url");
+                let path_name = get_or_create_string("path");
                 let method_name = get_or_create_string("method");
                 let params_name = get_or_create_string("params");
-                let path_str = get_or_create_string(path);
+                let query_name = get_or_create_string("query");
+                let raw_query_name = get_or_create_string("rawQuery");
+                let headers_name = get_or_create_string("headers");
+                let header_name = get_or_create_string("header");
+                let cookies_name = get_or_create_string("cookies");
+                let cookie_name = get_or_create_string("cookie");
+                let files_name = get_or_create_string("files");
+                let body_name = get_or_create_string("_body");
+                let query_fn_name = get_or_create_string("queryParam");
+
+                let full_url_str = get_or_create_string(path);
+                let clean_path_str = get_or_create_string(clean_path);
+                let raw_query_str = get_or_create_string(raw_query);
                 let method_str = get_or_create_string(method);
-                
+
+                // Parameters map
                 let mut params_obj_map = crate::vm::gc::get_pooled_map(extracted_params.len());
                 for (k, v) in extracted_params {
                     let k_str = get_or_create_string(&k);
@@ -1012,27 +2025,40 @@ pub extern "C" fn er_http_on_request(
                     params_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
                 }
                 let params_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(params_obj_map)));
-                
-                let mut headers_obj_map = crate::vm::gc::get_pooled_map(10);
-                for line in headers_str.lines() {
-                    if let Some(pos) = line.find(": ") {
-                        let key = line[..pos].to_lowercase();
-                        let val = &line[pos + 2..];
-                        let key_ptr = get_or_create_string(&key);
-                        let val_ptr = get_or_create_string(val);
-                        headers_obj_map.insert(crate::vm::value::MapKey(Value::string(key_ptr)), Value::string(val_ptr));
-                    }
+
+                // Query map
+                let mut query_obj_map = crate::vm::gc::get_pooled_map(parsed_query.len());
+                for (k, v) in &parsed_query {
+                    let k_str = get_or_create_string(k);
+                    let v_str = get_or_create_string(v);
+                    query_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
+                }
+                let query_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(query_obj_map)));
+
+                // Headers map
+                let mut headers_obj_map = crate::vm::gc::get_pooled_map(headers_map.len());
+                for (k, v) in &headers_map {
+                    let k_str = get_or_create_string(k);
+                    let v_str = get_or_create_string(v);
+                    headers_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
                 }
                 let headers_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(headers_obj_map)));
 
+                // Cookies map
+                let mut cookies_obj_map = crate::vm::gc::get_pooled_map(parsed_cookies.len());
+                for (k, v) in &parsed_cookies {
+                    let k_str = get_or_create_string(k);
+                    let v_str = get_or_create_string(v);
+                    cookies_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
+                }
+                let cookies_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(cookies_obj_map)));
+
+                // Multipart files parsing
                 let mut content_type = String::new();
-                for line in headers_str.lines() {
-                    if let Some(pos) = line.find(": ") {
-                        let key = line[..pos].to_lowercase();
-                        if key == "content-type" {
-                            content_type = line[pos + 2..].to_string();
-                            break;
-                        }
+                for (k, v) in &headers_map {
+                    if k == "content-type" {
+                        content_type = v.clone();
+                        break;
                     }
                 }
 
@@ -1041,14 +2067,14 @@ pub extern "C" fn er_http_on_request(
                     if let Some(b_pos) = content_type.find("boundary=") {
                         let boundary = content_type[b_pos + 9..].trim().to_string();
                         let parts = parse_multipart(body_bytes, &boundary);
-                        
+
                         let temp_dir = std::path::Path::new("temp_uploads");
                         if !temp_dir.exists() {
                             let _ = std::fs::create_dir_all(temp_dir);
                         }
-                        
+
                         static UPLOAD_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                        
+
                         for part in parts {
                             if let Some(cd) = part.headers.get("content-disposition") {
                                 let params = parse_header_params(cd);
@@ -1056,7 +2082,7 @@ pub extern "C" fn er_http_on_request(
                                     if let Some(_filename) = params.get("filename") {
                                         let count = UPLOAD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                         let temp_filename = format!("temp_uploads/upload_{}_{}.tmp", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), count);
-                                        
+
                                         if std::fs::write(&temp_filename, &part.data).is_ok() {
                                             let content_type_str = part.headers.get("content-type").map(|s| s.as_str()).unwrap_or("application/octet-stream");
                                             let file_val = construct_file_object(vm, &temp_filename, content_type_str, part.data.len());
@@ -1075,33 +2101,91 @@ pub extern "C" fn er_http_on_request(
 
                 let body_str = std::str::from_utf8(body_bytes).unwrap_or("");
                 let body_val = Value::string(get_or_create_string(body_str));
-                let body_name = get_or_create_string("_body");
-                let headers_name = get_or_create_string("headers");
-                let files_name = get_or_create_string("files");
 
-                req_map.insert(crate::vm::value::MapKey(Value::string(url_name)), Value::string(path_str));
+                req_map.insert(crate::vm::value::MapKey(Value::string(url_name)), Value::string(full_url_str));
+                req_map.insert(crate::vm::value::MapKey(Value::string(path_name)), Value::string(clean_path_str));
                 req_map.insert(crate::vm::value::MapKey(Value::string(method_name)), Value::string(method_str));
                 req_map.insert(crate::vm::value::MapKey(Value::string(params_name)), params_obj);
+                req_map.insert(crate::vm::value::MapKey(Value::string(query_name)), query_obj);
+                req_map.insert(crate::vm::value::MapKey(Value::string(query_fn_name)), Value::native_function(native_req_query));
+                req_map.insert(crate::vm::value::MapKey(Value::string(raw_query_name)), Value::string(raw_query_str));
                 req_map.insert(crate::vm::value::MapKey(Value::string(headers_name)), headers_obj);
+                req_map.insert(crate::vm::value::MapKey(Value::string(header_name)), Value::native_function(native_req_header));
+                req_map.insert(crate::vm::value::MapKey(Value::string(cookies_name)), cookies_obj);
+                req_map.insert(crate::vm::value::MapKey(Value::string(cookie_name)), Value::native_function(native_req_cookie));
                 req_map.insert(crate::vm::value::MapKey(Value::string(files_name)), files_obj);
                 req_map.insert(crate::vm::value::MapKey(Value::string(body_name)), body_val);
-                
+
                 let req_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(req_map)));
-                
-                let context_obj = crate::vm::gc::get_pooled_map(3);
+
+                // Response object (c.res)
+                let mut res_map = crate::vm::gc::get_pooled_map(12);
+                let status_key = get_or_create_string("status");
+                let set_status_key = get_or_create_string("setStatus");
+                let header_key = get_or_create_string("header");
+                let set_header_key = get_or_create_string("setHeader");
+                let get_header_key = get_or_create_string("getHeader");
+                let set_cookie_key = get_or_create_string("setCookie");
+                let clear_cookie_key = get_or_create_string("clearCookie");
+                let send_key = get_or_create_string("send");
+                let text_key = get_or_create_string("text");
+                let json_key = get_or_create_string("json");
+                let html_key = get_or_create_string("html");
+                let end_key = get_or_create_string("end");
+                let redirect_key = get_or_create_string("redirect");
+
+                res_map.insert(crate::vm::value::MapKey(Value::string(status_key)), Value::native_function(native_context_status));
+                res_map.insert(crate::vm::value::MapKey(Value::string(set_status_key)), Value::native_function(native_context_status));
+                res_map.insert(crate::vm::value::MapKey(Value::string(header_key)), Value::native_function(native_context_header));
+                res_map.insert(crate::vm::value::MapKey(Value::string(set_header_key)), Value::native_function(native_context_header));
+                res_map.insert(crate::vm::value::MapKey(Value::string(get_header_key)), Value::native_function(native_res_get_header));
+                res_map.insert(crate::vm::value::MapKey(Value::string(set_cookie_key)), Value::native_function(native_context_set_cookie));
+                res_map.insert(crate::vm::value::MapKey(Value::string(clear_cookie_key)), Value::native_function(native_context_clear_cookie));
+                res_map.insert(crate::vm::value::MapKey(Value::string(send_key)), Value::native_function(native_context_text));
+                res_map.insert(crate::vm::value::MapKey(Value::string(text_key)), Value::native_function(native_context_text));
+                res_map.insert(crate::vm::value::MapKey(Value::string(json_key)), Value::native_function(native_context_json));
+                res_map.insert(crate::vm::value::MapKey(Value::string(html_key)), Value::native_function(native_context_html));
+                res_map.insert(crate::vm::value::MapKey(Value::string(end_key)), Value::native_function(native_res_end));
+                res_map.insert(crate::vm::value::MapKey(Value::string(redirect_key)), Value::native_function(native_context_redirect));
+
+                let res_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(res_map)));
+
+                // Context object (c)
+                let mut map = crate::vm::gc::get_pooled_map(16);
                 let json_name = get_or_create_string("json");
-                let json_val = Value(crate::vm::value::TAG_METHOD_SEND_JSON | (res as u64 & crate::vm::value::PTR_MASK));
                 let html_name = get_or_create_string("html");
-                let html_val = Value::native_function(native_context_html);
+                let text_name = get_or_create_string("text");
+                let send_name = get_or_create_string("send");
+                let status_name = get_or_create_string("status");
+                let header_name_c = get_or_create_string("header");
+                let set_header_name_c = get_or_create_string("setHeader");
+                let cookie_name_c = get_or_create_string("cookie");
+                let set_cookie_name_c = get_or_create_string("setCookie");
+                let clear_cookie_name_c = get_or_create_string("clearCookie");
+                let redirect_name_c = get_or_create_string("redirect");
+                let serve_static_name_c = get_or_create_string("serveStatic");
+                let file_name_c = get_or_create_string("file");
                 let req_key_name = get_or_create_string("req");
-                
-                let mut map = context_obj;
-                map.insert(crate::vm::value::MapKey(Value::string(json_name)), json_val);
-                map.insert(crate::vm::value::MapKey(Value::string(html_name)), html_val);
+                let res_key_name = get_or_create_string("res");
+
+                map.insert(crate::vm::value::MapKey(Value::string(json_name)), Value::native_function(native_context_json));
+                map.insert(crate::vm::value::MapKey(Value::string(html_name)), Value::native_function(native_context_html));
+                map.insert(crate::vm::value::MapKey(Value::string(text_name)), Value::native_function(native_context_text));
+                map.insert(crate::vm::value::MapKey(Value::string(send_name)), Value::native_function(native_context_text));
+                map.insert(crate::vm::value::MapKey(Value::string(status_name)), Value::native_function(native_context_status));
+                map.insert(crate::vm::value::MapKey(Value::string(header_name_c)), Value::native_function(native_context_header));
+                map.insert(crate::vm::value::MapKey(Value::string(set_header_name_c)), Value::native_function(native_context_header));
+                map.insert(crate::vm::value::MapKey(Value::string(cookie_name_c)), Value::native_function(native_req_cookie));
+                map.insert(crate::vm::value::MapKey(Value::string(set_cookie_name_c)), Value::native_function(native_context_set_cookie));
+                map.insert(crate::vm::value::MapKey(Value::string(clear_cookie_name_c)), Value::native_function(native_context_clear_cookie));
+                map.insert(crate::vm::value::MapKey(Value::string(redirect_name_c)), Value::native_function(native_context_redirect));
+                map.insert(crate::vm::value::MapKey(Value::string(serve_static_name_c)), Value::native_function(native_context_serve_static));
+                map.insert(crate::vm::value::MapKey(Value::string(file_name_c)), Value::native_function(native_context_serve_static));
                 map.insert(crate::vm::value::MapKey(Value::string(req_key_name)), req_obj);
+                map.insert(crate::vm::value::MapKey(Value::string(res_key_name)), res_obj);
+
                 let c_val = Value::object(crate::vm::gc::gc_allocate(GcData::Object(map)));
-                
-                
+
                 let mws = MIDDLEWARES.with(|m| m.borrow().clone());
                 let mut mw_err = false;
                 for mw in mws {
@@ -1111,7 +2195,7 @@ pub extern "C" fn er_http_on_request(
                         break;
                     }
                 }
-                
+
                 if !mw_err {
                     if let Err(e) = vm.call_function_reentrant(callback, vec![c_val]) {
                         eprintln!("[HTTP] Error executing callback: {}", e);
@@ -1125,12 +2209,14 @@ pub extern "C" fn er_http_on_request(
                 eprintln!("[HTTP] Error: ACTIVE_VM is null during request handler");
             }
         });
-        
+
         ACTIVE_HTTP_RESPONSE.with(|resp| {
             resp.set(std::ptr::null_mut());
         });
     } else {
         unsafe {
+            let status = CString::new("404 Not Found").unwrap();
+            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
             let c_str = CString::new("{\"error\": \"Not Found\"}").unwrap();
             er_http_response_end_json(res, c_str.as_ptr(), c_str.as_bytes().len());
         }

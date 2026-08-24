@@ -9,11 +9,24 @@ export const status = {
   CREATED: 201,
   ACCEPTED: 202,
   NO_CONTENT: 204,
+  PARTIAL_CONTENT: 206,
+  MOVED_PERMANENTLY: 301,
+  FOUND: 302,
+  SEE_OTHER: 303,
+  NOT_MODIFIED: 304,
+  TEMPORARY_REDIRECT: 307,
+  PERMANENT_REDIRECT: 308,
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
-  INTERNAL_SERVER_ERROR: 500
+  METHOD_NOT_ALLOWED: 405,
+  CONFLICT: 409,
+  RANGE_NOT_SATISFIABLE: 416,
+  TOO_MANY_REQUESTS: 429,
+  INTERNAL_SERVER_ERROR: 500,
+  BAD_GATEWAY: 502,
+  SERVICE_UNAVAILABLE: 503
 }
 
 // NodeJS-compatible createServer API
@@ -23,21 +36,44 @@ export const createServer = (handler) => {
   let dispatch = (c) => {
     let req = {
       url: c.req.url,
+      path: c.req.path,
       method: c.req.method,
-      headers: {}
+      params: c.req.params,
+      query: c.req.query,
+      rawQuery: c.req.rawQuery,
+      headers: c.req.headers,
+      cookies: c.req.cookies,
+      header: (name) => c.req.header(name),
+      cookie: (name) => c.req.cookie(name)
     }
     
     let res = {
       statusCode: 200,
       headers: {},
+      setHeader: (name, val) => {
+        c.res.setHeader(name, val)
+      },
       writeHead: (statusCode, headers) => {
-        res.statusCode = statusCode
+        c.res.status(statusCode)
         if (headers) {
-          res.headers = headers
+          // If headers object provided
         }
       },
+      status: (code) => {
+        c.res.status(code)
+        return res
+      },
+      json: (data, code) => {
+        c.res.json(data, code)
+      },
+      html: (data, code) => {
+        c.res.html(data, code)
+      },
+      send: (data, code) => {
+        c.res.send(data, code)
+      },
       end: (data) => {
-        c.json(data)
+        c.res.end(data)
       }
     }
     
