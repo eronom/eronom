@@ -37,9 +37,9 @@ unsafe extern "C" {
     fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
     fn er_http_listen_and_run(port: i32);
     
-    fn er_http_response_write_status(res: *mut c_void, status_str: *const c_char, status_len: usize);
-    fn er_http_response_write_header(res: *mut c_void, key_str: *const c_char, key_len: usize, val_str: *const c_char, val_len: usize);
-    fn er_http_response_end(res: *mut c_void, data_str: *const c_char, data_len: usize);
+    fn er_http_response_write_status(res: *mut c_void, status_str: *const c_char, status_len: usize) -> bool;
+    fn er_http_response_write_header(res: *mut c_void, key_str: *const c_char, key_len: usize, val_str: *const c_char, val_len: usize) -> bool;
+    fn er_http_response_end(res: *mut c_void, data_str: *const c_char, data_len: usize) -> bool;
     
     fn er_http_create_timer(ms: i32, cb: extern "C" fn(*mut c_void));
 }

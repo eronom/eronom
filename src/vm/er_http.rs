@@ -39,12 +39,18 @@ thread_local! {
     pub static SERVER_RUNNING: Cell<bool> = const { Cell::new(false) };
 }
 
+#[allow(dead_code)]
 unsafe extern "C" {
     fn er_http_init();
     fn er_http_register_route(method: *const c_char, path: *const c_char);
     fn er_http_listen_and_run(port: i32);
-    fn er_http_response_end_json(res: *mut c_void, json_str: *const c_char, json_len: usize);
-    fn er_http_response_end_html(res: *mut c_void, html_str: *const c_char, html_len: usize);
+    fn er_http_response_end_json(res: *mut c_void, json_str: *const c_char, json_len: usize) -> bool;
+    fn er_http_response_end_html(res: *mut c_void, html_str: *const c_char, html_len: usize) -> bool;
+    fn er_http_response_write_status(res: *mut c_void, status_str: *const c_char, status_len: usize) -> bool;
+    fn er_http_response_write_header(res: *mut c_void, key_str: *const c_char, key_len: usize, val_str: *const c_char, val_len: usize) -> bool;
+    fn er_http_response_end(res: *mut c_void, data_str: *const c_char, data_len: usize) -> bool;
+    fn er_http_response_is_alive(res: *mut c_void) -> bool;
+    fn er_http_response_release(res: *mut c_void);
     
     fn er_ws_register_route(path: *const c_char);
     fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize);
@@ -350,6 +356,9 @@ pub fn get_target_script_path() -> Option<String> {
 
 
 pub fn end_http_response_json(res: *mut std::ffi::c_void, json: &str) {
+    if res.is_null() {
+        return;
+    }
     let c_str = std::ffi::CString::new(json).unwrap();
     unsafe {
         er_http_response_end_json(res, c_str.as_ptr(), c_str.as_bytes().len());
@@ -1276,33 +1285,44 @@ pub fn native_set_timeout(args: Vec<Value>) -> Value {
     }
     let vm = unsafe { &mut *vm_ptr };
 
-    let queue = vm.event_loop_queue.clone();
-    let active_counter = vm.active_async_tasks.clone();
-    let pending = vm.pending_callbacks.clone();
+    let timer_id = vm.next_timer_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let due_time = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms);
 
-    pending.lock().unwrap().push(crate::vm::execute::PendingAsync {
-        callback,
-        args: cb_args.clone(),
-    });
-    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-
-        let mut q = queue.lock().unwrap();
-        q.push(crate::vm::execute::EventLoopTask {
+    vm.timers.lock().unwrap().push(crate::vm::execute::VmTimer {
+        id: timer_id,
+        due_time,
+        action: crate::vm::execute::VmTimerAction::Callback {
             callback,
             args: cb_args,
-            result: crate::vm::execute::AsyncResult::Timeout,
-        });
-
-        let mut p = pending.lock().unwrap();
-        if let Some(pos) = p.iter().position(|x| x.callback.0 == callback.0) {
-            p.remove(pos);
-        }
-
-        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        },
     });
+    vm.active_async_tasks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    vm.event_loop_condvar.notify_all();
+
+    Value::number(timer_id as f64)
+}
+
+pub fn native_clear_timeout(args: Vec<Value>) -> Value {
+    if args.is_empty() || !args[0].is_number() {
+        return Value::null();
+    }
+    let timer_id = args[0].as_number() as u64;
+
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    let mut timers = vm.timers.lock().unwrap();
+    let mut remaining: Vec<crate::vm::execute::VmTimer> = timers.drain().collect();
+    if let Some(pos) = remaining.iter().position(|t| t.id == timer_id) {
+        remaining.swap_remove(pos);
+        vm.active_async_tasks.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    for t in remaining {
+        timers.push(t);
+    }
 
     Value::null()
 }
@@ -1613,25 +1633,19 @@ pub fn native_sleep(args: Vec<Value>) -> Value {
     let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
     let promise_val = Value::promise(promise_ptr);
 
-    let queue = vm.event_loop_queue.clone();
-    let active_counter = vm.active_async_tasks.clone();
-    let promise_usize = promise_ptr as usize;
+    let timer_id = vm.next_timer_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let due_time = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms);
 
-    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-
-        let promise_ptr = promise_usize as *mut crate::vm::gc::GcObject;
-        let mut q = queue.lock().unwrap();
-        q.push(crate::vm::execute::EventLoopTask {
-            callback: Value::null(),
-            args: Vec::new(),
-            result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, Value::null()),
-        });
-
-        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    vm.timers.lock().unwrap().push(crate::vm::execute::VmTimer {
+        id: timer_id,
+        due_time,
+        action: crate::vm::execute::VmTimerAction::ResolvePromise {
+            promise_ptr,
+            value: Value::null(),
+        },
     });
+    vm.active_async_tasks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    vm.event_loop_condvar.notify_all();
 
     promise_val
 }

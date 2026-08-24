@@ -32,7 +32,8 @@ use super::gc::{
 };
 
 use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
+use std::collections::BinaryHeap;
 
 pub enum AsyncResult {
     Timeout,
@@ -51,6 +52,42 @@ pub struct EventLoopTask {
 
 unsafe impl Send for EventLoopTask {}
 unsafe impl Sync for EventLoopTask {}
+
+#[derive(Clone)]
+pub enum VmTimerAction {
+    Callback { callback: Value, args: Vec<Value> },
+    ResolvePromise { promise_ptr: *mut crate::vm::gc::GcObject, value: Value },
+}
+
+pub struct VmTimer {
+    pub id: u64,
+    pub due_time: Instant,
+    pub action: VmTimerAction,
+}
+
+unsafe impl Send for VmTimer {}
+unsafe impl Sync for VmTimer {}
+
+impl PartialEq for VmTimer {
+    fn eq(&self, other: &Self) -> bool {
+        self.due_time == other.due_time && self.id == other.id
+    }
+}
+
+impl Eq for VmTimer {}
+
+impl PartialOrd for VmTimer {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for VmTimer {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Reverse ordering for min-heap: earliest due_time has highest priority
+        other.due_time.cmp(&self.due_time).then_with(|| other.id.cmp(&self.id))
+    }
+}
 
 pub struct PendingAsync {
     pub callback: Value,
@@ -85,6 +122,8 @@ pub struct VM {
     pub event_loop_condvar: Arc<Condvar>,
     pub active_async_tasks: Arc<AtomicUsize>,
     pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
+    pub timers: Arc<Mutex<BinaryHeap<VmTimer>>>,
+    pub next_timer_id: Arc<AtomicU64>,
 }
 
 pub struct CallFrame {
@@ -132,6 +171,8 @@ impl VM {
             event_loop_condvar: Arc::new(Condvar::new()),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
+            timers: Arc::new(Mutex::new(BinaryHeap::new())),
+            next_timer_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -312,6 +353,21 @@ impl VM {
                                 }
                             }
                         }
+                        if let Ok(timers) = self.timers.lock() {
+                            for timer in timers.iter() {
+                                match &timer.action {
+                                    VmTimerAction::Callback { callback, args } => {
+                                        mark_value(callback);
+                                        for arg in args {
+                                            mark_value(arg);
+                                        }
+                                    }
+                                    VmTimerAction::ResolvePromise { value, .. } => {
+                                        mark_value(value);
+                                    }
+                                }
+                            }
+                        }
                         GC_ROOTS.with(|roots| {
                             if let Ok(borrowed) = roots.try_borrow() {
                                 for root_fn in borrowed.iter() {
@@ -362,6 +418,21 @@ impl VM {
                             mark_value(&item.callback);
                             for arg in item.args.iter() {
                                 mark_value(arg);
+                            }
+                        }
+                    }
+                    if let Ok(timers) = self.timers.lock() {
+                        for timer in timers.iter() {
+                            match &timer.action {
+                                VmTimerAction::Callback { callback, args } => {
+                                    mark_value(callback);
+                                    for arg in args {
+                                        mark_value(arg);
+                                    }
+                                }
+                                VmTimerAction::ResolvePromise { value, .. } => {
+                                    mark_value(value);
+                                }
                             }
                         }
                     }
@@ -450,6 +521,21 @@ impl VM {
                 mark_value(&item.callback);
                 for arg in item.args.iter() {
                     mark_value(arg);
+                }
+            }
+        }
+        if let Ok(timers) = self.timers.lock() {
+            for timer in timers.iter() {
+                match &timer.action {
+                    VmTimerAction::Callback { callback, args } => {
+                        mark_value(callback);
+                        for arg in args {
+                            mark_value(arg);
+                        }
+                    }
+                    VmTimerAction::ResolvePromise { value, .. } => {
+                        mark_value(value);
+                    }
                 }
             }
         }
@@ -2111,6 +2197,43 @@ impl VM {
 
     fn run_event_loop_inner(&mut self, wait_for_active: bool) -> Result<(), String> {
         loop {
+            // 1. Process all expired timers from the min-heap
+            loop {
+                let now = Instant::now();
+                let timer_opt = {
+                    let mut timers = self.timers.lock().unwrap();
+                    if let Some(top) = timers.peek() {
+                        if top.due_time <= now {
+                            timers.pop()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                let Some(timer) = timer_opt else { break; };
+
+                self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+                match timer.action {
+                    VmTimerAction::Callback { callback, args } => {
+                        if let Err(e) = self.call_function_reentrant(callback, args) {
+                            return Err(e);
+                        }
+                    }
+                    VmTimerAction::ResolvePromise { promise_ptr, value } => {
+                        let mut q = self.event_loop_queue.lock().unwrap();
+                        q.push(EventLoopTask {
+                            callback: Value::null(),
+                            args: Vec::new(),
+                            result: AsyncResult::ResolvePromise(promise_ptr, value),
+                        });
+                    }
+                }
+            }
+
+            // 2. Process tasks from event loop queue (promises, I/O, etc.)
             let tasks = {
                 let mut queue = self.event_loop_queue.lock().unwrap();
                 std::mem::take(&mut *queue)
@@ -2212,6 +2335,10 @@ impl VM {
                         let func = unsafe {
                             match &(*frame.function).data {
                                 crate::vm::gc::GcData::Function(f) => f,
+                                crate::vm::gc::GcData::Closure(c) => match &(*c.function).data {
+                                    crate::vm::gc::GcData::Function(f) => f,
+                                    _ => unreachable!(),
+                                },
                                 _ => unreachable!(),
                             }
                         };
@@ -2246,17 +2373,36 @@ impl VM {
                 }
             }
 
-            let active = self.active_async_tasks.load(std::sync::atomic::Ordering::SeqCst);
+            let active = self.active_async_tasks.load(Ordering::SeqCst);
             if active == 0 || !wait_for_active {
                 let queue_empty = self.event_loop_queue.lock().unwrap().is_empty();
-                if queue_empty {
+                let has_due_timers = {
+                    let timers = self.timers.lock().unwrap();
+                    timers.peek().map_or(false, |t| t.due_time <= Instant::now())
+                };
+                if queue_empty && !has_due_timers {
                     break;
                 }
             }
 
             let queue = self.event_loop_queue.lock().unwrap();
             if queue.is_empty() {
-                let _ = self.event_loop_condvar.wait_timeout(queue, Duration::from_millis(10));
+                let now = Instant::now();
+                let wait_timeout = {
+                    let timers = self.timers.lock().unwrap();
+                    if let Some(top) = timers.peek() {
+                        if top.due_time > now {
+                            top.due_time.duration_since(now).min(Duration::from_millis(10))
+                        } else {
+                            Duration::from_millis(0)
+                        }
+                    } else {
+                        Duration::from_millis(10)
+                    }
+                };
+                if wait_timeout > Duration::from_millis(0) {
+                    let _ = self.event_loop_condvar.wait_timeout(queue, wait_timeout);
+                }
             }
         }
         Ok(())
@@ -2719,5 +2865,95 @@ mod tests {
         vm.run_event_loop().unwrap();
 
         assert_eq!(vm.get_global("counter").unwrap().as_number(), 30.0);
+    }
+
+    #[test]
+    fn test_set_timeout_scale_and_ordering() {
+        gc_free_all();
+        let source = "
+            let order = []
+            setTimeout(() => {
+                arrayPush(order, 3)
+            }, 30)
+            setTimeout(() => {
+                arrayPush(order, 1)
+            }, 10)
+            setTimeout(() => {
+                arrayPush(order, 2)
+            }, 20)
+        ";
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+        vm.register_global("clearTimeout", Value::native_function(crate::vm::er_http::native_clear_timeout));
+        vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+        vm.run_event_loop().unwrap();
+
+        let order_val = vm.get_global("order").unwrap();
+        assert!(order_val.is_array());
+        unsafe {
+            if let GcData::Array(arr) = &(*order_val.as_gc_ptr()).data {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0].as_number(), 1.0);
+                assert_eq!(arr[1].as_number(), 2.0);
+                assert_eq!(arr[2].as_number(), 3.0);
+            } else {
+                panic!("Expected array");
+            }
+        }
+    }
+
+    #[test]
+    fn test_clear_timeout_functionality() {
+        gc_free_all();
+        let source = "
+            let fired = []
+            let t1 = setTimeout(() => {
+                arrayPush(fired, 1)
+            }, 10)
+            let t2 = setTimeout(() => {
+                arrayPush(fired, 2)
+            }, 20)
+            clearTimeout(t2)
+        ";
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+        vm.register_global("clearTimeout", Value::native_function(crate::vm::er_http::native_clear_timeout));
+        vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+        vm.run_event_loop().unwrap();
+
+        let fired_val = vm.get_global("fired").unwrap();
+        assert!(fired_val.is_array());
+        unsafe {
+            if let GcData::Array(arr) = &(*fired_val.as_gc_ptr()).data {
+                assert_eq!(arr.len(), 1);
+                assert_eq!(arr[0].as_number(), 1.0);
+            } else {
+                panic!("Expected array");
+            }
+        }
+    }
+
+    #[test]
+    fn test_http_response_aborted_safety() {
+        crate::vm::er_http::end_http_response_json(std::ptr::null_mut(), "{}");
+        let null_args = vec![Value::null()];
+        crate::vm::er_http::native_context_json(null_args.clone());
+        crate::vm::er_http::native_context_html(null_args);
     }
 }
