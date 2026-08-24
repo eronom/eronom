@@ -32,12 +32,16 @@ impl Ctx {
 
 pub type HandlerFunc = fn(c: &mut Ctx) -> anyhow::Result<()>;
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Method {
     GET,
     POST,
     PUT,
     DELETE,
+    PATCH,
+    HEAD,
+    OPTIONS,
+    ALL,
 }
 
 pub struct RouteEntry {
@@ -91,28 +95,64 @@ impl App {
     pub fn delete(&mut self, path: &str, h: HandlerFunc) -> anyhow::Result<()> {
         self.handle(Method::DELETE, path, h)
     }
+    pub fn patch(&mut self, path: &str, h: HandlerFunc) -> anyhow::Result<()> {
+        self.handle(Method::PATCH, path, h)
+    }
+    pub fn head(&mut self, path: &str, h: HandlerFunc) -> anyhow::Result<()> {
+        self.handle(Method::HEAD, path, h)
+    }
+    pub fn options(&mut self, path: &str, h: HandlerFunc) -> anyhow::Result<()> {
+        self.handle(Method::OPTIONS, path, h)
+    }
+    pub fn all(&mut self, path: &str, h: HandlerFunc) -> anyhow::Result<()> {
+        self.handle(Method::ALL, path, h)
+    }
 }
 
 pub fn match_path(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
     if pattern == "/" && path == "/" {
         return Some(HashMap::new());
     }
+    if pattern == "*" || pattern == "/*" {
+        let mut params = HashMap::new();
+        let tail = if path.starts_with('/') { &path[1..] } else { path };
+        params.insert("*".to_string(), tail.to_string());
+        return Some(params);
+    }
 
     let pat_parts: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
     let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-    if pat_parts.len() != path_parts.len() {
-        return None;
-    }
-
     let mut params = HashMap::new();
-    for (pat_part, path_part) in pat_parts.iter().zip(path_parts.iter()) {
+    for (i, pat_part) in pat_parts.iter().enumerate() {
+        if *pat_part == "*" || pat_part.starts_with('*') {
+            if i == pat_parts.len() - 1 {
+                let tail = if i < path_parts.len() {
+                    path_parts[i..].join("/")
+                } else {
+                    String::new()
+                };
+                let key = if *pat_part == "*" { "*" } else { &pat_part[1..] };
+                params.insert(key.to_string(), tail);
+                return Some(params);
+            }
+        }
+
+        if i >= path_parts.len() {
+            return None;
+        }
+
+        let path_part = path_parts[i];
         if pat_part.starts_with(':') {
             params.insert(pat_part[1..].to_string(), path_part.to_string());
-        } else if pat_part != path_part {
+        } else if pat_part != &path_part {
             return None;
         }
     }
 
-    Some(params)
+    if pat_parts.len() == path_parts.len() {
+        Some(params)
+    } else {
+        None
+    }
 }

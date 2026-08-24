@@ -170,6 +170,9 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
     
     std::string method_str(method);
     std::string path_str(path);
+    for (char &c : method_str) {
+        c = (char)toupper((unsigned char)c);
+    }
     
     if (method_str == "GET") {
         g_app->get(path_str, [](auto* res, auto* req) {
@@ -194,9 +197,9 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
                                    headers_str.data(), headers_str.length(), nullptr, 0);
             }
         });
-    } else if (method_str == "POST") {
-        g_app->post(path_str, [](auto* res, auto* req) {
-            std::string_view method = "POST";
+    } else if (method_str == "HEAD") {
+        g_app->head(path_str, [](auto* res, auto* req) {
+            std::string_view method = "HEAD";
             std::string_view path = req->getUrl();
             
             std::string headers_str;
@@ -209,73 +212,101 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
             
             auto* token = new HttpResponseToken(res);
             res->onAborted(AbortHandler(token));
-
-            struct PostCtx {
-                HttpResponseToken* token;
-                std::string method;
-                std::string path;
-                std::string headers;
-                std::string body;
-                PostCtx(HttpResponseToken* t) : token(t) {
-                    if (token) token->add_ref();
-                }
-                ~PostCtx() {
-                    if (token) {
-                        token->release();
-                        token = nullptr;
-                    }
-                }
-            };
-            auto ctx = std::make_shared<PostCtx>(token);
-            ctx->method = std::string(method);
-            ctx->path = std::string(path);
-            ctx->headers = std::move(headers_str);
-            
-            res->onData([ctx, token](std::string_view chunk, bool isLast) {
-                if (token->aborted.load(std::memory_order_acquire)) return;
-                ctx->body.append(chunk.data(), chunk.length());
-                if (isLast) {
-                    if (g_http_req_cb) {
-                        g_http_req_cb(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                      ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
-                    } else {
-                        er_http_on_request(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                           ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
-                    }
-                }
-            });
+            if (g_http_req_cb) {
+                g_http_req_cb(token, method.data(), method.length(), path.data(), path.length(),
+                              headers_str.data(), headers_str.length(), nullptr, 0);
+            } else {
+                er_http_on_request(token, method.data(), method.length(), path.data(), path.length(),
+                                   headers_str.data(), headers_str.length(), nullptr, 0);
+            }
         });
+    } else {
+        auto register_body_handler = [&](auto attach_fn, const char* default_verb) {
+            attach_fn(path_str, [default_verb](auto* res, auto* req) {
+                std::string method_name = default_verb ? std::string(default_verb) : "";
+                if (method_name.empty()) {
+                    std::string_view req_m = req->getCaseSensitiveMethod();
+                    method_name = std::string(req_m);
+                    for (char &c : method_name) {
+                        c = (char)toupper((unsigned char)c);
+                    }
+                }
+                std::string_view path = req->getUrl();
+                
+                std::string headers_str;
+                for (auto h : *req) {
+                    headers_str.append(h.first);
+                    headers_str.append(": ");
+                    headers_str.append(h.second);
+                    headers_str.append("\r\n");
+                }
+                
+                auto* token = new HttpResponseToken(res);
+                res->onAborted(AbortHandler(token));
+
+                struct ReqCtx {
+                    HttpResponseToken* token;
+                    std::string method;
+                    std::string path;
+                    std::string headers;
+                    std::string body;
+                    ReqCtx(HttpResponseToken* t) : token(t) {
+                        if (token) token->add_ref();
+                    }
+                    ~ReqCtx() {
+                        if (token) {
+                            token->release();
+                            token = nullptr;
+                        }
+                    }
+                };
+                auto ctx = std::make_shared<ReqCtx>(token);
+                ctx->method = std::move(method_name);
+                ctx->path = std::string(path);
+                ctx->headers = std::move(headers_str);
+                
+                res->onData([ctx, token](std::string_view chunk, bool isLast) {
+                    if (token->aborted.load(std::memory_order_acquire)) return;
+                    ctx->body.append(chunk.data(), chunk.length());
+                    if (isLast) {
+                        if (g_http_req_cb) {
+                            g_http_req_cb(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                          ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                        } else {
+                            er_http_on_request(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                               ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                        }
+                    }
+                });
+            });
+        };
+
+        if (method_str == "POST") {
+            register_body_handler([](const std::string& p, auto h) { g_app->post(p, std::move(h)); }, "POST");
+        } else if (method_str == "PUT") {
+            register_body_handler([](const std::string& p, auto h) { g_app->put(p, std::move(h)); }, "PUT");
+        } else if (method_str == "PATCH") {
+            register_body_handler([](const std::string& p, auto h) { g_app->patch(p, std::move(h)); }, "PATCH");
+        } else if (method_str == "DELETE" || method_str == "DEL") {
+            register_body_handler([](const std::string& p, auto h) { g_app->del(p, std::move(h)); }, "DELETE");
+        } else if (method_str == "OPTIONS") {
+            register_body_handler([](const std::string& p, auto h) { g_app->options(p, std::move(h)); }, "OPTIONS");
+        } else if (method_str == "ALL" || method_str == "ANY" || method_str == "*") {
+            register_body_handler([](const std::string& p, auto h) { g_app->any(p, std::move(h)); }, nullptr);
+        }
     }
 }
 
 extern "C" void er_http_listen_and_run(int port) {
     if (!g_app) return;
     
-    g_app->get("/*", [](auto* res, auto* req) {
-        std::string_view method = "GET";
-        std::string_view path = req->getUrl();
-        
-        std::string headers_str;
-        for (auto h : *req) {
-            headers_str.append(h.first);
-            headers_str.append(": ");
-            headers_str.append(h.second);
-            headers_str.append("\r\n");
+    // Register wildcard fallback on any method to catch any unhandled request and forward to er_http_on_request
+    g_app->any("/*", [](auto* res, auto* req) {
+        std::string_view req_m = req->getCaseSensitiveMethod();
+        std::string method_str = std::string(req_m);
+        for (char &c : method_str) {
+            c = (char)toupper((unsigned char)c);
         }
-        
-        auto* token = new HttpResponseToken(res);
-        res->onAborted(AbortHandler(token));
-        if (g_http_req_cb) {
-            g_http_req_cb(token, method.data(), method.length(), path.data(), path.length(),
-                          headers_str.data(), headers_str.length(), nullptr, 0);
-        } else {
-            er_http_on_request(token, method.data(), method.length(), path.data(), path.length(),
-                               headers_str.data(), headers_str.length(), nullptr, 0);
-        }
-    });
-    
-    g_app->post("/*", [](auto* res, auto* req) {
-        std::string_view method = "POST";
         std::string_view path = req->getUrl();
         
         std::string headers_str;
@@ -289,24 +320,24 @@ extern "C" void er_http_listen_and_run(int port) {
         auto* token = new HttpResponseToken(res);
         res->onAborted(AbortHandler(token));
 
-        struct PostCtx {
+        struct FallbackCtx {
             HttpResponseToken* token;
             std::string method;
             std::string path;
             std::string headers;
             std::string body;
-            PostCtx(HttpResponseToken* t) : token(t) {
+            FallbackCtx(HttpResponseToken* t) : token(t) {
                 if (token) token->add_ref();
             }
-            ~PostCtx() {
+            ~FallbackCtx() {
                 if (token) {
                     token->release();
                     token = nullptr;
                 }
             }
         };
-        auto ctx = std::make_shared<PostCtx>(token);
-        ctx->method = std::string(method);
+        auto ctx = std::make_shared<FallbackCtx>(token);
+        ctx->method = std::move(method_str);
         ctx->path = std::string(path);
         ctx->headers = std::move(headers_str);
         

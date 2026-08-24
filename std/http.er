@@ -45,8 +45,7 @@ export const createServer = (handler) => {
   }
   
   // Register wildcard routes to catch all incoming requests
-  app.get("/*", dispatch)
-  app.post("/*", dispatch)
+  app.all("/*", dispatch)
   
   return {
     listen: (port, callback) => {

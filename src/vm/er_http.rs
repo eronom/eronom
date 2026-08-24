@@ -60,16 +60,32 @@ unsafe extern "C" {
 }
 
 pub fn native_route(_args: Vec<Value>) -> Value {
-    let router_obj = crate::vm::gc::get_pooled_map(5);
+    let router_obj = crate::vm::gc::get_pooled_map(13);
     
     let get_name = get_or_create_string("get");
     let post_name = get_or_create_string("post");
+    let put_name = get_or_create_string("put");
+    let delete_name = get_or_create_string("delete");
+    let del_name = get_or_create_string("del");
+    let patch_name = get_or_create_string("patch");
+    let head_name = get_or_create_string("head");
+    let options_name = get_or_create_string("options");
+    let all_name = get_or_create_string("all");
+    let any_name = get_or_create_string("any");
     let ws_name = get_or_create_string("ws");
     let use_name = get_or_create_string("use");
     let listen_name = get_or_create_string("listen");
     
     let get_fn = Value::native_function(native_router_get);
     let post_fn = Value::native_function(native_router_post);
+    let put_fn = Value::native_function(native_router_put);
+    let delete_fn = Value::native_function(native_router_delete);
+    let del_fn = Value::native_function(native_router_delete);
+    let patch_fn = Value::native_function(native_router_patch);
+    let head_fn = Value::native_function(native_router_head);
+    let options_fn = Value::native_function(native_router_options);
+    let all_fn = Value::native_function(native_router_all);
+    let any_fn = Value::native_function(native_router_all);
     let ws_fn = Value::native_function(native_router_ws);
     let use_fn = Value::native_function(native_router_use);
     let listen_fn = Value::native_function(native_router_listen);
@@ -77,6 +93,14 @@ pub fn native_route(_args: Vec<Value>) -> Value {
     let mut map = router_obj;
     map.insert(crate::vm::value::MapKey(Value::string(get_name)), get_fn);
     map.insert(crate::vm::value::MapKey(Value::string(post_name)), post_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(put_name)), put_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(delete_name)), delete_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(del_name)), del_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(patch_name)), patch_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(head_name)), head_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(options_name)), options_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(all_name)), all_fn);
+    map.insert(crate::vm::value::MapKey(Value::string(any_name)), any_fn);
     map.insert(crate::vm::value::MapKey(Value::string(ws_name)), ws_fn);
     map.insert(crate::vm::value::MapKey(Value::string(use_name)), use_fn);
     map.insert(crate::vm::value::MapKey(Value::string(listen_name)), listen_fn);
@@ -294,6 +318,30 @@ pub fn native_router_get(args: Vec<Value>) -> Value {
 
 pub fn native_router_post(args: Vec<Value>) -> Value {
     register_route_internal("POST", args)
+}
+
+pub fn native_router_put(args: Vec<Value>) -> Value {
+    register_route_internal("PUT", args)
+}
+
+pub fn native_router_delete(args: Vec<Value>) -> Value {
+    register_route_internal("DELETE", args)
+}
+
+pub fn native_router_patch(args: Vec<Value>) -> Value {
+    register_route_internal("PATCH", args)
+}
+
+pub fn native_router_head(args: Vec<Value>) -> Value {
+    register_route_internal("HEAD", args)
+}
+
+pub fn native_router_options(args: Vec<Value>) -> Value {
+    register_route_internal("OPTIONS", args)
+}
+
+pub fn native_router_all(args: Vec<Value>) -> Value {
+    register_route_internal("ALL", args)
 }
 
 pub fn native_context_json(args: Vec<Value>) -> Value {
@@ -680,24 +728,49 @@ fn check_and_reload_script_if_needed(vm: &mut VM) {
 }
 
 fn match_route_path(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
+    if pattern == "*" || pattern == "/*" {
+        let mut params = HashMap::new();
+        let tail = if path.starts_with('/') { &path[1..] } else { path };
+        params.insert("*".to_string(), tail.to_string());
+        return Some(params);
+    }
+    
     let pattern_parts: Vec<&str> = pattern.split('/').collect();
     let path_parts: Vec<&str> = path.split('/').collect();
     
-    if pattern_parts.len() != path_parts.len() {
-        return None;
-    }
-    
     let mut params = HashMap::new();
-    for (pat_part, path_part) in pattern_parts.iter().zip(path_parts.iter()) {
+    for (i, pat_part) in pattern_parts.iter().enumerate() {
+        if *pat_part == "*" || pat_part.starts_with('*') {
+            if i == pattern_parts.len() - 1 {
+                let tail = if i < path_parts.len() {
+                    path_parts[i..].join("/")
+                } else {
+                    String::new()
+                };
+                let key = if *pat_part == "*" { "*" } else { &pat_part[1..] };
+                params.insert(key.to_string(), tail);
+                return Some(params);
+            }
+        }
+        
+        if i >= path_parts.len() {
+            return None;
+        }
+        
+        let path_part = path_parts[i];
         if pat_part.starts_with(':') {
             let param_name = &pat_part[1..];
             params.insert(param_name.to_string(), path_part.to_string());
-        } else if pat_part != path_part {
+        } else if pat_part != &path_part {
             return None;
         }
     }
     
-    Some(params)
+    if pattern_parts.len() == path_parts.len() {
+        Some(params)
+    } else {
+        None
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -905,7 +978,7 @@ pub extern "C" fn er_http_on_request(
     let mut extracted_params = HashMap::new();
     let callback_opt = ROUTES.with(|routes| {
         for route in routes.borrow().iter() {
-            if route.method == method {
+            if route.method == "ALL" || route.method == "*" || route.method.eq_ignore_ascii_case(method) {
                 if let Some(params) = match_route_path(&route.path, path) {
                     extracted_params = params;
                     return Some(route.callback);
