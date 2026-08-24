@@ -4,18 +4,20 @@
 #include <iostream>
 #include <cstring>
 #include <memory>
+#include <atomic>
+#include <cstdint>
 
 extern "C" {
     void er_http_on_request(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
     void er_ws_on_open(void* ws, const char* path, size_t path_len);
-    void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
+    void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len, int is_binary);
     void er_ws_on_close(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
     void er_http_on_listening();
 }
 
 typedef void (*HttpRequestCallback)(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
 typedef void (*WsOpenCallback)(void* ws, const char* path, size_t path_len);
-typedef void (*WsMessageCallback)(void* ws, const char* path, size_t path_len, const char* message, size_t message_len);
+typedef void (*WsMessageCallback)(void* ws, const char* path, size_t path_len, const char* message, size_t message_len, int is_binary);
 typedef void (*WsCloseCallback)(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
 
 static HttpRequestCallback g_http_req_cb = nullptr;
@@ -25,6 +27,64 @@ static WsCloseCallback g_ws_close_cb = nullptr;
 
 struct PerSocketData {
     // Fill with user data if needed
+};
+
+struct HttpResponseToken {
+    std::atomic<uWS::HttpResponse<false>*> res;
+    std::atomic<bool> aborted{false};
+    std::atomic<bool> responded{false};
+    std::atomic<uint32_t> ref_count{2}; // 1 for uWS onAborted wrapper, 1 for Rust/VM context
+
+    HttpResponseToken(uWS::HttpResponse<false>* r) : res(r) {}
+
+    void add_ref() {
+        ref_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void release() {
+        if (ref_count.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            delete this;
+        }
+    }
+};
+
+struct AbortHandler {
+    HttpResponseToken* token;
+    explicit AbortHandler(HttpResponseToken* t) : token(t) {}
+    AbortHandler(const AbortHandler& o) : token(o.token) {
+        if (token) token->add_ref();
+    }
+    AbortHandler(AbortHandler&& o) noexcept : token(o.token) {
+        o.token = nullptr;
+    }
+    AbortHandler& operator=(const AbortHandler& o) {
+        if (this != &o) {
+            if (token) token->release();
+            token = o.token;
+            if (token) token->add_ref();
+        }
+        return *this;
+    }
+    AbortHandler& operator=(AbortHandler&& o) noexcept {
+        if (this != &o) {
+            if (token) token->release();
+            token = o.token;
+            o.token = nullptr;
+        }
+        return *this;
+    }
+    ~AbortHandler() {
+        if (token) {
+            token->release();
+            token = nullptr;
+        }
+    }
+    void operator()() {
+        if (token) {
+            token->aborted.store(true, std::memory_order_release);
+            token->res.store(nullptr, std::memory_order_release);
+        }
+    }
 };
 
 // Global app pointer (without SSL support)
@@ -78,10 +138,11 @@ extern "C" void er_ws_register_route(const char* path) {
         }
     };
     ws_behavior.message = [path_str](auto* ws, std::string_view message, uWS::OpCode opCode) {
+        int is_binary = (opCode == uWS::OpCode::BINARY) ? 1 : 0;
         if (g_ws_message_cb) {
-            g_ws_message_cb(ws, path_str.data(), path_str.length(), message.data(), message.length());
+            g_ws_message_cb(ws, path_str.data(), path_str.length(), message.data(), message.length(), is_binary);
         } else {
-            er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length());
+            er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length(), is_binary);
         }
     };
     ws_behavior.close = [path_str](auto* ws, int code, std::string_view message) {
@@ -95,14 +156,63 @@ extern "C" void er_ws_register_route(const char* path) {
     g_app->ws<PerSocketData>(path_str, std::move(ws_behavior));
 }
 
-extern "C" void er_ws_send(void* ws, const char* message, size_t message_len) {
+extern "C" void er_ws_send(void* ws, const char* message, size_t message_len, int is_binary) {
+    if (!ws || !message) return;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    web_socket->send(std::string_view(message, message_len), uWS::OpCode::TEXT, false);
+    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+    web_socket->send(std::string_view(message, message_len), op, false);
 }
 
 extern "C" void er_ws_close(void* ws) {
+    if (!ws) return;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     web_socket->close();
+}
+
+extern "C" void er_ws_close_with_code(void* ws, int code, const char* message, size_t message_len) {
+    if (!ws) return;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    if (code > 0 || message_len > 0) {
+        web_socket->end(code, std::string_view(message ? message : "", message_len));
+    } else {
+        web_socket->close();
+    }
+}
+
+extern "C" bool er_ws_subscribe(void* ws, const char* topic, size_t topic_len) {
+    if (!ws || !topic) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    return web_socket->subscribe(std::string_view(topic, topic_len));
+}
+
+extern "C" bool er_ws_unsubscribe(void* ws, const char* topic, size_t topic_len) {
+    if (!ws || !topic) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    return web_socket->unsubscribe(std::string_view(topic, topic_len));
+}
+
+extern "C" bool er_ws_is_subscribed(void* ws, const char* topic, size_t topic_len) {
+    if (!ws || !topic) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    return web_socket->isSubscribed(std::string_view(topic, topic_len));
+}
+
+extern "C" bool er_ws_publish(void* ws, const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
+    if (!ws || !topic || !message) return false;
+    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+    return web_socket->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+}
+
+extern "C" bool er_app_publish(const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
+    if (!g_app || !topic || !message) return false;
+    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+    return g_app->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+}
+
+extern "C" unsigned int er_app_num_subscribers(const char* topic, size_t topic_len) {
+    if (!g_app || !topic) return 0;
+    return g_app->numSubscribers(std::string_view(topic, topic_len));
 }
 
 extern "C" void er_http_register_route(const char* method, const char* path) {
@@ -110,11 +220,19 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
     
     std::string method_str(method);
     std::string path_str(path);
+    for (char &c : method_str) {
+        c = (char)toupper((unsigned char)c);
+    }
     
     if (method_str == "GET") {
         g_app->get(path_str, [](auto* res, auto* req) {
             std::string_view method = "GET";
-            std::string_view path = req->getUrl();
+            std::string full_url = std::string(req->getUrl());
+            std::string_view query = req->getQuery();
+            if (!query.empty()) {
+                full_url.push_back('?');
+                full_url.append(query);
+            }
             
             std::string headers_str;
             for (auto h : *req) {
@@ -124,19 +242,25 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
                 headers_str.append("\r\n");
             }
             
-            res->onAborted([]() {});
+            auto* token = new HttpResponseToken(res);
+            res->onAborted(AbortHandler(token));
             if (g_http_req_cb) {
-                g_http_req_cb(res, method.data(), method.length(), path.data(), path.length(),
+                g_http_req_cb(token, method.data(), method.length(), full_url.data(), full_url.length(),
                               headers_str.data(), headers_str.length(), nullptr, 0);
             } else {
-                er_http_on_request(res, method.data(), method.length(), path.data(), path.length(),
+                er_http_on_request(token, method.data(), method.length(), full_url.data(), full_url.length(),
                                    headers_str.data(), headers_str.length(), nullptr, 0);
             }
         });
-    } else if (method_str == "POST") {
-        g_app->post(path_str, [](auto* res, auto* req) {
-            std::string_view method = "POST";
-            std::string_view path = req->getUrl();
+    } else if (method_str == "HEAD") {
+        g_app->head(path_str, [](auto* res, auto* req) {
+            std::string_view method = "HEAD";
+            std::string full_url = std::string(req->getUrl());
+            std::string_view query = req->getQuery();
+            if (!query.empty()) {
+                full_url.push_back('?');
+                full_url.append(query);
+            }
             
             std::string headers_str;
             for (auto h : *req) {
@@ -146,45 +270,114 @@ extern "C" void er_http_register_route(const char* method, const char* path) {
                 headers_str.append("\r\n");
             }
             
-            struct PostCtx {
-                std::string method;
-                std::string path;
-                std::string headers;
-                std::string body;
-                bool aborted = false;
-            };
-            auto ctx = std::make_shared<PostCtx>();
-            ctx->method = std::string(method);
-            ctx->path = std::string(path);
-            ctx->headers = std::move(headers_str);
-            
-            res->onAborted([ctx]() {
-                ctx->aborted = true;
-            });
-            
-            res->onData([ctx, res](std::string_view chunk, bool isLast) {
-                if (ctx->aborted) return;
-                ctx->body.append(chunk.data(), chunk.length());
-                if (isLast) {
-                    if (g_http_req_cb) {
-                        g_http_req_cb(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                      ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
-                    } else {
-                        er_http_on_request(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                           ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+            auto* token = new HttpResponseToken(res);
+            res->onAborted(AbortHandler(token));
+            if (g_http_req_cb) {
+                g_http_req_cb(token, method.data(), method.length(), full_url.data(), full_url.length(),
+                              headers_str.data(), headers_str.length(), nullptr, 0);
+            } else {
+                er_http_on_request(token, method.data(), method.length(), full_url.data(), full_url.length(),
+                                   headers_str.data(), headers_str.length(), nullptr, 0);
+            }
+        });
+    } else {
+        auto register_body_handler = [&](auto attach_fn, const char* default_verb) {
+            attach_fn(path_str, [default_verb](auto* res, auto* req) {
+                std::string method_name = default_verb ? std::string(default_verb) : "";
+                if (method_name.empty()) {
+                    std::string_view req_m = req->getCaseSensitiveMethod();
+                    method_name = std::string(req_m);
+                    for (char &c : method_name) {
+                        c = (char)toupper((unsigned char)c);
                     }
                 }
+                std::string full_url = std::string(req->getUrl());
+                std::string_view query = req->getQuery();
+                if (!query.empty()) {
+                    full_url.push_back('?');
+                    full_url.append(query);
+                }
+                
+                std::string headers_str;
+                for (auto h : *req) {
+                    headers_str.append(h.first);
+                    headers_str.append(": ");
+                    headers_str.append(h.second);
+                    headers_str.append("\r\n");
+                }
+                
+                auto* token = new HttpResponseToken(res);
+                res->onAborted(AbortHandler(token));
+
+                struct ReqCtx {
+                    HttpResponseToken* token;
+                    std::string method;
+                    std::string path;
+                    std::string headers;
+                    std::string body;
+                    ReqCtx(HttpResponseToken* t) : token(t) {
+                        if (token) token->add_ref();
+                    }
+                    ~ReqCtx() {
+                        if (token) {
+                            token->release();
+                            token = nullptr;
+                        }
+                    }
+                };
+                auto ctx = std::make_shared<ReqCtx>(token);
+                ctx->method = std::move(method_name);
+                ctx->path = std::move(full_url);
+                ctx->headers = std::move(headers_str);
+                
+                res->onData([ctx, token](std::string_view chunk, bool isLast) {
+                    if (token->aborted.load(std::memory_order_acquire)) return;
+                    ctx->body.append(chunk.data(), chunk.length());
+                    if (isLast) {
+                        if (g_http_req_cb) {
+                            g_http_req_cb(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                          ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                        } else {
+                            er_http_on_request(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                                               ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
+                        }
+                    }
+                });
             });
-        });
+        };
+
+        if (method_str == "POST") {
+            register_body_handler([](const std::string& p, auto h) { g_app->post(p, std::move(h)); }, "POST");
+        } else if (method_str == "PUT") {
+            register_body_handler([](const std::string& p, auto h) { g_app->put(p, std::move(h)); }, "PUT");
+        } else if (method_str == "PATCH") {
+            register_body_handler([](const std::string& p, auto h) { g_app->patch(p, std::move(h)); }, "PATCH");
+        } else if (method_str == "DELETE" || method_str == "DEL") {
+            register_body_handler([](const std::string& p, auto h) { g_app->del(p, std::move(h)); }, "DELETE");
+        } else if (method_str == "OPTIONS") {
+            register_body_handler([](const std::string& p, auto h) { g_app->options(p, std::move(h)); }, "OPTIONS");
+        } else if (method_str == "ALL" || method_str == "ANY" || method_str == "*") {
+            register_body_handler([](const std::string& p, auto h) { g_app->any(p, std::move(h)); }, nullptr);
+        }
     }
 }
 
 extern "C" void er_http_listen_and_run(int port) {
     if (!g_app) return;
     
-    g_app->get("/*", [](auto* res, auto* req) {
-        std::string_view method = "GET";
-        std::string_view path = req->getUrl();
+    // Register wildcard fallback on any method to catch any unhandled request and forward to er_http_on_request
+    g_app->any("/*", [](auto* res, auto* req) {
+        std::string_view req_m = req->getCaseSensitiveMethod();
+        std::string method_str = std::string(req_m);
+        for (char &c : method_str) {
+            c = (char)toupper((unsigned char)c);
+        }
+        std::string full_url = std::string(req->getUrl());
+        std::string_view query = req->getQuery();
+        if (!query.empty()) {
+            full_url.push_back('?');
+            full_url.append(query);
+        }
         
         std::string headers_str;
         for (auto h : *req) {
@@ -194,53 +387,39 @@ extern "C" void er_http_listen_and_run(int port) {
             headers_str.append("\r\n");
         }
         
-        res->onAborted([]() {});
-        if (g_http_req_cb) {
-            g_http_req_cb(res, method.data(), method.length(), path.data(), path.length(),
-                          headers_str.data(), headers_str.length(), nullptr, 0);
-        } else {
-            er_http_on_request(res, method.data(), method.length(), path.data(), path.length(),
-                               headers_str.data(), headers_str.length(), nullptr, 0);
-        }
-    });
-    
-    g_app->post("/*", [](auto* res, auto* req) {
-        std::string_view method = "POST";
-        std::string_view path = req->getUrl();
-        
-        std::string headers_str;
-        for (auto h : *req) {
-            headers_str.append(h.first);
-            headers_str.append(": ");
-            headers_str.append(h.second);
-            headers_str.append("\r\n");
-        }
-        
-        struct PostCtx {
+        auto* token = new HttpResponseToken(res);
+        res->onAborted(AbortHandler(token));
+
+        struct FallbackCtx {
+            HttpResponseToken* token;
             std::string method;
             std::string path;
             std::string headers;
             std::string body;
-            bool aborted = false;
+            FallbackCtx(HttpResponseToken* t) : token(t) {
+                if (token) token->add_ref();
+            }
+            ~FallbackCtx() {
+                if (token) {
+                    token->release();
+                    token = nullptr;
+                }
+            }
         };
-        auto ctx = std::make_shared<PostCtx>();
-        ctx->method = std::string(method);
-        ctx->path = std::string(path);
+        auto ctx = std::make_shared<FallbackCtx>(token);
+        ctx->method = std::move(method_str);
+        ctx->path = std::move(full_url);
         ctx->headers = std::move(headers_str);
         
-        res->onAborted([ctx]() {
-            ctx->aborted = true;
-        });
-        
-        res->onData([ctx, res](std::string_view chunk, bool isLast) {
-            if (ctx->aborted) return;
+        res->onData([ctx, token](std::string_view chunk, bool isLast) {
+            if (token->aborted.load(std::memory_order_acquire)) return;
             ctx->body.append(chunk.data(), chunk.length());
             if (isLast) {
                 if (g_http_req_cb) {
-                    g_http_req_cb(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                    g_http_req_cb(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
                                   ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
                 } else {
-                    er_http_on_request(res, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
+                    er_http_on_request(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
                                        ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
                 }
             }
@@ -256,31 +435,80 @@ extern "C" void er_http_listen_and_run(int port) {
     }).run();
 }
 
-extern "C" void er_http_response_end_json(void* res, const char* json_str, size_t json_len) {
-    auto* http_res = static_cast<uWS::HttpResponse<false>*>(res);
+extern "C" bool er_http_response_is_alive(void* token_ptr) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    return !token->aborted.load(std::memory_order_acquire) && !token->responded.load(std::memory_order_acquire);
+}
+
+extern "C" void er_http_response_release(void* token_ptr) {
+    if (!token_ptr) return;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    token->release();
+}
+
+extern "C" bool er_http_response_end_json(void* token_ptr, const char* json_str, size_t json_len) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return false;
+    bool expected = false;
+    if (!token->responded.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return false;
+    }
+    auto* http_res = token->res.load(std::memory_order_acquire);
+    if (!http_res) return false;
     http_res->writeHeader("Content-Type", "application/json");
     http_res->end(std::string_view(json_str, json_len));
+    return true;
 }
 
-extern "C" void er_http_response_end_html(void* res, const char* html_str, size_t html_len) {
-    auto* http_res = static_cast<uWS::HttpResponse<false>*>(res);
+extern "C" bool er_http_response_end_html(void* token_ptr, const char* html_str, size_t html_len) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return false;
+    bool expected = false;
+    if (!token->responded.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return false;
+    }
+    auto* http_res = token->res.load(std::memory_order_acquire);
+    if (!http_res) return false;
     http_res->writeHeader("Content-Type", "text/html; charset=utf-8");
     http_res->end(std::string_view(html_str, html_len));
+    return true;
 }
 
-extern "C" void er_http_response_write_status(void* res, const char* status_str, size_t status_len) {
-    auto* http_res = static_cast<uWS::HttpResponse<false>*>(res);
+extern "C" bool er_http_response_write_status(void* token_ptr, const char* status_str, size_t status_len) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return false;
+    auto* http_res = token->res.load(std::memory_order_acquire);
+    if (!http_res) return false;
     http_res->writeStatus(std::string_view(status_str, status_len));
+    return true;
 }
 
-extern "C" void er_http_response_write_header(void* res, const char* key_str, size_t key_len, const char* val_str, size_t val_len) {
-    auto* http_res = static_cast<uWS::HttpResponse<false>*>(res);
+extern "C" bool er_http_response_write_header(void* token_ptr, const char* key_str, size_t key_len, const char* val_str, size_t val_len) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return false;
+    auto* http_res = token->res.load(std::memory_order_acquire);
+    if (!http_res) return false;
     http_res->writeHeader(std::string_view(key_str, key_len), std::string_view(val_str, val_len));
+    return true;
 }
 
-extern "C" void er_http_response_end(void* res, const char* data_str, size_t data_len) {
-    auto* http_res = static_cast<uWS::HttpResponse<false>*>(res);
+extern "C" bool er_http_response_end(void* token_ptr, const char* data_str, size_t data_len) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return false;
+    bool expected = false;
+    if (!token->responded.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return false;
+    }
+    auto* http_res = token->res.load(std::memory_order_acquire);
+    if (!http_res) return false;
     http_res->end(std::string_view(data_str, data_len));
+    return true;
 }
 
 extern "C" void er_http_create_timer(int ms, void (*cb)(void*)) {
@@ -293,5 +521,6 @@ extern "C" void er_http_create_timer(int ms, void (*cb)(void*)) {
         cb(t);
     }, ms, ms);
 }
+
 
 

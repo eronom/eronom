@@ -1,0 +1,55 @@
+import { router } from "std/http"
+
+let app = router()
+
+// WebSocket endpoint with full Topic Pub/Sub & Binary Frames support
+app.ws('/ws/chat', {
+  open: (ws) => {
+    print("[WS] Client connected. Subscribing to topic 'general'...")
+    let subOk = ws.subscribe("general")
+    print("[WS] Subscribed to 'general': " + subOk)
+    print("[WS] Is subscribed to 'general': " + ws.isSubscribed("general"))
+    print("[WS] Current subscriber count: " + app.numSubscribers("general"))
+
+    // Send a welcome text frame
+    ws.send("Welcome to Eronom Pub/Sub Chat!")
+
+    // Send a welcome binary frame (handshake header in bytes: 69 82 79 78 = 'ERON')
+    ws.send([69, 82, 79, 78], true)
+  },
+  message: (ws, msg, isBinary) => {
+    if (isBinary) {
+      print("[WS] Received BINARY frame (" + msg.length + " bytes)")
+      // Echo binary frame back or publish binary frame to topic
+      ws.publish("general", msg, true)
+    } else {
+      print("[WS] Received TEXT message: " + msg)
+      if (msg == "broadcast") {
+        // App-level broadcast to ALL subscribers unconditionally
+        app.publish("general", "Announcement from Server: System update scheduled!")
+      } else {
+        // Socket-level publish (to all subscribers of 'general' EXCEPT this sender)
+        ws.publish("general", "User says: " + msg)
+      }
+    }
+  },
+  close: (ws, code, reason) => {
+    print("[WS] Client disconnected with code " + code + ", reason: " + reason)
+    ws.unsubscribe("general")
+  }
+})
+
+// HTTP endpoint triggering server-side WebSocket Topic publish
+app.post('/api/broadcast', (c) => {
+  let count = app.numSubscribers("general")
+  let ok = app.publish("general", "HTTP Triggered Broadcast to " + count + " clients")
+  return c.json({
+    status: "ok",
+    subscribers: count,
+    published: ok
+  })
+})
+
+app.listen(3000, () => {
+  print("⚡ Eronom WebSocket Pub/Sub & Binary Server running on port 3000")
+})

@@ -32,7 +32,8 @@ use super::gc::{
 };
 
 use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
+use std::collections::BinaryHeap;
 
 pub enum AsyncResult {
     Timeout,
@@ -51,6 +52,42 @@ pub struct EventLoopTask {
 
 unsafe impl Send for EventLoopTask {}
 unsafe impl Sync for EventLoopTask {}
+
+#[derive(Clone)]
+pub enum VmTimerAction {
+    Callback { callback: Value, args: Vec<Value> },
+    ResolvePromise { promise_ptr: *mut crate::vm::gc::GcObject, value: Value },
+}
+
+pub struct VmTimer {
+    pub id: u64,
+    pub due_time: Instant,
+    pub action: VmTimerAction,
+}
+
+unsafe impl Send for VmTimer {}
+unsafe impl Sync for VmTimer {}
+
+impl PartialEq for VmTimer {
+    fn eq(&self, other: &Self) -> bool {
+        self.due_time == other.due_time && self.id == other.id
+    }
+}
+
+impl Eq for VmTimer {}
+
+impl PartialOrd for VmTimer {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for VmTimer {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Reverse ordering for min-heap: earliest due_time has highest priority
+        other.due_time.cmp(&self.due_time).then_with(|| other.id.cmp(&self.id))
+    }
+}
 
 pub struct PendingAsync {
     pub callback: Value,
@@ -85,6 +122,8 @@ pub struct VM {
     pub event_loop_condvar: Arc<Condvar>,
     pub active_async_tasks: Arc<AtomicUsize>,
     pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
+    pub timers: Arc<Mutex<BinaryHeap<VmTimer>>>,
+    pub next_timer_id: Arc<AtomicU64>,
 }
 
 pub struct CallFrame {
@@ -132,6 +171,8 @@ impl VM {
             event_loop_condvar: Arc::new(Condvar::new()),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
+            timers: Arc::new(Mutex::new(BinaryHeap::new())),
+            next_timer_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -279,19 +320,12 @@ impl VM {
             match phase {
                 GcPhase::Pause => {
                     if state.alloc_count >= 10000 {
-                        super::gc::gc_clear_string_cache();
                         state.phase = GcPhase::Mark;
                         state.gray_stack.clear();
 
-                        let stack_len = if let Some(last_frame) = self.frames.last() {
-                            (last_frame.slots_offset + 256).min(self.stack.len())
-                        } else {
-                            self.stack.len()
-                        };
-                        
                         drop(state);
                         
-                        for val in &self.stack[..stack_len] {
+                        for val in &self.stack {
                             mark_value(val);
                         }
                         for val in self.globals.values() {
@@ -316,6 +350,21 @@ impl VM {
                                 mark_value(&item.callback);
                                 for arg in item.args.iter() {
                                     mark_value(arg);
+                                }
+                            }
+                        }
+                        if let Ok(timers) = self.timers.lock() {
+                            for timer in timers.iter() {
+                                match &timer.action {
+                                    VmTimerAction::Callback { callback, args } => {
+                                        mark_value(callback);
+                                        for arg in args {
+                                            mark_value(arg);
+                                        }
+                                    }
+                                    VmTimerAction::ResolvePromise { value, .. } => {
+                                        mark_value(value);
+                                    }
                                 }
                             }
                         }
@@ -344,12 +393,7 @@ impl VM {
                     
                     drop(state);
                     
-                    let stack_len = if let Some(last_frame) = self.frames.last() {
-                        (last_frame.slots_offset + 256).min(self.stack.len())
-                    } else {
-                        self.stack.len()
-                    };
-                    for val in &self.stack[..stack_len] {
+                    for val in &self.stack {
                         mark_value(val);
                     }
                     for val in self.globals.values() {
@@ -357,6 +401,40 @@ impl VM {
                     }
                     for frame in &self.frames {
                         mark_value(&Value::function(frame.function));
+                    }
+                    for &upval_ptr in &self.open_upvalues {
+                        super::gc::mark_object(upval_ptr);
+                    }
+                    if let Ok(queue) = self.event_loop_queue.lock() {
+                        for task in queue.iter() {
+                            mark_value(&task.callback);
+                            for arg in task.args.iter() {
+                                mark_value(arg);
+                            }
+                        }
+                    }
+                    if let Ok(pending) = self.pending_callbacks.lock() {
+                        for item in pending.iter() {
+                            mark_value(&item.callback);
+                            for arg in item.args.iter() {
+                                mark_value(arg);
+                            }
+                        }
+                    }
+                    if let Ok(timers) = self.timers.lock() {
+                        for timer in timers.iter() {
+                            match &timer.action {
+                                VmTimerAction::Callback { callback, args } => {
+                                    mark_value(callback);
+                                    for arg in args {
+                                        mark_value(arg);
+                                    }
+                                }
+                                VmTimerAction::ResolvePromise { value, .. } => {
+                                    mark_value(value);
+                                }
+                            }
+                        }
                     }
                     GC_ROOTS.with(|roots| {
                         if let Ok(borrowed) = roots.try_borrow() {
@@ -374,6 +452,7 @@ impl VM {
                             break;
                         }
                     }
+                    super::gc::gc_sweep_string_cache();
                 }
                 GcPhase::Sweep => {
                     for _ in 0..5 {
@@ -381,7 +460,7 @@ impl VM {
                         if curr.is_null() {
                             state.phase = GcPhase::Pause;
                             state.alloc_count = 0;
-                            unsafe { GC_NEEDS_STEP = false; }
+                            GC_NEEDS_STEP.store(false, Ordering::Relaxed);
                             break;
                         }
 
@@ -411,19 +490,13 @@ impl VM {
 
     pub fn collect_garbage(&mut self) {
         let start_time = Instant::now();
-        super::gc::gc_clear_string_cache();
         GC_STATE.with(|state| {
             let mut state = state.borrow_mut();
             state.gray_stack.clear();
         });
 
         // 1. Mark phase: mark roots
-        let stack_len = if let Some(last_frame) = self.frames.last() {
-            (last_frame.slots_offset + 256).min(self.stack.len())
-        } else {
-            self.stack.len()
-        };
-        for val in &self.stack[..stack_len] {
+        for val in &self.stack {
             mark_value(val);
         }
         for val in self.globals.values() {
@@ -431,6 +504,40 @@ impl VM {
         }
         for frame in &self.frames {
             mark_value(&Value::function(frame.function));
+        }
+        for &upval_ptr in &self.open_upvalues {
+            super::gc::mark_object(upval_ptr);
+        }
+        if let Ok(queue) = self.event_loop_queue.lock() {
+            for task in queue.iter() {
+                mark_value(&task.callback);
+                for arg in task.args.iter() {
+                    mark_value(arg);
+                }
+            }
+        }
+        if let Ok(pending) = self.pending_callbacks.lock() {
+            for item in pending.iter() {
+                mark_value(&item.callback);
+                for arg in item.args.iter() {
+                    mark_value(arg);
+                }
+            }
+        }
+        if let Ok(timers) = self.timers.lock() {
+            for timer in timers.iter() {
+                match &timer.action {
+                    VmTimerAction::Callback { callback, args } => {
+                        mark_value(callback);
+                        for arg in args {
+                            mark_value(arg);
+                        }
+                    }
+                    VmTimerAction::ResolvePromise { value, .. } => {
+                        mark_value(value);
+                    }
+                }
+            }
         }
         GC_ROOTS.with(|roots| {
             if let Ok(borrowed) = roots.try_borrow() {
@@ -449,6 +556,9 @@ impl VM {
                 break;
             }
         }
+
+        // Evict dead entries from STRING_CACHE before sweeping
+        super::gc::gc_sweep_string_cache();
 
         // 3. Sweep phase: sweep the entire linked list in one go
         GC_STATE.with(|state| {
@@ -482,13 +592,13 @@ impl VM {
             state.sweep_ptr = std::ptr::null_mut();
             state.prev_sweep_ptr = std::ptr::null_mut();
         });
-        unsafe { GC_NEEDS_STEP = false; }
+        GC_NEEDS_STEP.store(false, Ordering::Relaxed);
         GC_TIME.with(|t| t.set(t.get() + start_time.elapsed()));
     }
 
     #[inline(always)]
     pub fn gc_trigger(&mut self) {
-        if unsafe { GC_NEEDS_STEP } {
+        if GC_NEEDS_STEP.load(Ordering::Relaxed) {
             self.collect_garbage();
         }
     }
@@ -817,10 +927,10 @@ impl VM {
                     let thrown = if !ret_val_out.is_null() {
                         ret_val_out
                     } else if let Some(err_msg) = self.error.take() {
-                        let ptr = super::gc::get_or_create_string(&err_msg);
+                        let ptr = super::gc::gc_alloc_string(&err_msg);
                         Value::string(ptr)
                     } else {
-                        let ptr = super::gc::get_or_create_string("JIT execution error");
+                        let ptr = super::gc::intern_string("JIT execution error");
                         Value::string(ptr)
                     };
 
@@ -1048,7 +1158,7 @@ impl VM {
                                     } else {
                                         let _ = write!(&mut s_ref, "{}", b);
                                     }
-                                    super::gc::get_or_create_string(s_ref.as_str())
+                                    super::gc::gc_alloc_string(s_ref.as_str())
                                 });
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else if b.is_string() {
@@ -1070,7 +1180,7 @@ impl VM {
                                         let _ = write!(&mut s_ref, "{}", a);
                                     }
                                     s_ref.push_str(sb_str);
-                                    super::gc::get_or_create_string(s_ref.as_str())
+                                    super::gc::gc_alloc_string(s_ref.as_str())
                                 });
                                 *frame_slots.add(dest) = Value::string(new_ptr);
                             } else {
@@ -1233,7 +1343,7 @@ impl VM {
                             reload_stack!();
                             let chars: Vec<Value> = match &(*s_ptr).data {
                                 GcData::String(s) => s.chars().map(|c| {
-                                    let cp = super::gc::get_or_create_string(&c.to_string());
+                                    let cp = super::gc::gc_alloc_string(&c.to_string());
                                     Value::string(cp)
                                 }).collect(),
                                 _ => Vec::new(),
@@ -2087,6 +2197,43 @@ impl VM {
 
     fn run_event_loop_inner(&mut self, wait_for_active: bool) -> Result<(), String> {
         loop {
+            // 1. Process all expired timers from the min-heap
+            loop {
+                let now = Instant::now();
+                let timer_opt = {
+                    let mut timers = self.timers.lock().unwrap();
+                    if let Some(top) = timers.peek() {
+                        if top.due_time <= now {
+                            timers.pop()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                let Some(timer) = timer_opt else { break; };
+
+                self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+                match timer.action {
+                    VmTimerAction::Callback { callback, args } => {
+                        if let Err(e) = self.call_function_reentrant(callback, args) {
+                            return Err(e);
+                        }
+                    }
+                    VmTimerAction::ResolvePromise { promise_ptr, value } => {
+                        let mut q = self.event_loop_queue.lock().unwrap();
+                        q.push(EventLoopTask {
+                            callback: Value::null(),
+                            args: Vec::new(),
+                            result: AsyncResult::ResolvePromise(promise_ptr, value),
+                        });
+                    }
+                }
+            }
+
+            // 2. Process tasks from event loop queue (promises, I/O, etc.)
             let tasks = {
                 let mut queue = self.event_loop_queue.lock().unwrap();
                 std::mem::take(&mut *queue)
@@ -2105,8 +2252,8 @@ impl VM {
                                 match res {
                                     Ok(body_str) => {
                                         let mut map = crate::vm::gc::get_pooled_map(2);
-                                        let body_key = crate::vm::gc::get_or_create_string("_body");
-                                        let body_val = crate::vm::gc::get_or_create_string(&body_str);
+                                        let body_key = crate::vm::gc::intern_string("_body");
+                                        let body_val = crate::vm::gc::gc_alloc_string(&body_str);
                                         map.insert(crate::vm::value::MapKey(Value::string(body_key)), Value::string(body_val));
                                         let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Object(map));
                                         Value::object(ptr)
@@ -2120,7 +2267,7 @@ impl VM {
                             AsyncResult::ResolveTextPromise(_, res) => {
                                 match res {
                                     Ok(content) => {
-                                        let ptr = crate::vm::gc::get_or_create_string(&content);
+                                        let ptr = crate::vm::gc::gc_alloc_string(&content);
                                         Value::string(ptr)
                                     }
                                     Err(e) => {
@@ -2188,6 +2335,10 @@ impl VM {
                         let func = unsafe {
                             match &(*frame.function).data {
                                 crate::vm::gc::GcData::Function(f) => f,
+                                crate::vm::gc::GcData::Closure(c) => match &(*c.function).data {
+                                    crate::vm::gc::GcData::Function(f) => f,
+                                    _ => unreachable!(),
+                                },
                                 _ => unreachable!(),
                             }
                         };
@@ -2222,17 +2373,36 @@ impl VM {
                 }
             }
 
-            let active = self.active_async_tasks.load(std::sync::atomic::Ordering::SeqCst);
+            let active = self.active_async_tasks.load(Ordering::SeqCst);
             if active == 0 || !wait_for_active {
                 let queue_empty = self.event_loop_queue.lock().unwrap().is_empty();
-                if queue_empty {
+                let has_due_timers = {
+                    let timers = self.timers.lock().unwrap();
+                    timers.peek().map_or(false, |t| t.due_time <= Instant::now())
+                };
+                if queue_empty && !has_due_timers {
                     break;
                 }
             }
 
             let queue = self.event_loop_queue.lock().unwrap();
             if queue.is_empty() {
-                let _ = self.event_loop_condvar.wait_timeout(queue, Duration::from_millis(10));
+                let now = Instant::now();
+                let wait_timeout = {
+                    let timers = self.timers.lock().unwrap();
+                    if let Some(top) = timers.peek() {
+                        if top.due_time > now {
+                            top.due_time.duration_since(now).min(Duration::from_millis(10))
+                        } else {
+                            Duration::from_millis(0)
+                        }
+                    } else {
+                        Duration::from_millis(10)
+                    }
+                };
+                if wait_timeout > Duration::from_millis(0) {
+                    let _ = self.event_loop_condvar.wait_timeout(queue, wait_timeout);
+                }
             }
         }
         Ok(())
@@ -2498,6 +2668,102 @@ mod tests {
     }
 
     #[test]
+    fn test_gc_stack_roots_deep_no_truncation() {
+        gc_free_all();
+
+        let mut vm = VM::new();
+        // Fill stack with 500 null values (> 256)
+        for _ in 0..500 {
+            vm.stack.push(Value::null());
+        }
+
+        // Place a live object at slot 450 (which would have been ignored by 256 truncation)
+        let deep_ptr = gc_allocate(GcData::Array(vec![Value::number(42.0)]));
+        vm.stack[450] = Value::array(deep_ptr);
+
+        let garbage_ptr = gc_allocate(GcData::Array(vec![Value::number(999.0)]));
+        let _garbage = Value::array(garbage_ptr);
+
+        // Run full GC collection
+        vm.collect_garbage();
+
+        let mut found_deep = false;
+        let mut found_garbage = false;
+        unsafe {
+            let mut curr = GC_STATE.with(|s| s.borrow().head);
+            while !curr.is_null() {
+                if curr == deep_ptr {
+                    found_deep = true;
+                }
+                if curr == garbage_ptr {
+                    found_garbage = true;
+                }
+                curr = (*curr).next;
+            }
+        }
+        assert!(found_deep, "Deep stack object (>256 slots) MUST be kept alive");
+        assert!(!found_garbage, "Unreferenced garbage object must be reclaimed");
+
+        gc_free_all();
+    }
+
+    #[test]
+    fn test_gc_string_cache_sweep() {
+        gc_free_all();
+
+        let mut vm = VM::new();
+
+        let live_ptr = crate::vm::gc::intern_string("live_constant_identifier");
+        let _dead_ptr = crate::vm::gc::intern_string("transient_dead_identifier");
+
+        // Reference live_ptr in global variables
+        vm.globals.insert("live_id".into(), Value::string(live_ptr));
+
+        // Ensure both are in cache initially
+        crate::vm::gc::STRING_CACHE.with(|cache| {
+            let c = cache.borrow();
+            assert!(c.contains_key("live_constant_identifier"));
+            assert!(c.contains_key("transient_dead_identifier"));
+        });
+
+        // Run GC collection
+        vm.collect_garbage();
+
+        // Verify cache sweeping: live retained, dead evicted
+        crate::vm::gc::STRING_CACHE.with(|cache| {
+            let c = cache.borrow();
+            assert!(c.contains_key("live_constant_identifier"), "Live interned string must be retained");
+            assert!(!c.contains_key("transient_dead_identifier"), "Dead interned string must be evicted");
+        });
+
+        // Verify that re-interning live string returns identical pointer
+        let live_ptr_2 = crate::vm::gc::intern_string("live_constant_identifier");
+        assert_eq!(live_ptr, live_ptr_2);
+
+        gc_free_all();
+    }
+
+    #[test]
+    fn test_gc_atomic_flag() {
+        gc_free_all();
+
+        assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), false);
+
+        for _ in 0..10000 {
+            gc_allocate(GcData::Array(vec![]));
+        }
+
+        assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), true);
+
+        let mut vm = VM::new();
+        vm.collect_garbage();
+
+        assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), false);
+
+        gc_free_all();
+    }
+
+    #[test]
     fn test_imports_exports() {
         use std::fs;
         let dir = std::env::current_dir().unwrap().join("target").join("test_imports_exports");
@@ -2599,5 +2865,211 @@ mod tests {
         vm.run_event_loop().unwrap();
 
         assert_eq!(vm.get_global("counter").unwrap().as_number(), 30.0);
+    }
+
+    #[test]
+    fn test_set_timeout_scale_and_ordering() {
+        gc_free_all();
+        let source = "
+            let order = []
+            setTimeout(() => {
+                arrayPush(order, 3)
+            }, 30)
+            setTimeout(() => {
+                arrayPush(order, 1)
+            }, 10)
+            setTimeout(() => {
+                arrayPush(order, 2)
+            }, 20)
+        ";
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+        vm.register_global("clearTimeout", Value::native_function(crate::vm::er_http::native_clear_timeout));
+        vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+        vm.run_event_loop().unwrap();
+
+        let order_val = vm.get_global("order").unwrap();
+        assert!(order_val.is_array());
+        unsafe {
+            if let GcData::Array(arr) = &(*order_val.as_gc_ptr()).data {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0].as_number(), 1.0);
+                assert_eq!(arr[1].as_number(), 2.0);
+                assert_eq!(arr[2].as_number(), 3.0);
+            } else {
+                panic!("Expected array");
+            }
+        }
+    }
+
+    #[test]
+    fn test_clear_timeout_functionality() {
+        gc_free_all();
+        let source = "
+            let fired = []
+            let t1 = setTimeout(() => {
+                arrayPush(fired, 1)
+            }, 10)
+            let t2 = setTimeout(() => {
+                arrayPush(fired, 2)
+            }, 20)
+            clearTimeout(t2)
+        ";
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+        vm.register_global("clearTimeout", Value::native_function(crate::vm::er_http::native_clear_timeout));
+        vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+        vm.run_event_loop().unwrap();
+
+        let fired_val = vm.get_global("fired").unwrap();
+        assert!(fired_val.is_array());
+        unsafe {
+            if let GcData::Array(arr) = &(*fired_val.as_gc_ptr()).data {
+                assert_eq!(arr.len(), 1);
+                assert_eq!(arr[0].as_number(), 1.0);
+            } else {
+                panic!("Expected array");
+            }
+        }
+    }
+
+    #[test]
+    fn test_http_response_aborted_safety() {
+        crate::vm::er_http::end_http_response_json(std::ptr::null_mut(), "{}");
+        let null_args = vec![Value::null()];
+        crate::vm::er_http::native_context_json(null_args.clone());
+        crate::vm::er_http::native_context_html(null_args);
+    }
+
+    #[test]
+    fn test_websocket_pubsub_api() {
+        gc_free_all();
+        let source = "
+            let app = router()
+            let open_called = false
+            let msg_received = \"\"
+            let is_binary_received = false
+            
+            app.ws(\"/chat\", {
+                open: (ws) => {
+                    open_called = true
+                },
+                message: (ws, msg, is_binary) => {
+                    msg_received = msg
+                    is_binary_received = is_binary
+                },
+                close: (ws, code, reason) => {
+                }
+            })
+
+            let pub_res = app.publish(\"global_room\", \"Hello Everyone\")
+            let subs_count = app.numSubscribers(\"global_room\")
+        ";
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.register_global("router", Value::native_function(crate::vm::er_http::native_route));
+        vm.use_jit = true;
+        vm.run(function).unwrap();
+
+        // Verify WebSocket route registered
+        let has_ws_routes = crate::vm::er_http::WS_ROUTES.with(|routes| {
+            routes.borrow().iter().any(|r| r.path == "/chat")
+        });
+        assert!(has_ws_routes);
+
+        // Test Simulated open event
+        let dummy_ws = 0x12345 as *mut std::ffi::c_void;
+        let path_c = std::ffi::CString::new("/chat").unwrap();
+        crate::vm::er_http::ACTIVE_VM.with(|active| active.set(&mut vm as *mut VM));
+        crate::vm::er_http::er_ws_on_open(dummy_ws, path_c.as_ptr(), path_c.as_bytes().len());
+        assert_eq!(vm.get_global("open_called").unwrap().as_boolean(), true);
+
+        // Test Simulated text message event
+        let text_msg = "Hello Eronom";
+        let text_c = std::ffi::CString::new(text_msg).unwrap();
+        crate::vm::er_http::er_ws_on_message(
+            dummy_ws,
+            path_c.as_ptr(),
+            path_c.as_bytes().len(),
+            text_c.as_ptr(),
+            text_c.as_bytes().len(),
+            0,
+        );
+        let received_val = vm.get_global("msg_received").unwrap();
+        assert_eq!(received_val.as_str().unwrap(), "Hello Eronom");
+        assert_eq!(vm.get_global("is_binary_received").unwrap().as_boolean(), false);
+
+        // Test Simulated binary message event
+        let binary_bytes: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
+        crate::vm::er_http::er_ws_on_message(
+            dummy_ws,
+            path_c.as_ptr(),
+            path_c.as_bytes().len(),
+            binary_bytes.as_ptr() as *const std::ffi::c_char,
+            binary_bytes.len(),
+            1,
+        );
+        let bin_msg_val = vm.get_global("msg_received").unwrap();
+        assert!(bin_msg_val.is_array());
+        unsafe {
+            if let GcData::Array(arr) = &(*bin_msg_val.as_gc_ptr()).data {
+                assert_eq!(arr.len(), 4);
+                assert_eq!(arr[0].as_number(), 0xde as f64);
+                assert_eq!(arr[1].as_number(), 0xad as f64);
+                assert_eq!(arr[2].as_number(), 0xbe as f64);
+                assert_eq!(arr[3].as_number(), 0xef as f64);
+            } else {
+                panic!("Expected Array for binary frame");
+            }
+        }
+        assert_eq!(vm.get_global("is_binary_received").unwrap().as_boolean(), true);
+
+        // Clean up
+        crate::vm::er_http::ACTIVE_VM.with(|active| active.set(std::ptr::null_mut()));
+    }
+
+    #[test]
+    fn test_extract_bytes_from_value() {
+        gc_free_all();
+        // 1. Test string extraction
+        let s_ptr = crate::vm::gc::gc_alloc_string("hello");
+        let (bytes, is_bin) = crate::vm::er_http::extract_bytes_from_value(Value::string(s_ptr), false);
+        assert_eq!(bytes, b"hello");
+        assert_eq!(is_bin, false);
+
+        let (bytes_forced, is_bin_forced) = crate::vm::er_http::extract_bytes_from_value(Value::string(s_ptr), true);
+        assert_eq!(bytes_forced, b"hello");
+        assert_eq!(is_bin_forced, true);
+
+        // 2. Test array of numbers extraction
+        let mut arr_elems = Vec::new();
+        arr_elems.push(Value::number(1.0));
+        arr_elems.push(Value::number(2.0));
+        arr_elems.push(Value::number(255.0));
+        let arr_ptr = crate::vm::gc::gc_allocate(GcData::Array(arr_elems));
+        let (arr_bytes, arr_is_bin) = crate::vm::er_http::extract_bytes_from_value(Value::array(arr_ptr), false);
+        assert_eq!(arr_bytes, vec![1, 2, 255]);
+        assert_eq!(arr_is_bin, true);
     }
 }

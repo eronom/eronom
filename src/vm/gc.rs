@@ -6,6 +6,7 @@ use super::bytecode::Function;
 use fnv::FnvHashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 pub type ObjectMap = FnvHashMap<MapKey, Value>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -146,7 +147,7 @@ thread_local! {
     pub static GC_ROOTS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
 }
 
-pub static mut GC_NEEDS_STEP: bool = false;
+pub static GC_NEEDS_STEP: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
 pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
@@ -251,7 +252,7 @@ pub fn gc_allocate(data: GcData) -> *mut GcObject {
 
         s_ref.alloc_count += 1;
         if s_ref.alloc_count >= 10000 {
-            unsafe { GC_NEEDS_STEP = true; }
+            GC_NEEDS_STEP.store(true, Ordering::Relaxed);
         }
         ptr
     })
@@ -282,7 +283,7 @@ pub fn gc_free_all() {
             s_ref.gray_stack.clear();
             s_ref.sweep_ptr = std::ptr::null_mut();
             s_ref.prev_sweep_ptr = std::ptr::null_mut();
-            GC_NEEDS_STEP = false;
+            GC_NEEDS_STEP.store(false, Ordering::Relaxed);
         });
         gc_clear_string_cache();
     }
@@ -421,7 +422,27 @@ pub fn gc_clear_string_cache() {
     STRING_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
-pub fn get_or_create_string(s: &str) -> *mut GcObject {
+pub fn gc_sweep_string_cache() {
+    STRING_CACHE.with(|cache| {
+        cache.borrow_mut().retain(|_, ptr| unsafe {
+            !ptr.is_null() && (*(*ptr)).color != GcColor::White
+        });
+    });
+}
+
+#[inline(always)]
+pub fn gc_alloc_string(s: &str) -> *mut GcObject {
+    let rc_str: Rc<str> = Rc::from(s);
+    gc_allocate(GcData::String(rc_str))
+}
+
+#[inline(always)]
+pub fn gc_alloc_string_rc(rc_str: Rc<str>) -> *mut GcObject {
+    gc_allocate(GcData::String(rc_str))
+}
+
+#[inline(always)]
+pub fn intern_string(s: &str) -> *mut GcObject {
     STRING_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(&ptr) = cache.get(s) {
@@ -433,6 +454,11 @@ pub fn get_or_create_string(s: &str) -> *mut GcObject {
             ptr
         }
     })
+}
+
+#[inline(always)]
+pub fn get_or_create_string(s: &str) -> *mut GcObject {
+    intern_string(s)
 }
 
 pub fn json_to_value(val: serde_json::Value) -> Value {
@@ -447,7 +473,7 @@ pub fn json_to_value(val: serde_json::Value) -> Value {
             }
         }
         serde_json::Value::String(s) => {
-            let ptr = get_or_create_string(&s);
+            let ptr = gc_alloc_string(&s);
             Value::string(ptr)
         }
         serde_json::Value::Array(arr) => {
@@ -461,7 +487,7 @@ pub fn json_to_value(val: serde_json::Value) -> Value {
         serde_json::Value::Object(obj) => {
             let mut map = get_pooled_map(obj.len());
             for (k, v) in obj {
-                let key_ptr = get_or_create_string(&k);
+                let key_ptr = intern_string(&k);
                 let val = json_to_value(v);
                 map.insert(MapKey(Value::string(key_ptr)), val);
             }

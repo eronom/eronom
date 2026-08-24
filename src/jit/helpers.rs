@@ -1,7 +1,7 @@
 use std::time::Instant;
 use crate::vm::execute::VM;
 use crate::vm::value::{Value, MapKey, push_positive_integer, ADD_SCRATCH};
-use crate::vm::gc::{gc_allocate, gc_write_barrier, GcData, get_or_create_string, get_pooled_vec, get_pooled_map, GC_NEEDS_STEP};
+use crate::vm::gc::{gc_allocate, gc_alloc_string, gc_write_barrier, GcData, get_or_create_string, get_pooled_vec, get_pooled_map, GC_NEEDS_STEP};
 use super::profile::{JIT_PROFILING, JIT_PROFILER};
 use fnv::FnvHashMap;
 
@@ -62,7 +62,7 @@ pub extern "C" fn er_jit_add(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
                     } else {
                         let _ = write!(&mut s_ref, "{}", val_c);
                     }
-                    get_or_create_string(s_ref.as_str())
+                    gc_alloc_string(s_ref.as_str())
                 });
                 Value::string(new_ptr)
             } else if val_c.is_string() {
@@ -84,7 +84,7 @@ pub extern "C" fn er_jit_add(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
                         let _ = write!(&mut s_ref, "{}", val_b);
                     }
                     s_ref.push_str(sb_str);
-                    get_or_create_string(s_ref.as_str())
+                    gc_alloc_string(s_ref.as_str())
                 });
                 Value::string(new_ptr)
             } else {
@@ -272,7 +272,7 @@ pub extern "C" fn er_jit_to_iter(vm: *mut VM, val: Value) -> Value {
             let s_ptr = val.as_gc_ptr();
             let chars: Vec<Value> = match &(*s_ptr).data {
                 GcData::String(s) => s.chars().map(|c| {
-                    let cp = get_or_create_string(&c.to_string());
+                    let cp = gc_alloc_string(&c.to_string());
                     Value::string(cp)
                 }).collect(),
                 _ => Vec::new(),
@@ -393,7 +393,7 @@ pub extern "C" fn er_jit_has_error(vm: *mut VM) -> i64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_needs_gc() -> i64 {
-    unsafe { if GC_NEEDS_STEP { 1 } else { 0 } }
+    if GC_NEEDS_STEP.load(std::sync::atomic::Ordering::Relaxed) { 1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]

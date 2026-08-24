@@ -1,0 +1,85 @@
+import { router } from "std/http"
+
+let app = router()
+
+// GET endpoint
+app.get('/api/items', (c) => {
+  return c.json({
+    status: "ok",
+    method: c.req.method,
+    items: [
+      { id: 1, name: "Item 1" },
+      { id: 2, name: "Item 2" }
+    ]
+  })
+})
+
+// POST endpoint
+app.post('/api/items', (c) => {
+  return c.json({
+    status: "created",
+    method: c.req.method,
+    body: c.req._body
+  })
+})
+
+// PUT endpoint with param
+app.put('/api/items/:id', (c) => {
+  return c.json({
+    status: "updated",
+    method: c.req.method,
+    id: c.req.params.id,
+    body: c.req._body
+  })
+})
+
+// DELETE endpoint with param
+app.delete('/api/items/:id', (c) => {
+  return c.json({
+    status: "deleted",
+    method: c.req.method,
+    id: c.req.params.id
+  })
+})
+
+// PATCH endpoint with param
+app.patch('/api/items/:id', (c) => {
+  return c.json({
+    status: "patched",
+    method: c.req.method,
+    id: c.req.params.id,
+    body: c.req._body
+  })
+})
+
+// HEAD endpoint
+app.head('/api/items', (c) => {
+  return c.json({
+    status: "ok",
+    method: c.req.method
+  })
+})
+
+// OPTIONS endpoint
+app.options('/api/items', (c) => {
+  return c.json({
+    status: "ok",
+    method: c.req.method,
+    allow: "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"
+  })
+})
+
+// Catch-all route matching ANY method on /wildcard/*
+app.all('/wildcard/*', (c) => {
+  return c.json({
+    status: "catch_all_matched",
+    method: c.req.method,
+    url: c.req.url,
+    wildcard: c.req.params["*"],
+    body: c.req._body
+  })
+})
+
+app.listen(3000, () => {
+  print("REST test server running on port 3000")
+})
