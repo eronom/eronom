@@ -1760,7 +1760,9 @@ impl VM {
                                              *frame_slots.add(dest) = Value::null();
                                          }
                                     }
-                                    _ => unreachable!(),
+                                    _ => {
+                                        *frame_slots.add(dest) = Value::null();
+                                    }
                                 }
                             }
                         } else if obj.is_array() {
@@ -1781,7 +1783,9 @@ impl VM {
                                         *frame_slots.add(dest) = Value::null();
                                     }
                                 }
-                                _ => unreachable!(),
+                                _ => {
+                                    *frame_slots.add(dest) = Value::null();
+                                }
                             }
                         } else {
                             return Err("Only objects and arrays have properties".into());
@@ -1813,7 +1817,7 @@ impl VM {
                                         return Err(format!("Struct has no field '{}'", name));
                                     }
                                 }
-                                _ => unreachable!(),
+                                _ => {}
                             }
                         } else if obj.is_array() {
                             let name_rc = name_val.as_str().unwrap_or("");
@@ -1837,7 +1841,7 @@ impl VM {
                                         return Err("Cannot set non-numeric property on array".into());
                                     }
                                 }
-                                _ => unreachable!(),
+                                _ => {}
                             }
                         } else {
                             return Err("Only objects and arrays have properties".into());
@@ -1856,7 +1860,9 @@ impl VM {
                                         let val = arr.get(idx).cloned().unwrap_or(Value::null());
                                         *frame_slots.add(dest) = val;
                                     }
-                                    _ => unreachable!(),
+                                    _ => {
+                                        *frame_slots.add(dest) = Value::null();
+                                    }
                                 }
                             } else if index.is_string() {
                                 let s = index.as_str().unwrap_or("");
@@ -1866,7 +1872,9 @@ impl VM {
                                             let val = arr.get(idx).cloned().unwrap_or(Value::null());
                                             *frame_slots.add(dest) = val;
                                         }
-                                        _ => unreachable!(),
+                                        _ => {
+                                            *frame_slots.add(dest) = Value::null();
+                                        }
                                     }
                                 } else {
                                     *frame_slots.add(dest) = Value::null();
@@ -1886,7 +1894,9 @@ impl VM {
                                         let val = s.get_field(index).unwrap_or(Value::null());
                                         *frame_slots.add(dest) = val;
                                     }
-                                    _ => unreachable!(),
+                                    _ => {
+                                        *frame_slots.add(dest) = Value::null();
+                                    }
                                 }
                             } else {
                                 return Err("Only arrays can be indexed by numbers, and objects by strings".into());
@@ -1918,7 +1928,7 @@ impl VM {
                                         }
                                         gc_write_barrier(ptr, &val);
                                     }
-                                    _ => unreachable!(),
+                                    _ => {}
                                 }
                             } else if index.is_string() {
                                 let s = index.as_str().unwrap_or("");
@@ -1938,7 +1948,7 @@ impl VM {
                                             }
                                             gc_write_barrier(ptr, &val);
                                         }
-                                        _ => unreachable!(),
+                                        _ => {}
                                     }
                                 } else {
                                     return Err("Cannot set non-numeric property on array".into());
@@ -1967,7 +1977,7 @@ impl VM {
                                             return Err(format!("Struct has no field '{}'", name));
                                         }
                                     }
-                                    _ => unreachable!(),
+                                    _ => {}
                                 }
                             } else {
                                 return Err("Only arrays can be indexed by numbers, and objects by strings".into());

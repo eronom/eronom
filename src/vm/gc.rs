@@ -424,6 +424,8 @@ pub fn gc_free_all() {
             GC_NEEDS_STEP.store(false, Ordering::Relaxed);
         });
         gc_clear_string_cache();
+        super::shape::reset_shape_state();
+        crate::jit::helpers::reset_global_ic();
     }
 }
 
