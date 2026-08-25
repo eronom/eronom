@@ -597,6 +597,11 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
     backend::er_http::register_eronom_file_api(&mut vm).unwrap();
+    backend::std_fs::register_fs_natives(&mut vm);
+    backend::std_path::register_path_natives(&mut vm);
+    backend::std_crypto::register_crypto_natives(&mut vm);
+    backend::std_json::register_json_natives(&mut vm);
+    backend::std_system::register_system_natives(&mut vm);
     backend::er_http::set_target_script_path(path);
     let main_path = std::path::Path::new(path);
     if let Some(parent_dir) = main_path.parent() {

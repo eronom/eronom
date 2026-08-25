@@ -1,0 +1,24 @@
+// Standard Path library for Eronom
+
+export const join = Eronom_nativePathJoin
+export const resolve = Eronom_nativePathResolve
+export const dirname = Eronom_nativePathDirname
+export const basename = Eronom_nativePathBasename
+export const extname = Eronom_nativePathExtname
+export const normalize = Eronom_nativePathNormalize
+export const isAbsolute = Eronom_nativePathIsAbsolute
+
+export const sep = "/"
+export const delimiter = ":"
+
+export const path = {
+  join: join,
+  resolve: resolve,
+  dirname: dirname,
+  basename: basename,
+  extname: extname,
+  normalize: normalize,
+  isAbsolute: isAbsolute,
+  sep: sep,
+  delimiter: delimiter
+}

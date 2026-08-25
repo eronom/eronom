@@ -1,0 +1,50 @@
+import { test, it, describe, assert, assertEqual, assertNotEqual, assertTrue, assertFalse, assertNull, assertNotNull, assertThrows, assertContains, runTests, beforeEach, afterEach } from "std/test"
+
+let count = 0
+
+beforeEach(() => {
+  count = count + 1
+})
+
+describe("Basic Assertions", () => {
+  test("truthy assertions", () => {
+    assert(true, "true should be truthy")
+    assertTrue(true, "assertTrue should pass")
+    assertFalse(false, "assertFalse should pass")
+  })
+
+  test("null assertions", () => {
+    assertNull(null, "assertNull should pass")
+    assertNotNull(42, "assertNotNull should pass")
+  })
+
+  test("equality assertions", () => {
+    assertEqual(10 + 20, 30, "10+20 should be 30")
+    assertEqual("hello " + "world", "hello world", "strings should match")
+    assertEqual([1, 2, 3], [1, 2, 3], "arrays should deep match")
+    assertEqual({ a: 1, b: "two" }, { a: 1, b: "two" }, "objects should deep match")
+    assertNotEqual(10, 20, "10 != 20")
+  })
+
+  test("string contains assertion", () => {
+    assertContains("Eronom High Performance Scripting", "Performance", "should contain substring")
+  })
+
+  test("throws assertion", () => {
+    assertThrows(() => {
+      throw "Custom Error 123"
+    }, "Custom Error")
+  })
+})
+
+describe("Lifecycle Hooks", () => {
+  it("beforeEach should have incremented count", () => {
+    assert(count > 0, "count should be > 0")
+  })
+})
+
+const results = runTests()
+print("Test runner result success: " + results.success)
+print("Test runner total tests: " + results.total)
+print("Test runner passed tests: " + results.passed)
+print("Test runner failed tests: " + results.failed)

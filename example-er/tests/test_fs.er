@@ -1,0 +1,75 @@
+import { readDir, makeDir, removeDir, exists, stat, readFile, writeFile, appendFile, readBinary, writeBinary, copyFile, rename, removeFile, createReadStream, fs } from "std/fs"
+
+print("--- Testing std/fs ---")
+
+// 1. Directory and file existence
+const testDir = "./tmp_test_fs"
+if (exists(testDir)) {
+  removeDir(testDir, true)
+}
+
+print("makeDir recursive: " + makeDir(testDir + "/sub", true))
+print("exists dir: " + exists(testDir + "/sub"))
+
+// 2. Writing and reading text files
+const testFile = testDir + "/hello.txt"
+print("writeFile: " + writeFile(testFile, "Hello Eronom FS!"))
+print("exists file: " + exists(testFile))
+print("readFile: " + readFile(testFile))
+
+// 3. Appending to text files
+appendFile(testFile, " Appended text.")
+print("readFile after append: " + readFile(testFile))
+
+// 4. File metadata stat
+const info = stat(testFile)
+print("stat.isFile: " + info.isFile)
+print("stat.isDirectory: " + info.isDirectory)
+print("stat.size > 0: " + (info.size > 0))
+print("stat.mtime > 0: " + (info.mtime > 0))
+
+// 5. Binary read and write
+const binFile = testDir + "/data.bin"
+const byteData = [65, 66, 67, 68, 255, 0, 42]
+print("writeBinary: " + writeBinary(binFile, byteData))
+const readBytes = readBinary(binFile)
+print("readBinary length: " + arrayLen(readBytes))
+print("readBinary byte 0: " + readBytes[0])
+print("readBinary byte 4: " + readBytes[4])
+
+// 6. Copy and Rename
+const copiedFile = testDir + "/hello_copy.txt"
+print("copyFile: " + (copyFile(testFile, copiedFile) > 0))
+print("exists copy: " + exists(copiedFile))
+
+const renamedFile = testDir + "/hello_renamed.txt"
+print("rename: " + rename(copiedFile, renamedFile))
+print("exists old copy: " + exists(copiedFile))
+print("exists renamed: " + exists(renamedFile))
+
+// 7. readDir
+const entries = readDir(testDir)
+print("readDir has entries: " + (arrayLen(entries) >= 2))
+
+const detailedEntries = readDir(testDir, { withFileTypes: true })
+print("detailedEntries count: " + (arrayLen(detailedEntries) >= 2))
+
+// 8. Streaming read
+const stream = createReadStream(testFile, { chunkSize: 8 })
+let chunk1 = stream.readChunk()
+print("stream chunk1: " + chunk1)
+let allStreamed = chunk1
+while (true) {
+  let c = stream.readChunk()
+  if (c == null) {
+    break
+  }
+  allStreamed = allStreamed + c
+}
+stream.close()
+print("streamed full text: " + allStreamed)
+
+// Cleanup
+removeDir(testDir, true)
+print("exists after removeDir: " + exists(testDir))
+print("--- std/fs tests completed successfully ---")

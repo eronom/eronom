@@ -5,6 +5,11 @@ pub mod compiler;
 pub mod execute;
 pub mod er_http;
 pub mod router;
+pub mod std_fs;
+pub mod std_path;
+pub mod std_crypto;
+pub mod std_json;
+pub mod std_system;
 
 // Re-export key structures to maintain public API compatibility
 pub use value::Value;

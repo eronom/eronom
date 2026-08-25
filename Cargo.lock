@@ -171,6 +171,7 @@ dependencies = [
  "clap",
  "fnv",
  "regex",
+ "ring",
  "serde",
  "serde_json",
  "toml",

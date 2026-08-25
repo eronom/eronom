@@ -1,0 +1,35 @@
+import { parse, stringify, JSON } from "std/json"
+
+print("--- Testing std/json ---")
+
+// 1. JSON.parse primitives and nested structures
+const jsonStr = "\{\"name\":\"Eronom\",\"version\":1,\"tags\":[\"fast\",\"jit\",\"web\"],\"active\":true,\"extra\":null\}"
+const data = parse(jsonStr)
+print("parse name: " + data.name)
+print("parse version: " + data.version)
+print("parse tags len: " + arrayLen(data.tags))
+print("parse tag 0: " + data.tags[0])
+print("parse active: " + data.active)
+print("parse extra is null: " + (data.extra == null))
+
+// 2. JSON.stringify compact
+const obj = {
+  title: "Runtime",
+  count: 42,
+  items: [10, 20, 30],
+  flag: false
+}
+const compactJson = stringify(obj)
+print("stringify compact: " + compactJson)
+print("stringify contains title: " + stringIncludes(compactJson, "\"title\":\"Runtime\""))
+print("stringify contains count: " + stringIncludes(compactJson, "\"count\":42"))
+
+// 3. JSON.stringify pretty
+const prettyJson = stringify(obj, 2)
+print("stringify pretty contains newline: " + stringIncludes(prettyJson, "\n"))
+
+// 4. Global JSON methods without import
+print("global JSON.parse: " + JSON.parse("[1,2,3]")[1])
+print("global JSON.stringify: " + JSON.stringify({ ok: true }))
+
+print("--- std/json tests completed successfully ---")

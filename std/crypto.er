@@ -1,0 +1,58 @@
+// Standard Cryptography library for Eronom
+
+export const sha256 = (data) => {
+  return Eronom_nativeCryptoHash("sha256", data)
+}
+
+export const sha512 = (data) => {
+  return Eronom_nativeCryptoHash("sha512", data)
+}
+
+export const md5 = (data) => {
+  return Eronom_nativeCryptoHash("md5", data)
+}
+
+export const hash = (algo, data) => {
+  return Eronom_nativeCryptoHash(algo, data)
+}
+
+export const hmac = (algo, key, data) => {
+  return Eronom_nativeCryptoHmac(algo, key, data)
+}
+
+export const hmacSha256 = (key, data) => {
+  return Eronom_nativeCryptoHmac("sha256", key, data)
+}
+
+export const hmacSha512 = (key, data) => {
+  return Eronom_nativeCryptoHmac("sha512", key, data)
+}
+
+export const hmacMd5 = (key, data) => {
+  return Eronom_nativeCryptoHmac("md5", key, data)
+}
+
+export const timingSafeEqual = (a, b) => {
+  return Eronom_nativeCryptoTimingSafeEqual(a, b)
+}
+
+export const randomUUID = Eronom_nativeCryptoRandomUUID
+export const randomBytes = Eronom_nativeCryptoRandomBytes
+export const randomHex = Eronom_nativeCryptoRandomHex
+export const randomInt = Eronom_nativeCryptoRandomInt
+
+export const crypto = {
+  sha256: sha256,
+  sha512: sha512,
+  md5: md5,
+  hash: hash,
+  hmac: hmac,
+  hmacSha256: hmacSha256,
+  hmacSha512: hmacSha512,
+  hmacMd5: hmacMd5,
+  timingSafeEqual: timingSafeEqual,
+  randomUUID: randomUUID,
+  randomBytes: randomBytes,
+  randomHex: randomHex,
+  randomInt: randomInt
+}

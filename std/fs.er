@@ -1,0 +1,105 @@
+// Standard File System library for Eronom
+
+export const readDir = Eronom_nativeReadDir
+export const makeDir = Eronom_nativeMakeDir
+export const mkdir = Eronom_nativeMakeDir
+export const removeDir = Eronom_nativeRemoveDir
+export const rmdir = Eronom_nativeRemoveDir
+export const exists = Eronom_nativeExists
+export const stat = Eronom_nativeStat
+export const readText = Eronom_nativeReadText
+export const readFile = Eronom_nativeReadText
+export const writeText = Eronom_nativeWriteText
+export const writeFile = Eronom_nativeWriteText
+export const appendFile = Eronom_nativeAppendText
+export const readBinary = Eronom_nativeReadBinary
+export const readBytes = Eronom_nativeReadBinary
+export const writeBinary = Eronom_nativeWriteBinary
+export const writeBytes = Eronom_nativeWriteBinary
+export const removeFile = Eronom_nativeRemoveFile
+export const unlink = Eronom_nativeRemoveFile
+export const copyFile = Eronom_nativeCopyFile
+export const rename = Eronom_nativeRename
+
+export const createReadStream = (path, options) => {
+  let chunkSize = 65536
+  if (options) {
+    if (options.chunkSize) {
+      chunkSize = options.chunkSize
+    }
+  }
+  let handle = Eronom_nativeOpenReadStream(path)
+  let closed = false
+
+  return {
+    path: path,
+    chunkSize: chunkSize,
+    read: (size) => {
+      if (closed) { return null }
+      let sz = chunkSize
+      if (size) { sz = size }
+      let chunk = Eronom_nativeReadStreamChunk(handle, sz)
+      if (chunk == null) {
+        closed = true
+      }
+      return chunk
+    },
+    readChunk: () => {
+      if (closed) { return null }
+      let chunk = Eronom_nativeReadStreamChunk(handle, chunkSize)
+      if (chunk == null) {
+        closed = true
+      }
+      return chunk
+    },
+    readBinaryChunk: () => {
+      if (closed) { return null }
+      let chunk = Eronom_nativeReadStreamBinaryChunk(handle, chunkSize)
+      if (chunk == null) {
+        closed = true
+      }
+      return chunk
+    },
+    eachChunk: (callback) => {
+      while (!closed) {
+        let chunk = Eronom_nativeReadStreamChunk(handle, chunkSize)
+        if (chunk == null) {
+          closed = true
+          break
+        }
+        callback(chunk)
+      }
+    },
+    close: () => {
+      if (!closed) {
+        closed = true
+        return Eronom_nativeCloseReadStream(handle)
+      }
+      return true
+    }
+  }
+}
+
+export const fs = {
+  readDir: readDir,
+  makeDir: makeDir,
+  mkdir: mkdir,
+  removeDir: removeDir,
+  rmdir: rmdir,
+  exists: exists,
+  stat: stat,
+  readText: readText,
+  readFile: readFile,
+  writeText: writeText,
+  writeFile: writeFile,
+  appendFile: appendFile,
+  readBinary: readBinary,
+  readBytes: readBytes,
+  writeBinary: writeBinary,
+  writeBytes: writeBytes,
+  removeFile: removeFile,
+  unlink: unlink,
+  copyFile: copyFile,
+  rename: rename,
+  createReadStream: createReadStream
+}

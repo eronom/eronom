@@ -1,0 +1,44 @@
+import { join, resolve, dirname, basename, extname, normalize, isAbsolute, sep, delimiter, path } from "std/path"
+
+print("--- Testing std/path ---")
+
+// 1. join
+print("join simple: " + join("a", "b", "c.txt"))
+print("join with dots: " + join("a", "./b", "../c", "d.txt"))
+print("join leading slash: " + join("/var", "log", "eronom.log"))
+
+// 2. resolve
+const resolved = resolve("src", "main.rs")
+print("resolve isAbsolute: " + isAbsolute(resolved))
+print("resolve contains src: " + stringIncludes(resolved, "src/main.rs"))
+
+// 3. dirname
+print("dirname /a/b/c.txt: " + dirname("/a/b/c.txt"))
+print("dirname file.txt: " + dirname("file.txt"))
+print("dirname /: " + dirname("/"))
+
+// 4. basename
+print("basename /a/b/c.txt: " + basename("/a/b/c.txt"))
+print("basename with ext strip: " + basename("/a/b/c.txt", ".txt"))
+print("basename .gitignore: " + basename(".gitignore"))
+
+// 5. extname
+print("extname index.html: " + extname("index.html"))
+print("extname archive.tar.gz: " + extname("archive.tar.gz"))
+print("extname no ext: " + (extname("filename") == ""))
+print("extname dotfile: " + (extname(".gitignore") == ""))
+
+// 6. normalize
+print("normalize with redundant slashes: " + normalize("/foo/bar//baz/asdf/quux/.."))
+print("normalize relative: " + normalize("a/./b/../../c"))
+
+// 7. isAbsolute
+print("isAbsolute /root: " + isAbsolute("/root"))
+print("isAbsolute rel/path: " + isAbsolute("rel/path"))
+
+// 8. path namespace object
+print("path.sep: " + path.sep)
+print("path.delimiter: " + path.delimiter)
+print("path.join: " + path.join("dir", "file.er"))
+
+print("--- std/path tests completed successfully ---")
