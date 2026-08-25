@@ -5,6 +5,7 @@ pub mod compiler;
 pub mod execute;
 pub mod er_http;
 pub mod router;
+pub mod std_fs;
 
 // Re-export key structures to maintain public API compatibility
 pub use value::Value;

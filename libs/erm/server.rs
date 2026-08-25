@@ -440,6 +440,7 @@ fn execute_api_route(
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
     crate::vm::er_http::register_eronom_file_api(&mut vm).unwrap();
+    crate::vm::std_fs::register_fs_natives(&mut vm);
     crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
 
     let _guard = GcGuard;
