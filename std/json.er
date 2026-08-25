@@ -1,0 +1,9 @@
+// Standard Native JSON library for Eronom
+
+export const parse = Eronom_nativeJsonParse
+export const stringify = Eronom_nativeJsonStringify
+
+export const JSON = {
+  parse: parse,
+  stringify: stringify
+}

@@ -188,6 +188,20 @@ impl<'a> Lexer<'a> {
                 let mut tokens = Vec::new();
 
                 while let Some(nc) = self.advance() {
+                    if nc == '\\' {
+                        if let Some(&next) = self.peek() {
+                            if next == quote || next == '\\' || next == '{' || next == '}' || next == 'n' || next == 't' || next == 'r' || next == '"' || next == '\'' {
+                                self.advance();
+                                match next {
+                                    'n' => string.push('\n'),
+                                    't' => string.push('\t'),
+                                    'r' => string.push('\r'),
+                                    other => string.push(other),
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     if nc == quote {
                         break;
                     }
