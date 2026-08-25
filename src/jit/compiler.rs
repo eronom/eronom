@@ -189,19 +189,84 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         mir.push_str(&format!("          local {}\n", local_regs));
     }
 
+    let mut param_is_double = vec![false; func.arity];
+    for p in 0..func.arity {
+        let mut used_as_non_double = false;
+        for inst in &func.chunk.code {
+            let ra = inst.ra as usize;
+            let rb = inst.rb as usize;
+            match inst.op {
+                OpCode::Call if rb == p => { used_as_non_double = true; }
+                OpCode::GetProperty if rb == p => { used_as_non_double = true; }
+                OpCode::SetProperty if ra == p => { used_as_non_double = true; }
+                OpCode::GetIndex if rb == p => { used_as_non_double = true; }
+                OpCode::SetIndex if ra == p => { used_as_non_double = true; }
+                OpCode::ToIter if rb == p => { used_as_non_double = true; }
+                OpCode::ArrayLen if rb == p => { used_as_non_double = true; }
+                _ => {}
+            }
+        }
+        if !used_as_non_double {
+            param_is_double[p] = true;
+        }
+    }
+
     mir.push_str("          alloca cast_ptr, 192\n");
     mir.push_str("          mov loop_counter, 0\n");
     mir.push_str("          bne resume_dispatch, start_ip, 0\n");
     for i in 0..func.arity.min(num_regs) {
         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
+        if param_is_double[i] {
+            let offset = (i % 24) * 8;
+            mir.push_str(&format!("          ubge deopt_entry, r{}, 0xffe8000000000000\n", i));
+            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, i));
+            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", i, offset));
+        }
     }
     mir.push_str("          jmp entry_0\n");
+    mir.push_str("deopt_entry:\n");
+    mir.push_str("          mov i64:(ip_out), 0\n");
+    mir.push_str("          ret 4\n");
+    let mut is_resume_target = vec![false; func.chunk.code.len()];
+    is_resume_target[0] = true;
+    for (i, inst) in func.chunk.code.iter().enumerate() {
+        if inst.op == OpCode::Loop {
+            let target = (i as i32 + 1 - inst.operand as i32) as usize;
+            if target < is_resume_target.len() {
+                is_resume_target[target] = true;
+            }
+        } else if inst.op == OpCode::Call || inst.op == OpCode::Await {
+            if i + 1 < is_resume_target.len() {
+                is_resume_target[i + 1] = true;
+            }
+        }
+    }
+
+    let resolve_branch_target = |code: &[crate::vm::bytecode::Instruction], mut target: usize| -> usize {
+        let mut depth = 0;
+        while target < code.len() && depth < 16 {
+            let inst = &code[target];
+            if inst.op == OpCode::Jump {
+                target = (target as i32 + 1 + inst.operand as i32) as usize;
+                depth += 1;
+            } else if inst.op == OpCode::JumpIfFalse {
+                target = (target as i32 + 1 + inst.operand as i32) as usize;
+                depth += 1;
+            } else {
+                break;
+            }
+        }
+        target
+    };
+
     mir.push_str("resume_dispatch:\n");
     for i in 0..num_regs {
         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
     }
     for ip_target in 1..func.chunk.code.len() {
-        mir.push_str(&format!("          beq entry_{}, start_ip, {}\n", ip_target, ip_target));
+        if is_resume_target[ip_target] {
+            mir.push_str(&format!("          beq entry_{}, start_ip, {}\n", ip_target, ip_target));
+        }
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -211,10 +276,20 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     }
 
     let debug_jit = std::env::var("ER_DEBUG_JIT").is_ok();
-    let mut types_at_inst = vec![vec![RegType::Double; num_regs]; func.chunk.code.len()];
+    let mut types_at_inst = vec![vec![RegType::Unknown; num_regs]; func.chunk.code.len()];
+    let mut is_init = vec![vec![false; num_regs]; func.chunk.code.len()];
     if num_regs > 0 {
         for r in 0..num_regs {
-            types_at_inst[0][r] = RegType::Unknown;
+            if r < func.arity {
+                is_init[0][r] = true;
+                if param_is_double[r] {
+                    types_at_inst[0][r] = RegType::Double;
+                } else {
+                    types_at_inst[0][r] = RegType::Unknown;
+                }
+            } else {
+                types_at_inst[0][r] = RegType::Unknown;
+            }
         }
     }
 
@@ -234,6 +309,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         let inst = &func.chunk.code[pc];
 
         let mut next_types = current_types.clone();
+        let mut next_init = is_init[pc].clone();
         let ra = inst.ra as usize;
         let rb = inst.rb as usize;
         let rc = inst.rc as usize;
@@ -246,35 +322,64 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::LoadConst => {
                 let val = func.chunk.constants[inst.operand as usize];
                 if ra < num_regs {
+                    next_init[ra] = true;
                     next_types[ra] = if val.is_number() { RegType::Double } else { RegType::Unknown };
                 }
             }
             OpCode::Move => {
-                if ra < num_regs && rb < num_regs {
-                    next_types[ra] = current_types[rb];
+                if ra < num_regs {
+                    next_init[ra] = true;
+                    if rb < num_regs {
+                        next_types[ra] = current_types[rb];
+                    }
                 }
             }
             OpCode::Add => {
-                if ra < num_regs && rb < num_regs && rc < num_regs {
-                    next_types[ra] = if current_types[rb] == RegType::Double && current_types[rc] == RegType::Double {
-                        RegType::Double
-                    } else {
-                        RegType::Unknown
-                    };
+                if ra < num_regs {
+                    next_init[ra] = true;
+                    if rb < num_regs && rc < num_regs {
+                        next_types[ra] = if current_types[rb] == RegType::Double && current_types[rc] == RegType::Double {
+                            RegType::Double
+                        } else {
+                            RegType::Unknown
+                        };
+                    }
                 }
             }
             OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Negate |
             OpCode::Mod | OpCode::BitAnd | OpCode::BitOr | OpCode::BitXor | OpCode::BitNot | OpCode::ShiftLeft | OpCode::ShiftRight | OpCode::ArrayLen => {
                 if ra < num_regs {
+                    next_init[ra] = true;
                     next_types[ra] = RegType::Double;
                 }
             }
-            OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
+            OpCode::Equal | OpCode::Greater | OpCode::Less => {
+                let is_fused_3 = if pc + 2 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[pc + 1];
+                    let jmp_inst = &func.chunk.code[pc + 2];
+                    next_inst.op == OpCode::Not && next_inst.ra == inst.ra && next_inst.rb == inst.ra
+                        && jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == inst.ra
+                } else {
+                    false
+                };
+                let is_fused_2 = if !is_fused_3 && pc + 1 < func.chunk.code.len() {
+                    let jmp_inst = &func.chunk.code[pc + 1];
+                    jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == inst.ra
+                } else {
+                    false
+                };
+                if !is_fused_3 && !is_fused_2 && ra < num_regs {
+                    next_init[ra] = true;
+                    next_types[ra] = RegType::Unknown;
+                }
+            }
+            OpCode::Not |
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
             OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter |
             OpCode::GetUpvalue | OpCode::Closure | OpCode::Await | OpCode::Call => {
                 if ra < num_regs {
+                    next_init[ra] = true;
                     next_types[ra] = RegType::Unknown;
                 }
             }
@@ -293,9 +398,40 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 successors.push(target);
             }
             OpCode::JumpIfFalse => {
-                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                let raw_target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                let target = resolve_branch_target(&func.chunk.code, raw_target);
                 successors.push(pc + 1);
                 successors.push(target);
+            }
+            OpCode::Less | OpCode::Greater | OpCode::Equal => {
+                let is_fused_3 = if pc + 2 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[pc + 1];
+                    let jmp_inst = &func.chunk.code[pc + 2];
+                    next_inst.op == OpCode::Not && next_inst.ra == inst.ra && next_inst.rb == inst.ra
+                        && jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == inst.ra
+                } else {
+                    false
+                };
+                let is_fused_2 = if !is_fused_3 && pc + 1 < func.chunk.code.len() {
+                    let jmp_inst = &func.chunk.code[pc + 1];
+                    jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == inst.ra
+                } else {
+                    false
+                };
+
+                if is_fused_3 {
+                    let raw_target = (pc + 3 + func.chunk.code[pc + 2].operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
+                    successors.push(pc + 3);
+                    successors.push(target);
+                } else if is_fused_2 {
+                    let raw_target = (pc + 2 + func.chunk.code[pc + 1].operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
+                    successors.push(pc + 2);
+                    successors.push(target);
+                } else {
+                    successors.push(pc + 1);
+                }
             }
             _ => {
                 successors.push(pc + 1);
@@ -308,8 +444,14 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             }
             let mut changed = false;
             for r in 0..num_regs {
+                if next_init[r] && !is_init[succ][r] {
+                    is_init[succ][r] = true;
+                    changed = true;
+                }
                 let old = types_at_inst[succ][r];
-                let new_t = if old == RegType::Double && next_types[r] == RegType::Double {
+                let new_t = if !visited[succ] {
+                    next_types[r]
+                } else if old == RegType::Double && next_types[r] == RegType::Double {
                     RegType::Double
                 } else {
                     RegType::Unknown
@@ -357,6 +499,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
     // Entry points conversion: from r{} to d{}
     for ip_target in 0..func.chunk.code.len() {
+        if !is_resume_target[ip_target] {
+            continue;
+        }
         mir.push_str(&format!("entry_{}:\n", ip_target));
         for r in 0..num_regs {
             if live_in[ip_target][r] && types_at_inst[ip_target][r] == RegType::Double {
@@ -369,12 +514,15 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     }
 
 
+    let has_closures = func.chunk.code.iter().any(|inst| inst.op == OpCode::Closure);
     let save_all_registers = |mir: &mut String, idx: usize| {
         for r in 0..num_regs {
-            if types_at_inst[idx][r] == RegType::Double {
-                mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
-            } else {
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
+            if is_init[idx][r] && (has_closures || live_in[idx][r]) {
+                if types_at_inst[idx][r] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
+                } else {
+                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
+                }
             }
         }
     };
@@ -416,7 +564,26 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     next_types[ra] = RegType::Double;
                 }
             }
-            OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
+            OpCode::Equal | OpCode::Greater | OpCode::Less => {
+                let is_fused_3 = if idx + 2 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    let jmp_inst = &func.chunk.code[idx + 2];
+                    next_inst.op == OpCode::Not && next_inst.ra == instruction.ra && next_inst.rb == instruction.ra
+                        && jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == instruction.ra
+                } else {
+                    false
+                };
+                let is_fused_2 = if !is_fused_3 && idx + 1 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == instruction.ra
+                } else {
+                    false
+                };
+                if !is_fused_3 && !is_fused_2 && ra < num_regs {
+                    next_types[ra] = RegType::Unknown;
+                }
+            }
+            OpCode::Not |
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
             OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter |
@@ -450,10 +617,22 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          mov r{}, {}\n", ra, tag));
             }
             OpCode::Move => {
-                if types_at_inst[idx][rb] == RegType::Double {
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                let next_ra_is_double = next_types[ra] == RegType::Double;
+                if rb_is_double {
                     mir.push_str(&format!("          dmov d{}, d{}\n", ra, rb));
+                    if !next_ra_is_double {
+                        let offset = (ra % 24) * 8;
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
+                    }
                 } else {
                     mir.push_str(&format!("          mov r{}, r{}\n", ra, rb));
+                    if next_ra_is_double {
+                        let offset = (ra % 24) * 8;
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
+                    }
                 }
             }
             OpCode::Negate => {
@@ -492,19 +671,34 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 }
             }
             OpCode::Not => {
-                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
-                if rb_is_double {
-                    mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
+                let prev_was_fused_cmp_not = if idx > 0 {
+                    let prev_inst = &func.chunk.code[idx - 1];
+                    let next_is_jmp = if idx + 1 < func.chunk.code.len() {
+                        let next_inst = &func.chunk.code[idx + 1];
+                        next_inst.op == OpCode::JumpIfFalse && next_inst.ra == instruction.ra
+                    } else {
+                        false
+                    };
+                    matches!(prev_inst.op, OpCode::Less | OpCode::Greater | OpCode::Equal) && instruction.ra == prev_inst.ra && instruction.rb == prev_inst.ra && next_is_jmp
                 } else {
-                    mir.push_str(&format!("          mov tmp1, {}\n", TAG_FALSE));
-                    mir.push_str(&format!("          beq done_not_{}, r{}, {}\n", idx, rb, TAG_TRUE));
-                    mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_FALSE));
-                    mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_NULL));
-                    mir.push_str(&format!("          jmp done_not_{}\n", idx));
-                    mir.push_str(&format!("set_true_{}:\n", idx));
-                    mir.push_str(&format!("          mov tmp1, {}\n", TAG_TRUE));
-                    mir.push_str(&format!("done_not_{}:\n", idx));
-                    mir.push_str(&format!("          mov r{}, tmp1\n", ra));
+                    false
+                };
+
+                if !prev_was_fused_cmp_not {
+                    let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                    if rb_is_double {
+                        mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
+                    } else {
+                        mir.push_str(&format!("          mov tmp1, {}\n", TAG_FALSE));
+                        mir.push_str(&format!("          beq done_not_{}, r{}, {}\n", idx, rb, TAG_TRUE));
+                        mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_FALSE));
+                        mir.push_str(&format!("          beq set_true_{}, r{}, {}\n", idx, rb, TAG_NULL));
+                        mir.push_str(&format!("          jmp done_not_{}\n", idx));
+                        mir.push_str(&format!("set_true_{}:\n", idx));
+                        mir.push_str(&format!("          mov tmp1, {}\n", TAG_TRUE));
+                        mir.push_str(&format!("done_not_{}:\n", idx));
+                        mir.push_str(&format!("          mov r{}, tmp1\n", ra));
+                    }
                 }
             }
             OpCode::Add => {
@@ -994,7 +1188,15 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Equal => {
                 let offset1 = ((idx * 3) % 24) * 8;
                 let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
+                let is_fused_3 = if idx + 2 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    let jmp_inst = &func.chunk.code[idx + 2];
+                    next_inst.op == OpCode::Not && next_inst.ra == ra as u8 && next_inst.rb == ra as u8
+                        && jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == ra as u8
+                } else {
+                    false
+                };
+                let is_fused_2 = if !is_fused_3 && idx + 1 < func.chunk.code.len() {
                     let next_inst = &func.chunk.code[idx + 1];
                     next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
                 } else {
@@ -1004,13 +1206,60 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
 
-                if next_is_jmp_if_false {
+                if is_fused_3 {
+                    let jmp_inst = &func.chunk.code[idx + 2];
+                    let raw_target = (idx + 3 + jmp_inst.operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
+
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dbeq take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xffe8000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xffe8000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dbeq take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+
+                        mir.push_str(&format!("fallback_eq_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_equal, er_jit_equal, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          mov status, u8:0(vm)\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_TRUE));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+                    }
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
+                } else if is_fused_2 {
                     let next_inst = &func.chunk.code[idx + 1];
-                    let target = (idx + 2 + next_inst.operand as usize) as usize;
+                    let raw_target = (idx + 2 + next_inst.operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
 
                     if rb_is_double && rc_is_double {
                         mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
@@ -1029,7 +1278,6 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          dbne take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
 
@@ -1057,11 +1305,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
                         mir.push_str(&format!("eq_fallthrough_{}:\n", idx));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     }
-                    // Common Trampoline Block
                     mir.push_str(&format!("take_branch_{}:\n", idx));
                     sync_edge(&mut mir, idx, target);
                     mir.push_str(&format!("          jmp inst_{}\n", target));
@@ -1129,7 +1375,15 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Greater => {
                 let offset1 = ((idx * 3) % 24) * 8;
                 let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
+                let is_fused_3 = if idx + 2 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    let jmp_inst = &func.chunk.code[idx + 2];
+                    next_inst.op == OpCode::Not && next_inst.ra == ra as u8 && next_inst.rb == ra as u8
+                        && jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == ra as u8
+                } else {
+                    false
+                };
+                let is_fused_2 = if !is_fused_3 && idx + 1 < func.chunk.code.len() {
                     let next_inst = &func.chunk.code[idx + 1];
                     next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
                 } else {
@@ -1139,13 +1393,60 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
 
-                if next_is_jmp_if_false {
+                if is_fused_3 {
+                    let jmp_inst = &func.chunk.code[idx + 2];
+                    let raw_target = (idx + 3 + jmp_inst.operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
+
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dbgt take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xffe8000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xffe8000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dbgt take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+
+                        mir.push_str(&format!("fallback_gt_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_greater, er_jit_greater, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          mov status, u8:0(vm)\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_TRUE));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+                    }
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
+                } else if is_fused_2 {
                     let next_inst = &func.chunk.code[idx + 1];
-                    let target = (idx + 2 + next_inst.operand as usize) as usize;
+                    let raw_target = (idx + 2 + next_inst.operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
 
                     if rb_is_double && rc_is_double {
                         mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
@@ -1164,7 +1465,6 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          dble take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
 
@@ -1182,11 +1482,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     }
-                    // Common Trampoline Block
                     mir.push_str(&format!("take_branch_{}:\n", idx));
                     sync_edge(&mut mir, idx, target);
                     mir.push_str(&format!("          jmp inst_{}\n", target));
@@ -1236,7 +1534,15 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Less => {
                 let offset1 = ((idx * 3) % 24) * 8;
                 let offset2 = ((idx * 3 + 1) % 24) * 8;
-                let next_is_jmp_if_false = if idx + 1 < func.chunk.code.len() {
+                let is_fused_3 = if idx + 2 < func.chunk.code.len() {
+                    let next_inst = &func.chunk.code[idx + 1];
+                    let jmp_inst = &func.chunk.code[idx + 2];
+                    next_inst.op == OpCode::Not && next_inst.ra == ra as u8 && next_inst.rb == ra as u8
+                        && jmp_inst.op == OpCode::JumpIfFalse && jmp_inst.ra == ra as u8
+                } else {
+                    false
+                };
+                let is_fused_2 = if !is_fused_3 && idx + 1 < func.chunk.code.len() {
                     let next_inst = &func.chunk.code[idx + 1];
                     next_inst.op == OpCode::JumpIfFalse && next_inst.ra == ra as u8
                 } else {
@@ -1246,13 +1552,60 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
 
-                if next_is_jmp_if_false {
+                if is_fused_3 {
+                    let jmp_inst = &func.chunk.code[idx + 2];
+                    let raw_target = (idx + 3 + jmp_inst.operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
+
+                    if rb_is_double && rc_is_double {
+                        mir.push_str(&format!("          dblt take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+                    } else {
+                        if !rb_is_double {
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xffe8000000000000\n", idx, rb));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xffe8000000000000\n", idx, rc));
+                        }
+                        if !rb_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if !rc_is_double {
+                            mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, rc));
+                            mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          dblt take_branch_{}, d{}, d{}\n", idx, rb, rc));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+
+                        mir.push_str(&format!("fallback_lt_{}:\n", idx));
+                        if rb_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                        }
+                        if rc_is_double {
+                            mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                            mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                        }
+                        mir.push_str(&format!("          call p_less, er_jit_less, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                        mir.push_str("          mov status, u8:0(vm)\n");
+                        mir.push_str("          bne err_label, status, 0\n");
+                        mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_TRUE));
+                        sync_edge(&mut mir, idx, idx + 3);
+                        mir.push_str(&format!("          jmp inst_{}\n", idx + 3));
+                    }
+                    mir.push_str(&format!("take_branch_{}:\n", idx));
+                    sync_edge(&mut mir, idx, target);
+                    mir.push_str(&format!("          jmp inst_{}\n", target));
+                } else if is_fused_2 {
                     let next_inst = &func.chunk.code[idx + 1];
-                    let target = (idx + 2 + next_inst.operand as usize) as usize;
+                    let raw_target = (idx + 2 + next_inst.operand as usize) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
 
                     if rb_is_double && rc_is_double {
                         mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
@@ -1271,7 +1624,6 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          dbge take_branch_{}, d{}, d{}\n", idx, rb, rc));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
 
@@ -1289,11 +1641,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
-                        // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     }
-                    // Common Trampoline Block
                     mir.push_str(&format!("take_branch_{}:\n", idx));
                     sync_edge(&mut mir, idx, target);
                     mir.push_str(&format!("          jmp inst_{}\n", target));
@@ -1365,11 +1715,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          call p_get_global, er_jit_get_global, r{}, vm, tmp1\n", ra));
                 mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
-                if next_types[ra] == RegType::Double {
-                    let offset = (ra % 24) * 8;
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
-                }
+                let offset = (ra % 24) * 8;
+                mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
+                mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
             }
             OpCode::SetGlobal => {
                 let c_idx = instruction.operand;
@@ -1391,7 +1739,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Loop => {
                 let target = (idx as i32 + 1 - instruction.operand as i32) as usize;
                 mir.push_str("          add loop_counter, loop_counter, 1\n");
-                mir.push_str("          and tmp, loop_counter, 1023\n");
+                mir.push_str("          and tmp, loop_counter, 4095\n");
                 mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
                 mir.push_str("          mov tmp1, er_gc_needs_step\n");
                 mir.push_str("          mov status, u8:0(tmp1)\n");
@@ -1406,12 +1754,21 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::JumpIfFalse => {
                 let prev_was_optimized_cmp = if idx > 0 {
                     let prev_inst = &func.chunk.code[idx - 1];
-                    matches!(prev_inst.op, OpCode::Less | OpCode::Greater | OpCode::Equal) && instruction.ra == prev_inst.ra
+                    let prev_was_2inst_cmp = matches!(prev_inst.op, OpCode::Less | OpCode::Greater | OpCode::Equal) && instruction.ra == prev_inst.ra;
+                    let prev_was_3inst_cmp = if idx > 1 {
+                        let pprev_inst = &func.chunk.code[idx - 2];
+                        prev_inst.op == OpCode::Not && prev_inst.ra == instruction.ra && prev_inst.rb == instruction.ra
+                            && matches!(pprev_inst.op, OpCode::Less | OpCode::Greater | OpCode::Equal) && pprev_inst.ra == instruction.ra
+                    } else {
+                        false
+                    };
+                    prev_was_2inst_cmp || prev_was_3inst_cmp
                 } else {
                     false
                 };
                 if !prev_was_optimized_cmp {
-                    let target = (idx as i32 + 1 + instruction.operand as i32) as usize;
+                    let raw_target = (idx as i32 + 1 + instruction.operand as i32) as usize;
+                    let target = resolve_branch_target(&func.chunk.code, raw_target);
                     if types_at_inst[idx][ra] != RegType::Double {
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
@@ -1558,9 +1915,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          blt err_label, status, -1\n"));
                 mir.push_str(&format!("          bne not_fast_call_{}, status, 0\n", idx));
                 mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                if next_types[ra] == RegType::Double {
-                    mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
-                }
+                mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
                 mir.push_str(&format!("          jmp done_call_{}\n", idx));
                 mir.push_str(&format!("not_fast_call_{}:\n", idx));
 
@@ -1569,9 +1924,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
                 mir.push_str(&format!("          blt err_label, status, 0\n"));
                 mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
-                if next_types[ra] == RegType::Double {
-                    mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
-                }
+                mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
                 mir.push_str(&format!("          jmp done_call_{}\n", idx));
                 mir.push_str(&format!("suspend_label_{}:\n", idx));
                 mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx));
@@ -1910,6 +2263,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Return => {
                 let has_closures = func.chunk.code.iter().any(|inst| inst.op == OpCode::Closure);
                 if has_closures {
+                    save_all_registers(&mut mir, idx);
                     mir.push_str("          call p_close_upvalues, er_jit_close_upvalues, status, vm, 0\n");
                 }
                 if types_at_inst[idx][ra] == RegType::Double {
@@ -1930,11 +2284,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::GetUpvalue => {
                 let upval_idx = instruction.operand;
                 mir.push_str(&format!("          call p_get_upvalue, er_jit_get_upvalue, r{}, vm, {}\n", ra, upval_idx));
-                if next_types[ra] == RegType::Double {
-                    let offset = (ra % 24) * 8;
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
-                }
+                let offset = (ra % 24) * 8;
+                mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
+                mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
             }
             OpCode::SetUpvalue => {
                 let upval_idx = instruction.operand;
@@ -1950,6 +2302,15 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 save_all_registers(&mut mir, idx);
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", const_idx * 8));
                 mir.push_str(&format!("          call p_make_closure, er_jit_make_closure, r{}, vm, tmp1\n", ra));
+                for r in 0..num_regs {
+                    if r != ra && is_init[idx][r] && (has_closures || live_in[idx][r]) {
+                        if types_at_inst[idx][r] == RegType::Double {
+                            mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", r, r * 8));
+                        } else {
+                            mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", r, r * 8));
+                        }
+                    }
+                }
             }
 
             OpCode::CloseUpvalue => {
@@ -1988,7 +2349,13 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("          endfunc\n");
     mir.push_str("          endmodule\n");
 
-    let _ = std::fs::write("/home/vishnus/Downloads/eronom/temp_compiled.mir", &mir);
+    if debug_jit {
+        static MIR_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = MIR_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let name_str = func.name.as_deref().unwrap_or("anon");
+        let path = format!("/home/vishnus/Downloads/eronom/temp_compiled_{}_{}.mir", id, name_str);
+        let _ = std::fs::write(&path, &mir);
+    }
     let c_mir = CString::new(mir).unwrap();
 
     unsafe {
@@ -2370,6 +2737,11 @@ fn eliminate_dead_instructions(
     num_regs: usize,
 ) -> (Vec<bool>, Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let n = func.chunk.code.len();
+    let has_closures = func.chunk.code.iter().any(|inst| inst.op == OpCode::Closure);
+    if has_closures {
+        let (in_set, out_set) = compute_liveness_with_dead(func, num_regs, &vec![false; n]);
+        return (vec![false; n], in_set, out_set);
+    }
     let mut is_dead = vec![false; n];
     let mut live_in = vec![vec![false; num_regs]; n];
     let mut live_out = vec![vec![false; num_regs]; n];

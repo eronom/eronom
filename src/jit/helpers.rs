@@ -1172,12 +1172,25 @@ pub extern "C" fn er_jit_call_fast(
 
         if res == 1 {
             if !(*vm).stack.is_empty() {
+                (*vm).close_upvalues(slots_offset);
                 (*vm).frames.pop();
             }
             *dest = ret_val_out;
             0
         } else if res == 3 {
             -3
+        } else if res == 4 {
+            let initial_depth = (*vm).frames.len() - 1;
+            match (*vm).execute_loop_interpreter(initial_depth) {
+                Ok(val) => {
+                    *dest = val;
+                    0
+                }
+                Err(e) => {
+                    (*vm).error = Some(e);
+                    -2
+                }
+            }
         } else {
             if !ret_val_out.is_null() {
                 (*vm).thrown_value = ret_val_out;
@@ -1299,6 +1312,7 @@ pub extern "C" fn er_jit_call_non_vm(
 
                 if jit_res == 1 {
                     if !(*_vm).stack.is_empty() {
+                        (*_vm).close_upvalues(slots_offset);
                         (*_vm).frames.pop();
                     }
                     *dest = ret_val_out;
@@ -1306,7 +1320,17 @@ pub extern "C" fn er_jit_call_non_vm(
                 } else if jit_res == 3 {
                     -3
                 } else if jit_res == 4 {
-                    -4
+                    let initial_depth = (*_vm).frames.len() - 1;
+                    match (*_vm).execute_loop_interpreter(initial_depth) {
+                        Ok(val) => {
+                            *dest = val;
+                            0
+                        }
+                        Err(e) => {
+                            (*_vm).error = Some(e);
+                            -2
+                        }
+                    }
                 } else {
                     if !ret_val_out.is_null() {
                         (*_vm).thrown_value = ret_val_out;
@@ -1489,13 +1513,14 @@ pub extern "C" fn er_jit_get_upvalue(vm: *mut VM, upval_idx: i64) -> Value {
             GcData::Closure(c) => c.upvalues[upval_idx as usize],
             _ => return Value::null(),
         };
-        match &(*upval_ptr).data {
+        let val = match &(*upval_ptr).data {
             GcData::Upvalue(u) => match u.location {
                 crate::vm::gc::UpvalueLocation::Open(slot) => (*vm).stack.as_ptr().add(slot).read(),
                 crate::vm::gc::UpvalueLocation::Closed(val) => val,
             },
             _ => Value::null(),
-        }
+        };
+        val
     }
 }
 

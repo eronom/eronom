@@ -160,11 +160,9 @@ impl VM {
     pub fn new() -> Self {
         let use_jit = std::env::var("ER_NO_JIT").is_err();
         let jit_threshold = if let Ok(val) = std::env::var("ER_JIT_THRESHOLD") {
-            val.parse::<usize>().unwrap_or(30)
-        } else if std::env::var("ER_EAGER_JIT").is_ok() {
-            0
+            val.parse::<usize>().unwrap_or(0)
         } else {
-            30
+            0
         };
         Self {
             has_error_flag: 0,
@@ -997,6 +995,7 @@ impl VM {
                 } else if status == 1 {
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.
                     let caller_dest_reg = frame.dest_reg;
+                    self.close_upvalues(frame.slots_offset);
                     self.frames.pop();
                     if self.frames.len() <= target_depth {
                         return Ok(ret_val_out);
@@ -1043,7 +1042,7 @@ impl VM {
                 } else if status == 4 {
                     // YieldDeopt: Dynamic type bailout back to bytecode interpreter
                     frame.ip = ip_out;
-                    return self.execute_loop_interpreter(0);
+                    return self.execute_loop_interpreter(target_depth);
                 } else {
                     // RuntimeError, JIT Throw, or JIT execution error.
                     let thrown = if !ret_val_out.is_null() {
@@ -1097,7 +1096,7 @@ impl VM {
         }
     }
 
-    fn execute_loop_interpreter(&mut self, target_depth: usize) -> Result<Value, String> {
+    pub(crate) fn execute_loop_interpreter(&mut self, target_depth: usize) -> Result<Value, String> {
         unsafe {
             let mut frame_ptr = {
                 let len = self.frames.len();
@@ -2037,7 +2036,9 @@ impl VM {
 
                                     let initial_depth = self.frames.len() - 1;
                                     let res = self.execute_loop(initial_depth)?;
-
+                                    if self.frames.len() <= target_depth {
+                                        return Ok(res);
+                                    }
                                     frame_ptr = {
                                         let len = self.frames.len();
                                         self.frames.as_mut_ptr().add(len - 1)
