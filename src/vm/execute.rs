@@ -1536,6 +1536,38 @@ impl VM {
                         let ptr = if count == 0 {
                             let obj = super::gc::get_pooled_map(0);
                             gc_allocate(GcData::Object(obj))
+                        } else if count <= 16 {
+                            let mut keys = [Value::null(); 16];
+                            let mut values = [Value::null(); 16];
+                            for i in 0..count {
+                                let key_val = *frame_slots.add(start_reg + i * 2);
+                                let val = *frame_slots.add(start_reg + i * 2 + 1);
+                                if !key_val.is_string() {
+                                    return Err("Object key must be string".into());
+                                }
+                                keys[i] = key_val;
+                                values[i] = val;
+                            }
+
+                            if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys[..count]) {
+                                let mut fields = super::gc::get_pooled_vec(count);
+                                fields.resize(count, Value::null());
+                                for i in 0..count {
+                                    let val = values[i];
+                                    let idx = offsets[i];
+                                    fields[idx] = val;
+                                }
+                                gc_allocate(GcData::Struct(super::gc::GcStruct {
+                                    descriptor: desc,
+                                    fields,
+                                }))
+                            } else {
+                                let mut obj = super::gc::get_pooled_map(count);
+                                for i in 0..count {
+                                    obj.insert(super::value::MapKey(keys[i]), values[i]);
+                                }
+                                gc_allocate(GcData::Object(obj))
+                            }
                         } else {
                             let mut keys = Vec::with_capacity(count);
                             let mut values = Vec::with_capacity(count);
@@ -1550,7 +1582,6 @@ impl VM {
                             }
 
                             if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys) {
-                                let offsets = offsets.to_vec();
                                 let mut fields = super::gc::get_pooled_vec(keys.len());
                                 fields.resize(keys.len(), Value::null());
                                 for i in 0..count {

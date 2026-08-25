@@ -458,6 +458,40 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
         let ptr = if count_usize == 0 {
             let obj = get_pooled_map(0);
             gc_allocate(GcData::Object(obj))
+        } else if count_usize <= 16 {
+            let mut keys = [Value::null(); 16];
+            let mut values = [Value::null(); 16];
+            for i in 0..count_usize {
+                let key_val = *start_reg.offset((i * 2) as isize);
+                let val = *start_reg.offset((i * 2 + 1) as isize);
+                if !key_val.is_string() {
+                    (*vm).has_error_flag = 1;
+                    (*vm).error = Some("Object key must be string".into());
+                    return Value::null();
+                }
+                keys[i] = key_val;
+                values[i] = val;
+            }
+
+            if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys[..count_usize]) {
+                let mut fields = crate::vm::gc::get_pooled_vec(count_usize);
+                fields.resize(count_usize, Value::null());
+                for i in 0..count_usize {
+                    let val = values[i];
+                    let idx = offsets[i];
+                    fields[idx] = val;
+                }
+                gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                    descriptor: desc,
+                    fields,
+                }))
+            } else {
+                let mut obj = get_pooled_map(count_usize);
+                for i in 0..count_usize {
+                    obj.insert(MapKey(keys[i]), values[i]);
+                }
+                gc_allocate(GcData::Object(obj))
+            }
         } else {
             let mut keys = Vec::with_capacity(count_usize);
             let mut values = Vec::with_capacity(count_usize);
@@ -474,7 +508,6 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
             }
 
             if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
-                let offsets = offsets.to_vec();
                 let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
                 fields.resize(keys.len(), Value::null());
                 for i in 0..count_usize {
@@ -931,17 +964,25 @@ pub extern "C" fn er_jit_call_fast(
     vm: *mut VM,
     callee: Value,
     callee_frame_slots: *mut Value,
-) -> Value {
+    dest: *mut Value,
+) -> i64 {
     unsafe {
+        if !callee.is_function() {
+            return -1;
+        }
         let func_ptr = (callee.0 & crate::vm::value::PTR_MASK) as *mut crate::vm::gc::GcObject;
         let (raw_fn_ptr, func) = match &(*func_ptr).data {
             GcData::Function(f) => (func_ptr, f),
             GcData::Closure(c) => match &(*c.function).data {
                 GcData::Function(f) => (c.function, f),
-                _ => return Value::null(),
+                _ => return -1,
             },
-            _ => return Value::null(),
+            _ => return -1,
         };
+
+        if func.is_async {
+            return -1;
+        }
 
         let native_ptr = if let Some(ptr) = func.jit_ptr.get() {
             ptr
@@ -970,6 +1011,14 @@ pub extern "C" fn er_jit_call_fast(
         let mut arg_count_out: usize = 0;
         let mut ret_val_out: Value = Value::null();
 
+        let slots_offset = callee_frame_slots.offset_from((*vm).stack.as_ptr()) as usize;
+        (*vm).frames.push(crate::vm::execute::CallFrame {
+            function: func_ptr,
+            ip: 0,
+            slots_offset,
+            dest_reg: 0,
+        });
+
         let res = jit_fn(
             vm,
             callee_frame_slots,
@@ -983,9 +1032,18 @@ pub extern "C" fn er_jit_call_fast(
         );
 
         if res == 1 {
-            ret_val_out
+            if !(*vm).stack.is_empty() {
+                (*vm).frames.pop();
+            }
+            *dest = ret_val_out;
+            0
+        } else if res == 3 {
+            -3
         } else {
-            Value::null()
+            if !(*vm).stack.is_empty() {
+                (*vm).frames.pop();
+            }
+            -1
         }
     }
 }

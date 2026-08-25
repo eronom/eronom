@@ -134,7 +134,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_set_property: proto i64, p:vm, i64:obj, i64:val, i64:name\n");
     mir.push_str("p_get_index: proto i64, p:vm, i64:obj, i64:idx\n");
     mir.push_str("p_set_index: proto i64, p:vm, i64:obj, i64:idx, i64:val\n");
-    mir.push_str("p_call_fast: proto i64, p:vm, i64:callee, p:callee_slots\n");
+    mir.push_str("p_call_fast: proto i64, p:vm, i64:callee, p:callee_slots, p:dest\n");
     mir.push_str("p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots, i64:inst_idx\n");
     mir.push_str("p_array_push: proto i64, i64:arr, i64:arg\n");
     mir.push_str("p_array_pop: proto i64, i64:arr\n");
@@ -145,6 +145,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_make_closure: proto i64, p:vm, i64:raw_fn\n");
     mir.push_str("p_close_upvalues: proto i64, p:vm, i64:slot\n");
     mir.push_str("p_await: proto i64, p:vm, i64:await_val, p:dest\n");
+    mir.push_str("p_jit_fn: proto i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out\n");
 
     mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:tmp3, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter\n");
     mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr\n");
@@ -1379,7 +1380,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Loop => {
                 let target = (idx as i32 + 1 - instruction.operand as i32) as usize;
                 mir.push_str("          add loop_counter, loop_counter, 1\n");
-                mir.push_str("          and tmp, loop_counter, 63\n");
+                mir.push_str("          and tmp, loop_counter, 1023\n");
                 mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
                 mir.push_str("          mov tmp1, er_gc_needs_step\n");
                 mir.push_str("          mov status, u8:0(tmp1)\n");
@@ -1473,12 +1474,42 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          jmp done_call_{}\n", idx));
 
                     mir.push_str(&format!("normal_call_{}:\n", idx));
-                    save_all_registers(&mut mir, idx);
                 } else {
                     save_all_registers(&mut mir, idx);
                 }
 
+                if arg_count == func.arity && !func.is_async {
+                    let func_val_u64 = Value::function(func_obj).0;
+                    mir.push_str(&format!("          bne not_self_call_{}, r{}, {}\n", idx, rb, func_val_u64));
+                    // Direct recursive call fast-path!
+                    mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", (rb + 1) * 8));
+                    mir.push_str(&format!("          call p_jit_fn, {}, status, vm, start_ptr, constants_ptr, 0, ip_out, dest_reg_out, func_reg_out, arg_count_out, ret_val_out\n", func_name));
+                    mir.push_str(&format!("          bne not_normal_ret_{}, status, 1\n", idx));
+                    mir.push_str(&format!("          mov r{}, i64:0(ret_val_out)\n", ra));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str(&format!("          dmov d{}, d:0(ret_val_out)\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_call_{}\n", idx));
+                    mir.push_str(&format!("not_normal_ret_{}:\n", idx));
+                    mir.push_str(&format!("          beq suspend_label_{}, status, 3\n", idx));
+                    mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+                    mir.push_str("          blt err_label, status, 0\n");
+                    mir.push_str(&format!("          jmp done_call_{}\n", idx));
+                    mir.push_str(&format!("not_self_call_{}:\n", idx));
+                }
+
                 mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
+                mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", (rb + 1) * 8));
+                mir.push_str(&format!("          call p_call_fast, er_jit_call_fast, status, vm, r{}, start_ptr, dest_ptr\n", rb));
+                mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+                mir.push_str(&format!("          bne not_fast_call_{}, status, 0\n", idx));
+                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
+                if next_types[ra] == RegType::Double {
+                    mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
+                }
+                mir.push_str(&format!("          jmp done_call_{}\n", idx));
+                mir.push_str(&format!("not_fast_call_{}:\n", idx));
+
                 mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots, {}\n", rb, rb, arg_count, idx));
                 mir.push_str(&format!("          beq call_vm_label_{}, status, -1\n", idx));
                 mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
@@ -1629,7 +1660,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::Return => {
-                mir.push_str("          call p_close_upvalues, er_jit_close_upvalues, status, vm, 0\n");
+                let has_closures = func.chunk.code.iter().any(|inst| inst.op == OpCode::Closure);
+                if has_closures {
+                    mir.push_str("          call p_close_upvalues, er_jit_close_upvalues, status, vm, 0\n");
+                }
                 if types_at_inst[idx][ra] == RegType::Double {
                     let offset = (ra % 24) * 8;
                     mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
