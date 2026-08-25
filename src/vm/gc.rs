@@ -193,7 +193,7 @@ thread_local! {
     pub static GC_STATE: std::cell::UnsafeCell<GcState> = const { std::cell::UnsafeCell::new(GcState {
         head: std::ptr::null_mut(),
         alloc_count: 0,
-        alloc_threshold: 1_000_000,
+        alloc_threshold: 10000,
         live_count: 0,
         phase: GcPhase::Pause,
         gray_stack: Vec::new(),
@@ -226,7 +226,11 @@ pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
             }
             v
         } else {
-            Vec::with_capacity(capacity.max(4))
+            let cap = capacity.max(8);
+            for _ in 0..63 {
+                s.vector_pool.push(Vec::with_capacity(cap));
+            }
+            Vec::with_capacity(cap)
         }
     })
 }
@@ -241,7 +245,11 @@ pub fn get_pooled_map(capacity: usize) -> ObjectMap {
             }
             m
         } else {
-            ObjectMap::with_capacity_and_hasher(capacity.max(4), Default::default())
+            let cap = capacity.max(4);
+            for _ in 0..31 {
+                s.map_pool.push(ObjectMap::with_capacity_and_hasher(cap, Default::default()));
+            }
+            ObjectMap::with_capacity_and_hasher(cap, Default::default())
         }
     })
 }
@@ -251,7 +259,7 @@ pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
     GC_STATE.with(|state| unsafe {
         let s = &mut *state.get();
         let count = slice.len();
-        let cap = if count < 4 { 4 } else { count + (count >> 1) };
+        let cap = if count < 4 { 8 } else { count + (count >> 1) };
         let mut elements = if let Some(mut v) = s.vector_pool.pop() {
             if v.capacity() < cap {
                 v.reserve(cap - v.capacity());
@@ -259,6 +267,9 @@ pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
             v.clear();
             v
         } else {
+            for _ in 0..63 {
+                s.vector_pool.push(Vec::with_capacity(cap));
+            }
             Vec::with_capacity(cap)
         };
         elements.extend_from_slice(slice);

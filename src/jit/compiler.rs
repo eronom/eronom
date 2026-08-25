@@ -2243,6 +2243,128 @@ fn compute_liveness_with_dead(
     (live_in, live_out)
 }
 
+fn get_aliased_registers(func: &crate::vm::bytecode::Function, root_reg: usize, is_dead: &[bool]) -> Vec<usize> {
+    let mut regs = vec![root_reg];
+    for pc in 0..func.chunk.code.len() {
+        if is_dead[pc] {
+            continue;
+        }
+        let inst = &func.chunk.code[pc];
+        if inst.op == OpCode::Move && regs.contains(&(inst.rb as usize)) {
+            let ra = inst.ra as usize;
+            if !regs.contains(&ra) {
+                regs.push(ra);
+            }
+        }
+    }
+    regs
+}
+
+fn array_escapes(
+    func: &crate::vm::bytecode::Function,
+    arr_reg: usize,
+    num_regs: usize,
+    is_dead: &[bool],
+    live_out: &[Vec<bool>],
+) -> bool {
+    let code = &func.chunk.code;
+    let n = code.len();
+    let arr_aliases = get_aliased_registers(func, arr_reg, is_dead);
+
+    for pc in 0..n {
+        if is_dead[pc] {
+            continue;
+        }
+        let inst = &code[pc];
+        let ra = inst.ra as usize;
+        let rb = inst.rb as usize;
+
+        match inst.op {
+            OpCode::SetGlobal | OpCode::DefineGlobal | OpCode::Return | OpCode::Throw |
+            OpCode::SetUpvalue | OpCode::Closure => {
+                if arr_aliases.contains(&ra) {
+                    return true;
+                }
+            }
+            OpCode::SetProperty => {
+                if arr_aliases.contains(&ra) || arr_aliases.contains(&rb) {
+                    return true;
+                }
+            }
+            OpCode::MakeArray => {
+                for i in 0..inst.operand as usize {
+                    if arr_aliases.contains(&(rb + i)) {
+                        return true;
+                    }
+                }
+            }
+            OpCode::MakeObject => {
+                for i in 0..(inst.operand as usize * 2) {
+                    if arr_aliases.contains(&(rb + i)) {
+                        return true;
+                    }
+                }
+            }
+            OpCode::Call => {
+                if arr_aliases.contains(&rb) {
+                    return true;
+                }
+                let mut is_array_method_call = false;
+                for prev in (0..pc).rev() {
+                    if !is_dead[prev] && code[prev].ra as usize == rb {
+                        if code[prev].op == OpCode::GetProperty && arr_aliases.contains(&(code[prev].rb as usize)) {
+                            let c_idx = code[prev].operand as usize;
+                            if c_idx < func.chunk.constants.len() {
+                                let name = func.chunk.constants[c_idx].as_str().unwrap_or("");
+                                if name == "push" || name == "pop" || name == "length" {
+                                    is_array_method_call = true;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                if !is_array_method_call {
+                    for i in 0..inst.operand as usize {
+                        if arr_aliases.contains(&(rb + 1 + i)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            OpCode::GetProperty => {
+                if arr_aliases.contains(&rb) {
+                    let c_idx = inst.operand as usize;
+                    if c_idx < func.chunk.constants.len() {
+                        let name = func.chunk.constants[c_idx].as_str().unwrap_or("");
+                        if name == "push" || name == "pop" || name == "length" {
+                            let method_reg = ra;
+                            if method_reg < num_regs && live_out[pc][method_reg] {
+                                for call_pc in (pc + 1)..n {
+                                    if !is_dead[call_pc] && code[call_pc].op == OpCode::Call && code[call_pc].rb as usize == method_reg {
+                                        let dest_reg = code[call_pc].ra as usize;
+                                        if dest_reg < num_regs && live_out[call_pc][dest_reg] {
+                                            return true;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            return true;
+                        }
+                    } else {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn eliminate_dead_instructions(
     func: &crate::vm::bytecode::Function,
     num_regs: usize,
@@ -2264,7 +2386,31 @@ fn eliminate_dead_instructions(
             }
             let inst = &func.chunk.code[pc];
             let ra = inst.ra as usize;
-            if ra < num_regs && !live_out[pc][ra] {
+
+            if inst.op == OpCode::MakeArray {
+                if ra < num_regs && !array_escapes(func, ra, num_regs, &is_dead, &live_out) {
+                    is_dead[pc] = true;
+                    changed = true;
+                    let arr_aliases = get_aliased_registers(func, ra, &is_dead);
+                    for user_pc in (pc + 1)..n {
+                        if !is_dead[user_pc] {
+                            let u_inst = &func.chunk.code[user_pc];
+                            if u_inst.op == OpCode::Move && arr_aliases.contains(&(u_inst.rb as usize)) {
+                                is_dead[user_pc] = true;
+                            } else if u_inst.op == OpCode::GetProperty && arr_aliases.contains(&(u_inst.rb as usize)) {
+                                let method_reg = u_inst.ra as usize;
+                                is_dead[user_pc] = true;
+                                for call_pc in (user_pc + 1)..n {
+                                    if !is_dead[call_pc] && func.chunk.code[call_pc].op == OpCode::Call && func.chunk.code[call_pc].rb as usize == method_reg {
+                                        is_dead[call_pc] = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if ra < num_regs && !live_out[pc][ra] {
                 match inst.op {
                     OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mod |
                     OpCode::BitAnd | OpCode::BitOr | OpCode::BitXor | OpCode::BitNot |
@@ -2272,7 +2418,7 @@ fn eliminate_dead_instructions(
                     OpCode::Equal | OpCode::Greater | OpCode::Less |
                     OpCode::GetProperty | OpCode::GetIndex | OpCode::TypeOf | OpCode::ArrayLen |
                     OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadBool | OpCode::Move |
-                    OpCode::MakeArray | OpCode::MakeObject => {
+                    OpCode::MakeObject => {
                         is_dead[pc] = true;
                         changed = true;
                     }
