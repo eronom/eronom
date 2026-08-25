@@ -97,7 +97,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_gc_needs_step, er_jit_define_struct, er_jit_get_upvalue, er_jit_set_upvalue, er_jit_make_closure, er_jit_close_upvalues, er_jit_await\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_fast, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_gc_needs_step, er_jit_define_struct, er_jit_get_upvalue, er_jit_set_upvalue, er_jit_make_closure, er_jit_close_upvalues, er_jit_await\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -134,7 +134,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_set_property: proto i64, p:vm, i64:obj, i64:val, i64:name\n");
     mir.push_str("p_get_index: proto i64, p:vm, i64:obj, i64:idx\n");
     mir.push_str("p_set_index: proto i64, p:vm, i64:obj, i64:idx, i64:val\n");
-    mir.push_str("p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots\n");
+    mir.push_str("p_call_fast: proto i64, p:vm, i64:callee, p:callee_slots\n");
+    mir.push_str("p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots, i64:inst_idx\n");
     mir.push_str("p_array_push: proto i64, i64:arr, i64:arg\n");
     mir.push_str("p_array_pop: proto i64, i64:arr\n");
     mir.push_str("p_has_error: proto i64, p:vm\n");
@@ -187,12 +188,16 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
     mir.push_str("          alloca cast_ptr, 192\n");
     mir.push_str("          mov loop_counter, 0\n");
-
+    mir.push_str("          bne resume_dispatch, start_ip, 0\n");
+    for i in 0..func.arity.min(num_regs) {
+        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
+    }
+    mir.push_str("          jmp entry_0\n");
+    mir.push_str("resume_dispatch:\n");
     for i in 0..num_regs {
         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
     }
-
-    for ip_target in 0..func.chunk.code.len() {
+    for ip_target in 1..func.chunk.code.len() {
         mir.push_str(&format!("          beq entry_{}, start_ip, {}\n", ip_target, ip_target));
     }
 
@@ -1468,13 +1473,13 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          jmp done_call_{}\n", idx));
 
                     mir.push_str(&format!("normal_call_{}:\n", idx));
-                    save_registers(&mut mir, idx, &extra);
+                    save_all_registers(&mut mir, idx);
                 } else {
-                    save_registers(&mut mir, idx, &extra);
+                    save_all_registers(&mut mir, idx);
                 }
 
                 mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
-                mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots\n", rb, rb, arg_count));
+                mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots, {}\n", rb, rb, arg_count, idx));
                 mir.push_str(&format!("          beq call_vm_label_{}, status, -1\n", idx));
                 mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
                 mir.push_str(&format!("          blt err_label, status, 0\n"));
@@ -1624,7 +1629,6 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::Return => {
-                save_all_registers(&mut mir, idx);
                 mir.push_str("          call p_close_upvalues, er_jit_close_upvalues, status, vm, 0\n");
                 if types_at_inst[idx][ra] == RegType::Double {
                     let offset = (ra % 24) * 8;
@@ -2015,6 +2019,7 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         ("er_jit_set_property", helpers::er_jit_set_property as *mut c_void),
         ("er_jit_get_index", helpers::er_jit_get_index as *mut c_void),
         ("er_jit_set_index", helpers::er_jit_set_index as *mut c_void),
+        ("er_jit_call_fast", helpers::er_jit_call_fast as *mut c_void),
         ("er_jit_call_non_vm", helpers::er_jit_call_non_vm as *mut c_void),
         ("er_jit_array_push", helpers::er_jit_array_push as *mut c_void),
         ("er_jit_array_pop", helpers::er_jit_array_pop as *mut c_void),

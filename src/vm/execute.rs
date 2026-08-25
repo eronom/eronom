@@ -115,6 +115,7 @@ pub struct VM {
     pub alloc_count_local: usize,
     pub use_evented_io: bool,
     pub structs: FnvHashMap<Rc<str>, Rc<super::gc::StructDescriptor>>,
+    pub auto_shapes: FnvHashMap<Vec<super::value::MapKey>, (Rc<super::gc::StructDescriptor>, Vec<usize>)>,
     pub last_matched_keys: Vec<Value>,
     pub last_matched_descriptor: Option<Rc<super::gc::StructDescriptor>>,
     pub last_matched_offsets: Vec<usize>,
@@ -167,6 +168,7 @@ impl VM {
             alloc_count_local: 0,
             use_evented_io: true,
             structs: FnvHashMap::default(),
+            auto_shapes: FnvHashMap::default(),
             last_matched_keys: Vec::new(),
             last_matched_descriptor: None,
             last_matched_offsets: Vec::new(),
@@ -258,7 +260,7 @@ impl VM {
     }
 
     pub fn find_matching_struct_cached(&mut self, keys: &[Value]) -> Option<(Rc<super::gc::StructDescriptor>, &[usize])> {
-        if self.structs.is_empty() {
+        if keys.is_empty() {
             return None;
         }
         if self.last_matched_descriptor.is_some() && self.last_matched_keys.len() == keys.len() {
@@ -277,18 +279,16 @@ impl VM {
         for desc in self.structs.values() {
             if desc.field_indices.len() == keys.len() {
                 let mut all_match = true;
+                let mut offsets = Vec::with_capacity(keys.len());
                 for &key in keys {
-                    if !desc.field_indices.contains_key(&super::value::MapKey(key)) {
+                    if let Some(&idx) = desc.field_indices.get(&super::value::MapKey(key)) {
+                        offsets.push(idx);
+                    } else {
                         all_match = false;
                         break;
                     }
                 }
                 if all_match {
-                    let mut offsets = Vec::with_capacity(keys.len());
-                    for &key in keys {
-                        let idx = *desc.field_indices.get(&super::value::MapKey(key)).unwrap();
-                        offsets.push(idx);
-                    }
                     self.last_matched_keys = keys.to_vec();
                     self.last_matched_descriptor = Some(desc.clone());
                     self.last_matched_offsets = offsets;
@@ -296,7 +296,32 @@ impl VM {
                 }
             }
         }
-        None
+
+        let map_keys: Vec<super::value::MapKey> = keys.iter().map(|&k| super::value::MapKey(k)).collect();
+        if let Some((desc, offsets)) = self.auto_shapes.get(&map_keys) {
+            self.last_matched_keys = keys.to_vec();
+            self.last_matched_descriptor = Some(desc.clone());
+            self.last_matched_offsets = offsets.clone();
+            return Some((desc.clone(), &self.last_matched_offsets));
+        }
+
+        let mut field_indices = FnvHashMap::default();
+        let mut offsets = Vec::with_capacity(keys.len());
+        for (idx, &key) in keys.iter().enumerate() {
+            field_indices.insert(super::value::MapKey(key), idx);
+            offsets.push(idx);
+        }
+        let desc = Rc::new(super::gc::StructDescriptor::new(
+            Rc::from("Object"),
+            field_indices,
+            FnvHashMap::default(),
+        ));
+
+        self.auto_shapes.insert(map_keys, (desc.clone(), offsets.clone()));
+        self.last_matched_keys = keys.to_vec();
+        self.last_matched_descriptor = Some(desc.clone());
+        self.last_matched_offsets = offsets;
+        Some((desc, &self.last_matched_offsets))
     }
 
     pub fn register_global(&mut self, name: &str, value: Value) {
@@ -688,7 +713,7 @@ impl VM {
 
     fn execute(&mut self) -> Result<Value, String> {
         let original_len = self.stack.len();
-        self.stack.resize(original_len + 4096, Value::null());
+        self.stack.resize(original_len + 65536, Value::null());
         
         let res = if self.use_jit {
             self.execute_loop(original_len)
@@ -802,8 +827,8 @@ impl VM {
                                 func_val.arity, actual_arg_count
                             ));
                         }
-                        // Save current IP (resume position: ip_out)
-                        frame.ip = ip_out;
+                        // Save current IP (resume position: ip_out + 1)
+                        frame.ip = ip_out + 1;
                         let new_slots_offset = slots_offset + func_reg_out + 1;
                         self.frames.push(CallFrame {
                             function: func_ptr,
@@ -833,7 +858,8 @@ impl VM {
                             return Ok(Value::null());
                         }
                         *frame_slots.add(dest_reg_out) = result;
-                        ip_val = ip_out;
+                        frame.ip = ip_out + 1;
+                        ip_val = frame.ip;
                     } else if callee.is_method_file() {
                         let ptr = (callee.0 & super::value::PTR_MASK & !3) as *mut GcObject;
                         let method_sub_tag = callee.0 & 3;
@@ -885,7 +911,8 @@ impl VM {
                         };
                         reload_stack!();
                         *frame_slots.add(dest_reg_out) = result;
-                        ip_val = ip_out;
+                        frame.ip = ip_out + 1;
+                        ip_val = frame.ip;
                     } else if callee.is_array_method_push() || callee.is_array_method_pop() {
                         let ptr = callee.as_gc_ptr();
                         let result = match &mut (*ptr).data {
@@ -905,9 +932,10 @@ impl VM {
                         };
                         reload_stack!();
                         *frame_slots.add(dest_reg_out) = result;
-                        ip_val = ip_out;
+                        frame.ip = ip_out + 1;
+                        ip_val = frame.ip;
                     } else {
-                        return Err(format!("Can only call functions (callee: 0x{:x})", callee.0).into());
+                        return Err(format!("[JIT] Can only call functions (callee: 0x{:x})", callee.0).into());
                     }
                 } else if status == 1 {
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.
@@ -936,10 +964,11 @@ impl VM {
                 } else if status == 3 {
                     // YieldSuspend: an async Await or native function suspended the VM during JIT execution.
                     frame.ip = ip_out;
-                    if func_reg_out < self.stack.len() {
+                    if !self.stack.is_empty() && func_reg_out < self.stack.len() {
                         let await_val = *frame_slots.add(func_reg_out);
                         if await_val.is_promise() {
                             let promise_ptr = await_val.as_gc_ptr();
+                            self.close_upvalues(0);
                             let suspended_stack = std::mem::take(&mut self.stack);
                             let suspended_frames = std::mem::take(&mut self.frames);
 
@@ -1504,16 +1533,8 @@ impl VM {
                         self.gc_trigger();
                         reload_stack!();
 
-                        let ptr = if self.structs.is_empty() {
-                            let mut obj = super::gc::get_pooled_map(count);
-                            for i in 0..count {
-                                let key_val = *frame_slots.add(start_reg + i * 2);
-                                let val = *frame_slots.add(start_reg + i * 2 + 1);
-                                if !key_val.is_string() {
-                                    return Err("Object key must be string".into());
-                                }
-                                obj.insert(super::value::MapKey(key_val), val);
-                            }
+                        let ptr = if count == 0 {
+                            let obj = super::gc::get_pooled_map(0);
                             gc_allocate(GcData::Object(obj))
                         } else {
                             let mut keys = Vec::with_capacity(count);
@@ -1529,6 +1550,7 @@ impl VM {
                             }
 
                             if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys) {
+                                let offsets = offsets.to_vec();
                                 let mut fields = super::gc::get_pooled_vec(keys.len());
                                 fields.resize(keys.len(), Value::null());
                                 for i in 0..count {
@@ -1870,7 +1892,7 @@ impl VM {
                                     func_val.arity, actual_arg_count
                                 ));
                             }
-                            frame.ip = ip.offset_from(code_ptr) as usize;
+                            frame.ip = ip.offset_from(code_ptr) as usize - 1;
                             let new_slots_offset = slots_offset + func_reg + 1;
                             self.frames.push(CallFrame {
                                 function: func_ptr,
@@ -2075,6 +2097,7 @@ impl VM {
                                 crate::vm::gc::PromiseState::Pending => {
                                      frame.ip = ip.offset_from(code_ptr) as usize - 1;
 
+                                     self.close_upvalues(0);
                                      let suspended_stack = std::mem::take(&mut self.stack);
                                      let suspended_frames = std::mem::take(&mut self.frames);
 
@@ -2120,11 +2143,11 @@ impl VM {
                             }
                         }
                         
-                        let descriptor = std::rc::Rc::new(super::gc::StructDescriptor {
-                            name: name_rc.clone(),
+                        let descriptor = std::rc::Rc::new(super::gc::StructDescriptor::new(
+                            name_rc.clone(),
                             field_indices,
                             methods,
-                        });
+                        ));
                         self.structs.insert(name_rc.clone(), descriptor.clone());
                         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
                         self.globals.insert(name_rc, Value::object(ptr));
@@ -2219,7 +2242,7 @@ impl VM {
                         constants_ptr = func.chunk.constants.as_ptr();
                         slots_offset = frame.slots_offset;
                         frame_slots = stack_start.add(slots_offset);
-                        ip = code_ptr.add(frame.ip);
+                        ip = code_ptr.add(frame.ip + 1);
 
                         *frame_slots.add(caller_dest_reg) = result;
                     }
@@ -2392,13 +2415,13 @@ impl VM {
                         let inst = func.chunk.code[frame.ip];
                         assert!(inst.op == OpCode::Await || inst.op == OpCode::Call);
 
-                        // Write the resolved value to the destination register
+                        // Write the resolved value to the destination register of the suspended instruction
                         self.stack[frame.slots_offset + inst.ra as usize] = resolved_value;
 
-                        // Advance instruction pointer past Await
+                        // Advance instruction pointer past Await/Call
                         frame.ip += 1;
 
-                        // Resume execution!
+                        // Resume execution directly at frame.ip (which points to the instruction right after Await/Call)
                         if let Err(e) = self.execute_loop_interpreter(0) {
                             return Err(e);
                         }
@@ -2864,7 +2887,6 @@ mod tests {
         let stmts = parser.parse().unwrap();
         let compiler = Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
-        
         let mut vm = VM::new();
         vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
         vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));

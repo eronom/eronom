@@ -2926,6 +2926,7 @@ pub fn native_future_await(args: Vec<Value>) -> Value {
         return Value::null();
     }
     let vm = unsafe { &mut *vm_ptr };
+    vm.close_upvalues(0);
 
     let suspended_stack = std::mem::take(&mut vm.stack);
     let suspended_frames = std::mem::take(&mut vm.frames);

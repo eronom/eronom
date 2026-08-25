@@ -438,11 +438,11 @@ pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val:
             }
         }
         
-        let descriptor = std::rc::Rc::new(crate::vm::gc::StructDescriptor {
-            name: name_rc.clone(),
+        let descriptor = std::rc::Rc::new(crate::vm::gc::StructDescriptor::new(
+            name_rc.clone(),
             field_indices,
             methods,
-        });
+        ));
         (*vm).structs.insert(name_rc.clone(), descriptor.clone());
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
         (*vm).globals.insert(name_rc, Value::object(ptr));
@@ -455,26 +455,18 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
         let count_usize = count as usize;
-        let ptr = if (*vm).structs.is_empty() {
-            let mut obj = get_pooled_map(count_usize);
-            for i in 0..count {
-                let key_val = *start_reg.offset((i * 2) as isize);
-                let val = *start_reg.offset((i * 2 + 1) as isize);
-                if !key_val.is_string() {
-                    (*vm).has_error_flag = 1; (*vm).error = Some("Object key must be string".into());
-                    return Value::null();
-                }
-                obj.insert(MapKey(key_val), val);
-            }
+        let ptr = if count_usize == 0 {
+            let obj = get_pooled_map(0);
             gc_allocate(GcData::Object(obj))
         } else {
             let mut keys = Vec::with_capacity(count_usize);
             let mut values = Vec::with_capacity(count_usize);
-            for i in 0..count {
+            for i in 0..count_usize {
                 let key_val = *start_reg.offset((i * 2) as isize);
                 let val = *start_reg.offset((i * 2 + 1) as isize);
                 if !key_val.is_string() {
-                    (*vm).has_error_flag = 1; (*vm).error = Some("Object key must be string".into());
+                    (*vm).has_error_flag = 1;
+                    (*vm).error = Some("Object key must be string".into());
                     return Value::null();
                 }
                 keys.push(key_val);
@@ -482,6 +474,7 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
             }
 
             if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
+                let offsets = offsets.to_vec();
                 let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
                 fields.resize(keys.len(), Value::null());
                 for i in 0..count_usize {
@@ -680,6 +673,17 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Value {
     unsafe {
+        if (obj.0 & 0xffff_0000_0000_0000) == crate::vm::value::TAG_ARRAY && index.0 < crate::vm::value::TAG_NUMBER_MASK {
+            let ptr = (obj.0 & crate::vm::value::PTR_MASK) as *mut crate::vm::gc::GcObject;
+            if let GcData::Array(arr) = &(*ptr).data {
+                let idx = index.as_number() as usize;
+                if idx < arr.len() {
+                    return *arr.as_ptr().add(idx);
+                }
+            }
+            return Value::null();
+        }
+
         if obj.is_array() {
             let ptr = obj.as_gc_ptr();
             if index.is_number() {
@@ -735,6 +739,22 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Val
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: Value) -> i64 {
     unsafe {
+        if (obj.0 & 0xffff_0000_0000_0000) == crate::vm::value::TAG_ARRAY && index.0 < crate::vm::value::TAG_NUMBER_MASK {
+            let ptr = (obj.0 & crate::vm::value::PTR_MASK) as *mut crate::vm::gc::GcObject;
+            if let GcData::Array(arr) = &mut (*ptr).data {
+                let idx = index.as_number() as usize;
+                if idx < arr.len() {
+                    *arr.as_mut_ptr().add(idx) = val;
+                    gc_write_barrier(ptr, &val);
+                    return 0;
+                } else if idx == arr.len() {
+                    arr.push(val);
+                    gc_write_barrier(ptr, &val);
+                    return 0;
+                }
+            }
+        }
+
         if obj.is_array() {
             let ptr = obj.as_gc_ptr();
             if index.is_number() {
@@ -907,6 +927,70 @@ pub fn construct_struct_from_args_helper(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn er_jit_call_fast(
+    vm: *mut VM,
+    callee: Value,
+    callee_frame_slots: *mut Value,
+) -> Value {
+    unsafe {
+        let func_ptr = (callee.0 & crate::vm::value::PTR_MASK) as *mut crate::vm::gc::GcObject;
+        let (raw_fn_ptr, func) = match &(*func_ptr).data {
+            GcData::Function(f) => (func_ptr, f),
+            GcData::Closure(c) => match &(*c.function).data {
+                GcData::Function(f) => (c.function, f),
+                _ => return Value::null(),
+            },
+            _ => return Value::null(),
+        };
+
+        let native_ptr = if let Some(ptr) = func.jit_ptr.get() {
+            ptr
+        } else {
+            crate::jit::compile_function(&mut *vm, raw_fn_ptr)
+        };
+
+        type JitFn = unsafe extern "C" fn(
+            vm: *mut VM,
+            frame_slots: *mut Value,
+            constants_ptr: *const Value,
+            start_ip: usize,
+            ip_out: *mut usize,
+            dest_reg_out: *mut usize,
+            func_reg_out: *mut usize,
+            arg_count_out: *mut usize,
+            ret_val_out: *mut Value,
+        ) -> i64;
+
+        let jit_fn: JitFn = std::mem::transmute(native_ptr);
+        let constants_ptr = func.chunk.constants.as_ptr();
+
+        let mut ip_out: usize = 0;
+        let mut dest_reg_out: usize = 0;
+        let mut func_reg_out: usize = 0;
+        let mut arg_count_out: usize = 0;
+        let mut ret_val_out: Value = Value::null();
+
+        let res = jit_fn(
+            vm,
+            callee_frame_slots,
+            constants_ptr,
+            0,
+            &mut ip_out,
+            &mut dest_reg_out,
+            &mut func_reg_out,
+            &mut arg_count_out,
+            &mut ret_val_out,
+        );
+
+        if res == 1 {
+            ret_val_out
+        } else {
+            Value::null()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn er_jit_call_non_vm(
     _vm: *mut VM,
     dest: *mut Value,
@@ -914,10 +998,120 @@ pub extern "C" fn er_jit_call_non_vm(
     func_reg: i64,
     arg_count: i64,
     frame_slots: *mut Value,
+    inst_idx: i64,
 ) -> i64 {
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
-        let status = if callee.is_native_function() {
+        if let Some(frame) = (*_vm).frames.last_mut() {
+            frame.ip = inst_idx as usize;
+        }
+        let status = if callee.is_function() {
+            let mut func_ptr = callee.as_gc_ptr();
+            let mut actual_arg_count = arg_count as usize;
+            let mut callee_frame_slots = frame_slots.offset((func_reg + 1) as isize);
+
+            if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
+                for i in (0..actual_arg_count).rev() {
+                    *frame_slots.offset((func_reg + 2 + i as i64) as isize) = *frame_slots.offset((func_reg + 1 + i as i64) as isize);
+                }
+                *frame_slots.offset((func_reg + 1) as isize) = bound_method.receiver;
+                func_ptr = bound_method.function;
+                actual_arg_count += 1;
+            }
+
+            let raw_fn_ptr = match &(*func_ptr).data {
+                GcData::Function(_) => func_ptr,
+                GcData::Closure(c) => c.function,
+                _ => return -1,
+            };
+
+            let func_val = match &(*raw_fn_ptr).data {
+                GcData::Function(func) => func,
+                _ => unreachable!(),
+            };
+
+            if actual_arg_count != func_val.arity {
+                (*_vm).error = Some(format!(
+                    "Expected {} args but got {}",
+                    func_val.arity, actual_arg_count
+                ));
+                (*_vm).has_error_flag = 1;
+                -1
+            } else if func_val.is_async {
+                -1 // Fallback to host VM loop for async
+            } else {
+                let offset_from_base = callee_frame_slots.offset_from((*_vm).stack.as_ptr()) as usize;
+                if offset_from_base + 512 >= (*_vm).stack.len() {
+                    let new_len = (*_vm).stack.len() * 2;
+                    (*_vm).stack.resize(new_len, Value::null());
+                    callee_frame_slots = (*_vm).stack.as_mut_ptr().add(offset_from_base);
+                }
+
+                let native_ptr = if let Some(ptr) = func_val.jit_ptr.get() {
+                    ptr
+                } else {
+                    crate::jit::compile_function(&mut *_vm, raw_fn_ptr)
+                };
+
+                type JitFn = unsafe extern "C" fn(
+                    vm: *mut VM,
+                    frame_slots: *mut Value,
+                    constants_ptr: *const Value,
+                    start_ip: usize,
+                    ip_out: *mut usize,
+                    dest_reg_out: *mut usize,
+                    func_reg_out: *mut usize,
+                    arg_count_out: *mut usize,
+                    ret_val_out: *mut Value,
+                ) -> i64;
+
+                let jit_fn: JitFn = std::mem::transmute(native_ptr);
+                let constants_ptr = func_val.chunk.constants.as_ptr();
+
+                let mut ip_out: usize = 0;
+                let mut dest_reg_out: usize = 0;
+                let mut func_reg_out: usize = 0;
+                let mut arg_count_out: usize = 0;
+                let mut ret_val_out: Value = Value::null();
+
+                let slots_offset = callee_frame_slots.offset_from((*_vm).stack.as_ptr()) as usize;
+                (*_vm).frames.push(crate::vm::execute::CallFrame {
+                    function: func_ptr,
+                    ip: 0,
+                    slots_offset,
+                    dest_reg: 0,
+                });
+
+                let jit_res = jit_fn(
+                    _vm,
+                    callee_frame_slots,
+                    constants_ptr,
+                    0,
+                    &mut ip_out,
+                    &mut dest_reg_out,
+                    &mut func_reg_out,
+                    &mut arg_count_out,
+                    &mut ret_val_out,
+                );
+
+                if !(*_vm).stack.is_empty() {
+                    (*_vm).frames.pop();
+                }
+
+                if jit_res == 1 {
+                    *dest = ret_val_out;
+                    0
+                } else if jit_res == 3 {
+                    -3
+                } else if jit_res == 4 {
+                    -4
+                } else if jit_res < 0 {
+                    -1
+                } else {
+                    -1
+                }
+            }
+        } else if callee.is_native_function() {
             let native = callee.as_native_fn();
             let mut args = Vec::with_capacity(arg_count as usize);
             for i in 0..arg_count {
@@ -1164,9 +1358,11 @@ pub extern "C" fn er_jit_make_closure(vm: *mut VM, raw_fn_val: Value) -> Value {
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_close_upvalues(vm: *mut VM, rel_slot: i64) -> i64 {
     unsafe {
-        if let Some(frame) = (*vm).frames.last() {
-            let slot = frame.slots_offset + rel_slot as usize;
-            (*vm).close_upvalues(slot);
+        if !(*vm).open_upvalues.is_empty() {
+            if let Some(frame) = (*vm).frames.last() {
+                let slot = frame.slots_offset + rel_slot as usize;
+                (*vm).close_upvalues(slot);
+            }
         }
         0
     }

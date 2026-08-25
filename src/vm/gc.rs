@@ -1,6 +1,6 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 use super::value::{
-    Value, TAG_NUMBER_MASK, TAG_STRING, TAG_FUNCTION, TAG_METHOD_PUSH, TAG_METHOD_POP, MapKey
+    Value, TAG_NUMBER_MASK, TAG_STRING, TAG_NATIVE, MapKey
 };
 use super::bytecode::Function;
 use fnv::FnvHashMap;
@@ -43,6 +43,32 @@ pub struct StructDescriptor {
     pub name: Rc<str>,
     pub field_indices: FnvHashMap<super::value::MapKey, usize>,
     pub methods: FnvHashMap<super::value::MapKey, Value>,
+    pub fast_fields: [(Value, usize); 8],
+    pub fast_field_count: usize,
+}
+
+impl StructDescriptor {
+    pub fn new(
+        name: Rc<str>,
+        field_indices: FnvHashMap<super::value::MapKey, usize>,
+        methods: FnvHashMap<super::value::MapKey, Value>,
+    ) -> Self {
+        let mut fast_fields = [(Value::null(), 0); 8];
+        let mut count = 0;
+        for (&map_key, &idx) in &field_indices {
+            if count < 8 {
+                fast_fields[count] = (map_key.0, idx);
+                count += 1;
+            }
+        }
+        Self {
+            name,
+            field_indices,
+            methods,
+            fast_fields,
+            fast_field_count: count,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -58,7 +84,14 @@ pub struct GcStruct {
 }
 
 impl GcStruct {
+    #[inline(always)]
     pub fn get_field(&self, name_val: Value) -> Option<Value> {
+        for i in 0..self.descriptor.fast_field_count {
+            let (k, idx) = self.descriptor.fast_fields[i];
+            if k.0 == name_val.0 {
+                return Some(self.fields[idx]);
+            }
+        }
         let idx = self.descriptor.field_indices.get(&super::value::MapKey(name_val))?;
         Some(self.fields[*idx])
     }
@@ -73,7 +106,15 @@ impl GcStruct {
         None
     }
 
+    #[inline(always)]
     pub fn set_field(&mut self, name_val: Value, val: Value) -> bool {
+        for i in 0..self.descriptor.fast_field_count {
+            let (k, idx) = self.descriptor.fast_fields[i];
+            if k.0 == name_val.0 {
+                self.fields[idx] = val;
+                return true;
+            }
+        }
         if let Some(idx) = self.descriptor.field_indices.get(&super::value::MapKey(name_val)) {
             self.fields[*idx] = val;
             true
@@ -308,7 +349,7 @@ pub fn gc_free_all() {
 pub fn gc_mark_value(val: &Value) {
     if (val.0 & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
         let tag = val.0 & 0xffff_0000_0000_0000;
-        if (tag >= TAG_STRING && tag <= TAG_FUNCTION) || tag == TAG_METHOD_PUSH || tag == TAG_METHOD_POP {
+        if tag >= TAG_STRING && tag != TAG_NATIVE {
             let ptr = val.as_gc_ptr();
             unsafe {
                 if !ptr.is_null() && (*ptr).color == GcColor::White {
@@ -414,7 +455,7 @@ pub fn gc_write_barrier(parent: *mut GcObject, child: &Value) {
         if (*parent).color == GcColor::Black {
             if (child.0 & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
                 let tag = child.0 & 0xffff_0000_0000_0000;
-                if (tag >= TAG_STRING && tag <= TAG_FUNCTION) || tag == TAG_METHOD_PUSH || tag == TAG_METHOD_POP {
+                if tag >= TAG_STRING && tag != TAG_NATIVE {
                     let child_ptr = child.as_gc_ptr();
                     if !child_ptr.is_null() && (*child_ptr).color == GcColor::White {
                         (*child_ptr).color = GcColor::Gray;
