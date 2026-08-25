@@ -486,11 +486,16 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
                     fields,
                 }))
             } else {
-                let mut obj = get_pooled_map(count_usize);
+                let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys[..count_usize]);
+                let mut fields = crate::vm::gc::get_pooled_vec(count_usize);
+                fields.resize(count_usize, Value::null());
                 for i in 0..count_usize {
-                    obj.insert(MapKey(keys[i]), values[i]);
+                    fields[offsets[i]] = values[i];
                 }
-                gc_allocate(GcData::Object(obj))
+                gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                    descriptor: desc,
+                    fields,
+                }))
             }
         } else {
             let mut keys = Vec::with_capacity(count_usize);
@@ -520,11 +525,16 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
                     fields,
                 }))
             } else {
-                let mut obj = get_pooled_map(count_usize);
+                let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
+                let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
+                fields.resize(keys.len(), Value::null());
                 for i in 0..count_usize {
-                    obj.insert(MapKey(keys[i]), values[i]);
+                    fields[offsets[i]] = values[i];
                 }
-                gc_allocate(GcData::Object(obj))
+                gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                    descriptor: desc,
+                    fields,
+                }))
             }
         };
         let res = Value::object(ptr);
@@ -541,40 +551,29 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
 
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) -> Value {
+    if (obj.0 & 0xffff_0000_0000_0000) == crate::vm::value::TAG_OBJECT {
+        let ptr = (obj.0 & crate::vm::value::PTR_MASK) as *mut crate::vm::gc::GcObject;
+        unsafe {
+            if let GcData::Struct(s) = &(*ptr).data {
+                let count = s.descriptor.fast_field_count;
+                let fast = &s.descriptor.fast_fields;
+                for i in 0..count {
+                    if fast[i].0.0 == name_val.0 {
+                        return s.fields[fast[i].1];
+                    }
+                }
+            }
+        }
+    }
+    er_jit_get_property_slow(vm, obj, name_val)
+}
+
+pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Value {
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
         let res = if obj.is_object() {
             let ptr = obj.as_gc_ptr();
             match &(*ptr).data {
-                GcData::Object(map) => {
-                    if let Some(&val) = map.get(&MapKey(name_val)) {
-                        val
-                    } else {
-                        // Check response / file methods only on miss
-                        let name = match &(*name_val.as_gc_ptr()).data {
-                            GcData::String(s) => s.as_ref(),
-                            _ => "",
-                        };
-                        if name == "json" || name == "text" {
-                            let body_key = get_or_create_string("_body");
-                            if map.contains_key(&MapKey(Value::string(body_key))) {
-                                let tag = if name == "json" { crate::vm::value::TAG_METHOD_JSON } else { crate::vm::value::TAG_METHOD_TEXT };
-                                Value(tag | (ptr as u64 & crate::vm::value::PTR_MASK))
-                            } else {
-                                Value::null()
-                            }
-                        } else if name == "exists" {
-                            let file_key = get_or_create_string("_isFile");
-                            if map.get(&MapKey(Value::string(file_key))).map(|v| v.as_boolean()).unwrap_or(false) {
-                                Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | 0)
-                            } else {
-                                Value::null()
-                            }
-                        } else {
-                            Value::null()
-                        }
-                    }
-                }
                 GcData::Struct(s) => {
                     if let Some(val) = s.get_field(name_val) {
                         val
@@ -599,6 +598,35 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
                             }
                         } else if name == "exists" && s.descriptor.name.as_ref() == "File" {
                             Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | 0)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                }
+                GcData::Object(map) => {
+                    if let Some(&val) = map.get(&MapKey(name_val)) {
+                        val
+                    } else {
+                        // Check response / file methods only on miss
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => s.as_ref(),
+                            _ => "",
+                        };
+                        if name == "json" || name == "text" {
+                            let body_key = get_or_create_string("_body");
+                            if map.contains_key(&MapKey(Value::string(body_key))) {
+                                let tag = if name == "json" { crate::vm::value::TAG_METHOD_JSON } else { crate::vm::value::TAG_METHOD_TEXT };
+                                Value(tag | (ptr as u64 & crate::vm::value::PTR_MASK))
+                            } else {
+                                Value::null()
+                            }
+                        } else if name == "exists" {
+                            let file_key = get_or_create_string("_isFile");
+                            if map.get(&MapKey(Value::string(file_key))).map(|v| v.as_boolean()).unwrap_or(false) {
+                                Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | 0)
+                            } else {
+                                Value::null()
+                            }
                         } else {
                             Value::null()
                         }
@@ -649,13 +677,14 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
         if obj.is_object() {
             let ptr = obj.as_gc_ptr();
             match &mut (*ptr).data {
-                GcData::Object(map) => {
-                    map.insert(MapKey(name_val), val);
-                    gc_write_barrier(ptr, &val);
-                    0
-                }
                 GcData::Struct(s) => {
                     if s.set_field(name_val, val) {
+                        gc_write_barrier(ptr, &val);
+                        0
+                    } else if s.descriptor.name.as_ref() == "Anonymous" {
+                        let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, name_val);
+                        s.descriptor = new_desc;
+                        s.fields.push(val);
                         gc_write_barrier(ptr, &val);
                         0
                     } else {
@@ -663,6 +692,11 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                         (*vm).has_error_flag = 1; (*vm).error = Some(format!("Struct has no field '{}'", name));
                         -1
                     }
+                }
+                GcData::Object(map) => {
+                    map.insert(MapKey(name_val), val);
+                    gc_write_barrier(ptr, &val);
+                    0
                 }
                 _ => unreachable!(),
             }
@@ -855,6 +889,12 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                     }
                     GcData::Struct(s) => {
                         if s.set_field(index, val) {
+                            gc_write_barrier(ptr, &val);
+                            0
+                        } else if s.descriptor.name.as_ref() == "Anonymous" {
+                            let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, index);
+                            s.descriptor = new_desc;
+                            s.fields.push(val);
                             gc_write_barrier(ptr, &val);
                             0
                         } else {

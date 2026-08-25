@@ -632,8 +632,8 @@ impl VM {
                 }
             }
             state.live_count = live_objects;
-            // Adaptive threshold: 2× the live set, but at least 1000
-            state.alloc_threshold = (live_objects * 2).max(1000);
+            // Adaptive threshold: 2× the live set, but at least 10000
+            state.alloc_threshold = (live_objects * 2).max(10000);
             state.alloc_count = 0;
             state.phase = GcPhase::Pause;
             state.sweep_ptr = std::ptr::null_mut();
@@ -1562,11 +1562,16 @@ impl VM {
                                     fields,
                                 }))
                             } else {
-                                let mut obj = super::gc::get_pooled_map(count);
+                                let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys[..count]);
+                                let mut fields = super::gc::get_pooled_vec(count);
+                                fields.resize(count, Value::null());
                                 for i in 0..count {
-                                    obj.insert(super::value::MapKey(keys[i]), values[i]);
+                                    fields[offsets[i]] = values[i];
                                 }
-                                gc_allocate(GcData::Object(obj))
+                                gc_allocate(GcData::Struct(super::gc::GcStruct {
+                                    descriptor: desc,
+                                    fields,
+                                }))
                             }
                         } else {
                             let mut keys = Vec::with_capacity(count);
@@ -1594,11 +1599,16 @@ impl VM {
                                     fields,
                                 }))
                             } else {
-                                let mut obj = super::gc::get_pooled_map(count);
+                                let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
+                                let mut fields = super::gc::get_pooled_vec(keys.len());
+                                fields.resize(keys.len(), Value::null());
                                 for i in 0..count {
-                                    obj.insert(super::value::MapKey(keys[i]), values[i]);
+                                    fields[offsets[i]] = values[i];
                                 }
-                                gc_allocate(GcData::Object(obj))
+                                gc_allocate(GcData::Struct(super::gc::GcStruct {
+                                    descriptor: desc,
+                                    fields,
+                                }))
                             }
                         };
                         *frame_slots.add(dest) = Value::object(ptr);
@@ -1727,6 +1737,11 @@ impl VM {
                                 }
                                 GcData::Struct(s) => {
                                     if s.set_field(name_val, val) {
+                                        gc_write_barrier(ptr, &val);
+                                    } else if s.descriptor.name.as_ref() == "Anonymous" {
+                                        let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, name_val);
+                                        s.descriptor = new_desc;
+                                        s.fields.push(val);
                                         gc_write_barrier(ptr, &val);
                                     } else {
                                         let name = name_val.as_str().unwrap_or("");
@@ -1885,6 +1900,11 @@ impl VM {
                                     }
                                     GcData::Struct(s) => {
                                         if s.set_field(index, val) {
+                                            gc_write_barrier(ptr, &val);
+                                        } else if s.descriptor.name.as_ref() == "Anonymous" {
+                                            let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, index);
+                                            s.descriptor = new_desc;
+                                            s.fields.push(val);
                                             gc_write_barrier(ptr, &val);
                                         } else {
                                             let name = index.as_str().unwrap_or("");

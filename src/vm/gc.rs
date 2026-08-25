@@ -38,8 +38,11 @@ pub struct GcPromise {
     pub suspended_frames: std::sync::Arc<std::sync::Mutex<Vec<crate::vm::execute::CallFrame>>>,
 }
 
+static NEXT_DESCRIPTOR_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
 #[derive(Clone, Debug)]
 pub struct StructDescriptor {
+    pub id: u32,
     pub name: Rc<str>,
     pub field_indices: FnvHashMap<super::value::MapKey, usize>,
     pub methods: FnvHashMap<super::value::MapKey, Value>,
@@ -61,7 +64,9 @@ impl StructDescriptor {
                 count += 1;
             }
         }
+        let id = NEXT_DESCRIPTOR_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self {
+            id,
             name,
             field_indices,
             methods,
@@ -222,8 +227,8 @@ pub fn get_pooled_map(capacity: usize) -> ObjectMap {
     })
 }
 
-// Pool size cap: limit to 256 entries to prevent unbounded memory use.
-const GC_POOL_MAX: usize = 256;
+// Pool size cap: limit to 16384 entries to allow fast hot loop object recycling.
+const GC_POOL_MAX: usize = 16384;
 
 #[inline(always)]
 pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
@@ -540,13 +545,23 @@ pub fn json_to_value(val: serde_json::Value) -> Value {
             Value::array(ptr)
         }
         serde_json::Value::Object(obj) => {
-            let mut map = get_pooled_map(obj.len());
+            let mut keys = Vec::with_capacity(obj.len());
+            let mut values = Vec::with_capacity(obj.len());
             for (k, v) in obj {
                 let key_ptr = intern_string(&k);
-                let val = json_to_value(v);
-                map.insert(MapKey(Value::string(key_ptr)), val);
+                keys.push(Value::string(key_ptr));
+                values.push(json_to_value(v));
             }
-            let ptr = gc_allocate(GcData::Object(map));
+            let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
+            let mut fields = get_pooled_vec(keys.len());
+            fields.resize(keys.len(), Value::null());
+            for i in 0..keys.len() {
+                fields[offsets[i]] = values[i];
+            }
+            let ptr = gc_allocate(GcData::Struct(GcStruct {
+                descriptor: desc,
+                fields,
+            }));
             Value::object(ptr)
         }
     }

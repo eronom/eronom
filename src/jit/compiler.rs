@@ -1059,11 +1059,21 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
+                        // Pure native MIR pointer/tag equality fast paths
+                        mir.push_str(&format!("          beq eq_fallthrough_{}, r{}, r{}\n", idx, rb, rc));
+                        mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                        mir.push_str(&format!("          xor tmp, tmp, r{}\n", rc));
+                        mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                        mir.push_str(&format!("          bne take_branch_{}, tmp, 0\n", idx));
+                        mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                        mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                        mir.push_str(&format!("          bne take_branch_{}, tmp, 0xfff4000000000000\n", idx));
                         mir.push_str(&format!("          call p_equal, er_jit_equal, r{}, vm, r{}, r{}\n", ra, rb, rc));
                         mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
+                        mir.push_str(&format!("eq_fallthrough_{}:\n", idx));
                         // Fall-through path
                         sync_edge(&mut mir, idx, idx + 2);
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
@@ -1108,6 +1118,24 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
+                        // Pure native MIR pointer/tag equality fast paths
+                        mir.push_str(&format!("          bne not_exact_eq_{}, r{}, r{}\n", idx, rb, rc));
+                        mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_TRUE));
+                        mir.push_str(&format!("          jmp done_eq_{}\n", idx));
+                        mir.push_str(&format!("not_exact_eq_{}:\n", idx));
+                        mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                        mir.push_str(&format!("          xor tmp, tmp, r{}\n", rc));
+                        mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                        mir.push_str(&format!("          beq same_tag_{}, tmp, 0\n", idx));
+                        mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
+                        mir.push_str(&format!("          jmp done_eq_{}\n", idx));
+                        mir.push_str(&format!("same_tag_{}:\n", idx));
+                        mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                        mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                        mir.push_str(&format!("          beq string_eq_{}, tmp, 0xfff4000000000000\n", idx));
+                        mir.push_str(&format!("          mov r{}, {}\n", ra, TAG_FALSE));
+                        mir.push_str(&format!("          jmp done_eq_{}\n", idx));
+                        mir.push_str(&format!("string_eq_{}:\n", idx));
                         mir.push_str(&format!("          call p_equal, er_jit_equal, r{}, vm, r{}, r{}\n", ra, rb, rc));
                         mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
