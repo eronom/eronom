@@ -97,6 +97,11 @@ pub enum Commands {
         #[arg(short, long = "port")]
         port: Option<u16>,
     },
+    /// Run Eronom test files (e.g. `eronom test` or `eronom test test_runner.er`)
+    Test {
+        /// Test file or directory to run (e.g. test_runner.er, tests/)
+        file: Option<PathBuf>,
+    },
 }
 
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
@@ -197,6 +202,9 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             let (dir, port_val) = parse_dir_and_port(dir_or_port, port_pos, port, ".")?;
             let resolved_port = resolve_port(&dir, port_val, false)?;
             start_server(&dir, false, resolved_port)?;
+        }
+        Commands::Test { file: _ } => {
+            // Handled via the main binary entrypoint
         }
     }
     Ok(())
