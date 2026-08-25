@@ -218,7 +218,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         }
     }
 
-    let live_in = compute_liveness(func, num_regs);
+    let (is_dead, live_in, _live_out) = eliminate_dead_instructions(func, num_regs);
 
     let mut worklist = vec![0];
     let mut in_worklist = vec![false; func.chunk.code.len()];
@@ -428,6 +428,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             _ => {}
         }
 
+        if is_dead[idx] {
+            continue;
+        }
+
         match instruction.op {
             OpCode::LoadConst => {
                 let val = func.chunk.constants[instruction.operand as usize];
@@ -465,7 +469,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset1));
                     }
                 } else {
-                    mir.push_str(&format!("          ubge fallback_neg_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    mir.push_str(&format!("          ubge fallback_neg_{}, r{}, 0xffe8000000000000\n", idx, rb));
                     mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
                     mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", rb, offset1));
                     mir.push_str(&format!("          dneg d{}, d{}\n", ra, rb));
@@ -520,10 +524,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     }
                 } else {
                     if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xffe8000000000000\n", idx, rb));
                     }
                     if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        mir.push_str(&format!("          ubge fallback_add_{}, r{}, 0xffe8000000000000\n", idx, rc));
                     }
                     if !rb_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -577,10 +581,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     }
                 } else {
                     if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xffe8000000000000\n", idx, rb));
                     }
                     if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        mir.push_str(&format!("          ubge fallback_sub_{}, r{}, 0xffe8000000000000\n", idx, rc));
                     }
                     if !rb_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -634,10 +638,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     }
                 } else {
                     if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xffe8000000000000\n", idx, rb));
                     }
                     if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        mir.push_str(&format!("          ubge fallback_mul_{}, r{}, 0xffe8000000000000\n", idx, rc));
                     }
                     if !rb_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -691,10 +695,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     }
                 } else {
                     if !rb_is_double {
-                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xffe8000000000000\n", idx, rb));
                     }
                     if !rc_is_double {
-                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                        mir.push_str(&format!("          ubge fallback_div_{}, r{}, 0xffe8000000000000\n", idx, rc));
                     }
                     if !rb_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -1011,10 +1015,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
                         if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xffe8000000000000\n", idx, rb));
                         }
                         if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xffe8000000000000\n", idx, rc));
                         }
                         if !rb_is_double {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -1069,10 +1073,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, res_val\n", ra));
                     } else {
                         if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xffe8000000000000\n", idx, rb));
                         }
                         if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                            mir.push_str(&format!("          ubge fallback_eq_{}, r{}, 0xffe8000000000000\n", idx, rc));
                         }
                         if !rb_is_double {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -1146,10 +1150,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
                         if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xffe8000000000000\n", idx, rb));
                         }
                         if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xffe8000000000000\n", idx, rc));
                         }
                         if !rb_is_double {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -1194,10 +1198,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, res_val\n", ra));
                     } else {
                         if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xffe8000000000000\n", idx, rb));
                         }
                         if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                            mir.push_str(&format!("          ubge fallback_gt_{}, r{}, 0xffe8000000000000\n", idx, rc));
                         }
                         if !rb_is_double {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -1253,10 +1257,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          jmp inst_{}\n", idx + 2));
                     } else {
                         if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xffe8000000000000\n", idx, rb));
                         }
                         if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xffe8000000000000\n", idx, rc));
                         }
                         if !rb_is_double {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -1301,10 +1305,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, res_val\n", ra));
                     } else {
                         if !rb_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xffe8000000000000\n", idx, rb));
                         }
                         if !rc_is_double {
-                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                            mir.push_str(&format!("          ubge fallback_lt_{}, r{}, 0xffe8000000000000\n", idx, rc));
                         }
                         if !rb_is_double {
                             mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset1, rb));
@@ -1625,10 +1629,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let mut is_push = false;
                 let mut is_pop = false;
                 if name_val.is_string() {
-                    let s = match unsafe { &(*name_val.as_gc_ptr()).data } {
-                        GcData::String(s) => s.as_ref(),
-                        _ => unreachable!(),
-                    };
+                    let s = name_val.as_str().unwrap_or("");
                     if s == "push" {
                         is_push = true;
                     } else if s == "pop" {
@@ -1824,7 +1825,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 if rc < num_regs && types_at_inst[idx][rc] == RegType::Double {
                     mir.push_str(&format!("          d2i idx_ptr, d{}\n", rc));
                 } else {
-                    mir.push_str(&format!("          ubge fallback_get_idx_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                    mir.push_str(&format!("          ubge fallback_get_idx_{}, r{}, 0xffe8000000000000\n", idx, rc));
                     mir.push_str(&format!("          mov i64:8(cast_ptr), r{}\n", rc));
                     mir.push_str("          dmov da, d:8(cast_ptr)\n");
                     mir.push_str("          d2i idx_ptr, da\n");
@@ -1876,7 +1877,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
                     mir.push_str(&format!("          d2i idx_ptr, d{}\n", rb));
                 } else {
-                    mir.push_str(&format!("          ubge fallback_set_idx_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    mir.push_str(&format!("          ubge fallback_set_idx_{}, r{}, 0xffe8000000000000\n", idx, rb));
                     mir.push_str(&format!("          mov i64:8(cast_ptr), r{}\n", rb));
                     mir.push_str("          dmov da, d:8(cast_ptr)\n");
                     mir.push_str("          d2i idx_ptr, da\n");
@@ -2024,7 +2025,11 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     }
 }
 
-fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Vec<Vec<bool>> {
+fn compute_liveness_with_dead(
+    func: &crate::vm::bytecode::Function,
+    num_regs: usize,
+    is_dead: &[bool],
+) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let code = &func.chunk.code;
     let n = code.len();
     let mut live_in = vec![vec![false; num_regs]; n];
@@ -2034,6 +2039,9 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
     let mut kill = vec![vec![false; num_regs]; n];
 
     for pc in 0..n {
+        if is_dead[pc] {
+            continue;
+        }
         let inst = &code[pc];
         let ra = inst.ra as usize;
         let rb = inst.rb as usize;
@@ -2167,22 +2175,6 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                 successors.push(target);
                 successors.push(pc + 1);
             }
-            OpCode::Equal | OpCode::Greater | OpCode::Less => {
-                let next_is_jmp_if_false = if pc + 1 < n {
-                    let next_inst = &code[pc + 1];
-                    next_inst.op == OpCode::JumpIfFalse && next_inst.ra == inst.ra
-                } else {
-                    false
-                };
-                if next_is_jmp_if_false {
-                    let next_inst = &code[pc + 1];
-                    let target = (pc + 2 + next_inst.operand as usize) as usize;
-                    successors.push(target);
-                    successors.push(pc + 2);
-                } else {
-                    successors.push(pc + 1);
-                }
-            }
             _ => {
                 successors.push(pc + 1);
             }
@@ -2233,25 +2225,6 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
                             is_pred = true;
                         }
                     }
-                    OpCode::Equal | OpCode::Greater | OpCode::Less => {
-                        let next_is_jmp_if_false = if pred + 1 < n {
-                            let next_inst = &code[pred + 1];
-                            next_inst.op == OpCode::JumpIfFalse && next_inst.ra == p_inst.ra
-                        } else {
-                            false
-                        };
-                        if next_is_jmp_if_false {
-                            let next_inst = &code[pred + 1];
-                            let target = (pred + 2 + next_inst.operand as usize) as usize;
-                            if target == pc || pred + 2 == pc {
-                                is_pred = true;
-                            }
-                        } else {
-                            if pred + 1 == pc {
-                                is_pred = true;
-                            }
-                        }
-                    }
                     _ => {
                         if pred + 1 == pc {
                             is_pred = true;
@@ -2267,7 +2240,76 @@ fn compute_liveness(func: &crate::vm::bytecode::Function, num_regs: usize) -> Ve
         }
     }
 
-    live_in
+    (live_in, live_out)
+}
+
+fn eliminate_dead_instructions(
+    func: &crate::vm::bytecode::Function,
+    num_regs: usize,
+) -> (Vec<bool>, Vec<Vec<bool>>, Vec<Vec<bool>>) {
+    let n = func.chunk.code.len();
+    let mut is_dead = vec![false; n];
+    let mut live_in = vec![vec![false; num_regs]; n];
+    let mut live_out = vec![vec![false; num_regs]; n];
+
+    for _ in 0..8 {
+        let (in_set, out_set) = compute_liveness_with_dead(func, num_regs, &is_dead);
+        live_in = in_set;
+        live_out = out_set;
+        let mut changed = false;
+
+        for pc in 0..n {
+            if is_dead[pc] {
+                continue;
+            }
+            let inst = &func.chunk.code[pc];
+            let ra = inst.ra as usize;
+            if ra < num_regs && !live_out[pc][ra] {
+                match inst.op {
+                    OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Mod |
+                    OpCode::BitAnd | OpCode::BitOr | OpCode::BitXor | OpCode::BitNot |
+                    OpCode::ShiftLeft | OpCode::ShiftRight | OpCode::Negate | OpCode::Not |
+                    OpCode::Equal | OpCode::Greater | OpCode::Less |
+                    OpCode::GetProperty | OpCode::GetIndex | OpCode::TypeOf | OpCode::ArrayLen |
+                    OpCode::LoadConst | OpCode::LoadNull | OpCode::LoadBool | OpCode::Move |
+                    OpCode::MakeArray | OpCode::MakeObject => {
+                        is_dead[pc] = true;
+                        changed = true;
+                    }
+                    OpCode::Call => {
+                        let callee_reg = inst.rb as usize;
+                        if callee_reg < num_regs {
+                            for prev in (0..pc).rev() {
+                                if func.chunk.code[prev].ra as usize == callee_reg {
+                                    if func.chunk.code[prev].op == OpCode::GetProperty {
+                                        let c_idx = func.chunk.code[prev].operand as usize;
+                                        if c_idx < func.chunk.constants.len() {
+                                            let name = func.chunk.constants[c_idx].as_str().unwrap_or("");
+                                            if name == "push" || name == "pop" {
+                                                let arr_reg = func.chunk.code[prev].rb as usize;
+                                                if arr_reg < num_regs && !live_out[pc][arr_reg] {
+                                                    is_dead[pc] = true;
+                                                    changed = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    (is_dead, live_in, live_out)
 }
 
 // Register FFI Helper Functions in the MIR JIT compiler

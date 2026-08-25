@@ -27,8 +27,8 @@ pub extern "C" fn er_gc_print_stats() {
     });
 }
 use super::gc::{
-    gc_allocate, gc_write_barrier, gc_blacken_object, mark_value,
-    GC_STATE, GC_ROOTS, GC_NEEDS_STEP, GcColor, GcPhase, GcData, GcObject
+    gc_allocate, gc_write_barrier, gc_blacken_object, mark_value, gc_with_state,
+    GC_ROOTS, GC_NEEDS_STEP, GcColor, GcPhase, GcData, GcObject
 };
 
 use std::sync::{Arc, Mutex, Condvar};
@@ -344,8 +344,12 @@ impl VM {
     }
 
     pub fn run(&mut self, function: Function) -> Result<Value, String> {
-        let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
         let func_ptr = gc_allocate(GcData::Function(function));
+        self.run_function_ptr(func_ptr)
+    }
+
+    pub fn run_function_ptr(&mut self, func_ptr: *mut GcObject) -> Result<Value, String> {
+        let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
         self.frames.push(CallFrame {
             function: func_ptr,
             ip: 0,
@@ -361,86 +365,19 @@ impl VM {
     pub fn gc_step(&mut self) {
         let start_time = Instant::now();
         GC_COUNT.with(|c| c.set(c.get() + 1));
-        GC_STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            let phase = state.phase;
-            match phase {
-                GcPhase::Pause => {
+        let phase = gc_with_state(|state| state.phase);
+        match phase {
+            GcPhase::Pause => {
+                let should_mark = gc_with_state(|state| {
                     if state.alloc_count >= 10000 {
                         state.phase = GcPhase::Mark;
                         state.gray_stack.clear();
-
-                        drop(state);
-                        
-                        for val in &self.stack {
-                            mark_value(val);
-                        }
-                        for val in self.globals.values() {
-                            mark_value(val);
-                        }
-                        for frame in &self.frames {
-                            mark_value(&Value::function(frame.function));
-                        }
-                        for &upval_ptr in &self.open_upvalues {
-                            super::gc::mark_object(upval_ptr);
-                        }
-                        mark_value(&self.thrown_value);
-                        if let Ok(queue) = self.event_loop_queue.lock() {
-                            for task in queue.iter() {
-                                mark_value(&task.callback);
-                                for arg in task.args.iter() {
-                                    mark_value(arg);
-                                }
-                            }
-                        }
-                        if let Ok(pending) = self.pending_callbacks.lock() {
-                            for item in pending.iter() {
-                                mark_value(&item.callback);
-                                for arg in item.args.iter() {
-                                    mark_value(arg);
-                                }
-                            }
-                        }
-                        if let Ok(timers) = self.timers.lock() {
-                            for timer in timers.iter() {
-                                match &timer.action {
-                                    VmTimerAction::Callback { callback, args } => {
-                                        mark_value(callback);
-                                        for arg in args {
-                                            mark_value(arg);
-                                        }
-                                    }
-                                    VmTimerAction::ResolvePromise { value, .. } => {
-                                        mark_value(value);
-                                    }
-                                }
-                            }
-                        }
-                        GC_ROOTS.with(|roots| {
-                            if let Ok(borrowed) = roots.try_borrow() {
-                                for root_fn in borrowed.iter() {
-                                    root_fn();
-                                }
-                            }
-                        });
-                    }
-                }
-                GcPhase::Mark => {
-                    let gray_opt = state.gray_stack.pop();
-                    if let Some(ptr) = gray_opt {
-                        drop(state);
-                        gc_blacken_object(ptr);
+                        true
                     } else {
-                        state.phase = GcPhase::Atomic;
+                        false
                     }
-                }
-                GcPhase::Atomic => {
-                    state.phase = GcPhase::Sweep;
-                    state.sweep_ptr = state.head;
-                    state.prev_sweep_ptr = std::ptr::null_mut();
-                    
-                    drop(state);
-                    
+                });
+                if should_mark {
                     for val in &self.stack {
                         mark_value(val);
                     }
@@ -492,19 +429,92 @@ impl VM {
                             }
                         }
                     });
-
-                    loop {
-                        let gray_opt = GC_STATE.with(|s| s.borrow_mut().gray_stack.pop());
-                        if let Some(ptr) = gray_opt {
+                }
+            }
+            GcPhase::Mark => {
+                gc_with_state(|state| {
+                    for _ in 0..128 {
+                        if let Some(ptr) = state.gray_stack.pop() {
                             gc_blacken_object(ptr);
                         } else {
+                            state.phase = GcPhase::Atomic;
                             break;
                         }
                     }
-                    super::gc::gc_sweep_string_cache();
+                });
+            }
+            GcPhase::Atomic => {
+                gc_with_state(|state| {
+                    state.phase = GcPhase::Sweep;
+                    state.sweep_ptr = state.head;
+                    state.prev_sweep_ptr = std::ptr::null_mut();
+                });
+                
+                for val in &self.stack {
+                    mark_value(val);
                 }
-                GcPhase::Sweep => {
-                    for _ in 0..5 {
+                for val in self.globals.values() {
+                    mark_value(val);
+                }
+                for frame in &self.frames {
+                    mark_value(&Value::function(frame.function));
+                }
+                for &upval_ptr in &self.open_upvalues {
+                    super::gc::mark_object(upval_ptr);
+                }
+                mark_value(&self.thrown_value);
+                if let Ok(queue) = self.event_loop_queue.lock() {
+                    for task in queue.iter() {
+                        mark_value(&task.callback);
+                        for arg in task.args.iter() {
+                            mark_value(arg);
+                        }
+                    }
+                }
+                if let Ok(pending) = self.pending_callbacks.lock() {
+                    for item in pending.iter() {
+                        mark_value(&item.callback);
+                        for arg in item.args.iter() {
+                            mark_value(arg);
+                        }
+                    }
+                }
+                if let Ok(timers) = self.timers.lock() {
+                    for timer in timers.iter() {
+                        match &timer.action {
+                            VmTimerAction::Callback { callback, args } => {
+                                mark_value(callback);
+                                for arg in args {
+                                    mark_value(arg);
+                                }
+                            }
+                            VmTimerAction::ResolvePromise { value, .. } => {
+                                mark_value(value);
+                            }
+                        }
+                    }
+                }
+                GC_ROOTS.with(|roots| {
+                    if let Ok(borrowed) = roots.try_borrow() {
+                        for root_fn in borrowed.iter() {
+                            root_fn();
+                        }
+                    }
+                });
+
+                loop {
+                    let gray_opt = gc_with_state(|s| s.gray_stack.pop());
+                    if let Some(ptr) = gray_opt {
+                        gc_blacken_object(ptr);
+                    } else {
+                        break;
+                    }
+                }
+                super::gc::gc_sweep_string_cache();
+            }
+            GcPhase::Sweep => {
+                gc_with_state(|state| {
+                    for _ in 0..256 {
                         let curr = state.sweep_ptr;
                         if curr.is_null() {
                             state.phase = GcPhase::Pause;
@@ -522,7 +532,7 @@ impl VM {
                                 } else {
                                     (*prev).next = next;
                                 }
-                                super::gc::gc_dealloc_object(&mut state, curr);
+                                super::gc::gc_dealloc_object(state, curr);
                                 state.sweep_ptr = next;
                             } else {
                                 (*curr).color = GcColor::White;
@@ -531,16 +541,17 @@ impl VM {
                             }
                         }
                     }
-                }
+                });
             }
-        });
-        GC_TIME.with(|t| t.set(t.get() + start_time.elapsed()));
+        }
+        if cfg!(debug_assertions) {
+            GC_TIME.with(|t| t.set(t.get() + start_time.elapsed()));
+        }
     }
 
     pub fn collect_garbage(&mut self) {
         let start_time = Instant::now();
-        GC_STATE.with(|state| {
-            let mut state = state.borrow_mut();
+        gc_with_state(|state| {
             state.gray_stack.clear();
         });
 
@@ -599,7 +610,7 @@ impl VM {
 
         // 2. Trace phase: process gray stack until empty
         loop {
-            let gray_opt = GC_STATE.with(|state| state.borrow_mut().gray_stack.pop());
+            let gray_opt = gc_with_state(|state| state.gray_stack.pop());
             if let Some(ptr) = gray_opt {
                 gc_blacken_object(ptr);
             } else {
@@ -611,8 +622,7 @@ impl VM {
         super::gc::gc_sweep_string_cache();
 
         // 3. Sweep phase: sweep the entire linked list in one go
-        GC_STATE.with(|state| {
-            let mut state = state.borrow_mut();
+        gc_with_state(|state| {
             let mut curr = state.head;
             state.head = std::ptr::null_mut();
             let mut prev: *mut GcObject = std::ptr::null_mut();
@@ -621,7 +631,7 @@ impl VM {
                 unsafe {
                     let next = (*curr).next;
                     if (*curr).color == GcColor::White {
-                        super::gc::gc_dealloc_object(&mut state, curr);
+                        super::gc::gc_dealloc_object(state, curr);
                     } else {
                         (*curr).color = GcColor::White;
                         (*curr).next = std::ptr::null_mut();
@@ -1252,20 +1262,15 @@ impl VM {
                         } else {
                             use std::fmt::Write;
                             if a.is_string() {
-                                let sa_str = match &(*a.as_gc_ptr()).data {
-                                    GcData::String(s) => s,
-                                    _ => unreachable!(),
-                                };
-                                let new_ptr = super::value::ADD_SCRATCH.with(|scratch| {
+                                let sa_str = a.as_str().unwrap_or("");
+                                let val = super::value::ADD_SCRATCH.with(|scratch| {
                                     let mut s_ref = scratch.borrow_mut();
                                     s_ref.clear();
                                     s_ref.push_str(sa_str);
                                     if b.is_string() {
-                                        let sb_str = match &(*b.as_gc_ptr()).data {
-                                            GcData::String(s) => s,
-                                            _ => unreachable!(),
-                                        };
-                                        s_ref.push_str(sb_str);
+                                        if let Some(sb_str) = b.as_str() {
+                                            s_ref.push_str(sb_str);
+                                        }
                                     } else if b.is_number() {
                                         let val = b.as_number();
                                         if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
@@ -1276,15 +1281,17 @@ impl VM {
                                     } else {
                                         let _ = write!(&mut s_ref, "{}", b);
                                     }
-                                    super::gc::gc_alloc_string(s_ref.as_str())
+                                    if let Some(inline) = Value::inline_string(s_ref.as_str()) {
+                                        inline
+                                    } else {
+                                        let new_ptr = super::gc::gc_alloc_string(s_ref.as_str());
+                                        Value::string(new_ptr)
+                                    }
                                 });
-                                *frame_slots.add(dest) = Value::string(new_ptr);
+                                *frame_slots.add(dest) = val;
                             } else if b.is_string() {
-                                let sb_str = match &(*b.as_gc_ptr()).data {
-                                    GcData::String(s) => s,
-                                    _ => unreachable!(),
-                                };
-                                let new_ptr = super::value::ADD_SCRATCH.with(|scratch| {
+                                let sb_str = b.as_str().unwrap_or("");
+                                let val = super::value::ADD_SCRATCH.with(|scratch| {
                                     let mut s_ref = scratch.borrow_mut();
                                     s_ref.clear();
                                     if a.is_number() {
@@ -1298,9 +1305,14 @@ impl VM {
                                         let _ = write!(&mut s_ref, "{}", a);
                                     }
                                     s_ref.push_str(sb_str);
-                                    super::gc::gc_alloc_string(s_ref.as_str())
+                                    if let Some(inline) = Value::inline_string(s_ref.as_str()) {
+                                        inline
+                                    } else {
+                                        let new_ptr = super::gc::gc_alloc_string(s_ref.as_str());
+                                        Value::string(new_ptr)
+                                    }
                                 });
-                                *frame_slots.add(dest) = Value::string(new_ptr);
+                                *frame_slots.add(dest) = val;
                             } else {
                                 return Err("Operands must be numbers or strings".into());
                             }
@@ -1515,19 +1527,14 @@ impl VM {
                     }
                     OpCode::DefineGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match &(*name_val.as_gc_ptr()).data {
-                            GcData::String(s) => s.clone(),
-                            _ => unreachable!(),
-                        };
+                        let name_str = name_val.as_str().unwrap_or("");
+                        let name: Rc<str> = Rc::from(name_str);
                         let val = *frame_slots.add(instruction.ra as usize);
                         self.globals.insert(name, val);
                     }
                     OpCode::GetGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match &(*name_val.as_gc_ptr()).data {
-                            GcData::String(s) => s,
-                            _ => unreachable!(),
-                        };
+                        let name = name_val.as_str().unwrap_or("");
                         if let Some(val) = self.globals.get(name) {
                             *frame_slots.add(instruction.ra as usize) = *val;
                         } else {
@@ -1536,17 +1543,14 @@ impl VM {
                     }
                     OpCode::SetGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
-                        let name = match &(*name_val.as_gc_ptr()).data {
-                            GcData::String(s) => s.clone(),
-                            _ => unreachable!(),
-                        };
+                        let name = name_val.as_str().unwrap_or("");
                         let val = *frame_slots.add(instruction.ra as usize);
-                        match self.globals.entry(name.clone()) {
-                            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                                entry.insert(val);
+                        match self.globals.get_mut(name) {
+                            Some(entry) => {
+                                *entry = val;
                             }
-                            std::collections::hash_map::Entry::Vacant(_) => {
-                                return Err(format_undeclared_var_error(&name));
+                            None => {
+                                return Err(format_undeclared_var_error(name));
                             }
                         }
                     }
@@ -1687,10 +1691,7 @@ impl VM {
                         let obj = *frame_slots.add(obj_reg);
                         if obj.is_object() {
                             let ptr = obj.as_gc_ptr();
-                            let name = match &(*name_val.as_gc_ptr()).data {
-                                GcData::String(s) => s.as_ref(),
-                                _ => "",
-                            };
+                            let name = name_val.as_str().unwrap_or("");
                             let mut is_json_method = false;
                             let mut is_text_method = false;
                             if name == "json" || name == "text" {
@@ -1763,10 +1764,7 @@ impl VM {
                                 }
                             }
                         } else if obj.is_array() {
-                            let name = match &(*name_val.as_gc_ptr()).data {
-                                GcData::String(s) => s.as_ref(),
-                                _ => unreachable!(),
-                            };
+                            let name = name_val.as_str().unwrap_or("");
                             let ptr = obj.as_gc_ptr();
                             match &(*ptr).data {
                                 GcData::Array(arr) => {
@@ -1818,10 +1816,7 @@ impl VM {
                                 _ => unreachable!(),
                             }
                         } else if obj.is_array() {
-                            let name_rc = match &(*name_val.as_gc_ptr()).data {
-                                GcData::String(s) => s.as_ref(),
-                                _ => unreachable!(),
-                            };
+                            let name_rc = name_val.as_str().unwrap_or("");
                             let ptr = obj.as_gc_ptr();
                             match &mut (*ptr).data {
                                 GcData::Array(arr) => {
@@ -1864,10 +1859,7 @@ impl VM {
                                     _ => unreachable!(),
                                 }
                             } else if index.is_string() {
-                                let s = match &(*index.as_gc_ptr()).data {
-                                    GcData::String(st) => st,
-                                    _ => unreachable!(),
-                                };
+                                let s = index.as_str().unwrap_or("");
                                 if let Ok(idx) = s.parse::<usize>() {
                                     match &(*ptr).data {
                                         GcData::Array(arr) => {
@@ -1929,10 +1921,7 @@ impl VM {
                                     _ => unreachable!(),
                                 }
                             } else if index.is_string() {
-                                let s = match &(*index.as_gc_ptr()).data {
-                                    GcData::String(st) => st,
-                                    _ => unreachable!(),
-                                };
+                                let s = index.as_str().unwrap_or("");
                                 if let Ok(idx) = s.parse::<usize>() {
                                     match &mut (*ptr).data {
                                         GcData::Array(arr) => {
@@ -2149,10 +2138,7 @@ impl VM {
                                     let body_val = map.get(&super::value::MapKey(Value::string(body_key))).cloned().unwrap_or(Value::null());
                                     if callee.is_method_json() {
                                         if body_val.is_string() {
-                                            let s = match &(*body_val.as_gc_ptr()).data {
-                                                GcData::String(st) => st.as_ref(),
-                                                _ => "",
-                                            };
+                                            let s = body_val.as_str().unwrap_or("");
                                             if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(s) {
                                                 super::gc::json_to_value(json_val)
                                             } else {
@@ -2281,10 +2267,7 @@ impl VM {
                     OpCode::DefineStruct => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
                         let fields_val = *constants_ptr.add(instruction.ra as usize);
-                        let name_rc = match &(*name_val.as_gc_ptr()).data {
-                            GcData::String(s) => s.clone(),
-                            _ => unreachable!(),
-                        };
+                        let name_rc: Rc<str> = Rc::from(name_val.as_str().unwrap_or(""));
                         let fields_vec = match &(*fields_val.as_gc_ptr()).data {
                             GcData::Array(arr) => arr,
                             _ => unreachable!(),
@@ -2861,29 +2844,29 @@ mod tests {
         let mut vm = VM::new();
         vm.stack.push(parent);
 
-        assert_eq!(GC_STATE.with(|s| s.borrow().phase), GcPhase::Pause);
+        assert_eq!(gc_with_state(|s| s.phase), GcPhase::Pause);
 
         for _ in 0..10000 {
             gc_allocate(GcData::Array(vec![]));
         }
 
         vm.gc_step();
-        assert_eq!(GC_STATE.with(|s| s.borrow().phase), GcPhase::Mark);
+        assert_eq!(gc_with_state(|s| s.phase), GcPhase::Mark);
 
-        while GC_STATE.with(|s| s.borrow().phase) != GcPhase::Sweep {
+        while gc_with_state(|s| s.phase) != GcPhase::Sweep {
             vm.gc_step();
         }
 
-        while GC_STATE.with(|s| s.borrow().phase) == GcPhase::Sweep {
+        while gc_with_state(|s| s.phase) == GcPhase::Sweep {
             vm.gc_step();
         }
 
-        assert_eq!(GC_STATE.with(|s| s.borrow().phase), GcPhase::Pause);
+        assert_eq!(gc_with_state(|s| s.phase), GcPhase::Pause);
 
         let mut found_parent = false;
         let mut found_garbage = false;
         unsafe {
-            let mut curr = GC_STATE.with(|s| s.borrow().head);
+            let mut curr = gc_with_state(|s| s.head);
             while !curr.is_null() {
                 if curr == parent_ptr {
                     found_parent = true;
@@ -2923,7 +2906,7 @@ mod tests {
         let mut found_deep = false;
         let mut found_garbage = false;
         unsafe {
-            let mut curr = GC_STATE.with(|s| s.borrow().head);
+            let mut curr = gc_with_state(|s| s.head);
             while !curr.is_null() {
                 if curr == deep_ptr {
                     found_deep = true;
@@ -2982,7 +2965,8 @@ mod tests {
 
         assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), false);
 
-        for _ in 0..10000 {
+        let threshold = gc_with_state(|s| s.alloc_threshold);
+        for _ in 0..threshold {
             gc_allocate(GcData::Array(vec![]));
         }
 

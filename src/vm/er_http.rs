@@ -266,11 +266,9 @@ pub fn native_router_ws(args: Vec<Value>) -> Value {
         return Value::null();
     }
     
-    let path_str = unsafe {
-        match &(*path_val.as_gc_ptr()).data {
-            GcData::String(s) => s.as_ref().to_string(),
-            _ => return Value::null(),
-        }
+    let path_str = match path_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
     };
     
     let open_name = get_or_create_string("open");
@@ -316,12 +314,7 @@ pub fn extract_bytes_from_value(val: Value, force_binary: bool) -> (Vec<u8>, boo
         };
         (bytes, true)
     } else if val.is_string() {
-        let s = unsafe {
-            match &(*val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_bytes().to_vec(),
-                _ => Vec::new(),
-            }
-        };
+        let s = val.as_str().map(|s| s.as_bytes().to_vec()).unwrap_or_default();
         (s, force_binary)
     } else {
         let s = val.to_string();
@@ -535,11 +528,9 @@ fn register_route_internal(method: &str, args: Vec<Value>) -> Value {
         return Value::null();
     }
     
-    let mut path_str = unsafe {
-        match &(*path_val.as_gc_ptr()).data {
-            GcData::String(s) => s.as_ref().to_string(),
-            _ => return Value::null(),
-        }
+    let mut path_str = match path_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
     };
     
     ROUTE_PREFIX.with(|prefix| {
@@ -1268,11 +1259,9 @@ pub fn native_context_html(args: Vec<Value>) -> Value {
         ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(args[1].as_number() as u16));
     }
     let html_str = if html_val.is_string() {
-        unsafe {
-            match &(*html_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref().to_string(),
-                _ => return Value::null(),
-            }
+        match html_val.as_str() {
+            Some(s) => s.to_string(),
+            None => return Value::null(),
         }
     } else {
         html_val.to_string()
@@ -1294,11 +1283,9 @@ pub fn native_context_text(args: Vec<Value>) -> Value {
         ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(args[1].as_number() as u16));
     }
     let text_str = if text_val.is_string() {
-        unsafe {
-            match &(*text_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref().to_string(),
-                _ => return Value::null(),
-            }
+        match text_val.as_str() {
+            Some(s) => s.to_string(),
+            None => return Value::null(),
         }
     } else {
         text_val.to_string()
@@ -1582,9 +1569,9 @@ pub fn value_to_json(val: Value) -> serde_json::Value {
                 GcData::Object(map) => {
                     let mut obj = serde_json::Map::new();
                     for (k, v) in map {
-                        let key_str = match &(*k.0.as_gc_ptr()).data {
-                            GcData::String(s) => s.as_ref().to_string(),
-                            _ => continue,
+                        let key_str = match k.0.as_str() {
+                            Some(s) => s.to_string(),
+                            None => continue,
                         };
                         obj.insert(key_str, value_to_json(*v));
                     }
@@ -2762,11 +2749,9 @@ pub fn native_fetch_sync(args: Vec<Value>) -> Value {
         eprintln!("[FetchSync] Error: URL must be a string");
         return Value::null();
     }
-    let url_str = unsafe {
-        match &(*url_val.as_gc_ptr()).data {
-            GcData::String(s) => s.as_ref().to_string(),
-            _ => return Value::null(),
-        }
+    let url_str = match url_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
     };
 
     match perform_native_fetch(&url_str) {
@@ -2794,11 +2779,9 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
         eprintln!("[FetchEvented] Error: URL must be a string");
         return Value::null();
     }
-    let url_str = unsafe {
-        match &(*url_val.as_gc_ptr()).data {
-            GcData::String(s) => s.as_ref().to_string(),
-            _ => return Value::null(),
-        }
+    let url_str = match url_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
     };
 
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
@@ -2952,11 +2935,9 @@ pub fn native_set_io_mode(args: Vec<Value>) -> Value {
     if !mode_val.is_string() {
         return Value::null();
     }
-    let mode_str = unsafe {
-        match &(*mode_val.as_gc_ptr()).data {
-            GcData::String(s) => s.as_ref().to_string(),
-            _ => return Value::null(),
-        }
+    let mode_str = match mode_val.as_str() {
+        Some(s) => s.to_string(),
+        None => return Value::null(),
     };
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     if !vm_ptr.is_null() {

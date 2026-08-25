@@ -15,6 +15,26 @@ thread_local! {
     static TRANSITION_CACHE: RefCell<FnvHashMap<(u32, u64), Rc<StructDescriptor>>> = RefCell::new(FnvHashMap::default());
 }
 
+/// Fast-path 2-key shape lookup avoiding allocations
+#[inline(always)]
+pub fn get_or_create_anonymous_shape_2(k0: Value, k1: Value) -> (Rc<StructDescriptor>, [usize; 2]) {
+    let k0_bits = k0.0;
+    let k1_bits = k1.0;
+    let cached = FAST_2KEY_CACHE.with(|c| {
+        if let Some((c0, c1, ref desc)) = *c.borrow() {
+            if c0 == k0_bits && c1 == k1_bits {
+                return Some(desc.clone());
+            }
+        }
+        None
+    });
+    if let Some(desc) = cached {
+        return (desc, [0, 1]);
+    }
+    let (desc, offsets) = get_or_create_anonymous_shape(&[k0, k1]);
+    (desc, [offsets[0], offsets[1]])
+}
+
 /// Fetches or creates a cached StructDescriptor for an anonymous object shape with the given keys.
 pub fn get_or_create_anonymous_shape(keys: &[Value]) -> (Rc<StructDescriptor>, Vec<usize>) {
     if keys.len() == 2 {

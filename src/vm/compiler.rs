@@ -1,7 +1,7 @@
 use crate::frontend::{Expr, LiteralValue, Stmt, TokenType};
 use super::value::Value;
 use super::bytecode::{Function, Chunk, OpCode};
-use super::gc::{gc_allocate, GcData, get_or_create_string};
+use super::gc::{gc_allocate, GcData};
 
 #[derive(Clone)]
 pub struct FlattenedStructInfo {
@@ -138,7 +138,7 @@ impl Compiler {
                 let callee_reg = self.next_reg;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::string(get_or_create_string("print")));
+                    .add_constant(Value::string_from_str("print"));
                 self.current_chunk().write_instruction(
                     OpCode::GetGlobal,
                     callee_reg as u8,
@@ -198,7 +198,7 @@ impl Compiler {
                     self.compile_expr(&expr, temp_reg)?;
                     let name_idx = self
                         .current_chunk()
-                        .add_constant(Value::string(get_or_create_string(name.as_str())));
+                        .add_constant(Value::string_from_str(name.as_str()));
                     self.current_chunk().write_instruction(
                         OpCode::DefineGlobal,
                         temp_reg as u8,
@@ -688,13 +688,12 @@ impl Compiler {
                     fields: Vec::new(),
                     methods: Vec::new(),
                 });
-                let name_val = Value::string(get_or_create_string(name.as_str()));
+                let name_val = Value::string_from_str(name.as_str());
                 let name_idx = self.current_chunk().add_constant(name_val);
                 
                 let mut field_names_vals = Vec::new();
                 for (field_name, _) in &flat.fields {
-                    let f_ptr = get_or_create_string(field_name.as_str());
-                    field_names_vals.push(Value::string(f_ptr));
+                    field_names_vals.push(Value::string_from_str(field_name.as_str()));
                 }
                 let array_ptr = gc_allocate(GcData::Array(field_names_vals));
                 let fields_val = Value::array(array_ptr);
@@ -732,8 +731,7 @@ impl Compiler {
                     let func_ptr = gc_allocate(GcData::Function(func));
                     let func_val = Value::function(func_ptr);
 
-                    let m_name_ptr = get_or_create_string(m_name.as_str());
-                    methods_map.insert(crate::vm::value::MapKey(Value::string(m_name_ptr)), func_val);
+                    methods_map.insert(crate::vm::value::MapKey(Value::string_from_str(m_name.as_str())), func_val);
                 }
                 let methods_ptr = gc_allocate(GcData::Object(methods_map));
                 let methods_val = Value::object(methods_ptr);
@@ -788,7 +786,7 @@ impl Compiler {
 
         let array_len_idx = self
             .current_chunk()
-            .add_constant(Value::string(get_or_create_string("arrayLen")));
+            .add_constant(Value::string_from_str("arrayLen"));
         self.current_chunk().write_instruction(
             OpCode::GetGlobal,
             len_reg as u8,
@@ -869,7 +867,7 @@ impl Compiler {
         let await_fn_reg = h_reg + 1;
         let await_name_idx = self
             .current_chunk()
-            .add_constant(Value::string(get_or_create_string("futureAwait")));
+            .add_constant(Value::string_from_str("futureAwait"));
         self.current_chunk().write_instruction(
             OpCode::GetGlobal,
             await_fn_reg as u8,
@@ -935,7 +933,7 @@ impl Compiler {
                     LiteralValue::String(s) => {
                         let idx = self
                             .current_chunk()
-                            .add_constant(Value::string(get_or_create_string(s.as_str())));
+                            .add_constant(Value::string_from_str(s.as_str()));
                         self.current_chunk().write_instruction(
                             OpCode::LoadConst,
                             dest as u8,
@@ -968,7 +966,7 @@ impl Compiler {
                 } else {
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::string(get_or_create_string(name.as_str())));
+                        .add_constant(Value::string_from_str(name.as_str()));
                     self.current_chunk().write_instruction(
                         OpCode::GetGlobal,
                         dest as u8,
@@ -1032,7 +1030,7 @@ impl Compiler {
                     self.compile_expr(val, dest)?;
                     let idx = self
                         .current_chunk()
-                        .add_constant(Value::string(get_or_create_string(name.as_str())));
+                        .add_constant(Value::string_from_str(name.as_str()));
                     self.current_chunk().write_instruction(
                         OpCode::SetGlobal,
                         dest as u8,
@@ -1166,7 +1164,7 @@ impl Compiler {
                             }
                             let name_idx = self
                                 .current_chunk()
-                                .add_constant(Value::string(get_or_create_string(name.as_str())));
+                                .add_constant(Value::string_from_str(name.as_str()));
                             self.current_chunk().write_instruction(
                                 OpCode::GetGlobal,
                                 dest as u8,
@@ -1195,7 +1193,7 @@ impl Compiler {
                         self.compile_expr(obj, obj_reg)?;
                         let name_idx = self
                             .current_chunk()
-                            .add_constant(Value::string(get_or_create_string(prop.as_str())));
+                            .add_constant(Value::string_from_str(prop.as_str()));
                         self.current_chunk().write_instruction(
                             OpCode::GetProperty,
                             dest as u8,
@@ -1321,7 +1319,7 @@ impl Compiler {
                             }
                             let name_idx = self
                                 .current_chunk()
-                                .add_constant(Value::string(get_or_create_string(name.as_str())));
+                                .add_constant(Value::string_from_str(name.as_str()));
                             self.current_chunk().write_instruction(
                                 OpCode::GetGlobal,
                                 dest as u8,
@@ -1351,7 +1349,7 @@ impl Compiler {
                         self.compile_expr(obj, obj_reg)?;
                         let name_idx = self
                             .current_chunk()
-                            .add_constant(Value::string(get_or_create_string(prop.as_str())));
+                            .add_constant(Value::string_from_str(prop.as_str()));
                         self.current_chunk().write_instruction(
                             OpCode::GetProperty,
                             dest as u8,
@@ -1599,7 +1597,7 @@ impl Compiler {
                 self.compile_expr(obj, dest)?;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::string(get_or_create_string(name.as_str())));
+                    .add_constant(Value::string_from_str(name.as_str()));
                 self.current_chunk().write_instruction(
                     OpCode::GetProperty,
                     dest as u8,
@@ -1614,7 +1612,7 @@ impl Compiler {
                 self.compile_expr(val, temp)?;
                 let name_idx = self
                     .current_chunk()
-                    .add_constant(Value::string(get_or_create_string(name.as_str())));
+                    .add_constant(Value::string_from_str(name.as_str()));
                 self.current_chunk().write_instruction(
                     OpCode::SetProperty,
                     dest as u8,
@@ -1650,7 +1648,7 @@ impl Compiler {
                 for (i, (key, val)) in pairs.iter().enumerate() {
                     let k_idx = self
                         .current_chunk()
-                        .add_constant(Value::string(get_or_create_string(key.as_str())));
+                        .add_constant(Value::string_from_str(key.as_str()));
                     self.current_chunk().write_instruction(
                         OpCode::LoadConst,
                         (start_reg + i * 2) as u8,
@@ -1760,7 +1758,7 @@ impl Compiler {
                     let push_fn_reg = std::cmp::max(self.next_reg, dest + 1);
                     let push_name_idx = self
                         .current_chunk()
-                        .add_constant(Value::string(get_or_create_string("arrayPush")));
+                        .add_constant(Value::string_from_str("arrayPush"));
                     self.current_chunk().write_instruction(
                         OpCode::GetGlobal,
                         push_fn_reg as u8,
