@@ -21,10 +21,20 @@ Follow these mandatory rules when building, compiling, running, or deploying the
   eronom dev
   ```
 
-## 3. Project Creation
+## 3. Running Benchmarks
+- **Always Use Release Mode**: When running benchmarks (`src/bin/bench.rs`), ALWAYS compile and run in release mode:
+  ```bash
+  cargo run --release --bin bench
+  ```
+  Or for individual benchmarks:
+  ```bash
+  cargo run --release --bin bench -- --bench <name> -n <iterations>
+  ```
+
+## 4. Project Creation
 - **CLI Project Initialization**: Use `eronom init` (or `eronom init <dir>`) to initialize a fresh Eronom application structure.
 
-## 4. Mandatory Post-Rust Modification Binary Deployment Rule
+## 5. Mandatory Post-Rust Modification Binary Deployment Rule
 - **Rebuild & Deploy Rule**: Whenever any Rust source file (`.rs`) in `src/` or `libs/` is modified, you MUST perform the following post-change workflow:
   1. Run `cargo build` to compile the debug binary.
   2. Copy the resulting `eronom` binary from `target/debug/eronom` to:
