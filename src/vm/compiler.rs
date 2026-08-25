@@ -71,6 +71,7 @@ impl Compiler {
                 chunk: Chunk::default(),
                 arity: 0,
                 jit_ptr: std::cell::Cell::new(None),
+                invocation_count: std::cell::Cell::new(0),
                 is_async: false,
                 upvalues: Vec::new(),
             },

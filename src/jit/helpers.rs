@@ -1064,10 +1064,15 @@ pub extern "C" fn er_jit_call_fast(
             return -1;
         }
 
+        let count = func.invocation_count.get() + 1;
+        func.invocation_count.set(count);
+
         let native_ptr = if let Some(ptr) = func.jit_ptr.get() {
             ptr
-        } else {
+        } else if (*vm).jit_threshold == 0 || count >= (*vm).jit_threshold {
             crate::jit::compile_function(&mut *vm, raw_fn_ptr)
+        } else {
+            return -1;
         };
 
         type JitFn = unsafe extern "C" fn(
@@ -1186,10 +1191,15 @@ pub extern "C" fn er_jit_call_non_vm(
                     callee_frame_slots = (*_vm).stack.as_mut_ptr().add(offset_from_base);
                 }
 
+                let count = func_val.invocation_count.get() + 1;
+                func_val.invocation_count.set(count);
+
                 let native_ptr = if let Some(ptr) = func_val.jit_ptr.get() {
                     ptr
-                } else {
+                } else if (*_vm).jit_threshold == 0 || count >= (*_vm).jit_threshold {
                     crate::jit::compile_function(&mut *_vm, raw_fn_ptr)
+                } else {
+                    return -1;
                 };
 
                 type JitFn = unsafe extern "C" fn(

@@ -112,6 +112,7 @@ pub struct VM {
     pub error: Option<String>,
     pub mir_ctx: Option<*mut std::ffi::c_void>,
     pub use_jit: bool,
+    pub jit_threshold: usize,
     pub alloc_count_local: usize,
     pub use_evented_io: bool,
     pub structs: FnvHashMap<Rc<str>, Rc<super::gc::StructDescriptor>>,
@@ -158,6 +159,13 @@ impl Drop for VM {
 impl VM {
     pub fn new() -> Self {
         let use_jit = std::env::var("ER_NO_JIT").is_err();
+        let jit_threshold = if let Ok(val) = std::env::var("ER_JIT_THRESHOLD") {
+            val.parse::<usize>().unwrap_or(30)
+        } else if std::env::var("ER_EAGER_JIT").is_ok() {
+            0
+        } else {
+            30
+        };
         Self {
             has_error_flag: 0,
             frames: Vec::new(),
@@ -166,6 +174,7 @@ impl VM {
             error: None,
             mir_ctx: None,
             use_jit,
+            jit_threshold,
             alloc_count_local: 0,
             use_evented_io: true,
             structs: FnvHashMap::default(),
@@ -720,17 +729,17 @@ impl VM {
         let original_len = self.stack.len();
         self.stack.resize(original_len + 65536, Value::null());
         
-        let res = if self.use_jit {
-            self.execute_loop(original_len)
+        let res = if self.use_jit && self.jit_threshold == 0 {
+            self.execute_loop(0)
         } else {
-            self.execute_loop_interpreter(original_len)
+            self.execute_loop_interpreter(0)
         };
         
         self.stack.truncate(original_len);
         res
     }
 
-    fn execute_loop(&mut self, _original_len: usize) -> Result<Value, String> {
+    fn execute_loop(&mut self, target_depth: usize) -> Result<Value, String> {
         unsafe {
             type JitFn = unsafe extern "C" fn(
                 vm: *mut VM,
@@ -788,9 +797,38 @@ impl VM {
                     GcData::Closure(c) => c.function,
                     _ => frame.function,
                 };
+                let raw_func = match &(*raw_fn_ptr).data {
+                    GcData::Function(f) => f,
+                    _ => unreachable!(),
+                };
 
-                // Ensure the current function is JIT compiled
-                let native_ptr = crate::jit::compile_function(self, raw_fn_ptr);
+                let count = raw_func.invocation_count.get() + 1;
+                raw_func.invocation_count.set(count);
+
+                let native_ptr = if let Some(ptr) = raw_func.jit_ptr.get() {
+                    ptr
+                } else if self.jit_threshold == 0 || count >= self.jit_threshold {
+                    crate::jit::compile_function(self, raw_fn_ptr)
+                } else {
+                    let initial_depth = self.frames.len() - 1;
+                    let res = self.execute_loop_interpreter(initial_depth)?;
+                    if self.frames.len() <= target_depth {
+                        return Ok(res);
+                    }
+                    frame_ptr = {
+                        let len = self.frames.len();
+                        self.frames.as_mut_ptr().add(len - 1)
+                    };
+                    frame = &mut *frame_ptr;
+                    func = get_func!(frame.function);
+                    constants_ptr = func.chunk.constants.as_ptr();
+                    slots_offset = frame.slots_offset;
+                    reload_stack!();
+                    *frame_slots.add(frame.dest_reg) = res;
+                    frame.ip += 1;
+                    ip_val = frame.ip;
+                    continue;
+                };
                 let jit_fn: JitFn = std::mem::transmute(native_ptr);
 
                 let mut ip_out: usize = ip_val;
@@ -946,7 +984,7 @@ impl VM {
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.
                     let caller_dest_reg = frame.dest_reg;
                     self.frames.pop();
-                    if self.frames.is_empty() {
+                    if self.frames.len() <= target_depth {
                         return Ok(ret_val_out);
                     }
 
@@ -1045,7 +1083,7 @@ impl VM {
         }
     }
 
-    fn execute_loop_interpreter(&mut self, _original_len: usize) -> Result<Value, String> {
+    fn execute_loop_interpreter(&mut self, target_depth: usize) -> Result<Value, String> {
         unsafe {
             let mut frame_ptr = {
                 let len = self.frames.len();
@@ -1516,6 +1554,20 @@ impl VM {
                         }
                     }
                     OpCode::Loop => {
+                        let raw_fn_ptr = match &(*frame.function).data {
+                            GcData::Function(_) => frame.function,
+                            GcData::Closure(c) => c.function,
+                            _ => frame.function,
+                        };
+                        let raw_func = match &(*raw_fn_ptr).data {
+                            GcData::Function(f) => f,
+                            _ => unreachable!(),
+                        };
+                        let count = raw_func.invocation_count.get() + 1;
+                        raw_func.invocation_count.set(count);
+                        if self.use_jit && !raw_func.is_async && raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || count >= self.jit_threshold) {
+                            crate::jit::compile_function(self, raw_fn_ptr);
+                        }
                         ip = ip.sub(instruction.operand as usize);
                     }
                     OpCode::MakeArray => {
@@ -1944,13 +1996,58 @@ impl VM {
                                 func_ptr = bound_method.function;
                                 actual_arg_count = arg_count + 1;
                             }
-                            let func_val = get_func!(func_ptr);
-                            if actual_arg_count != func_val.arity {
+                            let raw_fn_ptr = match &(*func_ptr).data {
+                                GcData::Function(_) => func_ptr,
+                                GcData::Closure(c) => c.function,
+                                _ => func_ptr,
+                            };
+                            let raw_func = match &(*raw_fn_ptr).data {
+                                GcData::Function(f) => f,
+                                _ => unreachable!(),
+                            };
+                            if actual_arg_count != raw_func.arity {
                                 return Err(format!(
                                     "Expected {} args but got {}",
-                                    func_val.arity, actual_arg_count
+                                    raw_func.arity, actual_arg_count
                                 ));
                             }
+
+                            let count = raw_func.invocation_count.get() + 1;
+                            raw_func.invocation_count.set(count);
+
+                            if self.use_jit && !raw_func.is_async {
+                                if raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || count >= self.jit_threshold) {
+                                    crate::jit::compile_function(self, raw_fn_ptr);
+                                }
+                                if raw_func.jit_ptr.get().is_some() {
+                                    frame.ip = ip.offset_from(code_ptr) as usize - 1;
+                                    let new_slots_offset = slots_offset + func_reg + 1;
+                                    self.frames.push(CallFrame {
+                                        function: func_ptr,
+                                        ip: 0,
+                                        slots_offset: new_slots_offset,
+                                        dest_reg: dest,
+                                    });
+
+                                    let initial_depth = self.frames.len() - 1;
+                                    let res = self.execute_loop(initial_depth)?;
+
+                                    frame_ptr = {
+                                        let len = self.frames.len();
+                                        self.frames.as_mut_ptr().add(len - 1)
+                                    };
+                                    frame = &mut *frame_ptr;
+                                    func = get_func!(frame.function);
+                                    code_ptr = func.chunk.code.as_ptr();
+                                    constants_ptr = func.chunk.constants.as_ptr();
+                                    slots_offset = frame.slots_offset;
+                                    reload_stack!();
+                                    *frame_slots.add(dest) = res;
+                                    ip = code_ptr.add(frame.ip + 1);
+                                    continue;
+                                }
+                            }
+
                             frame.ip = ip.offset_from(code_ptr) as usize - 1;
                             let new_slots_offset = slots_offset + func_reg + 1;
                             self.frames.push(CallFrame {
@@ -2287,7 +2384,7 @@ impl VM {
                         self.close_upvalues(frame.slots_offset);
 
                         self.frames.pop();
-                        if self.frames.is_empty() {
+                        if self.frames.len() <= target_depth {
                             return Ok(result);
                         }
 

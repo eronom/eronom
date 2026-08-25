@@ -18,6 +18,7 @@ pub struct Function {
     pub chunk: Chunk,
     pub arity: usize,
     pub jit_ptr: std::cell::Cell<Option<*const std::ffi::c_void>>,
+    pub invocation_count: std::cell::Cell<usize>,
     pub is_async: bool,
     pub upvalues: Vec<UpvalueDescriptor>,
 }
