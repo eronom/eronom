@@ -120,6 +120,7 @@ pub struct VM {
     pub last_matched_descriptor: Option<Rc<super::gc::StructDescriptor>>,
     pub last_matched_offsets: Vec<usize>,
     pub open_upvalues: Vec<*mut GcObject>,
+    pub thrown_value: Value,
     
     // Event loop fields
     pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
@@ -173,6 +174,7 @@ impl VM {
             last_matched_descriptor: None,
             last_matched_offsets: Vec::new(),
             open_upvalues: Vec::new(),
+            thrown_value: Value::null(),
             event_loop_queue: Arc::new(Mutex::new(Vec::new())),
             event_loop_condvar: Arc::new(Condvar::new()),
             active_async_tasks: Arc::new(AtomicUsize::new(0)),
@@ -373,6 +375,7 @@ impl VM {
                         for &upval_ptr in &self.open_upvalues {
                             super::gc::mark_object(upval_ptr);
                         }
+                        mark_value(&self.thrown_value);
                         if let Ok(queue) = self.event_loop_queue.lock() {
                             for task in queue.iter() {
                                 mark_value(&task.callback);
@@ -441,6 +444,7 @@ impl VM {
                     for &upval_ptr in &self.open_upvalues {
                         super::gc::mark_object(upval_ptr);
                     }
+                    mark_value(&self.thrown_value);
                     if let Ok(queue) = self.event_loop_queue.lock() {
                         for task in queue.iter() {
                             mark_value(&task.callback);
@@ -544,6 +548,7 @@ impl VM {
         for &upval_ptr in &self.open_upvalues {
             super::gc::mark_object(upval_ptr);
         }
+        mark_value(&self.thrown_value);
         if let Ok(queue) = self.event_loop_queue.lock() {
             for task in queue.iter() {
                 mark_value(&task.callback);
@@ -827,8 +832,8 @@ impl VM {
                                 func_val.arity, actual_arg_count
                             ));
                         }
-                        // Save current IP (resume position: ip_out + 1)
-                        frame.ip = ip_out + 1;
+                        // Save current IP (call instruction index: ip_out)
+                        frame.ip = ip_out;
                         let new_slots_offset = slots_offset + func_reg_out + 1;
                         self.frames.push(CallFrame {
                             function: func_ptr,
@@ -956,6 +961,7 @@ impl VM {
                     reload_stack!();
 
                     *frame_slots.add(caller_dest_reg) = ret_val_out;
+                    frame.ip = frame.ip + 1;
                     ip_val = frame.ip;
                 } else if status == 2 {
                     // YieldGc / YieldLoop
@@ -990,6 +996,10 @@ impl VM {
                     // RuntimeError, JIT Throw, or JIT execution error.
                     let thrown = if !ret_val_out.is_null() {
                         ret_val_out
+                    } else if !self.thrown_value.is_null() {
+                        let t = self.thrown_value;
+                        self.thrown_value = Value::null();
+                        t
                     } else if let Some(err_msg) = self.error.take() {
                         self.has_error_flag = 0;
                         let ptr = super::gc::gc_alloc_string(&err_msg);
@@ -1005,8 +1015,7 @@ impl VM {
                         let curr_ip = if frame_idx == initial_frame_idx {
                             ip_out
                         } else {
-                            let f_ip = self.frames[frame_idx].ip;
-                            if f_ip > 0 { f_ip - 1 } else { 0 }
+                            self.frames[frame_idx].ip
                         };
                         let curr_func = get_func!(self.frames[frame_idx].function);
                         if let Some(handler) = curr_func.chunk.find_handler(curr_ip).cloned() {
@@ -1089,8 +1098,7 @@ impl VM {
                             let offset = ip.offset_from(code_ptr) as usize;
                             if offset > 0 { offset - 1 } else { 0 }
                         } else {
-                            let f_ip = self.frames[frame_idx].ip;
-                            if f_ip > 0 { f_ip - 1 } else { 0 }
+                            self.frames[frame_idx].ip
                         };
                         let curr_func = get_func!(self.frames[frame_idx].function);
 

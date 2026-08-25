@@ -1040,8 +1040,13 @@ pub extern "C" fn er_jit_call_fast(
     callee: Value,
     callee_frame_slots: *mut Value,
     dest: *mut Value,
+    inst_idx: i64,
+    dest_reg: i64,
 ) -> i64 {
     unsafe {
+        if let Some(frame) = (*vm).frames.last_mut() {
+            frame.ip = inst_idx as usize;
+        }
         if !callee.is_function() {
             return -1;
         }
@@ -1091,7 +1096,7 @@ pub extern "C" fn er_jit_call_fast(
             function: func_ptr,
             ip: 0,
             slots_offset,
-            dest_reg: 0,
+            dest_reg: dest_reg as usize,
         });
 
         let res = jit_fn(
@@ -1115,10 +1120,10 @@ pub extern "C" fn er_jit_call_fast(
         } else if res == 3 {
             -3
         } else {
-            if !(*vm).stack.is_empty() {
-                (*vm).frames.pop();
+            if !ret_val_out.is_null() {
+                (*vm).thrown_value = ret_val_out;
             }
-            -1
+            -2
         }
     }
 }
@@ -1132,6 +1137,7 @@ pub extern "C" fn er_jit_call_non_vm(
     arg_count: i64,
     frame_slots: *mut Value,
     inst_idx: i64,
+    dest_reg: i64,
 ) -> i64 {
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
@@ -1169,9 +1175,9 @@ pub extern "C" fn er_jit_call_non_vm(
                     func_val.arity, actual_arg_count
                 ));
                 (*_vm).has_error_flag = 1;
-                -1
+                return -2;
             } else if func_val.is_async {
-                -1 // Fallback to host VM loop for async
+                return -1; // Fallback to host VM loop for async
             } else {
                 let offset_from_base = callee_frame_slots.offset_from((*_vm).stack.as_ptr()) as usize;
                 if offset_from_base + 512 >= (*_vm).stack.len() {
@@ -1212,7 +1218,7 @@ pub extern "C" fn er_jit_call_non_vm(
                     function: func_ptr,
                     ip: 0,
                     slots_offset,
-                    dest_reg: 0,
+                    dest_reg: dest_reg as usize,
                 });
 
                 let jit_res = jit_fn(
@@ -1227,21 +1233,21 @@ pub extern "C" fn er_jit_call_non_vm(
                     &mut ret_val_out,
                 );
 
-                if !(*_vm).stack.is_empty() {
-                    (*_vm).frames.pop();
-                }
-
                 if jit_res == 1 {
+                    if !(*_vm).stack.is_empty() {
+                        (*_vm).frames.pop();
+                    }
                     *dest = ret_val_out;
                     0
                 } else if jit_res == 3 {
                     -3
                 } else if jit_res == 4 {
                     -4
-                } else if jit_res < 0 {
-                    -1
                 } else {
-                    -1
+                    if !ret_val_out.is_null() {
+                        (*_vm).thrown_value = ret_val_out;
+                    }
+                    -2
                 }
             }
         } else if callee.is_native_function() {
@@ -1274,7 +1280,7 @@ pub extern "C" fn er_jit_call_non_vm(
                 }
                 Err(err) => {
                     (*_vm).error = Some(err);
-                    -1
+                    -2
                 }
             }
         } else if callee.is_method_json() || callee.is_method_text() {

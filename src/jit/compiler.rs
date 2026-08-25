@@ -135,8 +135,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_set_property: proto i64, p:vm, i64:obj, i64:val, i64:name\n");
     mir.push_str("p_get_index: proto i64, p:vm, i64:obj, i64:idx\n");
     mir.push_str("p_set_index: proto i64, p:vm, i64:obj, i64:idx, i64:val\n");
-    mir.push_str("p_call_fast: proto i64, p:vm, i64:callee, p:callee_slots, p:dest\n");
-    mir.push_str("p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots, i64:inst_idx\n");
+    mir.push_str("p_call_fast: proto i64, p:vm, i64:callee, p:callee_slots, p:dest, i64:inst_idx, i64:dest_reg\n");
+    mir.push_str("p_call_non_vm: proto i64, p:vm, p:dest, i64:callee, i64:func_reg, i64:arg_count, p:frame_slots, i64:inst_idx, i64:dest_reg\n");
     mir.push_str("p_array_push: proto i64, i64:arr, i64:arg\n");
     mir.push_str("p_array_pop: proto i64, i64:arr\n");
     mir.push_str("p_has_error: proto i64, p:vm\n");
@@ -368,29 +368,6 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         mir.push_str(&format!("          jmp inst_{}\n", ip_target));
     }
 
-    let save_registers = |mir: &mut String, idx: usize, extra_regs: &[usize]| {
-        let mut saved = vec![false; num_regs];
-        for r in 0..num_regs {
-            if live_in[idx][r] {
-                saved[r] = true;
-                if types_at_inst[idx][r] == RegType::Double {
-                    mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
-                } else {
-                    mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
-                }
-            }
-        }
-        for &r in extra_regs {
-            if r >= num_regs { continue; }
-            if saved[r] { continue; }
-            saved[r] = true;
-            if types_at_inst[idx][r] == RegType::Double {
-                mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
-            } else {
-                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
-            }
-        }
-    };
 
     let save_all_registers = |mir: &mut String, idx: usize| {
         for r in 0..num_regs {
@@ -1415,7 +1392,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str("          mov tmp1, er_gc_needs_step\n");
                 mir.push_str("          mov status, u8:0(tmp1)\n");
                 mir.push_str(&format!("          beq no_yield_gc_{}, status, 0\n", idx));
-                save_registers(&mut mir, idx, &[]);
+                save_all_registers(&mut mir, idx);
                 mir.push_str(&format!("          mov i64:(ip_out), {}\n", target));
                 mir.push_str("          ret 2\n");
                 mir.push_str(&format!("no_yield_gc_{}:\n", idx));
@@ -1507,7 +1484,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          jmp done_call_{}\n", idx));
 
                     mir.push_str(&format!("normal_call_{}:\n", idx));
-                    save_registers(&mut mir, idx, &extra);
+                    save_all_registers(&mut mir, idx);
                 } else if arg_count == 0 {
                     // Check if callee is array pop method (TAG_METHOD_POP = 0xfffa000000000000)
                     mir.push_str(&format!("          mov tmp, r{}\n", rb));
@@ -1545,7 +1522,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          jmp done_call_{}\n", idx));
 
                     mir.push_str(&format!("normal_call_{}:\n", idx));
-                    save_registers(&mut mir, idx, &extra);
+                    save_all_registers(&mut mir, idx);
                 } else {
                     save_all_registers(&mut mir, idx);
                 }
@@ -1572,8 +1549,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
                 mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
                 mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", (rb + 1) * 8));
-                mir.push_str(&format!("          call p_call_fast, er_jit_call_fast, status, vm, r{}, start_ptr, dest_ptr\n", rb));
+                mir.push_str(&format!("          call p_call_fast, er_jit_call_fast, status, vm, r{}, start_ptr, dest_ptr, {}, {}\n", rb, idx, ra));
                 mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+                mir.push_str(&format!("          blt err_label, status, -1\n"));
                 mir.push_str(&format!("          bne not_fast_call_{}, status, 0\n", idx));
                 mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
                 if next_types[ra] == RegType::Double {
@@ -1582,7 +1560,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          jmp done_call_{}\n", idx));
                 mir.push_str(&format!("not_fast_call_{}:\n", idx));
 
-                mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots, {}\n", rb, rb, arg_count, idx));
+                mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots, {}, {}\n", rb, rb, arg_count, idx, ra));
                 mir.push_str(&format!("          beq call_vm_label_{}, status, -1\n", idx));
                 mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
                 mir.push_str(&format!("          blt err_label, status, 0\n"));
@@ -1598,7 +1576,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          mov i64:(arg_count_out), {}\n", arg_count));
                 mir.push_str("          ret 3\n");
                 mir.push_str(&format!("call_vm_label_{}:\n", idx));
-                mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx + 1));
+                mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx));
                 mir.push_str(&format!("          mov i64:(dest_reg_out), {}\n", ra));
                 mir.push_str(&format!("          mov i64:(func_reg_out), {}\n", rb));
                 mir.push_str(&format!("          mov i64:(arg_count_out), {}\n", arg_count));
@@ -1944,6 +1922,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str("          ret 1\n");
             }
             OpCode::Throw => {
+                mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx));
                 mir.push_str(&format!("          mov i64:(ret_val_out), r{}\n", ra));
                 mir.push_str("          ret -1\n");
             }
@@ -1983,7 +1962,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rb));
                     mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset));
                 }
-                save_registers(&mut mir, idx, &[ra, rb]);
+                save_all_registers(&mut mir, idx);
                 mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
                 mir.push_str(&format!("          call p_await, er_jit_await, status, vm, r{}, dest_ptr\n", rb));
                 mir.push_str(&format!("          bne not_suspend_await_{}, status, -3\n", idx));
