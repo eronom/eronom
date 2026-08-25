@@ -332,6 +332,22 @@ pub extern "C" fn er_jit_less(vm: *mut VM, val_b: Value, val_c: Value) -> Value 
     }
 }
 
+#[derive(Clone, Copy)]
+struct GlobalIcEntry {
+    key: u64,
+    val: Value,
+}
+
+thread_local! {
+    static GLOBAL_IC: std::cell::UnsafeCell<[GlobalIcEntry; 64]> = const { std::cell::UnsafeCell::new([GlobalIcEntry { key: 0, val: Value::null() }; 64]) };
+}
+
+pub fn reset_global_ic() {
+    GLOBAL_IC.with(|c| unsafe {
+        *c.get() = [GlobalIcEntry { key: 0, val: Value::null() }; 64];
+    });
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: Value, val: Value) -> i64 {
     unsafe {
@@ -339,6 +355,11 @@ pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: Value, val: Value)
             GcData::String(s) => s.clone(),
             _ => unreachable!(),
         };
+        let key = name_val.0;
+        let slot = (key ^ (key >> 6)) as usize & 63;
+        let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
+        ic.key = key;
+        ic.val = val;
         (*vm).globals.insert(name, val);
         0
     }
@@ -347,11 +368,20 @@ pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: Value, val: Value)
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_get_global(vm: *mut VM, name_val: Value) -> Value {
     unsafe {
+        let key = name_val.0;
+        let slot = (key ^ (key >> 6)) as usize & 63;
+        let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
+        if ic.key == key {
+            return ic.val;
+        }
+
         let name = match &(*name_val.as_gc_ptr()).data {
             GcData::String(s) => s,
             _ => unreachable!(),
         };
         if let Some(val) = (*vm).globals.get(name) {
+            ic.key = key;
+            ic.val = *val;
             *val
         } else {
             (*vm).has_error_flag = 1; (*vm).error = Some(format!("Undefined variable '{}'", name));
@@ -369,6 +399,11 @@ pub extern "C" fn er_jit_set_global(vm: *mut VM, val: Value, name_val: Value) ->
         };
         match (*vm).globals.entry(name.clone()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let key = name_val.0;
+                let slot = (key ^ (key >> 6)) as usize & 63;
+                let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
+                ic.key = key;
+                ic.val = val;
                 entry.insert(val);
                 0
             }
@@ -1503,5 +1538,10 @@ pub extern "C" fn er_jit_await(vm: *mut VM, await_val: Value, dest: *mut Value) 
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_reset_context() {
     crate::jit::compiler::reset_jit_state();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_jit_write_barrier(parent: *mut crate::vm::gc::GcObject, child: Value) {
+    gc_write_barrier(parent, &child);
 }
 

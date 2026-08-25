@@ -61,6 +61,7 @@ pub fn reset_jit_state() {
     JIT_STATE.with(|state| {
         *state.borrow_mut() = None;
     });
+    crate::jit::helpers::reset_global_ic();
 }
 
 
@@ -97,7 +98,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_fast, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_gc_needs_step, er_jit_define_struct, er_jit_get_upvalue, er_jit_set_upvalue, er_jit_make_closure, er_jit_close_upvalues, er_jit_await\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_fast, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_gc_needs_step, er_jit_define_struct, er_jit_get_upvalue, er_jit_set_upvalue, er_jit_make_closure, er_jit_close_upvalues, er_jit_await, er_jit_write_barrier\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -145,10 +146,11 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_make_closure: proto i64, p:vm, i64:raw_fn\n");
     mir.push_str("p_close_upvalues: proto i64, p:vm, i64:slot\n");
     mir.push_str("p_await: proto i64, p:vm, i64:await_val, p:dest\n");
+    mir.push_str("p_write_barrier: proto i64, p:parent, i64:child\n");
     mir.push_str("p_jit_fn: proto i64, p:vm, p:frame_slots, p:constants_ptr, i64:start_ip, p:ip_out, p:dest_reg_out, p:func_reg_out, p:arg_count_out, p:ret_val_out\n");
 
     mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:tmp3, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter\n");
-    mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr\n");
+    mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr, i64:desc_ptr\n");
     mir.push_str("          local d:da, d:db, d:dres\n");
 
     let mut num_regs = func.arity;
@@ -271,7 +273,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
             OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter |
-            OpCode::GetUpvalue | OpCode::Closure | OpCode::Await => {
+            OpCode::GetUpvalue | OpCode::Closure | OpCode::Await | OpCode::Call => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Unknown;
                 }
@@ -441,7 +443,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
             OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter |
-            OpCode::GetUpvalue | OpCode::Closure | OpCode::Await => {
+            OpCode::GetUpvalue | OpCode::Closure | OpCode::Await | OpCode::Call => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Unknown;
                 }
@@ -1459,17 +1461,42 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
                     mir.push_str(&format!("          bne normal_call_{}, tmp, 0xfff9000000000000\n", idx));
 
-                    // Fast path
-                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
-                    mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
-                    mir.push_str("          or tmp, tmp, 0xfff5000000000000\n"); // Convert TAG_METHOD_PUSH to TAG_ARRAY
-
                     let arg_reg = rb + 1;
                     if arg_reg < num_regs && types_at_inst[idx][arg_reg] == RegType::Double {
                         mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", arg_reg));
                         mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", arg_reg));
                     }
 
+                    // Native inlined array push fast path
+                    mir.push_str(&format!("          mov obj_ptr, r{}\n", rb));
+                    mir.push_str("          and obj_ptr, obj_ptr, 0x0000ffffffffffff\n");
+                    mir.push_str("          mov tmp1, i64:40(obj_ptr)\n"); // len
+                    mir.push_str("          mov tmp2, i64:24(obj_ptr)\n"); // cap
+                    mir.push_str(&format!("          bge fallback_push_{}, tmp1, tmp2\n", idx));
+                    mir.push_str("          mov start_ptr, i64:32(obj_ptr)\n"); // buf_ptr
+                    mir.push_str("          mul tmp3, tmp1, 8\n");
+                    mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                    mir.push_str(&format!("          mov i64:0(start_ptr), r{}\n", arg_reg));
+                    mir.push_str("          add tmp1, tmp1, 1\n");
+                    mir.push_str("          mov i64:40(obj_ptr), tmp1\n");
+                    mir.push_str("          mov tmp3, u8:0(obj_ptr)\n");
+                    mir.push_str(&format!("          bne done_wb_push_{}, tmp3, 2\n", idx));
+                    mir.push_str(&format!("          ublt done_wb_push_{}, r{}, 0xfff4000000000000\n", idx, arg_reg));
+                    mir.push_str(&format!("          call p_write_barrier, er_jit_write_barrier, status, obj_ptr, r{}\n", arg_reg));
+                    mir.push_str(&format!("done_wb_push_{}:\n", idx));
+                    mir.push_str("          i2d da, tmp1\n");
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str(&format!("          dmov d{}, da\n", ra));
+                    } else {
+                        mir.push_str("          dmov d:0(cast_ptr), da\n");
+                        mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_call_{}\n", idx));
+
+                    mir.push_str(&format!("fallback_push_{}:\n", idx));
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
+                    mir.push_str("          or tmp, tmp, 0xfff5000000000000\n"); // Convert TAG_METHOD_PUSH to TAG_ARRAY
                     mir.push_str(&format!("          call p_array_push, er_jit_array_push, tmp2, tmp, r{}\n", rb + 1));
                     if next_types[ra] == RegType::Double {
                         mir.push_str("          mov i64:0(cast_ptr), tmp2\n");
@@ -1487,11 +1514,27 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
                     mir.push_str(&format!("          bne normal_call_{}, tmp, 0xfffa000000000000\n", idx));
 
-                    // Fast path
+                    // Native inlined array pop fast path
+                    mir.push_str(&format!("          mov obj_ptr, r{}\n", rb));
+                    mir.push_str("          and obj_ptr, obj_ptr, 0x0000ffffffffffff\n");
+                    mir.push_str("          mov tmp1, i64:40(obj_ptr)\n"); // len
+                    mir.push_str(&format!("          ble fallback_pop_{}, tmp1, 0\n", idx));
+                    mir.push_str("          sub tmp1, tmp1, 1\n");
+                    mir.push_str("          mov i64:40(obj_ptr), tmp1\n");
+                    mir.push_str("          mov start_ptr, i64:32(obj_ptr)\n"); // buf_ptr
+                    mir.push_str("          mul tmp3, tmp1, 8\n");
+                    mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                    mir.push_str(&format!("          mov r{}, i64:0(start_ptr)\n", ra));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                        mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_call_{}\n", idx));
+
+                    mir.push_str(&format!("fallback_pop_{}:\n", idx));
                     mir.push_str(&format!("          mov tmp, r{}\n", rb));
                     mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
                     mir.push_str("          or tmp, tmp, 0xfff5000000000000\n"); // Convert TAG_METHOD_POP to TAG_ARRAY
-
                     mir.push_str(&format!("          call p_array_pop, er_jit_array_pop, tmp2, tmp\n"));
                     if next_types[ra] == RegType::Double {
                         mir.push_str("          mov i64:0(cast_ptr), tmp2\n");
@@ -1502,6 +1545,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          jmp done_call_{}\n", idx));
 
                     mir.push_str(&format!("normal_call_{}:\n", idx));
+                    save_registers(&mut mir, idx, &extra);
                 } else {
                     save_all_registers(&mut mir, idx);
                 }
@@ -1629,21 +1673,90 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
                     mir.push_str(&format!("          or r{}, tmp, {}\n", ra, method_tag));
                     mir.push_str(&format!("          jmp done_get_prop_{}\n", idx));
-                    mir.push_str(&format!("fallback_get_prop_{}:\n", idx));
-                    mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
-                    mir.push_str(&format!("          call p_get_property, er_jit_get_property, r{}, vm, r{}, tmp1\n", ra, rb));
-                    mir.push_str("          mov status, u8:0(vm)\n");
-                    mir.push_str("          bne err_label, status, 0\n");
-                    mir.push_str(&format!("done_get_prop_{}:\n", idx));
                 } else {
-                    mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
-                    mir.push_str(&format!("          call p_get_property, er_jit_get_property, r{}, vm, r{}, tmp1\n", ra, rb));
-                    mir.push_str("          mov status, u8:0(vm)\n");
-                    mir.push_str("          bne err_label, status, 0\n");
+                    // Inlined Monomorphic / 4-Way Shape Inline Cache
+                    mir.push_str(&format!("          mov name_ptr, i64:{}(constants_ptr)\n", c_idx * 8));
+                    mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                    mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                    mir.push_str(&format!("          bne fallback_get_prop_{}, tmp, 0xfff6000000000000\n", idx));
+                    mir.push_str(&format!("          mov obj_ptr, r{}\n", rb));
+                    mir.push_str("          and obj_ptr, obj_ptr, 0x0000ffffffffffff\n");
+                    mir.push_str("          mov desc_ptr, i64:24(obj_ptr)\n");
+
+                    // Check fast_fields[0]
+                    mir.push_str("          mov tmp1, i64:32(desc_ptr)\n");
+                    mir.push_str(&format!("          bne check_ff1_{}, tmp1, name_ptr\n", idx));
+                    mir.push_str("          mov tmp2, i64:40(desc_ptr)\n");
+                    mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                    mir.push_str("          mul tmp3, tmp2, 8\n");
+                    mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                    mir.push_str(&format!("          mov r{}, i64:0(start_ptr)\n", ra));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                        mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_get_prop_{}\n", idx));
+
+                    // Check fast_fields[1]
+                    mir.push_str(&format!("check_ff1_{}:\n", idx));
+                    mir.push_str("          mov tmp1, i64:48(desc_ptr)\n");
+                    mir.push_str(&format!("          bne check_ff2_{}, tmp1, name_ptr\n", idx));
+                    mir.push_str("          mov tmp2, i64:56(desc_ptr)\n");
+                    mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                    mir.push_str("          mul tmp3, tmp2, 8\n");
+                    mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                    mir.push_str(&format!("          mov r{}, i64:0(start_ptr)\n", ra));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                        mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_get_prop_{}\n", idx));
+
+                    // Check fast_fields[2]
+                    mir.push_str(&format!("check_ff2_{}:\n", idx));
+                    mir.push_str("          mov tmp1, i64:64(desc_ptr)\n");
+                    mir.push_str(&format!("          bne check_ff3_{}, tmp1, name_ptr\n", idx));
+                    mir.push_str("          mov tmp2, i64:72(desc_ptr)\n");
+                    mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                    mir.push_str("          mul tmp3, tmp2, 8\n");
+                    mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                    mir.push_str(&format!("          mov r{}, i64:0(start_ptr)\n", ra));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                        mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_get_prop_{}\n", idx));
+
+                    // Check fast_fields[3]
+                    mir.push_str(&format!("check_ff3_{}:\n", idx));
+                    mir.push_str("          mov tmp1, i64:80(desc_ptr)\n");
+                    mir.push_str(&format!("          bne fallback_get_prop_{}, tmp1, name_ptr\n", idx));
+                    mir.push_str("          mov tmp2, i64:88(desc_ptr)\n");
+                    mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                    mir.push_str("          mul tmp3, tmp2, 8\n");
+                    mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                    mir.push_str(&format!("          mov r{}, i64:0(start_ptr)\n", ra));
+                    if next_types[ra] == RegType::Double {
+                        mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                        mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                    }
+                    mir.push_str(&format!("          jmp done_get_prop_{}\n", idx));
                 }
+
+                mir.push_str(&format!("fallback_get_prop_{}:\n", idx));
+                mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
+                mir.push_str(&format!("          call p_get_property, er_jit_get_property, r{}, vm, r{}, tmp1\n", ra, rb));
+                mir.push_str("          mov status, u8:0(vm)\n");
+                mir.push_str("          bne err_label, status, 0\n");
+                if next_types[ra] == RegType::Double {
+                    mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                    mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                }
+                mir.push_str(&format!("done_get_prop_{}:\n", idx));
             }
             OpCode::SetProperty => {
                 let c_idx = instruction.operand;
+
                 if ra < num_regs && types_at_inst[idx][ra] == RegType::Double {
                     mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", ra));
                     mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", ra));
@@ -1652,16 +1765,108 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          dmov d:8(cast_ptr), d{}\n", rb));
                     mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rb));
                 }
+
+                // Inline Shape IC for SetProperty
+                mir.push_str(&format!("          mov name_ptr, i64:{}(constants_ptr)\n", c_idx * 8));
+                mir.push_str(&format!("          mov tmp, r{}\n", ra));
+                mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                mir.push_str(&format!("          bne fallback_set_prop_{}, tmp, 0xfff6000000000000\n", idx));
+                mir.push_str(&format!("          mov obj_ptr, r{}\n", ra));
+                mir.push_str("          and obj_ptr, obj_ptr, 0x0000ffffffffffff\n");
+                mir.push_str("          mov desc_ptr, i64:24(obj_ptr)\n");
+
+                // Check fast_fields[0]
+                mir.push_str("          mov tmp1, i64:32(desc_ptr)\n");
+                mir.push_str(&format!("          bne check_set_ff1_{}, tmp1, name_ptr\n", idx));
+                mir.push_str("          mov tmp2, i64:40(desc_ptr)\n");
+                mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                mir.push_str("          mul tmp3, tmp2, 8\n");
+                mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                mir.push_str(&format!("          mov i64:0(start_ptr), r{}\n", rb));
+                mir.push_str(&format!("          jmp check_wb_set_prop_{}\n", idx));
+
+                // Check fast_fields[1]
+                mir.push_str(&format!("check_set_ff1_{}:\n", idx));
+                mir.push_str("          mov tmp1, i64:48(desc_ptr)\n");
+                mir.push_str(&format!("          bne check_set_ff2_{}, tmp1, name_ptr\n", idx));
+                mir.push_str("          mov tmp2, i64:56(desc_ptr)\n");
+                mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                mir.push_str("          mul tmp3, tmp2, 8\n");
+                mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                mir.push_str(&format!("          mov i64:0(start_ptr), r{}\n", rb));
+                mir.push_str(&format!("          jmp check_wb_set_prop_{}\n", idx));
+
+                // Check fast_fields[2]
+                mir.push_str(&format!("check_set_ff2_{}:\n", idx));
+                mir.push_str("          mov tmp1, i64:64(desc_ptr)\n");
+                mir.push_str(&format!("          bne check_set_ff3_{}, tmp1, name_ptr\n", idx));
+                mir.push_str("          mov tmp2, i64:72(desc_ptr)\n");
+                mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                mir.push_str("          mul tmp3, tmp2, 8\n");
+                mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                mir.push_str(&format!("          mov i64:0(start_ptr), r{}\n", rb));
+                mir.push_str(&format!("          jmp check_wb_set_prop_{}\n", idx));
+
+                // Check fast_fields[3]
+                mir.push_str(&format!("check_set_ff3_{}:\n", idx));
+                mir.push_str("          mov tmp1, i64:80(desc_ptr)\n");
+                mir.push_str(&format!("          bne fallback_set_prop_{}, tmp1, name_ptr\n", idx));
+                mir.push_str("          mov tmp2, i64:88(desc_ptr)\n");
+                mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
+                mir.push_str("          mul tmp3, tmp2, 8\n");
+                mir.push_str("          add start_ptr, start_ptr, tmp3\n");
+                mir.push_str(&format!("          mov i64:0(start_ptr), r{}\n", rb));
+
+                mir.push_str(&format!("check_wb_set_prop_{}:\n", idx));
+                mir.push_str("          mov tmp3, u8:0(obj_ptr)\n");
+                mir.push_str(&format!("          bne done_set_prop_{}, tmp3, 2\n", idx));
+                mir.push_str(&format!("          ublt done_set_prop_{}, r{}, 0xfff4000000000000\n", idx, rb));
+                mir.push_str(&format!("          call p_write_barrier, er_jit_write_barrier, status, obj_ptr, r{}\n", rb));
+                mir.push_str(&format!("          jmp done_set_prop_{}\n", idx));
+
+                mir.push_str(&format!("fallback_set_prop_{}:\n", idx));
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
                 mir.push_str(&format!("          call p_set_property, er_jit_set_property, status, vm, r{}, r{}, tmp1\n", ra, rb));
                 mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
+                mir.push_str(&format!("done_set_prop_{}:\n", idx));
             }
             OpCode::GetIndex => {
-                if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                if rb_is_double {
                     mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", rb));
                     mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", rb));
                 }
+
+                // Inlined native array indexing fast path
+                mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                mir.push_str(&format!("          bne fallback_get_idx_{}, tmp, 0xfff5000000000000\n", idx));
+
+                if rc < num_regs && types_at_inst[idx][rc] == RegType::Double {
+                    mir.push_str(&format!("          d2i idx_ptr, d{}\n", rc));
+                } else {
+                    mir.push_str(&format!("          ubge fallback_get_idx_{}, r{}, 0xfff0000000000000\n", idx, rc));
+                    mir.push_str(&format!("          mov i64:8(cast_ptr), r{}\n", rc));
+                    mir.push_str("          dmov da, d:8(cast_ptr)\n");
+                    mir.push_str("          d2i idx_ptr, da\n");
+                }
+                mir.push_str(&format!("          blt fallback_get_idx_{}, idx_ptr, 0\n", idx));
+                mir.push_str(&format!("          mov obj_ptr, r{}\n", rb));
+                mir.push_str("          and obj_ptr, obj_ptr, 0x0000ffffffffffff\n");
+                mir.push_str("          mov tmp1, i64:40(obj_ptr)\n"); // len
+                mir.push_str(&format!("          bge fallback_get_idx_{}, idx_ptr, tmp1\n", idx));
+                mir.push_str("          mov start_ptr, i64:32(obj_ptr)\n"); // buf_ptr
+                mir.push_str("          mul tmp2, idx_ptr, 8\n");
+                mir.push_str("          add start_ptr, start_ptr, tmp2\n");
+                mir.push_str(&format!("          mov r{}, i64:0(start_ptr)\n", ra));
+                if next_types[ra] == RegType::Double {
+                    mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                    mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                }
+                mir.push_str(&format!("          jmp done_get_idx_{}\n", idx));
+
+                mir.push_str(&format!("fallback_get_idx_{}:\n", idx));
                 if rc < num_regs && types_at_inst[idx][rc] == RegType::Double {
                     mir.push_str(&format!("          dmov d:8(cast_ptr), d{}\n", rc));
                     mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rc));
@@ -1669,23 +1874,59 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          call p_get_index, er_jit_get_index, r{}, vm, r{}, r{}\n", ra, rb, rc));
                 mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
+                if next_types[ra] == RegType::Double {
+                    mir.push_str(&format!("          mov i64:0(cast_ptr), r{}\n", ra));
+                    mir.push_str(&format!("          dmov d{}, d:0(cast_ptr)\n", ra));
+                }
+                mir.push_str(&format!("done_get_idx_{}:\n", idx));
             }
             OpCode::SetIndex => {
                 if ra < num_regs && types_at_inst[idx][ra] == RegType::Double {
                     mir.push_str(&format!("          dmov d:0(cast_ptr), d{}\n", ra));
                     mir.push_str(&format!("          mov r{}, i64:0(cast_ptr)\n", ra));
                 }
-                if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
-                    mir.push_str(&format!("          dmov d:8(cast_ptr), d{}\n", rb));
-                    mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rb));
-                }
                 if rc < num_regs && types_at_inst[idx][rc] == RegType::Double {
                     mir.push_str(&format!("          dmov d:16(cast_ptr), d{}\n", rc));
                     mir.push_str(&format!("          mov r{}, i64:16(cast_ptr)\n", rc));
                 }
+
+                // Inlined native array SetIndex fast path
+                mir.push_str(&format!("          mov tmp, r{}\n", ra));
+                mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                mir.push_str(&format!("          bne fallback_set_idx_{}, tmp, 0xfff5000000000000\n", idx));
+
+                if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
+                    mir.push_str(&format!("          d2i idx_ptr, d{}\n", rb));
+                } else {
+                    mir.push_str(&format!("          ubge fallback_set_idx_{}, r{}, 0xfff0000000000000\n", idx, rb));
+                    mir.push_str(&format!("          mov i64:8(cast_ptr), r{}\n", rb));
+                    mir.push_str("          dmov da, d:8(cast_ptr)\n");
+                    mir.push_str("          d2i idx_ptr, da\n");
+                }
+                mir.push_str(&format!("          blt fallback_set_idx_{}, idx_ptr, 0\n", idx));
+                mir.push_str(&format!("          mov obj_ptr, r{}\n", ra));
+                mir.push_str("          and obj_ptr, obj_ptr, 0x0000ffffffffffff\n");
+                mir.push_str("          mov tmp1, i64:40(obj_ptr)\n"); // len
+                mir.push_str(&format!("          bge fallback_set_idx_{}, idx_ptr, tmp1\n", idx));
+                mir.push_str("          mov start_ptr, i64:32(obj_ptr)\n"); // buf_ptr
+                mir.push_str("          mul tmp2, idx_ptr, 8\n");
+                mir.push_str("          add start_ptr, start_ptr, tmp2\n");
+                mir.push_str(&format!("          mov i64:0(start_ptr), r{}\n", rc));
+                mir.push_str("          mov tmp3, u8:0(obj_ptr)\n");
+                mir.push_str(&format!("          bne done_set_idx_{}, tmp3, 2\n", idx));
+                mir.push_str(&format!("          ublt done_set_idx_{}, r{}, 0xfff4000000000000\n", idx, rc));
+                mir.push_str(&format!("          call p_write_barrier, er_jit_write_barrier, status, obj_ptr, r{}\n", rc));
+                mir.push_str(&format!("          jmp done_set_idx_{}\n", idx));
+
+                mir.push_str(&format!("fallback_set_idx_{}:\n", idx));
+                if rb < num_regs && types_at_inst[idx][rb] == RegType::Double {
+                    mir.push_str(&format!("          dmov d:8(cast_ptr), d{}\n", rb));
+                    mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rb));
+                }
                 mir.push_str(&format!("          call p_set_index, er_jit_set_index, status, vm, r{}, r{}, r{}\n", ra, rb, rc));
                 mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
+                mir.push_str(&format!("done_set_idx_{}:\n", idx));
             }
             OpCode::Return => {
                 let has_closures = func.chunk.code.iter().any(|inst| inst.op == OpCode::Closure);
@@ -2094,6 +2335,7 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         ("er_jit_make_closure", helpers::er_jit_make_closure as *mut c_void),
         ("er_jit_close_upvalues", helpers::er_jit_close_upvalues as *mut c_void),
         ("er_jit_await", helpers::er_jit_await as *mut c_void),
+        ("er_jit_write_barrier", helpers::er_jit_write_barrier as *mut c_void),
     ];
 
     for &(name, ptr) in helpers {

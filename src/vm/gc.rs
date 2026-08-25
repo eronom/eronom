@@ -40,14 +40,16 @@ pub struct GcPromise {
 
 static NEXT_DESCRIPTOR_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
+#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct StructDescriptor {
     pub id: u32,
+    pub _padding: u32,
+    pub fast_field_count: usize,
+    pub fast_fields: [(Value, usize); 8],
     pub name: Rc<str>,
     pub field_indices: FnvHashMap<super::value::MapKey, usize>,
     pub methods: FnvHashMap<super::value::MapKey, Value>,
-    pub fast_fields: [(Value, usize); 8],
-    pub fast_field_count: usize,
 }
 
 impl StructDescriptor {
@@ -67,11 +69,12 @@ impl StructDescriptor {
         let id = NEXT_DESCRIPTOR_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self {
             id,
+            _padding: 0,
+            fast_field_count: count,
+            fast_fields,
             name,
             field_indices,
             methods,
-            fast_fields,
-            fast_field_count: count,
         }
     }
 }
@@ -82,6 +85,7 @@ pub struct GcBoundMethod {
     pub function: *mut GcObject,
 }
 
+#[repr(C)]
 #[derive(Clone)]
 pub struct GcStruct {
     pub descriptor: Rc<StructDescriptor>,
@@ -146,6 +150,7 @@ pub struct GcClosure {
     pub upvalues: Vec<*mut GcObject>,
 }
 
+#[repr(C, u8)]
 pub enum GcData {
     Empty,
     String(Rc<str>),
@@ -160,11 +165,14 @@ pub enum GcData {
     Upvalue(GcUpvalue),
 }
 
+#[repr(C)]
 pub struct GcObject {
     pub color: GcColor,
     pub next: *mut GcObject,
     pub data: GcData,
 }
+
+const GC_CHUNK_SIZE: usize = 1024;
 
 pub struct GcState {
     pub head: *mut GcObject,
@@ -176,6 +184,7 @@ pub struct GcState {
     pub sweep_ptr: *mut GcObject,
     pub prev_sweep_ptr: *mut GcObject,
     pub free_list: Vec<*mut GcObject>,
+    pub chunks: Vec<*mut GcObject>,
     pub vector_pool: Vec<Vec<Value>>,
     pub map_pool: Vec<ObjectMap>,
 }
@@ -191,6 +200,7 @@ thread_local! {
         sweep_ptr: std::ptr::null_mut(),
         prev_sweep_ptr: std::ptr::null_mut(),
         free_list: Vec::new(),
+        chunks: Vec::new(),
         vector_pool: Vec::new(),
         map_pool: Vec::new(),
     });
@@ -275,12 +285,23 @@ pub fn gc_alloc_object(state: &mut GcState, data: GcData) -> *mut GcObject {
         }
         ptr
     } else {
-        let obj = Box::new(GcObject {
-            color: GcColor::White,
-            next: std::ptr::null_mut(),
-            data,
-        });
-        Box::into_raw(obj)
+        let layout = std::alloc::Layout::array::<GcObject>(GC_CHUNK_SIZE).unwrap();
+        let raw = unsafe { std::alloc::alloc(layout) as *mut GcObject };
+        if raw.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        state.chunks.push(raw);
+        unsafe {
+            for i in (1..GC_CHUNK_SIZE).rev() {
+                state.free_list.push(raw.add(i));
+            }
+            std::ptr::write(raw, GcObject {
+                color: GcColor::White,
+                next: std::ptr::null_mut(),
+                data,
+            });
+        }
+        raw
     }
 }
 
@@ -328,12 +349,12 @@ pub fn gc_free_all() {
             while !curr.is_null() {
                 let next = (*curr).next;
                 gc_recycle_data(s_ref, &mut (*curr).data);
-                let _ = Box::from_raw(curr);
                 curr = next;
             }
-            let free_list = std::mem::take(&mut s_ref.free_list);
-            for ptr in free_list {
-                let _ = Box::from_raw(ptr);
+            s_ref.free_list.clear();
+            let layout = std::alloc::Layout::array::<GcObject>(GC_CHUNK_SIZE).unwrap();
+            for chunk in s_ref.chunks.drain(..) {
+                std::alloc::dealloc(chunk as *mut u8, layout);
             }
             s_ref.vector_pool.clear();
             s_ref.map_pool.clear();

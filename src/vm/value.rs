@@ -26,12 +26,12 @@ pub struct Value(pub u64);
 
 impl Value {
     #[inline(always)]
-    pub fn null() -> Self {
+    pub const fn null() -> Self {
         Value(TAG_NULL)
     }
 
     #[inline(always)]
-    pub fn boolean(b: bool) -> Self {
+    pub const fn boolean(b: bool) -> Self {
         Value(TAG_FALSE + (b as u64 * 0x0001_0000_0000_0000))
     }
 
