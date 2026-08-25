@@ -464,12 +464,8 @@ pub extern "C" fn er_jit_make_array(_vm: *mut VM, start_reg: *const Value, count
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
         let count_usize = count as usize;
-        let cap = if count_usize < 4 { 4 } else { count_usize + (count_usize >> 1) };
-        let mut elements = get_pooled_vec(cap);
-        elements.clear();
         let slice = std::slice::from_raw_parts(start_reg, count_usize);
-        elements.extend_from_slice(slice);
-        let ptr = gc_allocate(GcData::Array(elements));
+        let ptr = crate::vm::gc::gc_alloc_array(slice);
         let res = Value::array(ptr);
         if JIT_PROFILING {
             JIT_PROFILER.with(|p| {

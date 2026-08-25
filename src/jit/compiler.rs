@@ -2276,29 +2276,6 @@ fn eliminate_dead_instructions(
                         is_dead[pc] = true;
                         changed = true;
                     }
-                    OpCode::Call => {
-                        let callee_reg = inst.rb as usize;
-                        if callee_reg < num_regs {
-                            for prev in (0..pc).rev() {
-                                if func.chunk.code[prev].ra as usize == callee_reg {
-                                    if func.chunk.code[prev].op == OpCode::GetProperty {
-                                        let c_idx = func.chunk.code[prev].operand as usize;
-                                        if c_idx < func.chunk.constants.len() {
-                                            let name = func.chunk.constants[c_idx].as_str().unwrap_or("");
-                                            if name == "push" || name == "pop" {
-                                                let arr_reg = func.chunk.code[prev].rb as usize;
-                                                if arr_reg < num_regs && !live_out[pc][arr_reg] {
-                                                    is_dead[pc] = true;
-                                                    changed = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
                     _ => {}
                 }
             }

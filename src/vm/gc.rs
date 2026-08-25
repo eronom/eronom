@@ -246,6 +246,33 @@ pub fn get_pooled_map(capacity: usize) -> ObjectMap {
     })
 }
 
+#[inline(always)]
+pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
+    GC_STATE.with(|state| unsafe {
+        let s = &mut *state.get();
+        let count = slice.len();
+        let cap = if count < 4 { 4 } else { count + (count >> 1) };
+        let mut elements = if let Some(mut v) = s.vector_pool.pop() {
+            if v.capacity() < cap {
+                v.reserve(cap - v.capacity());
+            }
+            v.clear();
+            v
+        } else {
+            Vec::with_capacity(cap)
+        };
+        elements.extend_from_slice(slice);
+        let ptr = gc_alloc_object(s, GcData::Array(elements));
+        (*ptr).next = s.head;
+        s.head = ptr;
+        s.alloc_count += 1;
+        if s.alloc_count >= s.alloc_threshold {
+            GC_NEEDS_STEP.store(true, Ordering::Relaxed);
+        }
+        ptr
+    })
+}
+
 const GC_POOL_MAX: usize = 2048;
 
 #[inline(always)]
