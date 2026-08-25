@@ -1,0 +1,224 @@
+// Standard Testing Framework for Eronom
+import { JSON } from "std/json"
+
+let TEST_REGISTRY = []
+let BEFORE_EACH = []
+let AFTER_EACH = []
+let BEFORE_ALL = []
+let AFTER_ALL = []
+let CURRENT_SUITE = ""
+
+export const assert = (condition, message) => {
+  if (!condition) {
+    let msg = "AssertionError: Expected condition to be truthy"
+    if (message) {
+      msg = "AssertionError: " + message
+    }
+    throw msg
+  }
+}
+
+export const assertEqual = (actual, expected, message) => {
+  let isEq = (actual == expected)
+  if (!isEq) {
+    let aStr = JSON.stringify(actual)
+    let bStr = JSON.stringify(expected)
+    if (aStr == bStr) {
+      isEq = true
+    }
+  }
+  if (!isEq) {
+    let msg = "AssertionError: Expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual)
+    if (message) {
+      msg = "AssertionError: " + message + " (Expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual) + ")"
+    }
+    throw msg
+  }
+}
+
+export const assertNotEqual = (actual, expected, message) => {
+  let isEq = (actual == expected)
+  if (isEq) {
+    let msg = "AssertionError: Expected values not to be equal: " + JSON.stringify(actual)
+    if (message) {
+      msg = "AssertionError: " + message
+    }
+    throw msg
+  }
+}
+
+export const assertTrue = (val, message) => {
+  assert(val == true, message)
+}
+
+export const assertFalse = (val, message) => {
+  assert(val == false, message)
+}
+
+export const assertNull = (val, message) => {
+  assert(val == null, message)
+}
+
+export const assertNotNull = (val, message) => {
+  assert(val != null, message)
+}
+
+export const assertThrows = (fnToTest, expectedSubstr) => {
+  let didThrow = false
+  let thrownError = ""
+  try {
+    fnToTest()
+  } catch (err) {
+    didThrow = true
+    thrownError = err
+  }
+  if (!didThrow) {
+    throw "AssertionError: Expected function to throw an error, but it returned normally."
+  }
+  if (expectedSubstr) {
+    if (!stringIncludes(thrownError, expectedSubstr)) {
+      throw "AssertionError: Expected error to contain '" + expectedSubstr + "' but got: " + thrownError
+    }
+  }
+}
+
+export const assertContains = (haystack, needle, message) => {
+  if (haystack == null) {
+    throw "AssertionError: Cannot check contains on null"
+  }
+  let contains = false
+  if (stringIncludes(haystack, needle)) {
+    contains = true
+  }
+  if (!contains) {
+    let msg = "AssertionError: Expected '" + haystack + "' to contain '" + needle + "'"
+    if (message) {
+      msg = "AssertionError: " + message
+    }
+    throw msg
+  }
+}
+
+export const describe = (suiteName, suiteFn) => {
+  let prevSuite = CURRENT_SUITE
+  if (prevSuite == "") {
+    CURRENT_SUITE = suiteName
+  } else {
+    CURRENT_SUITE = prevSuite + " > " + suiteName
+  }
+  suiteFn()
+  CURRENT_SUITE = prevSuite
+}
+
+export const test = (testName, testFn) => {
+  let fullName = testName
+  if (CURRENT_SUITE != "") {
+    fullName = "[" + CURRENT_SUITE + "] " + testName
+  }
+  arrayPush(TEST_REGISTRY, {
+    name: fullName,
+    func: testFn
+  })
+}
+
+export const it = test
+
+export const beforeEach = (hookFn) => {
+  arrayPush(BEFORE_EACH, hookFn)
+}
+
+export const afterEach = (hookFn) => {
+  arrayPush(AFTER_EACH, hookFn)
+}
+
+export const beforeAll = (hookFn) => {
+  arrayPush(BEFORE_ALL, hookFn)
+}
+
+export const afterAll = (hookFn) => {
+  arrayPush(AFTER_ALL, hookFn)
+}
+
+export const runTests = () => {
+  const total = arrayLen(TEST_REGISTRY)
+  let passed = 0
+  let failed = 0
+
+  print("\n=== Running Eronom Test Suite ===")
+  const startTime = now()
+
+  // Run beforeAll hooks
+  let i = 0
+  while (i < arrayLen(BEFORE_ALL)) {
+    let hook = BEFORE_ALL[i]
+    hook()
+    i = i + 1
+  }
+
+  i = 0
+  while (i < total) {
+    let t = TEST_REGISTRY[i]
+
+    // Run beforeEach hooks
+    let h = 0
+    while (h < arrayLen(BEFORE_EACH)) {
+      let hook = BEFORE_EACH[h]
+      hook()
+      h = h + 1
+    }
+
+    let tStart = now()
+    let testPassed = true
+    let errMessage = ""
+
+    try {
+      let f = t.func
+      f()
+    } catch (err) {
+      testPassed = false
+      errMessage = err
+    }
+
+    let tDuration = now() - tStart
+
+    // Run afterEach hooks
+    h = 0
+    while (h < arrayLen(AFTER_EACH)) {
+      let hook = AFTER_EACH[h]
+      hook()
+      h = h + 1
+    }
+
+    if (testPassed) {
+      passed = passed + 1
+      print("  ✓ " + t.name + " (" + tDuration + "ms)")
+    } else {
+      failed = failed + 1
+      print("  ✗ " + t.name)
+      print("    " + errMessage)
+    }
+
+    i = i + 1
+  }
+
+  // Run afterAll hooks
+  i = 0
+  while (i < arrayLen(AFTER_ALL)) {
+    let hook = AFTER_ALL[i]
+    hook()
+    i = i + 1
+  }
+
+  const totalDuration = now() - startTime
+  print("================================")
+  print("Tests:  " + passed + " passed, " + failed + " failed, " + total + " total")
+  print("Time:   " + totalDuration + "ms\n")
+
+  return {
+    total: total,
+    passed: passed,
+    failed: failed,
+    duration: totalDuration,
+    success: (failed == 0)
+  }
+}

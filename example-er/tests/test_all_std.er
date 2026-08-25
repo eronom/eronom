@@ -1,0 +1,126 @@
+import { test, describe, assert, assertEqual, assertTrue, assertFalse, assertNull, assertNotNull, assertThrows, runTests } from "std/test"
+import { readDir, makeDir, removeDir, exists, stat, readFile, writeFile, appendFile, readBinary, writeBinary, copyFile, rename, removeFile } from "std/fs"
+import { join, resolve, dirname, basename, extname, normalize, isAbsolute, path } from "std/path"
+import { sha256, sha512, md5, hash, hmacSha256, timingSafeEqual, randomUUID, randomBytes, randomInt } from "std/crypto"
+import { parse, stringify, JSON } from "std/json"
+import { get, set, has, remove, all, env } from "std/env"
+import { args, pid, cwd, exec, platform, arch, process } from "std/process"
+
+describe("std/fs Module", () => {
+  test("directory operations and text files", () => {
+    const dir = "./tmp_master_fs"
+    if (exists(dir)) {
+      removeDir(dir, true)
+    }
+    assertTrue(makeDir(dir + "/nested", true), "makeDir should succeed")
+    assertTrue(exists(dir + "/nested"), "exists should be true")
+
+    const filePath = dir + "/test.txt"
+    assertTrue(writeFile(filePath, "Standard Library Test"), "writeFile should succeed")
+    assertEqual(readFile(filePath), "Standard Library Test", "readFile should match")
+
+    appendFile(filePath, " - Appended")
+    assertEqual(readFile(filePath), "Standard Library Test - Appended", "appendFile should work")
+
+    const fileStat = stat(filePath)
+    assertTrue(fileStat.isFile, "stat isFile should be true")
+    assertFalse(fileStat.isDirectory, "stat isDirectory should be false")
+    assertTrue(fileStat.size > 0, "stat size should be > 0")
+
+    const entries = readDir(dir)
+    assertTrue(arrayLen(entries) >= 1, "readDir should return entries")
+
+    removeDir(dir, true)
+    assertFalse(exists(dir), "directory should be cleaned up")
+  })
+
+  test("binary file operations", () => {
+    const binFile = "./tmp_test.bin"
+    const bytes = [10, 20, 30, 40, 250]
+    assertTrue(writeBinary(binFile, bytes), "writeBinary should succeed")
+    const read = readBinary(binFile)
+    assertEqual(arrayLen(read), 5, "read length should match")
+    assertEqual(read[0], 10, "byte 0 should match")
+    assertEqual(read[4], 250, "byte 4 should match")
+    removeFile(binFile)
+    assertFalse(exists(binFile), "bin file removed")
+  })
+})
+
+describe("std/path Module", () => {
+  test("path manipulation utilities", () => {
+    assertEqual(join("a", "b", "c.txt"), "a/b/c.txt", "join should work")
+    assertEqual(dirname("/a/b/c.txt"), "/a/b", "dirname should work")
+    assertEqual(basename("/a/b/c.txt"), "c.txt", "basename should work")
+    assertEqual(basename("/a/b/c.txt", ".txt"), "c", "basename ext strip should work")
+    assertEqual(extname("file.min.js"), ".js", "extname should work")
+    assertEqual(normalize("a/b/../c/./d"), "a/c/d", "normalize should work")
+    assertTrue(isAbsolute("/root/dir"), "isAbsolute should be true for /root/dir")
+    assertFalse(isAbsolute("relative/dir"), "isAbsolute should be false for relative/dir")
+  })
+})
+
+describe("std/crypto Module", () => {
+  test("cryptographic hashing and HMAC", () => {
+    const s256 = sha256("hello world")
+    assertEqual(s256, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9", "sha256 matches")
+    
+    const m5 = md5("hello world")
+    assertEqual(m5, "5eb63bbbe01eeed093cb22bb8f5acdc3", "md5 matches")
+
+    const hmacVal = hmacSha256("secret", "message")
+    assertEqual(stringLength(hmacVal), 64, "hmac sha256 hex length is 64")
+
+    assertTrue(timingSafeEqual("abc", "abc"), "timingSafeEqual same")
+    assertFalse(timingSafeEqual("abc", "xyz"), "timingSafeEqual diff")
+
+    const uuid = randomUUID()
+    assertEqual(stringLength(uuid), 36, "randomUUID length is 36")
+
+    const randBytes = randomBytes(8)
+    assertEqual(arrayLen(randBytes), 8, "randomBytes length is 8")
+
+    const r = randomInt(5, 15)
+    assertTrue(r >= 5 and r < 15, "randomInt is within range")
+  })
+})
+
+describe("std/json Module", () => {
+  test("JSON parsing and serialization", () => {
+    const raw = "\{\"name\":\"Eronom\",\"score\":99,\"tags\":[\"fast\",\"jit\"],\"enabled\":true\}"
+    const obj = parse(raw)
+    assertEqual(obj.name, "Eronom", "name should match")
+    assertEqual(obj.score, 99, "score should match")
+    assertEqual(obj.tags[0], "fast", "tag 0 should match")
+    assertTrue(obj.enabled, "enabled should be true")
+
+    const serialized = stringify(obj)
+    assertTrue(stringIncludes(serialized, "\"name\":\"Eronom\""), "serialized contains name")
+
+    const pretty = stringify(obj, 2)
+    assertTrue(stringIncludes(pretty, "\n"), "pretty JSON has newline")
+  })
+})
+
+describe("std/env & std/process Modules", () => {
+  test("system environment and process", () => {
+    set("ERONOM_TEST_ENV_VAR", "active_123")
+    assertTrue(has("ERONOM_TEST_ENV_VAR"), "has should be true")
+    assertEqual(get("ERONOM_TEST_ENV_VAR"), "active_123", "get should match")
+    remove("ERONOM_TEST_ENV_VAR")
+    assertFalse(has("ERONOM_TEST_ENV_VAR"), "has should be false after remove")
+
+    assertTrue(process.pid > 0, "process.pid should be > 0")
+    assertTrue(stringLength(process.cwd()) > 0, "process.cwd() should not be empty")
+    assertTrue(stringLength(process.platform) > 0, "process.platform should not be empty")
+
+    const execRes = exec("echo 'Process Test OK'")
+    assertTrue(execRes.success, "exec should succeed")
+    assertEqual(stringTrim(execRes.stdout), "Process Test OK", "exec stdout should match")
+  })
+})
+
+const results = runTests()
+if (!results.success) {
+  process.exit(1)
+}
