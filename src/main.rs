@@ -9,6 +9,7 @@ struct GcGuard;
 impl Drop for GcGuard {
     fn drop(&mut self) {
         backend::gc_free_all();
+        jit::reset_jit_state();
     }
 }
 
@@ -639,7 +640,7 @@ fn find_test_files_in_dir(dir: &std::path::Path, out: &mut Vec<std::path::PathBu
             let path = entry.path();
             if path.is_dir() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if !name.starts_with('.') && name != "node_modules" && name != "target" {
+                if !name.starts_with('.') && name != "target" {
                     find_test_files_in_dir(&path, out);
                 }
             } else if path.is_file() {

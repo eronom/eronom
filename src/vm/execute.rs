@@ -729,7 +729,7 @@ impl VM {
         let original_len = self.stack.len();
         self.stack.resize(original_len + 65536, Value::null());
         
-        let res = if self.use_jit && self.jit_threshold == 0 {
+        let res = if self.use_jit {
             self.execute_loop(0)
         } else {
             self.execute_loop_interpreter(0)
@@ -760,16 +760,19 @@ impl VM {
             let mut frame = &mut *frame_ptr;
 
             macro_rules! get_func {
-                ($func_ptr:expr) => {
-                    match &(*$func_ptr).data {
+                ($func_ptr:expr) => {{
+                    let mut p = $func_ptr;
+                    if let GcData::BoundMethod(bm) = &(*p).data {
+                        p = bm.function;
+                    }
+                    if let GcData::Closure(c) = &(*p).data {
+                        p = c.function;
+                    }
+                    match &(*p).data {
                         GcData::Function(func) => func,
-                        GcData::Closure(c) => match &(*c.function).data {
-                            GcData::Function(func) => func,
-                            _ => unreachable!(),
-                        },
                         _ => unreachable!(),
                     }
-                };
+                }};
             }
 
             let mut func = get_func!(frame.function);
@@ -807,9 +810,10 @@ impl VM {
 
                 let native_ptr = if let Some(ptr) = raw_func.jit_ptr.get() {
                     ptr
-                } else if self.jit_threshold == 0 || count >= self.jit_threshold {
+                } else if self.jit_threshold == 0 || count >= self.jit_threshold || self.frames.len() <= 1 {
                     crate::jit::compile_function(self, raw_fn_ptr)
                 } else {
+                    let child_dest_reg = frame.dest_reg;
                     let initial_depth = self.frames.len() - 1;
                     let res = self.execute_loop_interpreter(initial_depth)?;
                     if self.frames.len() <= target_depth {
@@ -824,7 +828,7 @@ impl VM {
                     constants_ptr = func.chunk.constants.as_ptr();
                     slots_offset = frame.slots_offset;
                     reload_stack!();
-                    *frame_slots.add(frame.dest_reg) = res;
+                    *frame_slots.add(child_dest_reg) = res;
                     frame.ip += 1;
                     ip_val = frame.ip;
                     continue;
@@ -1092,16 +1096,19 @@ impl VM {
             let mut frame = &mut *frame_ptr;
 
             macro_rules! get_func {
-                ($func_ptr:expr) => {
-                    match &(*$func_ptr).data {
+                ($func_ptr:expr) => {{
+                    let mut p = $func_ptr;
+                    if let GcData::BoundMethod(bm) = &(*p).data {
+                        p = bm.function;
+                    }
+                    if let GcData::Closure(c) = &(*p).data {
+                        p = c.function;
+                    }
+                    match &(*p).data {
                         GcData::Function(func) => func,
-                        GcData::Closure(c) => match &(*c.function).data {
-                            GcData::Function(func) => func,
-                            _ => unreachable!(),
-                        },
                         _ => unreachable!(),
                     }
-                };
+                }};
             }
 
             let mut func = get_func!(frame.function);
