@@ -96,8 +96,8 @@ const fetchTask = (url) => {
 
 // Structured Concurrency Scope: Automatically joins all spawned tasks
 concurrent {
-    on fetchTask("https://jsonplaceholder.typicode.com/todos/1")
-    on fetchTask("https://jsonplaceholder.typicode.com/todos/2")
+    fetchTask("https://jsonplaceholder.typicode.com/todos/1")
+    fetchTask("https://jsonplaceholder.typicode.com/todos/2")
 }
 
 print("Both concurrent tasks completed!")
