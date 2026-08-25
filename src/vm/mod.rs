@@ -7,6 +7,7 @@ pub mod er_http;
 pub mod router;
 pub mod std_fs;
 pub mod std_path;
+pub mod std_crypto;
 
 // Re-export key structures to maintain public API compatibility
 pub use value::Value;

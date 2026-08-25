@@ -1,0 +1,55 @@
+import { sha256, sha512, md5, hash, hmac, hmacSha256, hmacSha512, hmacMd5, timingSafeEqual, randomUUID, randomBytes, randomHex, randomInt, crypto } from "std/crypto"
+
+print("--- Testing std/crypto ---")
+
+// 1. Hashes
+const helloSha256 = sha256("hello world")
+print("sha256('hello world'): " + helloSha256)
+// Known SHA-256 for 'hello world': b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+print("sha256 match: " + (helloSha256 == "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"))
+
+const helloMd5 = md5("hello world")
+print("md5('hello world'): " + helloMd5)
+// Known MD5 for 'hello world': 5eb63bbbe01eeed093cb22bb8f5acdc3
+print("md5 match: " + (helloMd5 == "5eb63bbbe01eeed093cb22bb8f5acdc3"))
+
+const helloSha512 = sha512("hello world")
+print("sha512 length: " + stringLength(helloSha512))
+
+// 2. Generic hash
+print("hash('sha256', 'test'): " + (hash("sha256", "test") == sha256("test")))
+
+// 3. HMAC
+const hmacKey = "secret-key"
+const hmacData = "message payload"
+const sig256 = hmacSha256(hmacKey, hmacData)
+print("hmacSha256 length: " + stringLength(sig256))
+
+const sigMd5 = hmacMd5(hmacKey, hmacData)
+print("hmacMd5 length: " + stringLength(sigMd5))
+
+// 4. Timing safe equal
+print("timingSafeEqual same: " + timingSafeEqual("token-abc-123", "token-abc-123"))
+print("timingSafeEqual diff: " + timingSafeEqual("token-abc-123", "token-xyz-999"))
+
+// 5. Random UUID
+const uuid1 = randomUUID()
+const uuid2 = randomUUID()
+print("randomUUID 1: " + uuid1)
+print("randomUUID 2: " + uuid2)
+print("uuid length == 36: " + (stringLength(uuid1) == 36))
+print("uuids are unique: " + (uuid1 != uuid2))
+
+// 6. Random bytes, hex, int
+const rBytes = randomBytes(16)
+print("randomBytes length: " + arrayLen(rBytes))
+
+const rHex = randomHex(8)
+print("randomHex length: " + stringLength(rHex))
+
+const rInt = randomInt(10, 50)
+print("randomInt in range: " + (rInt >= 10 and rInt < 50))
+
+// 7. crypto namespace object
+print("crypto.sha256: " + (crypto.sha256("abc") == sha256("abc")))
+print("--- std/crypto tests completed successfully ---")
