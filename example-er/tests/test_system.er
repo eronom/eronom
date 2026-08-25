@@ -1,0 +1,40 @@
+import { get, set, has, remove, all, env } from "std/env"
+import { args, pid, cwd, chdir, exit, exec, platform, arch, process } from "std/process"
+
+print("--- Testing std/env & std/process ---")
+
+// 1. Environment variables
+print("env.set TEST_VAR: " + set("TEST_VAR", "eronom_value_123"))
+print("env.has TEST_VAR: " + has("TEST_VAR"))
+print("env.get TEST_VAR: " + get("TEST_VAR"))
+print("env.get with default: " + get("NON_EXISTING_VAR_XYZ", "default_val"))
+
+print("env.remove TEST_VAR: " + remove("TEST_VAR"))
+print("env.has after remove: " + has("TEST_VAR"))
+
+const allVars = all()
+print("env.all is object: " + (allVars != null))
+
+// 2. Process properties
+print("process.pid > 0: " + (process.pid > 0))
+print("process.cwd(): " + process.cwd())
+print("process.platform: " + process.platform)
+print("process.arch: " + process.arch)
+print("process.args len: " + arrayLen(process.args))
+
+// 3. Subprocess execution
+const res = exec("echo 'Eronom Process Exec Test'")
+print("exec stdout: " + stringTrim(res.stdout))
+print("exec exitCode == 0: " + (res.exitCode == 0))
+print("exec success: " + res.success)
+
+// Subprocess execution with arguments array
+const echoRes = exec("echo", ["Hello", "Subprocess"])
+print("exec with args stdout: " + stringTrim(echoRes.stdout))
+print("exec with args success: " + echoRes.success)
+
+// Global env and process
+print("global env.get PATH exists: " + (env.get("PATH") != null))
+print("global process.pid == process.pid: " + (process.pid == pid()))
+
+print("--- std/env & std/process tests completed successfully ---")

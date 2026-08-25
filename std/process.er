@@ -1,0 +1,25 @@
+// Standard Process library for Eronom
+import { env } from "std/env"
+
+export const args = Eronom_nativeProcessArgs
+export const pid = Eronom_nativeProcessPid
+export const cwd = Eronom_nativeProcessCwd
+export const chdir = Eronom_nativeProcessChdir
+export const exit = Eronom_nativeProcessExit
+export const exec = Eronom_nativeProcessExec
+export const platform = Eronom_nativeProcessPlatform
+export const arch = Eronom_nativeProcessArch
+
+export const process = {
+  args: args(),
+  pid: pid(),
+  cwd: cwd,
+  chdir: chdir,
+  exit: exit,
+  exec: exec,
+  platform: platform(),
+  arch: arch(),
+  env: env
+}
+
+export { env }

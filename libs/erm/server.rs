@@ -444,6 +444,7 @@ fn execute_api_route(
     crate::vm::std_path::register_path_natives(&mut vm);
     crate::vm::std_crypto::register_crypto_natives(&mut vm);
     crate::vm::std_json::register_json_natives(&mut vm);
+    crate::vm::std_system::register_system_natives(&mut vm);
     crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
 
     let _guard = GcGuard;
