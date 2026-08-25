@@ -493,7 +493,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     // Fallback
                     mir.push_str(&format!("fallback_neg_{}:\n", idx));
                     mir.push_str(&format!("          call p_negate, er_jit_negate, r{}, vm, r{}\n", ra, rb));
-                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          mov status, u8:0(vm)\n");
                     mir.push_str("          bne err_label, status, 0\n");
                     if next_ra_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
@@ -566,7 +566,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                     }
                     mir.push_str(&format!("          call p_add, er_jit_add, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          mov status, u8:0(vm)\n");
                     mir.push_str("          bne err_label, status, 0\n");
                     if next_ra_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
@@ -623,7 +623,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                     }
                     mir.push_str(&format!("          call p_sub, er_jit_sub, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          mov status, u8:0(vm)\n");
                     mir.push_str("          bne err_label, status, 0\n");
                     if next_ra_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
@@ -680,7 +680,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                     }
                     mir.push_str(&format!("          call p_mul, er_jit_mul, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          mov status, u8:0(vm)\n");
                     mir.push_str("          bne err_label, status, 0\n");
                     if next_ra_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
@@ -737,7 +737,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                         mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                     }
                     mir.push_str(&format!("          call p_div, er_jit_div, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          mov status, u8:0(vm)\n");
                     mir.push_str("          bne err_label, status, 0\n");
                     if next_ra_is_double {
                         mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
@@ -762,7 +762,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                 }
                 mir.push_str(&format!("          call p_mod, er_jit_mod, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
                 if next_ra_is_double {
                     mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
@@ -776,20 +776,32 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
                 let next_ra_is_double = next_types[ra] == RegType::Double;
-                if rb_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                }
-                if rc_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                }
-                mir.push_str(&format!("          call p_bit_and, er_jit_bit_and, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
-                mir.push_str("          bne err_label, status, 0\n");
-                if next_ra_is_double {
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                if rb_is_double && rc_is_double {
+                    // Fast path: both numeric — inline integer op
+                    mir.push_str(&format!("          d2i tmp1, d{}\n", rb));
+                    mir.push_str(&format!("          d2i tmp2, d{}\n", rc));
+                    mir.push_str("          and tmp3, tmp1, tmp2\n");
+                    mir.push_str(&format!("          i2d d{}, tmp3\n", ra));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_bit_and, er_jit_bit_and, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          mov status, u8:0(vm)\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
                 }
             }
             OpCode::BitOr => {
@@ -799,20 +811,31 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
                 let next_ra_is_double = next_types[ra] == RegType::Double;
-                if rb_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                }
-                if rc_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                }
-                mir.push_str(&format!("          call p_bit_or, er_jit_bit_or, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
-                mir.push_str("          bne err_label, status, 0\n");
-                if next_ra_is_double {
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          d2i tmp1, d{}\n", rb));
+                    mir.push_str(&format!("          d2i tmp2, d{}\n", rc));
+                    mir.push_str("          or tmp3, tmp1, tmp2\n");
+                    mir.push_str(&format!("          i2d d{}, tmp3\n", ra));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_bit_or, er_jit_bit_or, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          mov status, u8:0(vm)\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
                 }
             }
             OpCode::BitXor => {
@@ -822,20 +845,31 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
                 let next_ra_is_double = next_types[ra] == RegType::Double;
-                if rb_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                }
-                if rc_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                }
-                mir.push_str(&format!("          call p_bit_xor, er_jit_bit_xor, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
-                mir.push_str("          bne err_label, status, 0\n");
-                if next_ra_is_double {
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          d2i tmp1, d{}\n", rb));
+                    mir.push_str(&format!("          d2i tmp2, d{}\n", rc));
+                    mir.push_str("          xor tmp3, tmp1, tmp2\n");
+                    mir.push_str(&format!("          i2d d{}, tmp3\n", ra));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_bit_xor, er_jit_bit_xor, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          mov status, u8:0(vm)\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
                 }
             }
             OpCode::BitNot => {
@@ -844,16 +878,24 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let next_ra_is_double = next_types[ra] == RegType::Double;
                 if rb_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    // Fast path: numeric — inline bit-not
+                    mir.push_str(&format!("          d2i tmp1, d{}\n", rb));
+                    mir.push_str("          not tmp3, tmp1\n");
+                    mir.push_str(&format!("          i2d d{}, tmp3\n", ra));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset2));
+                    }
+                } else {
+                    mir.push_str(&format!("          call p_bit_not, er_jit_bit_not, r{}, vm, r{}\n", ra, rb));
+                    mir.push_str("          mov status, u8:0(vm)\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset2));
+                    }
                 }
-                mir.push_str(&format!("          call p_bit_not, er_jit_bit_not, r{}, vm, r{}\n", ra, rb));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
-                mir.push_str("          bne err_label, status, 0\n");
-                if next_ra_is_double {
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset2));
-                }
+                let _ = offset1; // suppress unused warning
             }
             OpCode::ShiftLeft => {
                 let offset1 = ((idx * 3) % 24) * 8;
@@ -862,20 +904,31 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
                 let next_ra_is_double = next_types[ra] == RegType::Double;
-                if rb_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                }
-                if rc_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                }
-                mir.push_str(&format!("          call p_shift_left, er_jit_shift_left, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
-                mir.push_str("          bne err_label, status, 0\n");
-                if next_ra_is_double {
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          d2i tmp1, d{}\n", rb));
+                    mir.push_str(&format!("          d2i tmp2, d{}\n", rc));
+                    mir.push_str("          lsl tmp3, tmp1, tmp2\n");
+                    mir.push_str(&format!("          i2d d{}, tmp3\n", ra));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_shift_left, er_jit_shift_left, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          mov status, u8:0(vm)\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
                 }
             }
             OpCode::ShiftRight => {
@@ -885,20 +938,31 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
                 let rc_is_double = rc < num_regs && types_at_inst[idx][rc] == RegType::Double;
                 let next_ra_is_double = next_types[ra] == RegType::Double;
-                if rb_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
-                }
-                if rc_is_double {
-                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
-                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
-                }
-                mir.push_str(&format!("          call p_shift_right, er_jit_shift_right, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
-                mir.push_str("          bne err_label, status, 0\n");
-                if next_ra_is_double {
-                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
-                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                if rb_is_double && rc_is_double {
+                    mir.push_str(&format!("          d2i tmp1, d{}\n", rb));
+                    mir.push_str(&format!("          d2i tmp2, d{}\n", rc));
+                    mir.push_str("          asr tmp3, tmp1, tmp2\n");
+                    mir.push_str(&format!("          i2d d{}, tmp3\n", ra));
+                    if !next_ra_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset3, ra));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset3));
+                    }
+                } else {
+                    if rb_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset1, rb));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
+                    }
+                    if rc_is_double {
+                        mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset2, rc));
+                        mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
+                    }
+                    mir.push_str(&format!("          call p_shift_right, er_jit_shift_right, r{}, vm, r{}, r{}\n", ra, rb, rc));
+                    mir.push_str("          mov status, u8:0(vm)\n");
+                    mir.push_str("          bne err_label, status, 0\n");
+                    if next_ra_is_double {
+                        mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset3, ra));
+                        mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset3));
+                    }
                 }
             }
             OpCode::TypeOf => {
@@ -918,7 +982,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
                 }
                 mir.push_str(&format!("          call p_to_iter, er_jit_to_iter, r{}, vm, r{}\n", ra, rb));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::ArrayLen => {
@@ -931,7 +995,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset1));
                 }
                 mir.push_str(&format!("          call p_array_len_op, er_jit_array_len_op, r{}, vm, r{}\n", ra, rb));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
                 if next_ra_is_double {
                     mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset2, ra));
@@ -990,7 +1054,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          call p_equal, er_jit_equal, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
@@ -1039,7 +1103,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          call p_equal, er_jit_equal, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("done_eq_{}:\n", idx));
                     }
@@ -1097,7 +1161,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          call p_greater, er_jit_greater, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
@@ -1146,7 +1210,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          call p_greater, er_jit_greater, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("done_gt_{}:\n", idx));
                     }
@@ -1204,7 +1268,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          call p_less, er_jit_less, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_FALSE));
                         mir.push_str(&format!("          beq take_branch_{}, r{}, {}\n", idx, ra, TAG_NULL));
@@ -1253,7 +1317,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                             mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rc, offset2));
                         }
                         mir.push_str(&format!("          call p_less, er_jit_less, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                        mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                        mir.push_str("          mov status, u8:0(vm)\n");
                         mir.push_str("          bne err_label, status, 0\n");
                         mir.push_str(&format!("done_lt_{}:\n", idx));
                     }
@@ -1282,7 +1346,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 let c_idx = instruction.operand;
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
                 mir.push_str(&format!("          call p_get_global, er_jit_get_global, r{}, vm, tmp1\n", ra));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
                 if next_types[ra] == RegType::Double {
                     let offset = (ra % 24) * 8;
@@ -1299,7 +1363,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 }
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
                 mir.push_str(&format!("          call p_set_global, er_jit_set_global, status, vm, r{}, tmp1\n", ra));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::Jump => {
@@ -1310,7 +1374,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Loop => {
                 let target = (idx as i32 + 1 - instruction.operand as i32) as usize;
                 mir.push_str("          add loop_counter, loop_counter, 1\n");
-                mir.push_str("          and tmp, loop_counter, 255\n");
+                mir.push_str("          and tmp, loop_counter, 63\n");
                 mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
                 mir.push_str("          call p_needs_gc, er_jit_needs_gc, status\n");
                 mir.push_str(&format!("          beq no_yield_gc_{}, status, 0\n", idx));
@@ -1503,13 +1567,13 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("fallback_get_prop_{}:\n", idx));
                     mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
                     mir.push_str(&format!("          call p_get_property, er_jit_get_property, r{}, vm, r{}, tmp1\n", ra, rb));
-                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          mov status, u8:0(vm)\n");
                     mir.push_str("          bne err_label, status, 0\n");
                     mir.push_str(&format!("done_get_prop_{}:\n", idx));
                 } else {
                     mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
                     mir.push_str(&format!("          call p_get_property, er_jit_get_property, r{}, vm, r{}, tmp1\n", ra, rb));
-                    mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                    mir.push_str("          mov status, u8:0(vm)\n");
                     mir.push_str("          bne err_label, status, 0\n");
                 }
             }
@@ -1525,7 +1589,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 }
                 mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", c_idx * 8));
                 mir.push_str(&format!("          call p_set_property, er_jit_set_property, status, vm, r{}, r{}, tmp1\n", ra, rb));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::GetIndex => {
@@ -1538,7 +1602,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          mov r{}, i64:8(cast_ptr)\n", rc));
                 }
                 mir.push_str(&format!("          call p_get_index, er_jit_get_index, r{}, vm, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::SetIndex => {
@@ -1555,7 +1619,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str(&format!("          mov r{}, i64:16(cast_ptr)\n", rc));
                 }
                 mir.push_str(&format!("          call p_set_index, er_jit_set_index, status, vm, r{}, r{}, r{}\n", ra, rb, rc));
-                mir.push_str("          call p_has_error, er_jit_has_error, status, vm\n");
+                mir.push_str("          mov status, u8:0(vm)\n");
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::Return => {

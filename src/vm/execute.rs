@@ -103,6 +103,9 @@ pub fn format_undeclared_var_error(name: &str) -> String {
 }
 
 pub struct VM {
+    /// Fast error flag at offset 0 — read directly by JIT code without FFI call.
+    /// Set to 1 whenever `self.error` is set; cleared when error is consumed.
+    pub has_error_flag: u8,
     pub frames: Vec<CallFrame>,
     pub stack: Vec<Value>,
     pub globals: FnvHashMap<Rc<str>, Value>,
@@ -154,6 +157,7 @@ impl VM {
     pub fn new() -> Self {
         let use_jit = std::env::var("ER_NO_JIT").is_err();
         Self {
+            has_error_flag: 0,
             frames: Vec::new(),
             stack: Vec::new(),
             globals: FnvHashMap::default(),
@@ -590,7 +594,18 @@ impl VM {
                 }
             }
 
-            // 4. Reset GC state
+            // 4. Count live objects for adaptive threshold and reset GC state
+            let mut live_objects: usize = 0;
+            let mut curr_count = state.head;
+            while !curr_count.is_null() {
+                unsafe {
+                    live_objects += 1;
+                    curr_count = (*curr_count).next;
+                }
+            }
+            state.live_count = live_objects;
+            // Adaptive threshold: 2× the live set, but at least 1000
+            state.alloc_threshold = (live_objects * 2).max(1000);
             state.alloc_count = 0;
             state.phase = GcPhase::Pause;
             state.sweep_ptr = std::ptr::null_mut();
@@ -944,6 +959,7 @@ impl VM {
                     let thrown = if !ret_val_out.is_null() {
                         ret_val_out
                     } else if let Some(err_msg) = self.error.take() {
+                        self.has_error_flag = 0;
                         let ptr = super::gc::gc_alloc_string(&err_msg);
                         Value::string(ptr)
                     } else {

@@ -123,6 +123,8 @@ pub struct GcObject {
 pub struct GcState {
     pub head: *mut GcObject,
     pub alloc_count: usize,
+    pub alloc_threshold: usize,
+    pub live_count: usize,
     pub phase: GcPhase,
     pub gray_stack: Vec<*mut GcObject>,
     pub sweep_ptr: *mut GcObject,
@@ -136,6 +138,8 @@ thread_local! {
     pub static GC_STATE: RefCell<GcState> = RefCell::new(GcState {
         head: std::ptr::null_mut(),
         alloc_count: 0,
+        alloc_threshold: 10000,
+        live_count: 0,
         phase: GcPhase::Pause,
         gray_stack: Vec::new(),
         sweep_ptr: std::ptr::null_mut(),
@@ -177,6 +181,9 @@ pub fn get_pooled_map(capacity: usize) -> ObjectMap {
     })
 }
 
+// Pool size cap: limit to 256 entries to prevent unbounded memory use.
+const GC_POOL_MAX: usize = 256;
+
 #[inline(always)]
 pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
     unsafe {
@@ -184,17 +191,23 @@ pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
             GcData::Array(arr) => {
                 let mut vec = std::ptr::read(arr);
                 vec.clear();
-                state.vector_pool.push(vec);
+                if state.vector_pool.len() < GC_POOL_MAX {
+                    state.vector_pool.push(vec);
+                }
             }
             GcData::Object(obj) => {
                 let mut map = std::ptr::read(obj);
                 map.clear();
-                state.map_pool.push(map);
+                if state.map_pool.len() < GC_POOL_MAX {
+                    state.map_pool.push(map);
+                }
             }
             GcData::Struct(s) => {
                 let mut s_val = std::ptr::read(s);
                 s_val.fields.clear();
-                state.vector_pool.push(s_val.fields);
+                if state.vector_pool.len() < GC_POOL_MAX {
+                    state.vector_pool.push(s_val.fields);
+                }
             }
             _ => {
                 std::ptr::drop_in_place(data);
@@ -251,7 +264,7 @@ pub fn gc_allocate(data: GcData) -> *mut GcObject {
         }
 
         s_ref.alloc_count += 1;
-        if s_ref.alloc_count >= 10000 {
+        if s_ref.alloc_count >= s_ref.alloc_threshold {
             GC_NEEDS_STEP.store(true, Ordering::Relaxed);
         }
         ptr
@@ -279,6 +292,7 @@ pub fn gc_free_all() {
             s_ref.vector_pool.clear();
             s_ref.map_pool.clear();
             s_ref.alloc_count = 0;
+            s_ref.live_count = 0;
             s_ref.phase = GcPhase::Pause;
             s_ref.gray_stack.clear();
             s_ref.sweep_ptr = std::ptr::null_mut();

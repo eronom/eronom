@@ -11,7 +11,7 @@ pub extern "C" fn er_jit_negate(vm: *mut VM, val: Value) -> Value {
         if val.is_number() {
             Value::number_unchecked(-val.as_number())
         } else {
-            (*vm).error = Some("Operand must be a number".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operand must be a number".into());
             Value::null()
         }
     }
@@ -88,7 +88,7 @@ pub extern "C" fn er_jit_add(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
                 });
                 Value::string(new_ptr)
             } else {
-                (*vm).error = Some("Operands must be numbers or strings".into());
+                (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers or strings".into());
                 Value::null()
             }
         };
@@ -109,7 +109,7 @@ pub extern "C" fn er_jit_sub(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
         if val_b.is_number() && val_c.is_number() {
             Value::number_unchecked(val_b.as_number() - val_c.as_number())
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -121,7 +121,7 @@ pub extern "C" fn er_jit_mul(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
         if val_b.is_number() && val_c.is_number() {
             Value::number_unchecked(val_b.as_number() * val_c.as_number())
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -133,7 +133,7 @@ pub extern "C" fn er_jit_div(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
         if val_b.is_number() && val_c.is_number() {
             Value::number_unchecked(val_b.as_number() / val_c.as_number())
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -145,7 +145,7 @@ pub extern "C" fn er_jit_mod(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
         if val_b.is_number() && val_c.is_number() {
             Value::number_unchecked(val_b.as_number() % val_c.as_number())
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -158,7 +158,7 @@ pub extern "C" fn er_jit_bit_and(vm: *mut VM, val_b: Value, val_c: Value) -> Val
             let res = ((val_b.as_number() as i64) & (val_c.as_number() as i64)) as f64;
             Value::number_unchecked(res)
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -171,7 +171,7 @@ pub extern "C" fn er_jit_bit_or(vm: *mut VM, val_b: Value, val_c: Value) -> Valu
             let res = ((val_b.as_number() as i64) | (val_c.as_number() as i64)) as f64;
             Value::number_unchecked(res)
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -184,7 +184,7 @@ pub extern "C" fn er_jit_bit_xor(vm: *mut VM, val_b: Value, val_c: Value) -> Val
             let res = ((val_b.as_number() as i64) ^ (val_c.as_number() as i64)) as f64;
             Value::number_unchecked(res)
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -197,7 +197,7 @@ pub extern "C" fn er_jit_bit_not(vm: *mut VM, val: Value) -> Value {
             let res = (!(val.as_number() as i64)) as f64;
             Value::number_unchecked(res)
         } else {
-            (*vm).error = Some("Operand must be a number".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operand must be a number".into());
             Value::null()
         }
     }
@@ -211,7 +211,7 @@ pub extern "C" fn er_jit_shift_left(vm: *mut VM, val_b: Value, val_c: Value) -> 
             let res = ((val_b.as_number() as i64).wrapping_shl(shift)) as f64;
             Value::number_unchecked(res)
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -225,7 +225,7 @@ pub extern "C" fn er_jit_shift_right(vm: *mut VM, val_b: Value, val_c: Value) ->
             let res = ((val_b.as_number() as i64).wrapping_shr(shift)) as f64;
             Value::number_unchecked(res)
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -280,7 +280,7 @@ pub extern "C" fn er_jit_to_iter(vm: *mut VM, val: Value) -> Value {
             let arr_ptr = gc_allocate(GcData::Array(chars));
             Value::array(arr_ptr)
         } else {
-            (*vm).error = Some("Cannot iterate over non-iterable value".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Cannot iterate over non-iterable value".into());
             Value::null()
         }
     }
@@ -297,7 +297,7 @@ pub extern "C" fn er_jit_array_len_op(vm: *mut VM, val: Value) -> Value {
             };
             Value::number(len as f64)
         } else {
-            (*vm).error = Some("Expected array for length".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Expected array for length".into());
             Value::null()
         }
     }
@@ -314,7 +314,7 @@ pub extern "C" fn er_jit_greater(vm: *mut VM, val_b: Value, val_c: Value) -> Val
         if val_b.is_number() && val_c.is_number() {
             Value::boolean(val_b.as_number() > val_c.as_number())
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -326,7 +326,7 @@ pub extern "C" fn er_jit_less(vm: *mut VM, val_b: Value, val_c: Value) -> Value 
         if val_b.is_number() && val_c.is_number() {
             Value::boolean(val_b.as_number() < val_c.as_number())
         } else {
-            (*vm).error = Some("Operands must be numbers".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers".into());
             Value::null()
         }
     }
@@ -354,7 +354,7 @@ pub extern "C" fn er_jit_get_global(vm: *mut VM, name_val: Value) -> Value {
         if let Some(val) = (*vm).globals.get(name) {
             *val
         } else {
-            (*vm).error = Some(format!("Undefined variable '{}'", name));
+            (*vm).has_error_flag = 1; (*vm).error = Some(format!("Undefined variable '{}'", name));
             Value::null()
         }
     }
@@ -373,7 +373,7 @@ pub extern "C" fn er_jit_set_global(vm: *mut VM, val: Value, name_val: Value) ->
                 0
             }
             std::collections::hash_map::Entry::Vacant(_) => {
-                (*vm).error = Some(crate::vm::execute::format_undeclared_var_error(&name));
+                (*vm).has_error_flag = 1; (*vm).error = Some(crate::vm::execute::format_undeclared_var_error(&name));
                 -1
             }
         }
@@ -382,13 +382,8 @@ pub extern "C" fn er_jit_set_global(vm: *mut VM, val: Value, name_val: Value) ->
 
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_has_error(vm: *mut VM) -> i64 {
-    unsafe {
-        if (*vm).error.is_some() {
-            1
-        } else {
-            0
-        }
-    }
+    // Read the fast inline flag (always in sync with vm.error)
+    unsafe { (*vm).has_error_flag as i64 }
 }
 
 #[unsafe(no_mangle)]
@@ -466,7 +461,7 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
             let key_val = *start_reg.offset((i * 2) as isize);
             let val = *start_reg.offset((i * 2 + 1) as isize);
             if !key_val.is_string() {
-                (*vm).error = Some("Object key must be string".into());
+                (*vm).has_error_flag = 1; (*vm).error = Some("Object key must be string".into());
                 return Value::null();
             }
             keys.push(key_val);
@@ -609,7 +604,7 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
                 _ => unreachable!(),
             }
         } else {
-            (*vm).error = Some("Only objects and arrays have properties".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Only objects and arrays have properties".into());
             Value::null()
         };
         if JIT_PROFILING {
@@ -640,7 +635,7 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                         0
                     } else {
                         let name = name_val.as_str().unwrap_or("");
-                        (*vm).error = Some(format!("Struct has no field '{}'", name));
+                        (*vm).has_error_flag = 1; (*vm).error = Some(format!("Struct has no field '{}'", name));
                         -1
                     }
                 }
@@ -660,7 +655,7 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                         } else if idx == arr.len() {
                             arr.push(val);
                         } else {
-                            (*vm).error = Some(format!(
+                            (*vm).has_error_flag = 1; (*vm).error = Some(format!(
                                 "Index {} out of bounds for array of length {}",
                                 idx,
                                 arr.len()
@@ -670,14 +665,14 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                         gc_write_barrier(ptr, &val);
                         0
                     } else {
-                        (*vm).error = Some("Cannot set non-numeric property on array".into());
+                        (*vm).has_error_flag = 1; (*vm).error = Some("Cannot set non-numeric property on array".into());
                         -1
                     }
                 }
                 _ => unreachable!(),
             }
         } else {
-            (*vm).error = Some("Only objects and arrays have properties".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Only objects and arrays have properties".into());
             -1
         }
     }
@@ -712,7 +707,7 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Val
                     Value::null()
                 }
             } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
+                (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
                 Value::null()
             }
         } else if obj.is_object() {
@@ -728,11 +723,11 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Val
                     _ => unreachable!(),
                 }
             } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
+                (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
                 Value::null()
             }
         } else {
-            (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
             Value::null()
         }
     }
@@ -752,7 +747,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                         } else if idx == arr.len() {
                             arr.push(val);
                         } else {
-                            (*vm).error = Some(format!(
+                            (*vm).has_error_flag = 1; (*vm).error = Some(format!(
                                 "Index {} out of bounds for array of length {}",
                                 idx,
                                 arr.len()
@@ -777,7 +772,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                             } else if idx == arr.len() {
                                 arr.push(val);
                             } else {
-                                (*vm).error = Some(format!(
+                                (*vm).has_error_flag = 1; (*vm).error = Some(format!(
                                     "Index {} out of bounds for array of length {}",
                                     idx,
                                     arr.len()
@@ -790,11 +785,11 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                         _ => unreachable!(),
                     }
                 } else {
-                    (*vm).error = Some("Cannot set non-numeric property on array".into());
+                    (*vm).has_error_flag = 1; (*vm).error = Some("Cannot set non-numeric property on array".into());
                     -1
                 }
             } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
+                (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
                 -1
             }
         } else if obj.is_object() {
@@ -812,18 +807,18 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                             0
                         } else {
                             let name = index.as_str().unwrap_or("");
-                            (*vm).error = Some(format!("Struct has no field '{}'", name));
+                            (*vm).has_error_flag = 1; (*vm).error = Some(format!("Struct has no field '{}'", name));
                             -1
                         }
                     }
                     _ => unreachable!(),
                 }
             } else {
-                (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
+                (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
                 -1
             }
         } else {
-            (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
             -1
         }
     }
@@ -1197,7 +1192,7 @@ pub extern "C" fn er_jit_await(vm: *mut VM, await_val: Value, dest: *mut Value) 
                     0
                 }
                 crate::vm::gc::PromiseState::Rejected(err) => {
-                    (*vm).error = Some(err);
+                    (*vm).has_error_flag = 1; (*vm).error = Some(err);
                     -1
                 }
                 crate::vm::gc::PromiseState::Pending => {
