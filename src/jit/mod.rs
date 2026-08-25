@@ -5,4 +5,4 @@ pub mod profile;
 
 // Re-export key JIT interface functions
 pub use bindings::cleanup_jit;
-pub use compiler::compile_function;
+pub use compiler::{compile_function, reset_jit_state};

@@ -231,6 +231,10 @@ impl VM {
         }
     }
 
+    pub fn reset_jit(&mut self) {
+        crate::jit::reset_jit_state();
+    }
+
     pub fn find_matching_struct(&self, keys: &[Value]) -> Option<Rc<super::gc::StructDescriptor>> {
         for desc in self.structs.values() {
             if desc.field_indices.len() == keys.len() {
@@ -731,21 +735,14 @@ impl VM {
                 self.gc_trigger();
                 reload_stack!();
 
-                let (is_async, has_handlers, has_upvalues) = match &(*frame.function).data {
-                    GcData::Function(f) => (
-                        f.is_async,
-                        !f.chunk.handlers.is_empty(),
-                        !f.upvalues.is_empty() || f.chunk.code.iter().any(|inst| matches!(inst.op, OpCode::Closure | OpCode::GetUpvalue | OpCode::SetUpvalue | OpCode::CloseUpvalue)),
-                    ),
-                    GcData::Closure(_) => (false, false, true),
-                    _ => (false, false, false),
+                let raw_fn_ptr = match &(*frame.function).data {
+                    GcData::Function(_) => frame.function,
+                    GcData::Closure(c) => c.function,
+                    _ => frame.function,
                 };
-                if is_async || has_handlers || has_upvalues {
-                    return self.execute_loop_interpreter(0);
-                }
 
                 // Ensure the current function is JIT compiled
-                let native_ptr = crate::jit::compile_function(self, frame.function);
+                let native_ptr = crate::jit::compile_function(self, raw_fn_ptr);
                 let jit_fn: JitFn = std::mem::transmute(native_ptr);
 
                 let mut ip_out: usize = ip_val;
@@ -919,9 +916,29 @@ impl VM {
                     frame.ip = ip_out;
                     ip_val = ip_out;
                 } else if status == 3 {
-                    // YieldSuspend: a native function suspended the VM during JIT execution.
+                    // YieldSuspend: an async Await or native function suspended the VM during JIT execution.
                     frame.ip = ip_out;
+                    if func_reg_out < self.stack.len() {
+                        let await_val = *frame_slots.add(func_reg_out);
+                        if await_val.is_promise() {
+                            let promise_ptr = await_val.as_gc_ptr();
+                            let suspended_stack = std::mem::take(&mut self.stack);
+                            let suspended_frames = std::mem::take(&mut self.frames);
+
+                            match &mut (*promise_ptr).data {
+                                crate::vm::gc::GcData::Promise(prom) => {
+                                    *prom.suspended_stack.lock().unwrap() = suspended_stack;
+                                    *prom.suspended_frames.lock().unwrap() = suspended_frames;
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
                     return Ok(Value::null());
+                } else if status == 4 {
+                    // YieldDeopt: Dynamic type bailout back to bytecode interpreter
+                    frame.ip = ip_out;
+                    return self.execute_loop_interpreter(0);
                 } else {
                     // RuntimeError, JIT Throw, or JIT execution error.
                     let thrown = if !ret_val_out.is_null() {
@@ -3072,4 +3089,93 @@ mod tests {
         assert_eq!(arr_bytes, vec![1, 2, 255]);
         assert_eq!(arr_is_bin, true);
     }
+
+    #[test]
+    fn test_jit_closures_and_upvalues() {
+        let code = "
+            fn makeCounter(initial) {
+                let count = initial
+                fn inc(step) {
+                    count = count + step
+                    return count
+                }
+                return inc
+            }
+
+            let c1 = makeCounter(10)
+            let res1 = c1(5)
+            let res2 = c1(3)
+        ";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("res1").unwrap().as_number(), 15.0);
+        assert_eq!(vm.get_global("res2").unwrap().as_number(), 18.0);
+    }
+
+    #[test]
+    fn test_jit_struct_field_access_and_methods() {
+        let code = "
+            struct Point {
+                x: int,
+                y: int,
+                fn sum() {
+                    return this.x + this.y
+                }
+            }
+
+            let pt : Point = { x: 10, y: 25 }
+            let sum_val = pt.sum()
+            pt.x = 40
+            let sum_val2 = pt.sum()
+        ";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("sum_val").unwrap().as_number(), 35.0);
+        assert_eq!(vm.get_global("sum_val2").unwrap().as_number(), 65.0);
+    }
+
+
+    #[test]
+    fn test_jit_object_literals_and_array_methods() {
+        let code = "
+            let obj = { a: 1, b: \"hello\", c: [10, 20] }
+            obj.c.push(30)
+            let popped = obj.c.pop()
+            let len = obj.c.length
+            let val_a = obj.a
+            let val_b = obj.b
+        ";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("popped").unwrap().as_number(), 30.0);
+        assert_eq!(vm.get_global("len").unwrap().as_number(), 2.0);
+        assert_eq!(vm.get_global("val_a").unwrap().as_number(), 1.0);
+        assert_eq!(vm.get_global("val_b").unwrap().as_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_jit_dynamic_type_bailout() {
+        let code = "
+            fn dynAdd(a, b) {
+                return a + b
+            }
+
+            let r1 = dynAdd(10, 20)
+            let r2 = dynAdd(\"Hello \", \"World\")
+            let r3 = dynAdd(\"Number: \", 42)
+        ";
+        let vm = run_code(code).unwrap();
+        assert_eq!(vm.get_global("r1").unwrap().as_number(), 30.0);
+        assert_eq!(vm.get_global("r2").unwrap().as_str().unwrap(), "Hello World");
+        assert_eq!(vm.get_global("r3").unwrap().as_str().unwrap(), "Number: 42");
+    }
+
+    #[test]
+    fn test_jit_lifecycle_reset() {
+        for i in 0..5 {
+            let code = format!("let val = {} * 10 + 5", i);
+            let vm = run_code(&code).unwrap();
+            assert_eq!(vm.get_global("val").unwrap().as_number(), (i * 10 + 5) as f64);
+            // Reset JIT context to test teardown and re-creation
+            crate::jit::reset_jit_state();
+        }
+    }
 }
+

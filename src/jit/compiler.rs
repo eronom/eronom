@@ -56,6 +56,14 @@ pub fn get_or_init_jit_ctx(_vm: &mut VM) -> *mut c_void {
     })
 }
 
+// Safely free all MIR native code buffers and clear the JIT cache on hot-reloads
+pub fn reset_jit_state() {
+    JIT_STATE.with(|state| {
+        *state.borrow_mut() = None;
+    });
+}
+
+
 pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let func = match unsafe { &(*func_obj).data } {
         GcData::Function(f) => f,
@@ -89,7 +97,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_jit_define_struct\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_jit_define_struct, er_jit_get_upvalue, er_jit_set_upvalue, er_jit_make_closure, er_jit_close_upvalues, er_jit_await\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -131,6 +139,11 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     mir.push_str("p_array_pop: proto i64, i64:arr\n");
     mir.push_str("p_has_error: proto i64, p:vm\n");
     mir.push_str("p_def_struct: proto i64, p:vm, i64:name, i64:fields, i64:methods\n");
+    mir.push_str("p_get_upvalue: proto i64, p:vm, i64:idx\n");
+    mir.push_str("p_set_upvalue: proto i64, p:vm, i64:idx, i64:val\n");
+    mir.push_str("p_make_closure: proto i64, p:vm, i64:raw_fn\n");
+    mir.push_str("p_close_upvalues: proto i64, p:vm, i64:slot\n");
+    mir.push_str("p_await: proto i64, p:vm, i64:await_val, p:dest\n");
 
     mir.push_str("          local i64:tmp, i64:tmp1, i64:tmp2, i64:tmp3, i64:status, i64:res_bool, i64:res_val, i64:cast_ptr, i64:loop_counter\n");
     mir.push_str("          local i64:ra_ptr, i64:rb_ptr, i64:rc_ptr, i64:name_ptr, i64:val_ptr, i64:start_ptr, i64:dest_ptr, i64:idx_ptr, i64:obj_ptr\n");
@@ -142,7 +155,12 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::MakeArray => inst.rb as usize + inst.operand as usize,
             OpCode::MakeObject => inst.rb as usize + 2 * (inst.operand as usize),
             OpCode::Call => inst.rb as usize + 1 + inst.operand as usize,
-            OpCode::DefineStruct => 0,
+            OpCode::DefineStruct | OpCode::CloseUpvalue => 0,
+            OpCode::GetUpvalue | OpCode::Closure | OpCode::SetUpvalue => inst.ra as usize + 1,
+            OpCode::Await => {
+                let m = (inst.ra as usize).max(inst.rb as usize);
+                m + 1
+            }
             _ => {
                 let mut m = inst.ra as usize;
                 if inst.rb as usize > m { m = inst.rb as usize; }
@@ -154,6 +172,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             num_regs = max_accessed;
         }
     }
+
 
     if num_regs > 0 {
         let mut local_regs = String::new();
@@ -246,7 +265,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
             OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter |
-            OpCode::GetUpvalue | OpCode::Closure => {
+            OpCode::GetUpvalue | OpCode::Closure | OpCode::Await => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Unknown;
                 }
@@ -365,6 +384,17 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         }
     };
 
+    let save_all_registers = |mir: &mut String, idx: usize| {
+        for r in 0..num_regs {
+            if types_at_inst[idx][r] == RegType::Double {
+                mir.push_str(&format!("          dmov d:{}(frame_slots), d{}\n", r * 8, r));
+            } else {
+                mir.push_str(&format!("          mov i64:{}(frame_slots), r{}\n", r * 8, r));
+            }
+        }
+    };
+
+
 
     for (idx, instruction) in func.chunk.code.iter().enumerate() {
         mir.push_str(&format!("inst_{}:\n", idx));
@@ -404,7 +434,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less |
             OpCode::LoadNull | OpCode::LoadBool |
             OpCode::GetGlobal | OpCode::GetProperty | OpCode::GetIndex |
-            OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter => {
+            OpCode::MakeArray | OpCode::MakeObject | OpCode::TypeOf | OpCode::ToIter |
+            OpCode::GetUpvalue | OpCode::Closure | OpCode::Await => {
                 if ra < num_regs {
                     next_types[ra] = RegType::Unknown;
                 }
@@ -1528,6 +1559,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str("          bne err_label, status, 0\n");
             }
             OpCode::Return => {
+                save_all_registers(&mut mir, idx);
+                mir.push_str("          call p_close_upvalues, er_jit_close_upvalues, status, vm, 0\n");
                 if types_at_inst[idx][ra] == RegType::Double {
                     let offset = (ra % 24) * 8;
                     mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
@@ -1542,9 +1575,60 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str(&format!("          mov i64:(ret_val_out), r{}\n", ra));
                 mir.push_str("          ret -1\n");
             }
-            OpCode::Await | OpCode::GetUpvalue | OpCode::SetUpvalue | OpCode::Closure | OpCode::CloseUpvalue => {}
+            OpCode::GetUpvalue => {
+                let upval_idx = instruction.operand;
+                mir.push_str(&format!("          call p_get_upvalue, er_jit_get_upvalue, r{}, vm, {}\n", ra, upval_idx));
+                if next_types[ra] == RegType::Double {
+                    let offset = (ra % 24) * 8;
+                    mir.push_str(&format!("          mov i64:{}(cast_ptr), r{}\n", offset, ra));
+                    mir.push_str(&format!("          dmov d{}, d:{}(cast_ptr)\n", ra, offset));
+                }
+            }
+            OpCode::SetUpvalue => {
+                let upval_idx = instruction.operand;
+                if ra < num_regs && types_at_inst[idx][ra] == RegType::Double {
+                    let offset = (ra % 24) * 8;
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, ra));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", ra, offset));
+                }
+                mir.push_str(&format!("          call p_set_upvalue, er_jit_set_upvalue, status, vm, {}, r{}\n", upval_idx, ra));
+            }
+            OpCode::Closure => {
+                let const_idx = instruction.operand;
+                save_all_registers(&mut mir, idx);
+                mir.push_str(&format!("          mov tmp1, i64:{}(constants_ptr)\n", const_idx * 8));
+                mir.push_str(&format!("          call p_make_closure, er_jit_make_closure, r{}, vm, tmp1\n", ra));
+            }
+
+            OpCode::CloseUpvalue => {
+                let rel_slot = instruction.operand;
+                mir.push_str(&format!("          call p_close_upvalues, er_jit_close_upvalues, status, vm, {}\n", rel_slot));
+            }
+            OpCode::Await => {
+                let rb_is_double = rb < num_regs && types_at_inst[idx][rb] == RegType::Double;
+                if rb_is_double {
+                    let offset = (rb % 24) * 8;
+                    mir.push_str(&format!("          dmov d:{}(cast_ptr), d{}\n", offset, rb));
+                    mir.push_str(&format!("          mov r{}, i64:{}(cast_ptr)\n", rb, offset));
+                }
+                save_registers(&mut mir, idx, &[ra, rb]);
+                mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
+                mir.push_str(&format!("          call p_await, er_jit_await, status, vm, r{}, dest_ptr\n", rb));
+                mir.push_str(&format!("          bne not_suspend_await_{}, status, -3\n", idx));
+                mir.push_str(&format!("          mov i64:(ip_out), {}\n", idx));
+                mir.push_str(&format!("          mov i64:(dest_reg_out), {}\n", ra));
+                mir.push_str(&format!("          mov i64:(func_reg_out), {}\n", rb));
+                mir.push_str("          ret 3\n");
+                mir.push_str(&format!("not_suspend_await_{}:\n", idx));
+                mir.push_str("          blt err_label, status, 0\n");
+                mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
+                if next_types[ra] == RegType::Double {
+                    mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));
+                }
+            }
         }
     }
+
 
     mir.push_str("          ret 1\n");
     mir.push_str("err_label:\n");
@@ -1872,6 +1956,11 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         ("er_jit_has_error", helpers::er_jit_has_error as *mut c_void),
         ("er_jit_needs_gc", helpers::er_jit_needs_gc as *mut c_void),
         ("er_jit_define_struct", helpers::er_jit_define_struct as *mut c_void),
+        ("er_jit_get_upvalue", helpers::er_jit_get_upvalue as *mut c_void),
+        ("er_jit_set_upvalue", helpers::er_jit_set_upvalue as *mut c_void),
+        ("er_jit_make_closure", helpers::er_jit_make_closure as *mut c_void),
+        ("er_jit_close_upvalues", helpers::er_jit_close_upvalues as *mut c_void),
+        ("er_jit_await", helpers::er_jit_await as *mut c_void),
     ];
 
     for &(name, ptr) in helpers {
