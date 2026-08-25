@@ -97,7 +97,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
     let mut mir = String::new();
     mir.push_str(&format!("{}: module\n", module_name));
     mir.push_str(&format!("          export {}\n", func_name));
-    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_jit_define_struct, er_jit_get_upvalue, er_jit_set_upvalue, er_jit_make_closure, er_jit_close_upvalues, er_jit_await\n");
+    mir.push_str("          import er_jit_negate, er_jit_not, er_jit_add, er_jit_sub, er_jit_mul, er_jit_div, er_jit_mod, er_jit_bit_and, er_jit_bit_or, er_jit_bit_xor, er_jit_bit_not, er_jit_shift_left, er_jit_shift_right, er_jit_typeof, er_jit_to_iter, er_jit_array_len_op, er_jit_equal, er_jit_greater, er_jit_less, er_jit_define_global, er_jit_get_global, er_jit_set_global, er_jit_make_array, er_jit_make_object, er_jit_get_property, er_jit_set_property, er_jit_get_index, er_jit_set_index, er_jit_call_non_vm, er_jit_array_push, er_jit_array_pop, er_jit_has_error, er_jit_needs_gc, er_gc_needs_step, er_jit_define_struct, er_jit_get_upvalue, er_jit_set_upvalue, er_jit_make_closure, er_jit_close_upvalues, er_jit_await\n");
 
     // Signature: returns status code (i64), arguments are pointers to vm, frame_slots, constants, etc.
     mir.push_str(&format!(
@@ -1376,7 +1376,8 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str("          add loop_counter, loop_counter, 1\n");
                 mir.push_str("          and tmp, loop_counter, 63\n");
                 mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
-                mir.push_str("          call p_needs_gc, er_jit_needs_gc, status\n");
+                mir.push_str("          mov tmp1, er_gc_needs_step\n");
+                mir.push_str("          mov status, u8:0(tmp1)\n");
                 mir.push_str(&format!("          beq no_yield_gc_{}, status, 0\n", idx));
                 save_registers(&mut mir, idx, &[]);
                 mir.push_str(&format!("          mov i64:(ip_out), {}\n", target));
@@ -2019,6 +2020,7 @@ unsafe fn register_helpers(ctx: *mut c_void) {
         ("er_jit_array_pop", helpers::er_jit_array_pop as *mut c_void),
         ("er_jit_has_error", helpers::er_jit_has_error as *mut c_void),
         ("er_jit_needs_gc", helpers::er_jit_needs_gc as *mut c_void),
+        ("er_gc_needs_step", &crate::vm::gc::GC_NEEDS_STEP as *const _ as *mut c_void),
         ("er_jit_define_struct", helpers::er_jit_define_struct as *mut c_void),
         ("er_jit_get_upvalue", helpers::er_jit_get_upvalue as *mut c_void),
         ("er_jit_set_upvalue", helpers::er_jit_set_upvalue as *mut c_void),

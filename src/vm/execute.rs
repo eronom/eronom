@@ -257,7 +257,10 @@ impl VM {
         None
     }
 
-    pub fn find_matching_struct_cached(&mut self, keys: &[Value]) -> Option<(Rc<super::gc::StructDescriptor>, Vec<usize>)> {
+    pub fn find_matching_struct_cached(&mut self, keys: &[Value]) -> Option<(Rc<super::gc::StructDescriptor>, &[usize])> {
+        if self.structs.is_empty() {
+            return None;
+        }
         if self.last_matched_descriptor.is_some() && self.last_matched_keys.len() == keys.len() {
             let mut match_ok = true;
             for i in 0..keys.len() {
@@ -267,7 +270,7 @@ impl VM {
                 }
             }
             if match_ok {
-                return Some((self.last_matched_descriptor.as_ref().unwrap().clone(), self.last_matched_offsets.clone()));
+                return Some((self.last_matched_descriptor.as_ref().unwrap().clone(), &self.last_matched_offsets));
             }
         }
 
@@ -288,8 +291,8 @@ impl VM {
                     }
                     self.last_matched_keys = keys.to_vec();
                     self.last_matched_descriptor = Some(desc.clone());
-                    self.last_matched_offsets = offsets.clone();
-                    return Some((desc.clone(), offsets));
+                    self.last_matched_offsets = offsets;
+                    return Some((desc.clone(), &self.last_matched_offsets));
                 }
             }
         }
@@ -1501,38 +1504,49 @@ impl VM {
                         self.gc_trigger();
                         reload_stack!();
 
-                        let mut keys = Vec::with_capacity(count);
-                        let mut values = Vec::with_capacity(count);
-                        for i in 0..count {
-                            let key_val = *frame_slots.add(start_reg + i * 2);
-                            let val = *frame_slots.add(start_reg + i * 2 + 1);
-                            if !key_val.is_string() {
-                                return Err("Object key must be string".into());
-                            }
-                            keys.push(key_val);
-                            values.push(val);
-                        }
-
-                        let ptr = if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys) {
-                            let mut fields = super::gc::get_pooled_vec(keys.len());
-                            fields.resize(keys.len(), Value::null());
-                            for i in 0..count {
-                                let val = values[i];
-                                let idx = offsets[i];
-                                fields[idx] = val;
-                            }
-                            gc_allocate(GcData::Struct(super::gc::GcStruct {
-                                descriptor: desc,
-                                fields,
-                            }))
-                        } else {
+                        let ptr = if self.structs.is_empty() {
                             let mut obj = super::gc::get_pooled_map(count);
                             for i in 0..count {
                                 let key_val = *frame_slots.add(start_reg + i * 2);
                                 let val = *frame_slots.add(start_reg + i * 2 + 1);
+                                if !key_val.is_string() {
+                                    return Err("Object key must be string".into());
+                                }
                                 obj.insert(super::value::MapKey(key_val), val);
                             }
                             gc_allocate(GcData::Object(obj))
+                        } else {
+                            let mut keys = Vec::with_capacity(count);
+                            let mut values = Vec::with_capacity(count);
+                            for i in 0..count {
+                                let key_val = *frame_slots.add(start_reg + i * 2);
+                                let val = *frame_slots.add(start_reg + i * 2 + 1);
+                                if !key_val.is_string() {
+                                    return Err("Object key must be string".into());
+                                }
+                                keys.push(key_val);
+                                values.push(val);
+                            }
+
+                            if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys) {
+                                let mut fields = super::gc::get_pooled_vec(keys.len());
+                                fields.resize(keys.len(), Value::null());
+                                for i in 0..count {
+                                    let val = values[i];
+                                    let idx = offsets[i];
+                                    fields[idx] = val;
+                                }
+                                gc_allocate(GcData::Struct(super::gc::GcStruct {
+                                    descriptor: desc,
+                                    fields,
+                                }))
+                            } else {
+                                let mut obj = super::gc::get_pooled_map(count);
+                                for i in 0..count {
+                                    obj.insert(super::value::MapKey(keys[i]), values[i]);
+                                }
+                                gc_allocate(GcData::Object(obj))
+                            }
                         };
                         *frame_slots.add(dest) = Value::object(ptr);
                     }

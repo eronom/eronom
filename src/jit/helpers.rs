@@ -455,39 +455,51 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
         let count_usize = count as usize;
-        let mut keys = Vec::with_capacity(count_usize);
-        let mut values = Vec::with_capacity(count_usize);
-        for i in 0..count {
-            let key_val = *start_reg.offset((i * 2) as isize);
-            let val = *start_reg.offset((i * 2 + 1) as isize);
-            if !key_val.is_string() {
-                (*vm).has_error_flag = 1; (*vm).error = Some("Object key must be string".into());
-                return Value::null();
-            }
-            keys.push(key_val);
-            values.push(val);
-        }
-
-        let ptr = if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
-            let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
-            fields.resize(keys.len(), Value::null());
-            for i in 0..count_usize {
-                let val = values[i];
-                let idx = offsets[i];
-                fields[idx] = val;
-            }
-            gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
-                descriptor: desc,
-                fields,
-            }))
-        } else {
+        let ptr = if (*vm).structs.is_empty() {
             let mut obj = get_pooled_map(count_usize);
             for i in 0..count {
                 let key_val = *start_reg.offset((i * 2) as isize);
                 let val = *start_reg.offset((i * 2 + 1) as isize);
+                if !key_val.is_string() {
+                    (*vm).has_error_flag = 1; (*vm).error = Some("Object key must be string".into());
+                    return Value::null();
+                }
                 obj.insert(MapKey(key_val), val);
             }
             gc_allocate(GcData::Object(obj))
+        } else {
+            let mut keys = Vec::with_capacity(count_usize);
+            let mut values = Vec::with_capacity(count_usize);
+            for i in 0..count {
+                let key_val = *start_reg.offset((i * 2) as isize);
+                let val = *start_reg.offset((i * 2 + 1) as isize);
+                if !key_val.is_string() {
+                    (*vm).has_error_flag = 1; (*vm).error = Some("Object key must be string".into());
+                    return Value::null();
+                }
+                keys.push(key_val);
+                values.push(val);
+            }
+
+            if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
+                let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
+                fields.resize(keys.len(), Value::null());
+                for i in 0..count_usize {
+                    let val = values[i];
+                    let idx = offsets[i];
+                    fields[idx] = val;
+                }
+                gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                    descriptor: desc,
+                    fields,
+                }))
+            } else {
+                let mut obj = get_pooled_map(count_usize);
+                for i in 0..count_usize {
+                    obj.insert(MapKey(keys[i]), values[i]);
+                }
+                gc_allocate(GcData::Object(obj))
+            }
         };
         let res = Value::object(ptr);
         if JIT_PROFILING {
@@ -507,79 +519,66 @@ pub extern "C" fn er_jit_get_property(vm: *mut VM, obj: Value, name_val: Value) 
     unsafe {
         let res = if obj.is_object() {
             let ptr = obj.as_gc_ptr();
-            let name = match &(*name_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref(),
-                _ => "",
-            };
-            let mut is_json_method = false;
-            let mut is_text_method = false;
-            if name == "json" || name == "text" {
-                let body_key = get_or_create_string("_body");
-                let is_response = match &(*ptr).data {
-                    GcData::Object(map) => map.contains_key(&MapKey(Value::string(body_key))),
-                    GcData::Struct(s) => s.get_field_by_name("_body").is_some(),
-                    _ => false,
-                };
-                if is_response {
-                    if name == "json" {
-                        is_json_method = true;
+            match &(*ptr).data {
+                GcData::Object(map) => {
+                    if let Some(&val) = map.get(&MapKey(name_val)) {
+                        val
                     } else {
-                        is_text_method = true;
-                    }
-                }
-            }
-            let mut is_file_method = false;
-            let mut file_method_sub_tag = 0;
-            if name == "exists" || name == "text" || name == "json" {
-                let is_file = match &(*ptr).data {
-                    GcData::Object(map) => {
-                        let file_key = get_or_create_string("_isFile");
-                        map.get(&MapKey(Value::string(file_key)))
-                            .map(|v| v.as_boolean())
-                            .unwrap_or(false)
-                    }
-                    GcData::Struct(s) => {
-                        s.descriptor.name.as_ref() == "File"
-                    }
-                    _ => false,
-                };
-                if is_file {
-                    is_file_method = true;
-                    file_method_sub_tag = match name {
-                        "exists" => 0,
-                        "text" => 1,
-                        "json" => 2,
-                        _ => 3,
-                    };
-                }
-            }
-            if is_json_method {
-                Value(crate::vm::value::TAG_METHOD_JSON | (ptr as u64 & crate::vm::value::PTR_MASK))
-            } else if is_text_method {
-                Value(crate::vm::value::TAG_METHOD_TEXT | (ptr as u64 & crate::vm::value::PTR_MASK))
-            } else if is_file_method && file_method_sub_tag < 3 {
-                Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | file_method_sub_tag)
-            } else {
-                match &(*ptr).data {
-                    GcData::Object(map) => {
-                        map.get(&MapKey(name_val)).cloned().unwrap_or(Value::null())
-                    }
-                    GcData::Struct(s) => {
-                        if let Some(val) = s.get_field(name_val) {
-                            val
-                        } else if let Some(&method_val) = s.descriptor.methods.get(&MapKey(name_val)) {
-                            let bound_method = crate::vm::gc::GcBoundMethod {
-                                receiver: obj,
-                                function: method_val.as_gc_ptr(),
-                            };
-                            let ptr = gc_allocate(GcData::BoundMethod(bound_method));
-                            Value::function(ptr)
+                        // Check response / file methods only on miss
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => s.as_ref(),
+                            _ => "",
+                        };
+                        if name == "json" || name == "text" {
+                            let body_key = get_or_create_string("_body");
+                            if map.contains_key(&MapKey(Value::string(body_key))) {
+                                let tag = if name == "json" { crate::vm::value::TAG_METHOD_JSON } else { crate::vm::value::TAG_METHOD_TEXT };
+                                Value(tag | (ptr as u64 & crate::vm::value::PTR_MASK))
+                            } else {
+                                Value::null()
+                            }
+                        } else if name == "exists" {
+                            let file_key = get_or_create_string("_isFile");
+                            if map.get(&MapKey(Value::string(file_key))).map(|v| v.as_boolean()).unwrap_or(false) {
+                                Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | 0)
+                            } else {
+                                Value::null()
+                            }
                         } else {
                             Value::null()
                         }
                     }
-                    _ => unreachable!(),
                 }
+                GcData::Struct(s) => {
+                    if let Some(val) = s.get_field(name_val) {
+                        val
+                    } else if let Some(&method_val) = s.descriptor.methods.get(&MapKey(name_val)) {
+                        let bound_method = crate::vm::gc::GcBoundMethod {
+                            receiver: obj,
+                            function: method_val.as_gc_ptr(),
+                        };
+                        let ptr = gc_allocate(GcData::BoundMethod(bound_method));
+                        Value::function(ptr)
+                    } else {
+                        let name = match &(*name_val.as_gc_ptr()).data {
+                            GcData::String(s) => s.as_ref(),
+                            _ => "",
+                        };
+                        if name == "json" || name == "text" {
+                            if s.get_field_by_name("_body").is_some() {
+                                let tag = if name == "json" { crate::vm::value::TAG_METHOD_JSON } else { crate::vm::value::TAG_METHOD_TEXT };
+                                Value(tag | (ptr as u64 & crate::vm::value::PTR_MASK))
+                            } else {
+                                Value::null()
+                            }
+                        } else if name == "exists" && s.descriptor.name.as_ref() == "File" {
+                            Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | 0)
+                        } else {
+                            Value::null()
+                        }
+                    }
+                }
+                _ => unreachable!(),
             }
         } else if obj.is_array() {
             let name = match &(*name_val.as_gc_ptr()).data {
