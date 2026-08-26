@@ -577,8 +577,35 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     };
 
     if has_http_import(&stmts) {
-        let port = find_listen_port(&stmts).unwrap_or(3000);
-        backend::er_http::LISTEN_PORT.with(|p| p.set(Some(port)));
+        let mut port = find_listen_port(&stmts);
+        if port.is_none() {
+            let main_path = std::path::Path::new(path);
+            if let Some(parent_dir) = main_path.parent() {
+                let toml_path = parent_dir.join("eronom.toml");
+                if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
+                    if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                        if let Some(server) = toml_val.get("server") {
+                            if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
+                                port = Some(p as i32);
+                            }
+                        }
+                    }
+                }
+            }
+            if port.is_none() {
+                if let Some(toml_content) = backend::embedded::get_vfs_text("eronom.toml") {
+                    if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                        if let Some(server) = toml_val.get("server") {
+                            if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
+                                port = Some(p as i32);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let final_port = port.unwrap_or(3000);
+        backend::er_http::LISTEN_PORT.with(|p| p.set(Some(final_port)));
     }
 
     let compiler = Compiler::new();

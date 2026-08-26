@@ -629,7 +629,7 @@ fn get_page_route(rel_path: &str) -> Option<PageRoute> {
     })
 }
 
-fn generate_server_script<F>(routes: &[PageRoute], api_routes: &[String], get_render_path: F) -> String
+fn generate_server_script<F>(routes: &[PageRoute], api_routes: &[String], port: u16, get_render_path: F) -> String
 where
     F: Fn(&PageRoute) -> String,
 {
@@ -665,11 +665,12 @@ where
         code.push_str(&route_block);
         code.push_str("\n\n");
     }
+    code.push_str(&format!("app.listen({}, () => {{\n  print(\"Server running on port {}\")\n}})\n", port, port));
     code
 }
 
-fn generate_server_er(routes: &[PageRoute], api_routes: &[String]) -> String {
-    generate_server_script(routes, api_routes, |r| r.rel_path.clone())
+fn generate_server_er(routes: &[PageRoute], api_routes: &[String], port: u16) -> String {
+    generate_server_script(routes, api_routes, port, |r| r.rel_path.clone())
 }
 
 fn get_ssg_html_path(rel_path: &str) -> String {
@@ -684,8 +685,8 @@ fn get_ssg_html_path(rel_path: &str) -> String {
     dest_path.to_string_lossy().replace("\\", "/")
 }
 
-fn generate_server_er_ssg(routes: &[PageRoute], api_routes: &[String]) -> String {
-    generate_server_script(routes, api_routes, |r| get_ssg_html_path(&r.rel_path))
+fn generate_server_er_ssg(routes: &[PageRoute], api_routes: &[String], port: u16) -> String {
+    generate_server_script(routes, api_routes, port, |r| get_ssg_html_path(&r.rel_path))
 }
 
 fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
@@ -736,16 +737,18 @@ fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     let mut api_routes = Vec::new();
     build_dir_recursive(&base_path, &base_path, &build_dir, mode, &mut routes, &mut api_routes)?;
 
+    let port = get_port_from_config_file(dir).unwrap_or(3000);
+
     match mode {
         BuildMode::Ssr => {
             // Write the generated server.er file
-            let server_er_content = generate_server_er(&routes, &api_routes);
+            let server_er_content = generate_server_er(&routes, &api_routes, port);
             let server_er_path = build_dir.join("server.er");
             fs::write(server_er_path, server_er_content)?;
         }
         BuildMode::Ssg | BuildMode::Ppr => {
             // Write the generated server.er file for SSG/PPR
-            let server_er_content = generate_server_er_ssg(&routes, &api_routes);
+            let server_er_content = generate_server_er_ssg(&routes, &api_routes, port);
             let server_er_path = build_dir.join("server.er");
             fs::write(server_er_path, server_er_content)?;
         }
