@@ -937,7 +937,48 @@ pub fn serve_static_file(
     file_path: &Path,
     req_headers: &HashMap<String, String>,
 ) -> bool {
+    let path_str = file_path.to_string_lossy().to_string();
+
     if !file_path.exists() || !file_path.is_file() {
+        if let Some(vfs_bytes) = super::embedded::get_vfs_file(&path_str) {
+            let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let mime = get_mime_type_for_extension(ext);
+            let etag = format!("\"vfs-{}\"", vfs_bytes.len());
+
+            if let Some(if_none_match) = req_headers.get("if-none-match") {
+                if if_none_match.contains(&etag) || if_none_match.trim() == "*" {
+                    unsafe {
+                        let status = CString::new("304 Not Modified").unwrap();
+                        er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+                        let etag_key = CString::new("ETag").unwrap();
+                        let etag_val = CString::new(etag).unwrap();
+                        er_http_response_write_header(res_ptr, etag_key.as_ptr(), etag_key.as_bytes().len(), etag_val.as_ptr(), etag_val.as_bytes().len());
+                        er_http_response_end(res_ptr, b"".as_ptr() as *const c_char, 0);
+                    }
+                    return true;
+                }
+            }
+
+            unsafe {
+                let status = CString::new("200 OK").unwrap();
+                er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+
+                let ct_k = CString::new("Content-Type").unwrap();
+                let ct_v = CString::new(mime).unwrap();
+                er_http_response_write_header(res_ptr, ct_k.as_ptr(), ct_k.as_bytes().len(), ct_v.as_ptr(), ct_v.as_bytes().len());
+
+                let etag_k = CString::new("ETag").unwrap();
+                let etag_v = CString::new(etag).unwrap();
+                er_http_response_write_header(res_ptr, etag_k.as_ptr(), etag_k.as_bytes().len(), etag_v.as_ptr(), etag_v.as_bytes().len());
+
+                let cl_k = CString::new("Content-Length").unwrap();
+                let cl_v = CString::new(format!("{}", vfs_bytes.len())).unwrap();
+                er_http_response_write_header(res_ptr, cl_k.as_ptr(), cl_k.as_bytes().len(), cl_v.as_ptr(), cl_v.as_bytes().len());
+
+                er_http_response_end(res_ptr, vfs_bytes.as_ptr() as *const c_char, vfs_bytes.len());
+            }
+            return true;
+        }
         return false;
     }
 
@@ -953,6 +994,7 @@ pub fn serve_static_file(
 
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let mime = get_mime_type_for_extension(ext);
+
 
     // 1. Conditional GET: If-None-Match
     if let Some(if_none_match) = req_headers.get("if-none-match") {

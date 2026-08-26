@@ -1126,16 +1126,24 @@ fn resolve_imports_recursive(
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
     visited_exports: &mut std::collections::HashMap<std::path::PathBuf, std::collections::HashSet<String>>,
 ) -> Result<Vec<Stmt>, String> {
-    let canonical = path.canonicalize()
-        .map_err(|e| format!("Failed to canonicalize path {:?}: {}", path, e))?;
+    let path_str = path.to_string_lossy().to_string();
+
+    let (canonical, content) = if path.exists() {
+        let canonical = path.canonicalize()
+            .map_err(|e| format!("Failed to canonicalize path {:?}: {}", path, e))?;
+        let content = std::fs::read_to_string(&canonical)
+            .map_err(|e| format!("Failed to read file {:?}: {}", canonical, e))?;
+        (canonical, content)
+    } else if let Some(vfs_text) = crate::vm::embedded::get_vfs_text(&path_str) {
+        (std::path::PathBuf::from(&path_str), vfs_text)
+    } else {
+        return Err(format!("File not found on disk or in embedded VFS: {:?}", path));
+    };
 
     if visited.contains(&canonical) {
         return Ok(Vec::new());
     }
     visited.insert(canonical.clone());
-
-    let content = std::fs::read_to_string(&canonical)
-        .map_err(|e| format!("Failed to read file {:?}: {}", canonical, e))?;
 
     let tokens = super::lexer::lex(&content);
     let mut parser = Parser::new(tokens).with_file_path(canonical.to_string_lossy().to_string());
@@ -1146,7 +1154,7 @@ fn resolve_imports_recursive(
     visited_exports.insert(canonical.clone(), direct_exports);
 
     let mut resolved_stmts = Vec::new();
-    let parent_dir = canonical.parent().ok_or_else(|| "No parent directory".to_string())?;
+    let parent_dir = canonical.parent().unwrap_or(std::path::Path::new(""));
 
     for stmt in stmts {
         match stmt {
@@ -1163,7 +1171,7 @@ fn resolve_imports_recursive(
                     parent_dir.join(&import_path)
                 };
                 
-                // Fallbacks:
+                // Fallbacks on disk
                 if !resolved_path.exists() {
                     if import_path.ends_with(".js") {
                         let er_path = resolved_path.with_extension("er");
@@ -1180,28 +1188,52 @@ fn resolve_imports_recursive(
                     }
                 }
 
-                if !resolved_path.exists() {
+                // Check VFS if not on disk
+                let resolved_path_str = resolved_path.to_string_lossy().to_string();
+                let is_in_vfs = !resolved_path.exists() && (
+                    crate::vm::embedded::has_vfs_file(&resolved_path_str) ||
+                    crate::vm::embedded::has_vfs_file(&import_path) ||
+                    (import_path.ends_with(".js") && crate::vm::embedded::has_vfs_file(&import_path.replace(".js", ".er"))) ||
+                    (!import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path))) ||
+                    (is_std_import && !import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path)))
+                );
+
+                if !resolved_path.exists() && !is_in_vfs {
                     return Err(format!(
                         "Imported file not found: {:?} (specified as {})",
                         resolved_path, import_path
                     ));
                 }
 
-                let resolved_canonical = resolved_path.canonicalize()
-                    .map_err(|e| format!("Failed to canonicalize path {:?}: {}", resolved_path, e))?;
+                let final_path = if is_in_vfs {
+                    if crate::vm::embedded::has_vfs_file(&resolved_path_str) {
+                        resolved_path
+                    } else if crate::vm::embedded::has_vfs_file(&import_path) {
+                        std::path::PathBuf::from(&import_path)
+                    } else if import_path.ends_with(".js") && crate::vm::embedded::has_vfs_file(&import_path.replace(".js", ".er")) {
+                        std::path::PathBuf::from(import_path.replace(".js", ".er"))
+                    } else if !import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path)) {
+                        std::path::PathBuf::from(format!("{}.er", import_path))
+                    } else {
+                        resolved_path
+                    }
+                } else {
+                    resolved_path.canonicalize()
+                        .map_err(|e| format!("Failed to canonicalize path {:?}: {}", resolved_path, e))?
+                };
 
-                let sub_stmts = if visited.contains(&resolved_canonical) {
+                let sub_stmts = if visited.contains(&final_path) {
                     Vec::new()
                 } else {
-                    resolve_imports_recursive(&resolved_path, visited, visited_exports)?
+                    resolve_imports_recursive(&final_path, visited, visited_exports)?
                 };
                 
-                let exports = visited_exports.get(&resolved_canonical).cloned().unwrap_or_default();
+                let exports = visited_exports.get(&final_path).cloned().unwrap_or_default();
                 for name in &names {
                     if !exports.contains(name) {
                         return Err(format!(
                             "Name '{}' is not exported by {:?}",
-                            name, resolved_path
+                            name, final_path
                         ));
                     }
                 }
@@ -1219,3 +1251,4 @@ fn resolve_imports_recursive(
 
     Ok(resolved_stmts)
 }
+
