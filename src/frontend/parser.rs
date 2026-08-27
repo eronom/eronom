@@ -81,6 +81,9 @@ impl Parser {
             || self.peek().ty == TokenType::On
             || self.peek().ty == TokenType::Concurrent
             || self.peek().ty == TokenType::Underscore
+            || self.peek().ty == TokenType::From
+            || self.peek().ty == TokenType::Default
+            || self.peek().ty == TokenType::Typeof
     }
 
     fn match_token(&mut self, types: &[TokenType]) -> bool {
@@ -110,6 +113,9 @@ impl Parser {
                 TokenType::On => return Ok("on".to_string()),
                 TokenType::Concurrent => return Ok("concurrent".to_string()),
                 TokenType::Underscore => return Ok("_".to_string()),
+                TokenType::From => return Ok("from".to_string()),
+                TokenType::Default => return Ok("default".to_string()),
+                TokenType::Typeof => return Ok("typeof".to_string()),
                 _ => {}
             }
         }
@@ -198,7 +204,7 @@ impl Parser {
                         let mut params = Vec::new();
                         if !self.check(&TokenType::RightParen) {
                             loop {
-                                let param = self.consume_ident("Expected parameter name.")?;
+                                let param = self.parse_fn_param()?.name;
                                 params.push(param);
                                 if !self.match_token(&[TokenType::Comma]) {
                                     break;
@@ -254,7 +260,7 @@ impl Parser {
                         let mut params = Vec::new();
                         if !self.check(&TokenType::RightParen) {
                             loop {
-                                let param = self.consume_ident("Expected parameter name.")?;
+                                let param = self.parse_fn_param()?.name;
                                 params.push(param);
                                 if !self.match_token(&[TokenType::Comma]) {
                                     break;
@@ -911,6 +917,54 @@ impl Parser {
                 line: tok.line,
                 col: tok.col,
             };
+            if self.match_token(&[TokenType::Arrow]) {
+                let arrow_tok = self.previous().clone();
+                self.push_scope();
+                self.declare_variable(name.clone());
+                let body = self.statement()?;
+                let body_loc = SourceLocation {
+                    file_path: self.file_path.clone(),
+                    line: arrow_tok.line,
+                    col: arrow_tok.col,
+                };
+                let body = match body {
+                    Stmt::Expr(expr) => Stmt::Return(Some(expr), body_loc),
+                    other => other,
+                };
+                self.pop_scope();
+                let params = vec![crate::frontend::ast::FnParam { name, ty: None }];
+                return Ok(Expr::Function(params, None, Box::new(body)));
+            }
+            let is_capitalized = name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+            let next_is_prop = self.check(&TokenType::LeftBrace)
+                && (self.current + 1 < self.tokens.len()
+                    && (self.tokens[self.current + 1].ty == TokenType::RightBrace
+                        || (matches!(self.tokens[self.current + 1].ty, TokenType::Identifier(_))
+                            && self.current + 2 < self.tokens.len()
+                            && self.tokens[self.current + 2].ty == TokenType::Colon)));
+
+            if is_capitalized && next_is_prop && self.match_token(&[TokenType::LeftBrace]) {
+                let mut pairs = Vec::new();
+                if !self.check(&TokenType::RightBrace) {
+                    loop {
+                        let key = self.consume_ident("Expected property key.")?;
+                        self.consume(TokenType::Colon, "Expected ':' after property key.")?;
+                        let value = self.expression()?;
+                        pairs.push((key, value));
+                        if !self.match_token(&[TokenType::Comma]) {
+                            break;
+                        }
+                        if self.check(&TokenType::RightBrace) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(
+                    TokenType::RightBrace,
+                    "Expected '}' after struct properties.",
+                )?;
+                return Ok(Expr::StructInst(name, pairs, loc));
+            }
             return Ok(Expr::Variable(name, loc));
         }
 

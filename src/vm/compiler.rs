@@ -682,11 +682,11 @@ impl Compiler {
             Stmt::Export(inner) => {
                 self.compile_stmt(inner)?;
             }
-            Stmt::Struct(name, _, _, _, _) => {
-                let flat = self.structs.get(name).cloned().unwrap_or(FlattenedStructInfo {
-                    composed: Vec::new(),
-                    fields: Vec::new(),
-                    methods: Vec::new(),
+            Stmt::Struct(name, composed, fields, methods, _) => {
+                let flat = self.structs.get(name).cloned().unwrap_or_else(|| FlattenedStructInfo {
+                    composed: composed.clone(),
+                    fields: fields.clone(),
+                    methods: methods.clone(),
                 });
                 let name_val = Value::string_from_str(name.as_str());
                 let name_idx = self.current_chunk().add_constant(name_val);
@@ -1915,6 +1915,62 @@ impl Compiler {
     }
 }
 
+fn collect_structs_expr(expr: &Expr, map: &mut std::collections::HashMap<String, RawStructInfo>) {
+    match expr {
+        Expr::Function(_, _, body) => {
+            collect_structs(std::slice::from_ref(body), map);
+        }
+        Expr::Call(callee, args) => {
+            collect_structs_expr(callee, map);
+            for arg in args {
+                collect_structs_expr(arg, map);
+            }
+        }
+        Expr::Binary(left, _, right) | Expr::Logical(left, _, right) => {
+            collect_structs_expr(left, map);
+            collect_structs_expr(right, map);
+        }
+        Expr::Unary(_, inner) | Expr::Prefix(_, inner) | Expr::Postfix(_, inner) | Expr::Spawn(inner) => {
+            collect_structs_expr(inner, map);
+        }
+        Expr::Ternary(cond, then_e, else_e) => {
+            collect_structs_expr(cond, map);
+            collect_structs_expr(then_e, map);
+            collect_structs_expr(else_e, map);
+        }
+        Expr::Array(items) => {
+            for it in items {
+                collect_structs_expr(it, map);
+            }
+        }
+        Expr::Object(pairs) | Expr::StructInst(_, pairs, _) => {
+            for (_, val) in pairs {
+                collect_structs_expr(val, map);
+            }
+        }
+        Expr::Assign(_, val, _) => {
+            collect_structs_expr(val, map);
+        }
+        Expr::Get(obj, _) => {
+            collect_structs_expr(obj, map);
+        }
+        Expr::Set(obj, _, val) => {
+            collect_structs_expr(obj, map);
+            collect_structs_expr(val, map);
+        }
+        Expr::GetIndex(arr, idx) => {
+            collect_structs_expr(arr, map);
+            collect_structs_expr(idx, map);
+        }
+        Expr::SetIndex(arr, idx, val) => {
+            collect_structs_expr(arr, map);
+            collect_structs_expr(idx, map);
+            collect_structs_expr(val, map);
+        }
+        _ => {}
+    }
+}
+
 fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, RawStructInfo>) {
     for stmt in stmts {
         match stmt {
@@ -1924,6 +1980,23 @@ fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, R
                     fields: fields.clone(),
                     methods: methods.clone(),
                 });
+            }
+            Stmt::Expr(expr) => {
+                collect_structs_expr(expr, map);
+            }
+            Stmt::Print(expr) => {
+                collect_structs_expr(expr, map);
+            }
+            Stmt::Throw(expr) => {
+                collect_structs_expr(expr, map);
+            }
+            Stmt::VarDecl(_, _, _, init, _) => {
+                collect_structs_expr(init, map);
+            }
+            Stmt::Return(expr_opt, _) => {
+                if let Some(e) = expr_opt {
+                    collect_structs_expr(e, map);
+                }
             }
             Stmt::Block(inner_stmts) => {
                 collect_structs(inner_stmts, map);
@@ -1962,6 +2035,9 @@ fn collect_structs(stmts: &[Stmt], map: &mut std::collections::HashMap<String, R
             }
             Stmt::Export(inner) => {
                 collect_structs(std::slice::from_ref(inner), map);
+            }
+            Stmt::Concurrent(body) => {
+                collect_structs(std::slice::from_ref(body), map);
             }
             _ => {}
         }

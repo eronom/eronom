@@ -702,6 +702,9 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
                             }
                         } else if name == "exists" && s.descriptor.name.as_ref() == "File" {
                             Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | 0)
+                        } else if let Some(m) = crate::vm::execute::get_object_builtin_method_id(name) {
+                            let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                            Value::function(ptr)
                         } else {
                             Value::null()
                         }
@@ -728,6 +731,9 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
                             } else {
                                 Value::null()
                             }
+                        } else if let Some(m) = crate::vm::execute::get_object_builtin_method_id(name) {
+                            let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                            Value::function(ptr)
                         } else {
                             Value::null()
                         }
@@ -740,12 +746,11 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
             let ptr = obj.as_gc_ptr();
             match &(*ptr).data {
                 GcData::Array(arr) => {
-                    if name == "push" {
-                        Value::array_method_push(ptr)
-                    } else if name == "pop" {
-                        Value::array_method_pop(ptr)
-                    } else if name == "length" {
+                    if name == "length" {
                         Value::number(arr.len() as f64)
+                    } else if let Some(m) = crate::vm::execute::get_array_builtin_method_id(name) {
+                        let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                        Value::function(ptr)
                     } else if let Ok(idx) = name.parse::<usize>() {
                         arr.get(idx).cloned().unwrap_or(Value::null())
                     } else {
@@ -754,8 +759,19 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
                 }
                 _ => Value::null(),
             }
+        } else if obj.is_string() {
+            let name = name_val.as_str().unwrap_or("");
+            if name == "length" {
+                let s = obj.as_str().unwrap_or("");
+                Value::number(s.chars().count() as f64)
+            } else if let Some(m) = crate::vm::execute::get_string_builtin_method_id(name) {
+                let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                Value::function(ptr)
+            } else {
+                Value::null()
+            }
         } else {
-            (*vm).has_error_flag = 1; (*vm).error = Some("Only objects and arrays have properties".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Only objects, arrays, and strings have properties".into());
             Value::null()
         };
         if JIT_PROFILING {
@@ -1218,23 +1234,42 @@ pub extern "C" fn er_jit_call_non_vm(
         }
         let status = if callee.is_function() {
             let mut func_ptr = callee.as_gc_ptr();
-            let mut actual_arg_count = arg_count as usize;
-            let mut callee_frame_slots = frame_slots.offset((func_reg + 1) as isize);
-
-            if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
-                for i in (0..actual_arg_count).rev() {
-                    *frame_slots.offset((func_reg + 2 + i as i64) as isize) = *frame_slots.offset((func_reg + 1 + i as i64) as isize);
+            if let GcData::BuiltinMethod(builtin) = &(*func_ptr).data {
+                let receiver = builtin.receiver;
+                let method = builtin.method;
+                let mut args = Vec::with_capacity(arg_count as usize);
+                for i in 0..arg_count as usize {
+                    args.push(*frame_slots.offset((func_reg + 1 + i as i64) as isize));
                 }
-                *frame_slots.offset((func_reg + 1) as isize) = bound_method.receiver;
-                func_ptr = bound_method.function;
-                actual_arg_count += 1;
-            }
+                match (*_vm).execute_builtin_method(receiver, method, args) {
+                    Ok(res) => {
+                        *dest = res;
+                        0
+                    }
+                    Err(err) => {
+                        (*_vm).error = Some(err);
+                        (*_vm).has_error_flag = 1;
+                        -2
+                    }
+                }
+            } else {
+                let mut actual_arg_count = arg_count as usize;
+                let mut callee_frame_slots = frame_slots.offset((func_reg + 1) as isize);
 
-            let raw_fn_ptr = match &(*func_ptr).data {
-                GcData::Function(_) => func_ptr,
-                GcData::Closure(c) => c.function,
-                _ => return -1,
-            };
+                if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
+                    for i in (0..actual_arg_count).rev() {
+                        *frame_slots.offset((func_reg + 2 + i as i64) as isize) = *frame_slots.offset((func_reg + 1 + i as i64) as isize);
+                    }
+                    *frame_slots.offset((func_reg + 1) as isize) = bound_method.receiver;
+                    func_ptr = bound_method.function;
+                    actual_arg_count += 1;
+                }
+
+                let raw_fn_ptr = match &(*func_ptr).data {
+                    GcData::Function(_) => func_ptr,
+                    GcData::Closure(c) => c.function,
+                    _ => return -1,
+                };
 
             let func_val = match &(*raw_fn_ptr).data {
                 GcData::Function(func) => func,
@@ -1337,6 +1372,7 @@ pub extern "C" fn er_jit_call_non_vm(
                     }
                     -2
                 }
+            }
             }
         } else if callee.is_native_function() {
             let native = callee.as_native_fn();

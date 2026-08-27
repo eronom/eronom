@@ -79,6 +79,69 @@ impl StructDescriptor {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinMethodId {
+    // String methods
+    StringToUpperCase,
+    StringToLowerCase,
+    StringTrim,
+    StringTrimStart,
+    StringTrimEnd,
+    StringSplit,
+    StringSlice,
+    StringSubstring,
+    StringIndexOf,
+    StringLastIndexOf,
+    StringIncludes,
+    StringStartsWith,
+    StringEndsWith,
+    StringReplace,
+    StringReplaceAll,
+    StringCharAt,
+    StringCharCodeAt,
+    StringRepeat,
+    StringPadStart,
+    StringPadEnd,
+    StringConcat,
+
+    // Array methods
+    ArrayPush,
+    ArrayPop,
+    ArrayShift,
+    ArrayUnshift,
+    ArrayMap,
+    ArrayFilter,
+    ArrayReduce,
+    ArrayForEach,
+    ArrayFind,
+    ArrayFindIndex,
+    ArraySome,
+    ArrayEvery,
+    ArrayIncludes,
+    ArrayIndexOf,
+    ArrayLastIndexOf,
+    ArraySlice,
+    ArrayJoin,
+    ArrayConcat,
+    ArrayReverse,
+    ArraySort,
+    ArrayFlat,
+    ArrayFlatMap,
+    ArrayFill,
+
+    // Object methods
+    ObjectKeys,
+    ObjectValues,
+    ObjectEntries,
+    ObjectHasOwnProperty,
+}
+
+#[derive(Clone)]
+pub struct GcBuiltinMethod {
+    pub receiver: Value,
+    pub method: BuiltinMethodId,
+}
+
 #[derive(Clone)]
 pub struct GcBoundMethod {
     pub receiver: Value,
@@ -160,6 +223,7 @@ pub enum GcData {
     Promise(GcPromise),
     Struct(GcStruct),
     BoundMethod(GcBoundMethod),
+    BuiltinMethod(GcBuiltinMethod),
     StructConstructor(Rc<StructDescriptor>),
     Closure(GcClosure),
     Upvalue(GcUpvalue),
@@ -507,6 +571,9 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
                 gc_mark_value(&bm.receiver);
                 gc_mark_object(bm.function);
             }
+            GcData::BuiltinMethod(bm) => {
+                gc_mark_value(&bm.receiver);
+            }
             GcData::StructConstructor(_) => {}
             GcData::Closure(c) => {
                 gc_mark_object(c.function);
@@ -572,6 +639,11 @@ pub fn gc_sweep_string_cache() {
 pub fn gc_alloc_string(s: &str) -> *mut GcObject {
     let rc_str: Rc<str> = Rc::from(s);
     gc_allocate(GcData::String(rc_str))
+}
+
+#[inline(always)]
+pub fn gc_alloc_builtin_method(receiver: Value, method: BuiltinMethodId) -> *mut GcObject {
+    gc_allocate(GcData::BuiltinMethod(GcBuiltinMethod { receiver, method }))
 }
 
 #[inline(always)]
