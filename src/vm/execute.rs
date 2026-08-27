@@ -229,9 +229,11 @@ impl VM {
     pub fn new() -> Self {
         let use_jit = std::env::var("ER_NO_JIT").is_err();
         let jit_threshold = if let Ok(val) = std::env::var("ER_JIT_THRESHOLD") {
-            val.parse::<usize>().unwrap_or(0)
-        } else {
+            val.parse::<usize>().unwrap_or(30)
+        } else if std::env::var("ER_EAGER_JIT").is_ok() {
             0
+        } else {
+            30
         };
         Self {
             has_error_flag: 0,
@@ -1866,7 +1868,11 @@ impl VM {
                             actual_arg_count = arg_count_out + 1;
                         }
                         let func_val = get_func!(func_ptr);
-                        if actual_arg_count != func_val.arity {
+                        if actual_arg_count < func_val.arity {
+                            for i in actual_arg_count..func_val.arity {
+                                *frame_slots.add(func_reg_out + 1 + i) = Value::null();
+                            }
+                        } else if actual_arg_count > func_val.arity {
                             return Err(format!(
                                 "Expected {} args but got {}",
                                 func_val.arity, actual_arg_count
@@ -3032,7 +3038,11 @@ impl VM {
                                 GcData::Function(f) => f,
                                 _ => unreachable!(),
                             };
-                            if actual_arg_count != raw_func.arity {
+                            if actual_arg_count < raw_func.arity {
+                                for i in actual_arg_count..raw_func.arity {
+                                    *frame_slots.add(func_reg + 1 + i) = Value::null();
+                                }
+                            } else if actual_arg_count > raw_func.arity {
                                 return Err(format!(
                                     "Expected {} args but got {}",
                                     raw_func.arity, actual_arg_count

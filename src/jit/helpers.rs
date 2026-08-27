@@ -1277,14 +1277,20 @@ pub extern "C" fn er_jit_call_non_vm(
                 _ => return -1,
             };
 
-            if actual_arg_count != func_val.arity {
+            if actual_arg_count < func_val.arity {
+                for i in actual_arg_count..func_val.arity {
+                    *callee_frame_slots.add(i) = Value::null();
+                }
+            } else if actual_arg_count > func_val.arity {
                 (*_vm).error = Some(format!(
                     "Expected {} args but got {}",
                     func_val.arity, actual_arg_count
                 ));
                 (*_vm).has_error_flag = 1;
                 return -2;
-            } else if func_val.is_async {
+            }
+
+            if func_val.is_async {
                 return -1; // Fallback to host VM loop for async
             } else {
                 let offset_from_base = callee_frame_slots.offset_from((*_vm).stack.as_ptr()) as usize;
