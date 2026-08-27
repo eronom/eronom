@@ -29,6 +29,25 @@ fn get_re_export() -> &'static regex::Regex {
     RE.get_or_init(|| regex::Regex::new(r#"^(\s*)export\s+"#).unwrap())
 }
 
+pub fn file_exists_or_vfs(path: &std::path::Path) -> bool {
+    if path.exists() {
+        return true;
+    }
+    let s = path.to_string_lossy();
+    crate::vm::embedded::has_vfs_file(&s)
+}
+
+pub fn read_file_or_vfs(path: &std::path::Path) -> anyhow::Result<String> {
+    if path.exists() && path.is_file() {
+        return Ok(std::fs::read_to_string(path)?);
+    }
+    let s = path.to_string_lossy();
+    if let Some(text) = crate::vm::embedded::get_vfs_text(&s) {
+        return Ok(text);
+    }
+    anyhow::bail!("File not found on disk or in VFS: {}", path.display())
+}
+
 
 
 fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
@@ -1076,12 +1095,12 @@ pub fn process_component_tree(
                             let mut curr = std::path::PathBuf::from(&base_dir);
                             loop {
                                 let p_comp = curr.join(&comp_filename);
-                                if p_comp.exists() {
+                                if file_exists_or_vfs(&p_comp) {
                                     comp_path = Some(p_comp);
                                     break;
                                 }
                                 let p_comp_dir = curr.join("components").join(&comp_filename);
-                                if p_comp_dir.exists() {
+                                if file_exists_or_vfs(&p_comp_dir) {
                                     comp_path = Some(p_comp_dir);
                                     break;
                                 }
@@ -1094,10 +1113,20 @@ pub fn process_component_tree(
                                     break;
                                 }
                             }
+                            if comp_path.is_none() {
+                                let fallback_app = std::path::PathBuf::from("app/components").join(&comp_filename);
+                                if file_exists_or_vfs(&fallback_app) {
+                                    comp_path = Some(fallback_app);
+                                }
+                            }
                         }
 
                         if let Some(comp_path) = comp_path {
-                            let canonical_comp_path = std::fs::canonicalize(&comp_path).unwrap_or(comp_path);
+                            let canonical_comp_path = if comp_path.exists() {
+                                std::fs::canonicalize(&comp_path).unwrap_or(comp_path.clone())
+                            } else {
+                                comp_path.clone()
+                            };
                             let comp_path_str = canonical_comp_path.to_string_lossy().into_owned();
 
                             let anchor_id = format!("erm-anchor-{}-{}", tag_name.to_lowercase(), i);
@@ -1114,7 +1143,7 @@ pub fn process_component_tree(
 
                             let sub_html = if !visited.contains_key(&comp_path_str) {
                                 visited.insert(comp_path_str.clone(), "".to_string()); // placeholder to avoid infinite recursion
-                                let comp_content = std::fs::read_to_string(&canonical_comp_path)?;
+                                let comp_content = read_file_or_vfs(&canonical_comp_path)?;
                                 let mut sub_res = process_component_tree(&comp_path_str, &comp_content, visited, None, params, if_counter, for_counter, state_var_sources)?;
                                 println!("DEBUG: compiled component {} scripts count = {}", tag_name, sub_res.scripts.len());
                                 for (idx, s) in sub_res.scripts.iter().enumerate() {
@@ -1894,8 +1923,13 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut curr = std::path::PathBuf::from(base_dir);
     loop {
         let p_layouts = curr.join("layouts").join("layout.erm");
-        if p_layouts.exists() {
+        if file_exists_or_vfs(&p_layouts) {
             layout_path = Some(p_layouts);
+            break;
+        }
+        let p_direct = curr.join("layout.erm");
+        if file_exists_or_vfs(&p_direct) {
+            layout_path = Some(p_direct);
             break;
         }
         if let Some(parent) = curr.parent() {
@@ -1907,18 +1941,29 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             break;
         }
     }
+    if layout_path.is_none() {
+        let fallback_app_layout = std::path::PathBuf::from("app/layouts/layout.erm");
+        if file_exists_or_vfs(&fallback_app_layout) {
+            layout_path = Some(fallback_app_layout);
+        } else {
+            let fallback_layout = std::path::PathBuf::from("layouts/layout.erm");
+            if file_exists_or_vfs(&fallback_layout) {
+                layout_path = Some(fallback_layout);
+            }
+        }
+    }
 
     // Automatic Loading support: search for loading.erm in current and parent directories.
     let mut loading_path = None;
     let mut curr_load = std::path::PathBuf::from(base_dir);
     loop {
         let p_loadings = curr_load.join("layouts").join("loading.erm");
-        if p_loadings.exists() {
+        if file_exists_or_vfs(&p_loadings) {
             loading_path = Some(p_loadings);
             break;
         }
         let p_loading_direct = curr_load.join("loading.erm");
-        if p_loading_direct.exists() {
+        if file_exists_or_vfs(&p_loading_direct) {
             loading_path = Some(p_loading_direct);
             break;
         }
@@ -1931,12 +1976,18 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             break;
         }
     }
+    if loading_path.is_none() {
+        let fallback_app_loading = std::path::PathBuf::from("app/layouts/loading.erm");
+        if file_exists_or_vfs(&fallback_app_loading) {
+            loading_path = Some(fallback_app_loading);
+        }
+    }
 
     let mut if_counter = 0;
     let mut for_counter = 0;
 
     let loading_res = if let Some(ref l_path) = loading_path {
-        let loading_content = std::fs::read_to_string(l_path)?;
+        let loading_content = read_file_or_vfs(l_path)?;
         let res = process_component_tree(&l_path.to_string_lossy(), &loading_content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
         Some(res)
     } else {
@@ -1945,7 +1996,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     let mut result = if let Some(lp) = layout_path {
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
-            let layout_content = std::fs::read_to_string(&lp)?;
+            let layout_content = read_file_or_vfs(&lp)?;
             if content.trim() != layout_content.trim() {
                 let page_res = process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
                 
