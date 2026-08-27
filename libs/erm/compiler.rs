@@ -938,7 +938,7 @@ pub fn process_component_tree(
                         i += tag_end + 1;
                         continue;
                     }
-                    if tag_name == "Suspense" {
+                    if tag_name == "Loading" || tag_name == "Suspense" {
                         let mut parent_scripts = String::new();
                         let mut temp_search = 0;
                         while let Some(start_idx) = content[temp_search..].find("<script") {
@@ -1001,21 +1001,28 @@ pub fn process_component_tree(
                             "".to_string()
                         };
 
-                        // Find matching </Suspense> tag
+                        // Find matching </Loading> or </Suspense> tag
+                        let open_prefix = format!("<{}", tag_name);
+                        let close_tag = format!("</{}>", tag_name);
+                        let open_len = open_prefix.len();
+                        let close_len = close_tag.len();
+
                         let mut depth = 1;
                         let mut search_pos = i + tag_end + 1;
                         let mut closing_idx = None;
                         while search_pos < content.len() {
-                            if content[search_pos..].starts_with("<Suspense") {
+                            if content[search_pos..].starts_with(&open_prefix)
+                                && content[search_pos + open_len..].chars().next().map_or(true, |c| c.is_whitespace() || c == '>' || c == '/')
+                            {
                                 depth += 1;
-                                search_pos += 9;
-                            } else if content[search_pos..].starts_with("</Suspense>") {
+                                search_pos += open_len;
+                            } else if content[search_pos..].starts_with(&close_tag) {
                                 depth -= 1;
                                 if depth == 0 {
                                     closing_idx = Some(search_pos);
                                     break;
                                 }
-                                search_pos += 11;
+                                search_pos += close_len;
                             } else {
                                 search_pos += 1;
                             }
@@ -1061,10 +1068,10 @@ pub fn process_component_tree(
                                 suspense_id, suspense_id, fallback_html, suspense_id, children_res.html
                             ));
 
-                            i = closing + 11;
+                            i = closing + close_len;
                             continue;
                         } else {
-                            return Err(anyhow::anyhow!("Unclosed <Suspense> tag"));
+                            return Err(anyhow::anyhow!("Unclosed <{}> tag", tag_name));
                         }
                     }
 
@@ -3134,6 +3141,23 @@ mod tests {
             transform_use_effect("useEffect(() => { const x = [1, 2]; }, [count, x])"),
             "useEffect(() => { const x = [1, 2]; }, () => [count, x])"
         );
+    }
+
+    #[test]
+    fn test_loading_tag_compilation() {
+        let content = r#"
+        <script>
+            let ready = useState(false);
+        </script>
+        <Loading fallback={<div>Loading skeleton...</div>}>
+            <div>Actual Content Loaded</div>
+        </Loading>
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, false, &params).unwrap();
+        assert!(res.contains("erm-suspense-container"));
+        assert!(res.contains("Loading skeleton..."));
+        assert!(res.contains("Actual Content Loaded"));
     }
 }
 
