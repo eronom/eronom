@@ -2,6 +2,9 @@ pub use eronom::vm as backend;
 pub use eronom::frontend;
 pub use eronom::jit;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use backend::{Compiler, VM, Value};
 use frontend::{Expr, LiteralValue, Stmt};
 

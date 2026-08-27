@@ -1,24 +1,62 @@
 use std::env;
 use std::path::Path;
 
+fn configure_c_optimizations(build: &mut cc::Build, is_release: bool, is_windows: bool) {
+    build.opt_level(3);
+    build.warnings(false);
+
+    if is_release {
+        build.define("NDEBUG", None);
+    }
+
+    if is_windows {
+        build.flag_if_supported("/Gy"); // Function-level linking
+        build.flag_if_supported("/Gw"); // Optimize global data
+        build.flag_if_supported("/GF"); // String pooling
+        build.flag_if_supported("/O2"); // Max speed
+    } else {
+        build.flag_if_supported("-ffunction-sections");
+        build.flag_if_supported("-fdata-sections");
+        build.flag_if_supported("-fvisibility=hidden");
+        build.flag_if_supported("-fno-unwind-tables");
+        build.flag_if_supported("-fno-asynchronous-unwind-tables");
+        build.flag_if_supported("-fno-semantic-interposition");
+    }
+}
+
+fn configure_cpp_optimizations(build: &mut cc::Build, is_release: bool, is_windows: bool) {
+    configure_c_optimizations(build, is_release, is_windows);
+
+    if is_windows {
+        build.flag_if_supported("/EHs-c-"); // Disable C++ exceptions
+        build.flag_if_supported("/GR-");     // Disable RTTI
+    } else {
+        build.flag_if_supported("-fno-exceptions");
+        build.flag_if_supported("-fno-rtti");
+        build.flag_if_supported("-fvisibility-inlines-hidden");
+        build.flag_if_supported("-fno-c++-static-destructors");
+    }
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let mir_dir = Path::new(&manifest_dir).join("deps").join("mir");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let is_windows = target_os == "windows";
+    let is_release = env::var("PROFILE").map(|p| p == "release" || p == "bench").unwrap_or(false);
 
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir.c").display());
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir-gen.c").display());
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir.h").display());
     println!("cargo:rerun-if-changed={}", mir_dir.join("mir-gen.h").display());
 
-    cc::Build::new()
+    let mut mir_build = cc::Build::new();
+    mir_build
         .file(mir_dir.join("mir.c"))
         .file(mir_dir.join("mir-gen.c"))
-        .include(&mir_dir)
-        .warnings(false)
-        .compile("mir");
-
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let is_windows = target_os == "windows";
+        .include(&mir_dir);
+    configure_c_optimizations(&mut mir_build, is_release, is_windows);
+    mir_build.compile("mir");
 
     let libuv_dir = Path::new(&manifest_dir).join("deps").join("libuv");
     if is_windows {
@@ -34,8 +72,6 @@ fn main() {
             .define("WIN32_LEAN_AND_MEAN", None)
             .define("_CRT_DECLARE_NONSTDC_NAMES", "0")
             .define("_CRT_SECURE_NO_WARNINGS", None)
-            .warnings(false)
-            .opt_level(3)
             // Common files
             .file(libuv_src.join("fs-poll.c"))
             .file(libuv_src.join("idna.c"))
@@ -74,8 +110,9 @@ fn main() {
             .file(libuv_win.join("udp.c"))
             .file(libuv_win.join("util.c"))
             .file(libuv_win.join("winapi.c"))
-            .file(libuv_win.join("winsock.c"))
-            .compile("uv");
+            .file(libuv_win.join("winsock.c"));
+        configure_c_optimizations(&mut libuv_build, is_release, is_windows);
+        libuv_build.compile("uv");
     }
 
     // Compile uSockets C files
@@ -88,9 +125,7 @@ fn main() {
         .file(u_sockets_dir.join("src").join("socket.c"))
         .file(u_sockets_dir.join("src").join("udp.c"))
         .include(u_sockets_dir.join("src"))
-        .define("LIBUS_NO_SSL", None)
-        .warnings(false)
-        .opt_level(3);
+        .define("LIBUS_NO_SSL", None);
 
     if is_windows {
         u_sockets_build.file(u_sockets_dir.join("src").join("eventing").join("libuv.c"));
@@ -101,7 +136,7 @@ fn main() {
     } else {
         u_sockets_build.file(u_sockets_dir.join("src").join("eventing").join("epoll_kqueue.c"));
     }
-
+    configure_c_optimizations(&mut u_sockets_build, is_release, is_windows);
     u_sockets_build.compile("usockets");
 
     // Compile uWebSockets C++ wrapper
@@ -115,9 +150,7 @@ fn main() {
         .include(u_websockets_dir.join("src"))
         .include(u_sockets_dir.join("src"))
         .define("LIBUS_NO_SSL", None)
-        .define("UWS_NO_ZLIB", None)
-        .warnings(false)
-        .opt_level(3);
+        .define("UWS_NO_ZLIB", None);
 
     if is_windows {
         u_websockets_build.define("LIBUS_USE_LIBUV", None);
@@ -135,6 +168,6 @@ fn main() {
         println!("cargo:rustc-link-lib=ole32");
         println!("cargo:rustc-link-lib=shell32");
     }
-
+    configure_cpp_optimizations(&mut u_websockets_build, is_release, is_windows);
     u_websockets_build.compile("er_http");
 }

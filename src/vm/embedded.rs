@@ -342,13 +342,70 @@ pub fn strip_existing_payload(bytes: &[u8]) -> &[u8] {
     bytes
 }
 
+/// Strips debug symbols and unneeded sections from runner binary using host strip utility if available
+pub fn optimize_and_strip_runner(runner_bytes: &[u8]) -> Vec<u8> {
+    let clean = strip_existing_payload(runner_bytes);
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join(format!("eronom_runner_strip_{}_{}.tmp", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
+
+    if let Ok(()) = fs::write(&temp_path, clean) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = fs::metadata(&temp_path) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o755);
+                let _ = fs::set_permissions(&temp_path, perms);
+            }
+        }
+
+        let mut stripped = false;
+        for strip_tool in &["strip", "llvm-strip"] {
+            let mut cmd = std::process::Command::new(strip_tool);
+            #[cfg(unix)]
+            {
+                cmd.arg("-R").arg(".eh_frame")
+                   .arg("-R").arg(".eh_frame_hdr")
+                   .arg("-R").arg(".gcc_except_table")
+                   .arg("--strip-all");
+            }
+            #[cfg(not(unix))]
+            {
+                cmd.arg("--strip-all");
+            }
+            cmd.arg(&temp_path);
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+
+            if let Ok(mut child) = cmd.spawn() {
+                if let Ok(status) = child.wait() {
+                    if status.success() {
+                        stripped = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if stripped {
+            if let Ok(bytes) = fs::read(&temp_path) {
+                let _ = fs::remove_file(&temp_path);
+                return bytes;
+            }
+        }
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    clean.to_vec()
+}
+
 /// Creates a self-contained standalone executable binary
 pub fn build_standalone_executable(
     runner_stub_bytes: &[u8],
     bundle: &EmbeddedBundle,
     output_path: &Path,
 ) -> anyhow::Result<()> {
-    let clean_runner = strip_existing_payload(runner_stub_bytes);
+    let clean_runner = optimize_and_strip_runner(runner_stub_bytes);
     let serialized_payload = bundle.serialize();
     let payload_len = serialized_payload.len() as u64;
 
@@ -367,7 +424,7 @@ pub fn build_standalone_executable(
         .open(output_path)?;
 
     // 1. Write the runner executable binary
-    out_file.write_all(clean_runner)?;
+    out_file.write_all(&clean_runner)?;
 
     // 2. Write the serialized embedded bundle payload
     out_file.write_all(&serialized_payload)?;
