@@ -231,21 +231,30 @@ fn native_render(args: Vec<Value>) -> Value {
         }
     }
     
-    if !resolved_path.exists() {
-        return Value::null();
-    }
-    
     let base_dir = match resolved_path.parent() {
         Some(p) => p.to_string_lossy().to_string(),
         None => "".to_string(),
     };
-    
-    let content = match std::fs::read_to_string(&resolved_path) {
-        Ok(c) => c,
-        Err(_) => return Value::null(),
+
+    let (content, is_html, comp_path) = if resolved_path.exists() {
+        let c = match std::fs::read_to_string(&resolved_path) {
+            Ok(c) => c,
+            Err(_) => return Value::null(),
+        };
+        let is_h = resolved_path.extension().map_or(false, |ext| ext == "html");
+        let cp = resolved_path.to_str().unwrap_or(&base_dir).to_string();
+        (c, is_h, cp)
+    } else if let Some(vfs_text) = backend::embedded::get_vfs_text(file_path) {
+        let is_h = file_path.ends_with(".html");
+        (vfs_text, is_h, file_path.to_string())
+    } else if let Some(vfs_text) = backend::embedded::get_vfs_text(&resolved_path.to_string_lossy()) {
+        let is_h = resolved_path.extension().map_or(false, |ext| ext == "html");
+        (vfs_text, is_h, resolved_path.to_string_lossy().to_string())
+    } else {
+        return Value::null();
     };
 
-    if resolved_path.extension().map_or(false, |ext| ext == "html") {
+    if is_html {
         let mut final_content = content;
         if !params_map.is_empty() {
             let mut params_js = String::from("window.__erm_params = {");
@@ -259,7 +268,8 @@ fn native_render(args: Vec<Value>) -> Value {
         return Value::string(ptr);
     }
     
-    match eronom::compiler::process_erm_component(resolved_path.to_str().unwrap_or(&base_dir), &content, true, &params_map) {
+    match eronom::compiler::process_erm_component(&comp_path, &content, true, &params_map) {
+
         Ok(html) => {
             let ptr = backend::gc::gc_alloc_string(&html);
             Value::string(ptr)
@@ -556,7 +566,8 @@ fn find_listen_port(stmts: &[Stmt]) -> Option<i32> {
 pub fn run_file(path: &str) -> anyhow::Result<()> {
     let _guard = GcGuard;
     let path_buf = std::path::PathBuf::from(path);
-    if !path_buf.exists() {
+    let in_vfs = backend::embedded::has_vfs_file(path);
+    if !path_buf.exists() && !in_vfs {
         anyhow::bail!("File not found: {}", path);
     }
 
@@ -566,8 +577,35 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     };
 
     if has_http_import(&stmts) {
-        let port = find_listen_port(&stmts).unwrap_or(3000);
-        backend::er_http::LISTEN_PORT.with(|p| p.set(Some(port)));
+        let mut port = find_listen_port(&stmts);
+        if port.is_none() {
+            let main_path = std::path::Path::new(path);
+            if let Some(parent_dir) = main_path.parent() {
+                let toml_path = parent_dir.join("eronom.toml");
+                if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
+                    if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                        if let Some(server) = toml_val.get("server") {
+                            if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
+                                port = Some(p as i32);
+                            }
+                        }
+                    }
+                }
+            }
+            if port.is_none() {
+                if let Some(toml_content) = backend::embedded::get_vfs_text("eronom.toml") {
+                    if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                        if let Some(server) = toml_val.get("server") {
+                            if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
+                                port = Some(p as i32);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let final_port = port.unwrap_or(3000);
+        backend::er_http::LISTEN_PORT.with(|p| p.set(Some(final_port)));
     }
 
     let compiler = Compiler::new();
@@ -604,7 +642,11 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     backend::std_json::register_json_natives(&mut vm);
     backend::std_system::register_system_natives(&mut vm);
     backend::er_http::set_target_script_path(path);
+    if let Some(css_text) = backend::embedded::get_vfs_text("css/global.css") {
+        eronom::compiler::set_global_ermcss(css_text);
+    }
     let main_path = std::path::Path::new(path);
+    let mut config_loaded = false;
     if let Some(parent_dir) = main_path.parent() {
         let toml_path = parent_dir.join("eronom.toml");
         if toml_path.exists() {
@@ -613,7 +655,18 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
                     if let Ok(json_val) = serde_json::to_value(toml_val) {
                         let config_val = backend::gc::json_to_value(json_val);
                         vm.register_global("config", config_val);
+                        config_loaded = true;
                     }
+                }
+            }
+        }
+    }
+    if !config_loaded {
+        if let Some(toml_content) = backend::embedded::get_vfs_text("eronom.toml") {
+            if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
+                if let Ok(json_val) = serde_json::to_value(toml_val) {
+                    let config_val = backend::gc::json_to_value(json_val);
+                    vm.register_global("config", config_val);
                 }
             }
         }
@@ -709,6 +762,16 @@ pub fn run_test_command(file_opt: Option<std::path::PathBuf>) -> anyhow::Result<
 }
 
 fn main() {
+    // 1. Check if the currently executing binary is a self-contained embedded executable
+    if let Ok(true) = backend::embedded::check_and_mount_embedded() {
+        let entrypoint = backend::embedded::get_vfs_entrypoint().unwrap_or_else(|| "server.er".to_string());
+        if let Err(e) = run_file(&entrypoint) {
+            eprintln!("Runtime error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     use clap::Parser;
     let cli = eronom::cli::Cli::parse();
 
@@ -744,3 +807,4 @@ fn main() {
         std::process::exit(1);
     }
 }
+

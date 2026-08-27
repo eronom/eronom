@@ -1,0 +1,215 @@
+// Comprehensive Test Suite for Method Chaining in Eronom
+import { assert, assertEqual, assertTrue, assertFalse, runTests, test, describe } from "std/test"
+
+describe("String Method Chaining", () => {
+  test("basic string trimming and case conversion", () => {
+    let s = "  Hello World  "
+    assertEqual(s.trim(), "Hello World")
+    assertEqual(s.trim().toLowerCase(), "hello world")
+    assertEqual(s.trim().toUpperCase(), "HELLO WORLD")
+  })
+
+  test("string split and array pipeline", () => {
+    let text = "  apple, banana , cherry , date  "
+    let result = text.trim()
+                     .split(",")
+                     .map(x => x.trim().toUpperCase())
+                     .filter(x => x.length > 4)
+                     .join(" | ")
+    assertEqual(result, "APPLE | BANANA | CHERRY")
+  })
+
+  test("string search and slice operations", () => {
+    let s = "Eronom Language Runtime"
+    assertEqual(s.slice(0, 6), "Eronom")
+    assertEqual(s.slice(-7), "Runtime")
+    assertEqual(s.substring(7, 15), "Language")
+    assertTrue(s.startsWith("Eronom"))
+    assertTrue(s.endsWith("Runtime"))
+    assertTrue(s.includes("Language"))
+    assertEqual(s.indexOf("Language"), 7)
+    assertEqual(s.indexOf("NotFound"), -1)
+  })
+
+  test("string replacement and formatting", () => {
+    let str = "foo bar foo baz"
+    assertEqual(str.replace("foo", "qux"), "qux bar foo baz")
+    assertEqual(str.replaceAll("foo", "qux"), "qux bar qux baz")
+    assertEqual("ha".repeat(3), "hahaha")
+    assertEqual("42".padStart(5, "0"), "00042")
+    assertEqual("42".padEnd(5, "!"), "42!!!")
+    assertEqual("Hello".concat(" ", "World", "!"), "Hello World!")
+    assertEqual("A".charCodeAt(0), 65)
+    assertEqual("Eronom".charAt(0), "E")
+    assertEqual("Eronom".length, 6)
+  })
+})
+
+describe("Array Method Chaining", () => {
+  test("filter, map, reverse, slice chaining", () => {
+    let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let result = numbers.filter(n => n % 2 == 0)
+                        .map(n => n * 10)
+                        .reverse()
+                        .slice(0, 3)
+    assertEqual(result, [100, 80, 60])
+  })
+
+  test("reduce calculations", () => {
+    let numbers = [1, 2, 3, 4, 5]
+    let sum = numbers.reduce((acc, x) => acc + x, 0)
+    assertEqual(sum, 15)
+
+    let product = numbers.reduce((acc, x) => acc * x)
+    assertEqual(product, 120)
+  })
+
+  test("search and predicate methods: find, findIndex, some, every, includes", () => {
+    let users = [
+      { id: 1, name: "Alice", active: true },
+      { id: 2, name: "Bob", active: false },
+      { id: 3, name: "Charlie", active: true }
+    ]
+
+    let found = users.find(u => u.name == "Bob")
+    assertEqual(found.id, 2)
+
+    let index = users.findIndex(u => u.name == "Charlie")
+    assertEqual(index, 2)
+
+    assertTrue(users.some(u => u.active == false))
+    assertFalse(users.every(u => u.active == true))
+
+    let list = [10, 20, 30, 40, 20]
+    assertTrue(list.includes(30))
+    assertFalse(list.includes(99))
+    assertEqual(list.indexOf(20), 1)
+    assertEqual(list.lastIndexOf(20), 4)
+  })
+
+  test("array transformations: flat, flatMap, concat, join", () => {
+    let nested = [1, [2, 3], [4, [5, 6]]]
+    assertEqual(nested.flat(1), [1, 2, 3, 4, [5, 6]])
+    assertEqual(nested.flat(2), [1, 2, 3, 4, 5, 6])
+
+    let words = ["hello world", "foo bar"]
+    let splitWords = words.flatMap(w => w.split(" "))
+    assertEqual(splitWords, ["hello", "world", "foo", "bar"])
+
+    let merged = [1, 2].concat([3, 4], 5)
+    assertEqual(merged, [1, 2, 3, 4, 5])
+    assertEqual(merged.join("-"), "1-2-3-4-5")
+  })
+
+  test("in-place methods: sort, reverse, fill, push, pop, shift, unshift", () => {
+    let arr = [5, 2, 8, 1, 9]
+    arr.sort((a, b) => a - b)
+    assertEqual(arr, [1, 2, 5, 8, 9])
+
+    arr.sort((a, b) => b - a)
+    assertEqual(arr, [9, 8, 5, 2, 1])
+
+    let letters = ["c", "a", "b"]
+    letters.sort()
+    assertEqual(letters, ["a", "b", "c"])
+
+    let f = [1, 2, 3, 4, 5]
+    f.fill(0, 1, 4)
+    assertEqual(f, [1, 0, 0, 0, 5])
+
+    let stack = [10, 20]
+    assertEqual(stack.push(30, 40), 4)
+    assertEqual(stack.pop(), 40)
+    assertEqual(stack.shift(), 10)
+    assertEqual(stack.unshift(5), 3)
+    assertEqual(stack, [5, 20, 30])
+  })
+})
+
+describe("Object Introspection Methods", () => {
+  test("keys, values, entries, hasOwnProperty", () => {
+    let person = {
+      name: "Vishnu",
+      age: 25,
+      city: "Bengaluru"
+    }
+
+    let keys = person.keys().sort()
+    assertEqual(keys, ["age", "city", "name"])
+
+    assertTrue(person.has("name"))
+    assertTrue(person.hasOwnProperty("age"))
+    assertFalse(person.has("salary"))
+
+    let entries = person.entries()
+    assertTrue(entries.length == 3)
+  })
+})
+
+describe("Fluent Struct Method Chaining (Builder Pattern)", () => {
+  struct QueryBuilder {
+    table: string,
+    whereClause: string,
+    limitCount: int,
+    fn from(tbl: string) {
+      this.table = tbl
+      return this
+    }
+    fn where(clause: string) {
+      this.whereClause = clause
+      return this
+    }
+    fn limit(count: int) {
+      this.limitCount = count
+      return this
+    }
+    fn build() {
+      return "SELECT * FROM " + this.table + " WHERE " + this.whereClause + " LIMIT " + this.limitCount
+    }
+  }
+
+  test("chained builder returns expected query", () => {
+    let builder = QueryBuilder {
+      table: "",
+      whereClause: "",
+      limitCount: 0,
+    }
+
+    let query = builder.from("users")
+                       .where("is_active = true")
+                       .limit(25)
+                       .build()
+
+    assertEqual(query, "SELECT * FROM users WHERE is_active = true LIMIT 25")
+  })
+
+  struct Calculator {
+    value: int,
+    fn add(n: int) {
+      this.value = this.value + n
+      return this
+    }
+    fn mul(n: int) {
+      this.value = this.value * n
+      return this
+    }
+    fn sub(n: int) {
+      this.value = this.value - n
+      return this
+    }
+    fn result() {
+      return this.value
+    }
+  }
+
+  test("arithmetic chaining on struct", () => {
+    let calc = Calculator { value: 10 }
+    let res = calc.add(5).mul(2).sub(6).result()
+    assertEqual(res, 24)
+  })
+})
+
+let results = runTests()
+if (!results.success) {
+  throw "Some tests failed!"
+}

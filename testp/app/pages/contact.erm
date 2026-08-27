@@ -271,7 +271,7 @@
 
 <div class="contact-container">
     <div class="contact-card">
-        <Suspense fallback={<ContactSkeleton />}>
+        <Loading fallback={<ContactSkeleton />}>
             if submitted {
                 <div class="success-container">
                     <div class="success-icon">✓</div>
@@ -310,7 +310,7 @@
                     </button>
                 </form>
             }
-        </Suspense>
+        </Loading>
 
         <div class="home-link-container">
             <Link to="/" class="home-link">← Go Back Home</Link>

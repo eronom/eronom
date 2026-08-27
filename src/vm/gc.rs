@@ -1,6 +1,6 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 use super::value::{
-    Value, TAG_NUMBER_MASK, TAG_STRING, TAG_NATIVE, MapKey
+    Value, TAG_STRING, TAG_NATIVE, MapKey
 };
 use super::bytecode::Function;
 use fnv::FnvHashMap;
@@ -77,6 +77,69 @@ impl StructDescriptor {
             methods,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinMethodId {
+    // String methods
+    StringToUpperCase,
+    StringToLowerCase,
+    StringTrim,
+    StringTrimStart,
+    StringTrimEnd,
+    StringSplit,
+    StringSlice,
+    StringSubstring,
+    StringIndexOf,
+    StringLastIndexOf,
+    StringIncludes,
+    StringStartsWith,
+    StringEndsWith,
+    StringReplace,
+    StringReplaceAll,
+    StringCharAt,
+    StringCharCodeAt,
+    StringRepeat,
+    StringPadStart,
+    StringPadEnd,
+    StringConcat,
+
+    // Array methods
+    ArrayPush,
+    ArrayPop,
+    ArrayShift,
+    ArrayUnshift,
+    ArrayMap,
+    ArrayFilter,
+    ArrayReduce,
+    ArrayForEach,
+    ArrayFind,
+    ArrayFindIndex,
+    ArraySome,
+    ArrayEvery,
+    ArrayIncludes,
+    ArrayIndexOf,
+    ArrayLastIndexOf,
+    ArraySlice,
+    ArrayJoin,
+    ArrayConcat,
+    ArrayReverse,
+    ArraySort,
+    ArrayFlat,
+    ArrayFlatMap,
+    ArrayFill,
+
+    // Object methods
+    ObjectKeys,
+    ObjectValues,
+    ObjectEntries,
+    ObjectHasOwnProperty,
+}
+
+#[derive(Clone)]
+pub struct GcBuiltinMethod {
+    pub receiver: Value,
+    pub method: BuiltinMethodId,
 }
 
 #[derive(Clone)]
@@ -160,6 +223,7 @@ pub enum GcData {
     Promise(GcPromise),
     Struct(GcStruct),
     BoundMethod(GcBoundMethod),
+    BuiltinMethod(GcBuiltinMethod),
     StructConstructor(Rc<StructDescriptor>),
     Closure(GcClosure),
     Upvalue(GcUpvalue),
@@ -172,8 +236,6 @@ pub struct GcObject {
     pub data: GcData,
 }
 
-const GC_CHUNK_SIZE: usize = 1024;
-
 pub struct GcState {
     pub head: *mut GcObject,
     pub alloc_count: usize,
@@ -184,13 +246,15 @@ pub struct GcState {
     pub sweep_ptr: *mut GcObject,
     pub prev_sweep_ptr: *mut GcObject,
     pub free_list: Vec<*mut GcObject>,
+    pub current_chunk_ptr: *mut GcObject,
+    pub chunk_remaining: usize,
     pub chunks: Vec<*mut GcObject>,
     pub vector_pool: Vec<Vec<Value>>,
     pub map_pool: Vec<ObjectMap>,
 }
 
 thread_local! {
-    pub static GC_STATE: RefCell<GcState> = RefCell::new(GcState {
+    pub static GC_STATE: std::cell::UnsafeCell<GcState> = const { std::cell::UnsafeCell::new(GcState {
         head: std::ptr::null_mut(),
         alloc_count: 0,
         alloc_threshold: 10000,
@@ -200,45 +264,91 @@ thread_local! {
         sweep_ptr: std::ptr::null_mut(),
         prev_sweep_ptr: std::ptr::null_mut(),
         free_list: Vec::new(),
+        current_chunk_ptr: std::ptr::null_mut(),
+        chunk_remaining: 0,
         chunks: Vec::new(),
         vector_pool: Vec::new(),
         map_pool: Vec::new(),
-    });
+    }) };
     pub static GC_ROOTS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
 }
 
 pub static GC_NEEDS_STEP: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
+pub fn gc_with_state<R>(f: impl FnOnce(&mut GcState) -> R) -> R {
+    GC_STATE.with(|state| unsafe { f(&mut *state.get()) })
+}
+
+#[inline(always)]
 pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
-    GC_STATE.with(|state| {
-        let mut s = state.borrow_mut();
-        if let Some(mut vec) = s.vector_pool.pop() {
-            if vec.capacity() < capacity {
-                vec.reserve(capacity - vec.capacity());
+    GC_STATE.with(|state| unsafe {
+        let s = &mut *state.get();
+        if let Some(mut v) = s.vector_pool.pop() {
+            if v.capacity() < capacity {
+                v.reserve(capacity - v.capacity());
             }
-            vec
+            v
         } else {
-            Vec::with_capacity(capacity)
+            let cap = capacity.max(8);
+            for _ in 0..63 {
+                s.vector_pool.push(Vec::with_capacity(cap));
+            }
+            Vec::with_capacity(cap)
         }
     })
 }
 
 #[inline(always)]
 pub fn get_pooled_map(capacity: usize) -> ObjectMap {
-    GC_STATE.with(|state| {
-        let mut s = state.borrow_mut();
-        if let Some(mut map) = s.map_pool.pop() {
-            map.reserve(capacity);
-            map
+    GC_STATE.with(|state| unsafe {
+        let s = &mut *state.get();
+        if let Some(mut m) = s.map_pool.pop() {
+            if m.capacity() < capacity {
+                m.reserve(capacity - m.capacity());
+            }
+            m
         } else {
-            ObjectMap::with_capacity_and_hasher(capacity, Default::default())
+            let cap = capacity.max(4);
+            for _ in 0..31 {
+                s.map_pool.push(ObjectMap::with_capacity_and_hasher(cap, Default::default()));
+            }
+            ObjectMap::with_capacity_and_hasher(cap, Default::default())
         }
     })
 }
 
-// Pool size cap: limit to 16384 entries to allow fast hot loop object recycling.
-const GC_POOL_MAX: usize = 16384;
+#[inline(always)]
+pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
+    GC_STATE.with(|state| unsafe {
+        let s = &mut *state.get();
+        let count = slice.len();
+        let cap = if count < 4 { 8 } else { count + (count >> 1) };
+        let mut elements = if let Some(mut v) = s.vector_pool.pop() {
+            if v.capacity() < cap {
+                v.reserve(cap - v.capacity());
+            }
+            v.clear();
+            v
+        } else {
+            for _ in 0..63 {
+                s.vector_pool.push(Vec::with_capacity(cap));
+            }
+            Vec::with_capacity(cap)
+        };
+        elements.extend_from_slice(slice);
+        let ptr = gc_alloc_object(s, GcData::Array(elements));
+        (*ptr).next = s.head;
+        s.head = ptr;
+        s.alloc_count += 1;
+        if s.alloc_count >= s.alloc_threshold {
+            GC_NEEDS_STEP.store(true, Ordering::Relaxed);
+        }
+        ptr
+    })
+}
+
+const GC_POOL_MAX: usize = 2048;
 
 #[inline(always)]
 pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
@@ -273,6 +383,8 @@ pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
     }
 }
 
+const CHUNK_COUNT: usize = 4096;
+
 #[inline(always)]
 pub fn gc_alloc_object(state: &mut GcState, data: GcData) -> *mut GcObject {
     if let Some(ptr) = state.free_list.pop() {
@@ -284,24 +396,35 @@ pub fn gc_alloc_object(state: &mut GcState, data: GcData) -> *mut GcObject {
             });
         }
         ptr
-    } else {
-        let layout = std::alloc::Layout::array::<GcObject>(GC_CHUNK_SIZE).unwrap();
-        let raw = unsafe { std::alloc::alloc(layout) as *mut GcObject };
-        if raw.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-        state.chunks.push(raw);
+    } else if state.chunk_remaining > 0 {
+        let ptr = state.current_chunk_ptr;
         unsafe {
-            for i in (1..GC_CHUNK_SIZE).rev() {
-                state.free_list.push(raw.add(i));
-            }
-            std::ptr::write(raw, GcObject {
+            state.current_chunk_ptr = state.current_chunk_ptr.add(1);
+            state.chunk_remaining -= 1;
+            std::ptr::write(ptr, GcObject {
                 color: GcColor::White,
                 next: std::ptr::null_mut(),
                 data,
             });
         }
-        raw
+        ptr
+    } else {
+        let layout = std::alloc::Layout::array::<GcObject>(CHUNK_COUNT).unwrap();
+        let raw = unsafe { std::alloc::alloc(layout) as *mut GcObject };
+        if raw.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        state.chunks.push(raw);
+        state.current_chunk_ptr = unsafe { raw.add(1) };
+        state.chunk_remaining = CHUNK_COUNT - 1;
+        unsafe {
+            std::ptr::write(raw, GcObject {
+                color: GcColor::White,
+                next: std::ptr::null_mut(),
+                data,
+            });
+            raw
+        }
     }
 }
 
@@ -315,13 +438,10 @@ pub fn gc_dealloc_object(state: &mut GcState, ptr: *mut GcObject) {
 
 #[inline(always)]
 pub fn gc_allocate(data: GcData) -> *mut GcObject {
-    GC_STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        let s_ref = &mut *state;
+    GC_STATE.with(|state| unsafe {
+        let s_ref = &mut *state.get();
         let ptr = gc_alloc_object(s_ref, data);
-        unsafe {
-            (*ptr).next = s_ref.head;
-        }
+        (*ptr).next = s_ref.head;
         s_ref.head = ptr;
 
         if let GcPhase::Sweep = s_ref.phase {
@@ -342,8 +462,7 @@ pub fn gc_allocate(data: GcData) -> *mut GcObject {
 pub fn gc_free_all() {
     unsafe {
         GC_STATE.with(|state| {
-            let mut state = state.borrow_mut();
-            let s_ref = &mut *state;
+            let s_ref = &mut *state.get();
             let mut curr = s_ref.head;
             s_ref.head = std::ptr::null_mut();
             while !curr.is_null() {
@@ -352,7 +471,9 @@ pub fn gc_free_all() {
                 curr = next;
             }
             s_ref.free_list.clear();
-            let layout = std::alloc::Layout::array::<GcObject>(GC_CHUNK_SIZE).unwrap();
+            s_ref.current_chunk_ptr = std::ptr::null_mut();
+            s_ref.chunk_remaining = 0;
+            let layout = std::alloc::Layout::array::<GcObject>(CHUNK_COUNT).unwrap();
             for chunk in s_ref.chunks.drain(..) {
                 std::alloc::dealloc(chunk as *mut u8, layout);
             }
@@ -367,20 +488,22 @@ pub fn gc_free_all() {
             GC_NEEDS_STEP.store(false, Ordering::Relaxed);
         });
         gc_clear_string_cache();
+        super::shape::reset_shape_state();
+        crate::jit::helpers::reset_global_ic();
     }
 }
 
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn gc_mark_value(val: &Value) {
-    if (val.0 & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
+    if !val.is_number() && !val.is_inline_string() {
         let tag = val.0 & 0xffff_0000_0000_0000;
         if tag >= TAG_STRING && tag != TAG_NATIVE {
             let ptr = val.as_gc_ptr();
             unsafe {
                 if !ptr.is_null() && (*ptr).color == GcColor::White {
                     (*ptr).color = GcColor::Gray;
-                    GC_STATE.with(|state| state.borrow_mut().gray_stack.push(ptr));
+                    GC_STATE.with(|state| (*state.get()).gray_stack.push(ptr));
                 }
             }
         }
@@ -395,7 +518,7 @@ pub fn gc_mark_object(ptr: *mut GcObject) {
     unsafe {
         if (*ptr).color == GcColor::White {
             (*ptr).color = GcColor::Gray;
-            GC_STATE.with(|state| state.borrow_mut().gray_stack.push(ptr));
+            GC_STATE.with(|state| (*state.get()).gray_stack.push(ptr));
         }
     }
 }
@@ -448,6 +571,9 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
                 gc_mark_value(&bm.receiver);
                 gc_mark_object(bm.function);
             }
+            GcData::BuiltinMethod(bm) => {
+                gc_mark_value(&bm.receiver);
+            }
             GcData::StructConstructor(_) => {}
             GcData::Closure(c) => {
                 gc_mark_object(c.function);
@@ -478,17 +604,15 @@ pub fn gc_write_barrier(parent: *mut GcObject, child: &Value) {
         if parent.is_null() {
             return;
         }
-        if (*parent).color == GcColor::Black {
-            if (child.0 & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
-                let tag = child.0 & 0xffff_0000_0000_0000;
-                if tag >= TAG_STRING && tag != TAG_NATIVE {
-                    let child_ptr = child.as_gc_ptr();
-                    if !child_ptr.is_null() && (*child_ptr).color == GcColor::White {
-                        (*child_ptr).color = GcColor::Gray;
-                        GC_STATE.with(|state| {
-                            state.borrow_mut().gray_stack.push(child_ptr);
-                        });
-                    }
+        if (*parent).color == GcColor::Black && !child.is_number() && !child.is_inline_string() {
+            let tag = child.0 & 0xffff_0000_0000_0000;
+            if tag >= TAG_STRING && tag != TAG_NATIVE {
+                let child_ptr = child.as_gc_ptr();
+                if !child_ptr.is_null() && (*child_ptr).color == GcColor::White {
+                    (*child_ptr).color = GcColor::Gray;
+                    GC_STATE.with(|state| {
+                        (*state.get()).gray_stack.push(child_ptr);
+                    });
                 }
             }
         }
@@ -515,6 +639,11 @@ pub fn gc_sweep_string_cache() {
 pub fn gc_alloc_string(s: &str) -> *mut GcObject {
     let rc_str: Rc<str> = Rc::from(s);
     gc_allocate(GcData::String(rc_str))
+}
+
+#[inline(always)]
+pub fn gc_alloc_builtin_method(receiver: Value, method: BuiltinMethodId) -> *mut GcObject {
+    gc_allocate(GcData::BuiltinMethod(GcBuiltinMethod { receiver, method }))
 }
 
 #[inline(always)]

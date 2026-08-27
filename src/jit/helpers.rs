@@ -1,6 +1,7 @@
 use std::time::Instant;
-use crate::vm::execute::VM;
-use crate::vm::value::{Value, MapKey, push_positive_integer, ADD_SCRATCH};
+use std::rc::Rc;
+use crate::vm::execute::{VM, format_undeclared_var_error};
+use crate::vm::value::{Value, MapKey};
 use crate::vm::gc::{gc_allocate, gc_alloc_string, gc_write_barrier, GcData, get_or_create_string, get_pooled_vec, get_pooled_map, GC_NEEDS_STEP};
 use super::profile::{JIT_PROFILING, JIT_PROFILER};
 use fnv::FnvHashMap;
@@ -35,62 +36,102 @@ pub extern "C" fn er_jit_add(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
     unsafe {
         let res = if val_b.is_number() && val_c.is_number() {
             Value::number_unchecked(val_b.as_number() + val_c.as_number())
-        } else {
-            use std::fmt::Write;
-            if val_b.is_string() {
-                let sa_str = match &(*val_b.as_gc_ptr()).data {
-                    GcData::String(s) => s,
-                    _ => unreachable!(),
-                };
-                let new_ptr = ADD_SCRATCH.with(|scratch| {
-                    let mut s_ref = scratch.borrow_mut();
-                    s_ref.clear();
-                    s_ref.push_str(sa_str);
-                    if val_c.is_string() {
-                        let sb_str = match &(*val_c.as_gc_ptr()).data {
-                            GcData::String(s) => s,
-                            _ => unreachable!(),
-                        };
-                        s_ref.push_str(sb_str);
-                    } else if val_c.is_number() {
-                        let val = val_c.as_number();
-                        if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
-                            push_positive_integer(&mut s_ref, val as u64);
-                        } else {
-                            let _ = write!(&mut s_ref, "{}", val);
-                        }
+        } else if val_b.is_string() {
+            let sa_str = val_b.as_str().unwrap_or("");
+            let mut buf = [0u8; 64];
+            let sa_bytes = sa_str.as_bytes();
+            let mut len = sa_bytes.len().min(63);
+            buf[..len].copy_from_slice(&sa_bytes[..len]);
+            if val_c.is_string() {
+                if let Some(sb_str) = val_c.as_str() {
+                    let sb_bytes = sb_str.as_bytes();
+                    let to_copy = sb_bytes.len().min(63 - len);
+                    buf[len..len + to_copy].copy_from_slice(&sb_bytes[..to_copy]);
+                    len += to_copy;
+                }
+            } else if val_c.is_number() {
+                let val = val_c.as_number();
+                if val >= 0.0 && val == val.trunc() && val < 1e15 {
+                    let mut n = val as u64;
+                    if n == 0 {
+                        if len < 64 { buf[len] = b'0'; len += 1; }
                     } else {
-                        let _ = write!(&mut s_ref, "{}", val_c);
-                    }
-                    gc_alloc_string(s_ref.as_str())
-                });
-                Value::string(new_ptr)
-            } else if val_c.is_string() {
-                let sb_str = match &(*val_c.as_gc_ptr()).data {
-                    GcData::String(s) => s,
-                    _ => unreachable!(),
-                };
-                let new_ptr = ADD_SCRATCH.with(|scratch| {
-                    let mut s_ref = scratch.borrow_mut();
-                    s_ref.clear();
-                    if val_b.is_number() {
-                        let val = val_b.as_number();
-                        if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
-                            push_positive_integer(&mut s_ref, val as u64);
-                        } else {
-                            let _ = write!(&mut s_ref, "{}", val);
+                        let mut digits = [0u8; 20];
+                        let mut d_len = 0;
+                        while n > 0 {
+                            digits[d_len] = b'0' + (n % 10) as u8;
+                            n /= 10;
+                            d_len += 1;
                         }
-                    } else {
-                        let _ = write!(&mut s_ref, "{}", val_b);
+                        for i in (0..d_len).rev() {
+                            if len < 64 {
+                                buf[len] = digits[i];
+                                len += 1;
+                            }
+                        }
                     }
-                    s_ref.push_str(sb_str);
-                    gc_alloc_string(s_ref.as_str())
-                });
-                Value::string(new_ptr)
+                } else {
+                    use std::io::Write;
+                    let _ = write!(&mut buf[len..], "{}", val);
+                }
             } else {
-                (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers or strings".into());
-                Value::null()
+                use std::io::Write;
+                let _ = write!(&mut buf[len..], "{}", val_c);
             }
+            let s = std::str::from_utf8_unchecked(&buf[..len]);
+            if let Some(inline) = Value::inline_string(s) {
+                inline
+            } else {
+                let new_ptr = gc_alloc_string(s);
+                Value::string(new_ptr)
+            }
+        } else if val_c.is_string() {
+            let sb_str = val_c.as_str().unwrap_or("");
+            let mut buf = [0u8; 64];
+            let mut len = 0;
+            if val_b.is_number() {
+                let val = val_b.as_number();
+                if val >= 0.0 && val == val.trunc() && val < 1e15 {
+                    let mut n = val as u64;
+                    if n == 0 {
+                        if len < 64 { buf[len] = b'0'; len += 1; }
+                    } else {
+                        let mut digits = [0u8; 20];
+                        let mut d_len = 0;
+                        while n > 0 {
+                            digits[d_len] = b'0' + (n % 10) as u8;
+                            n /= 10;
+                            d_len += 1;
+                        }
+                        for i in (0..d_len).rev() {
+                            if len < 64 {
+                                buf[len] = digits[i];
+                                len += 1;
+                            }
+                        }
+                    }
+                } else {
+                    use std::io::Write;
+                    let _ = write!(&mut buf[len..], "{}", val);
+                }
+            } else {
+                use std::io::Write;
+                let _ = write!(&mut buf[len..], "{}", val_b);
+            }
+            let sb_bytes = sb_str.as_bytes();
+            let to_copy = sb_bytes.len().min(63 - len);
+            buf[len..len + to_copy].copy_from_slice(&sb_bytes[..to_copy]);
+            len += to_copy;
+            let s = std::str::from_utf8_unchecked(&buf[..len]);
+            if let Some(inline) = Value::inline_string(s) {
+                inline
+            } else {
+                let new_ptr = gc_alloc_string(s);
+                Value::string(new_ptr)
+            }
+        } else {
+            (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers or strings".into());
+            Value::null()
         };
         if JIT_PROFILING {
             JIT_PROFILER.with(|p| {
@@ -351,10 +392,8 @@ pub fn reset_global_ic() {
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: Value, val: Value) -> i64 {
     unsafe {
-        let name = match &(*name_val.as_gc_ptr()).data {
-            GcData::String(s) => s.clone(),
-            _ => unreachable!(),
-        };
+        let name_str = name_val.as_str().unwrap_or("");
+        let name: Rc<str> = Rc::from(name_str);
         let key = name_val.0;
         let slot = (key ^ (key >> 6)) as usize & 63;
         let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
@@ -375,10 +414,7 @@ pub extern "C" fn er_jit_get_global(vm: *mut VM, name_val: Value) -> Value {
             return ic.val;
         }
 
-        let name = match &(*name_val.as_gc_ptr()).data {
-            GcData::String(s) => s,
-            _ => unreachable!(),
-        };
+        let name = name_val.as_str().unwrap_or("");
         if let Some(val) = (*vm).globals.get(name) {
             ic.key = key;
             ic.val = *val;
@@ -393,22 +429,19 @@ pub extern "C" fn er_jit_get_global(vm: *mut VM, name_val: Value) -> Value {
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_set_global(vm: *mut VM, val: Value, name_val: Value) -> i64 {
     unsafe {
-        let name = match &(*name_val.as_gc_ptr()).data {
-            GcData::String(s) => s.clone(),
-            _ => unreachable!(),
-        };
-        match (*vm).globals.entry(name.clone()) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
+        let name = name_val.as_str().unwrap_or("");
+        match (*vm).globals.get_mut(name) {
+            Some(entry) => {
                 let key = name_val.0;
                 let slot = (key ^ (key >> 6)) as usize & 63;
                 let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
                 ic.key = key;
                 ic.val = val;
-                entry.insert(val);
+                *entry = val;
                 0
             }
-            std::collections::hash_map::Entry::Vacant(_) => {
-                (*vm).has_error_flag = 1; (*vm).error = Some(crate::vm::execute::format_undeclared_var_error(&name));
+            None => {
+                (*vm).has_error_flag = 1; (*vm).error = Some(format_undeclared_var_error(name));
                 -1
             }
         }
@@ -430,10 +463,9 @@ pub extern "C" fn er_jit_needs_gc() -> i64 {
 pub extern "C" fn er_jit_make_array(_vm: *mut VM, start_reg: *const Value, count: i64) -> Value {
     let start_time = if JIT_PROFILING { Some(Instant::now()) } else { None };
     unsafe {
-        let mut elements = get_pooled_vec(count as usize);
-        let slice = std::slice::from_raw_parts(start_reg, count as usize);
-        elements.extend_from_slice(slice);
-        let ptr = gc_allocate(GcData::Array(elements));
+        let count_usize = count as usize;
+        let slice = std::slice::from_raw_parts(start_reg, count_usize);
+        let ptr = crate::vm::gc::gc_alloc_array(slice);
         let res = Value::array(ptr);
         if JIT_PROFILING {
             JIT_PROFILER.with(|p| {
@@ -449,13 +481,10 @@ pub extern "C" fn er_jit_make_array(_vm: *mut VM, start_reg: *const Value, count
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val: Value, methods_val: Value) -> i64 {
     unsafe {
-        let name_rc = match &(*name_val.as_gc_ptr()).data {
-            GcData::String(s) => s.clone(),
-            _ => unreachable!(),
-        };
+        let name_rc: Rc<str> = Rc::from(name_val.as_str().unwrap_or(""));
         let fields_vec = match &(*fields_val.as_gc_ptr()).data {
             GcData::Array(arr) => arr,
-            _ => unreachable!(),
+            _ => return -1,
         };
         
         let mut field_indices = FnvHashMap::default();
@@ -493,6 +522,47 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
         let ptr = if count_usize == 0 {
             let obj = get_pooled_map(0);
             gc_allocate(GcData::Object(obj))
+        } else if count_usize == 2 {
+            let k0 = *start_reg;
+            let v0 = *start_reg.add(1);
+            let k1 = *start_reg.add(2);
+            let v1 = *start_reg.add(3);
+            if !k0.is_string() || !k1.is_string() {
+                (*vm).has_error_flag = 1;
+                (*vm).error = Some("Object key must be string".into());
+                return Value::null();
+            }
+            let keys = [k0, k1];
+            if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
+                let mut fields = crate::vm::gc::get_pooled_vec(2);
+                fields.clear();
+                if offsets[0] == 0 {
+                    fields.push(v0);
+                    fields.push(v1);
+                } else {
+                    fields.push(v1);
+                    fields.push(v0);
+                }
+                gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                    descriptor: desc,
+                    fields,
+                }))
+            } else {
+                let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape_2(k0, k1);
+                let mut fields = crate::vm::gc::get_pooled_vec(2);
+                fields.clear();
+                if offsets[0] == 0 {
+                    fields.push(v0);
+                    fields.push(v1);
+                } else {
+                    fields.push(v1);
+                    fields.push(v0);
+                }
+                gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
+                    descriptor: desc,
+                    fields,
+                }))
+            }
         } else if count_usize <= 16 {
             let mut keys = [Value::null(); 16];
             let mut values = [Value::null(); 16];
@@ -510,6 +580,7 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
 
             if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys[..count_usize]) {
                 let mut fields = crate::vm::gc::get_pooled_vec(count_usize);
+                fields.clear();
                 fields.resize(count_usize, Value::null());
                 for i in 0..count_usize {
                     let val = values[i];
@@ -523,6 +594,7 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
             } else {
                 let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys[..count_usize]);
                 let mut fields = crate::vm::gc::get_pooled_vec(count_usize);
+                fields.clear();
                 fields.resize(count_usize, Value::null());
                 for i in 0..count_usize {
                     fields[offsets[i]] = values[i];
@@ -620,10 +692,7 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
                         let ptr = gc_allocate(GcData::BoundMethod(bound_method));
                         Value::function(ptr)
                     } else {
-                        let name = match &(*name_val.as_gc_ptr()).data {
-                            GcData::String(s) => s.as_ref(),
-                            _ => "",
-                        };
+                        let name = name_val.as_str().unwrap_or("");
                         if name == "json" || name == "text" {
                             if s.get_field_by_name("_body").is_some() {
                                 let tag = if name == "json" { crate::vm::value::TAG_METHOD_JSON } else { crate::vm::value::TAG_METHOD_TEXT };
@@ -633,6 +702,9 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
                             }
                         } else if name == "exists" && s.descriptor.name.as_ref() == "File" {
                             Value(crate::vm::value::TAG_METHOD_FILE | (ptr as u64 & crate::vm::value::PTR_MASK & !3) | 0)
+                        } else if let Some(m) = crate::vm::execute::get_object_builtin_method_id(name) {
+                            let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                            Value::function(ptr)
                         } else {
                             Value::null()
                         }
@@ -643,10 +715,7 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
                         val
                     } else {
                         // Check response / file methods only on miss
-                        let name = match &(*name_val.as_gc_ptr()).data {
-                            GcData::String(s) => s.as_ref(),
-                            _ => "",
-                        };
+                        let name = name_val.as_str().unwrap_or("");
                         if name == "json" || name == "text" {
                             let body_key = get_or_create_string("_body");
                             if map.contains_key(&MapKey(Value::string(body_key))) {
@@ -662,37 +731,47 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
                             } else {
                                 Value::null()
                             }
+                        } else if let Some(m) = crate::vm::execute::get_object_builtin_method_id(name) {
+                            let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                            Value::function(ptr)
                         } else {
                             Value::null()
                         }
                     }
                 }
-                _ => unreachable!(),
+                _ => Value::null(),
             }
         } else if obj.is_array() {
-            let name = match &(*name_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref(),
-                _ => unreachable!(),
-            };
+            let name = name_val.as_str().unwrap_or("");
             let ptr = obj.as_gc_ptr();
             match &(*ptr).data {
                 GcData::Array(arr) => {
-                    if name == "push" {
-                        Value::array_method_push(ptr)
-                    } else if name == "pop" {
-                        Value::array_method_pop(ptr)
-                    } else if name == "length" {
+                    if name == "length" {
                         Value::number(arr.len() as f64)
+                    } else if let Some(m) = crate::vm::execute::get_array_builtin_method_id(name) {
+                        let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                        Value::function(ptr)
                     } else if let Ok(idx) = name.parse::<usize>() {
                         arr.get(idx).cloned().unwrap_or(Value::null())
                     } else {
                         Value::null()
                     }
                 }
-                _ => unreachable!(),
+                _ => Value::null(),
+            }
+        } else if obj.is_string() {
+            let name = name_val.as_str().unwrap_or("");
+            if name == "length" {
+                let s = obj.as_str().unwrap_or("");
+                Value::number(s.chars().count() as f64)
+            } else if let Some(m) = crate::vm::execute::get_string_builtin_method_id(name) {
+                let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
+                Value::function(ptr)
+            } else {
+                Value::null()
             }
         } else {
-            (*vm).has_error_flag = 1; (*vm).error = Some("Only objects and arrays have properties".into());
+            (*vm).has_error_flag = 1; (*vm).error = Some("Only objects, arrays, and strings have properties".into());
             Value::null()
         };
         if JIT_PROFILING {
@@ -733,13 +812,10 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                     gc_write_barrier(ptr, &val);
                     0
                 }
-                _ => unreachable!(),
+                _ => 0,
             }
         } else if obj.is_array() {
-            let name = match &(*name_val.as_gc_ptr()).data {
-                GcData::String(s) => s.as_ref(),
-                _ => unreachable!(),
-            };
+            let name = name_val.as_str().unwrap_or("");
             let ptr = obj.as_gc_ptr();
             match &mut (*ptr).data {
                 GcData::Array(arr) => {
@@ -763,7 +839,7 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                         -1
                     }
                 }
-                _ => unreachable!(),
+                _ => -1,
             }
         } else {
             (*vm).has_error_flag = 1; (*vm).error = Some("Only objects and arrays have properties".into());
@@ -794,19 +870,16 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Val
                     GcData::Array(arr) => {
                         arr.get(idx).cloned().unwrap_or(Value::null())
                     }
-                    _ => unreachable!(),
+                    _ => Value::null(),
                 }
             } else if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st,
-                    _ => unreachable!(),
-                };
+                let s = index.as_str().unwrap_or("");
                 if let Ok(idx) = s.parse::<usize>() {
                     match &(*ptr).data {
                         GcData::Array(arr) => {
                             arr.get(idx).cloned().unwrap_or(Value::null())
                         }
-                        _ => unreachable!(),
+                        _ => Value::null(),
                     }
                 } else {
                     Value::null()
@@ -825,7 +898,7 @@ pub extern "C" fn er_jit_get_index(vm: *mut VM, obj: Value, index: Value) -> Val
                     GcData::Struct(s) => {
                         s.get_field(index).unwrap_or(Value::null())
                     }
-                    _ => unreachable!(),
+                    _ => Value::null(),
                 }
             } else {
                 (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
@@ -878,13 +951,10 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                         gc_write_barrier(ptr, &val);
                         0
                     }
-                    _ => unreachable!(),
+                    _ => -1,
                 }
             } else if index.is_string() {
-                let s = match &(*index.as_gc_ptr()).data {
-                    GcData::String(st) => st,
-                    _ => unreachable!(),
-                };
+                let s = index.as_str().unwrap_or("");
                 if let Ok(idx) = s.parse::<usize>() {
                     match &mut (*ptr).data {
                         GcData::Array(arr) => {
@@ -903,7 +973,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                             gc_write_barrier(ptr, &val);
                             0
                         }
-                        _ => unreachable!(),
+                        _ => -1,
                     }
                 } else {
                     (*vm).has_error_flag = 1; (*vm).error = Some("Cannot set non-numeric property on array".into());
@@ -938,7 +1008,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                             -1
                         }
                     }
-                    _ => unreachable!(),
+                    _ => -1,
                 }
             } else {
                 (*vm).has_error_flag = 1; (*vm).error = Some("Only arrays can be indexed by numbers, and objects by strings".into());
@@ -1118,12 +1188,25 @@ pub extern "C" fn er_jit_call_fast(
 
         if res == 1 {
             if !(*vm).stack.is_empty() {
+                (*vm).close_upvalues(slots_offset);
                 (*vm).frames.pop();
             }
             *dest = ret_val_out;
             0
         } else if res == 3 {
             -3
+        } else if res == 4 {
+            let initial_depth = (*vm).frames.len() - 1;
+            match (*vm).execute_loop_interpreter(initial_depth) {
+                Ok(val) => {
+                    *dest = val;
+                    0
+                }
+                Err(e) => {
+                    (*vm).error = Some(e);
+                    -2
+                }
+            }
         } else {
             if !ret_val_out.is_null() {
                 (*vm).thrown_value = ret_val_out;
@@ -1151,27 +1234,46 @@ pub extern "C" fn er_jit_call_non_vm(
         }
         let status = if callee.is_function() {
             let mut func_ptr = callee.as_gc_ptr();
-            let mut actual_arg_count = arg_count as usize;
-            let mut callee_frame_slots = frame_slots.offset((func_reg + 1) as isize);
-
-            if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
-                for i in (0..actual_arg_count).rev() {
-                    *frame_slots.offset((func_reg + 2 + i as i64) as isize) = *frame_slots.offset((func_reg + 1 + i as i64) as isize);
+            if let GcData::BuiltinMethod(builtin) = &(*func_ptr).data {
+                let receiver = builtin.receiver;
+                let method = builtin.method;
+                let mut args = Vec::with_capacity(arg_count as usize);
+                for i in 0..arg_count as usize {
+                    args.push(*frame_slots.offset((func_reg + 1 + i as i64) as isize));
                 }
-                *frame_slots.offset((func_reg + 1) as isize) = bound_method.receiver;
-                func_ptr = bound_method.function;
-                actual_arg_count += 1;
-            }
+                match (*_vm).execute_builtin_method(receiver, method, args) {
+                    Ok(res) => {
+                        *dest = res;
+                        0
+                    }
+                    Err(err) => {
+                        (*_vm).error = Some(err);
+                        (*_vm).has_error_flag = 1;
+                        -2
+                    }
+                }
+            } else {
+                let mut actual_arg_count = arg_count as usize;
+                let mut callee_frame_slots = frame_slots.offset((func_reg + 1) as isize);
 
-            let raw_fn_ptr = match &(*func_ptr).data {
-                GcData::Function(_) => func_ptr,
-                GcData::Closure(c) => c.function,
-                _ => return -1,
-            };
+                if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
+                    for i in (0..actual_arg_count).rev() {
+                        *frame_slots.offset((func_reg + 2 + i as i64) as isize) = *frame_slots.offset((func_reg + 1 + i as i64) as isize);
+                    }
+                    *frame_slots.offset((func_reg + 1) as isize) = bound_method.receiver;
+                    func_ptr = bound_method.function;
+                    actual_arg_count += 1;
+                }
+
+                let raw_fn_ptr = match &(*func_ptr).data {
+                    GcData::Function(_) => func_ptr,
+                    GcData::Closure(c) => c.function,
+                    _ => return -1,
+                };
 
             let func_val = match &(*raw_fn_ptr).data {
                 GcData::Function(func) => func,
-                _ => unreachable!(),
+                _ => return -1,
             };
 
             if actual_arg_count != func_val.arity {
@@ -1245,6 +1347,7 @@ pub extern "C" fn er_jit_call_non_vm(
 
                 if jit_res == 1 {
                     if !(*_vm).stack.is_empty() {
+                        (*_vm).close_upvalues(slots_offset);
                         (*_vm).frames.pop();
                     }
                     *dest = ret_val_out;
@@ -1252,13 +1355,24 @@ pub extern "C" fn er_jit_call_non_vm(
                 } else if jit_res == 3 {
                     -3
                 } else if jit_res == 4 {
-                    -4
+                    let initial_depth = (*_vm).frames.len() - 1;
+                    match (*_vm).execute_loop_interpreter(initial_depth) {
+                        Ok(val) => {
+                            *dest = val;
+                            0
+                        }
+                        Err(e) => {
+                            (*_vm).error = Some(e);
+                            -2
+                        }
+                    }
                 } else {
                     if !ret_val_out.is_null() {
                         (*_vm).thrown_value = ret_val_out;
                     }
                     -2
                 }
+            }
             }
         } else if callee.is_native_function() {
             let native = callee.as_native_fn();
@@ -1277,7 +1391,7 @@ pub extern "C" fn er_jit_call_non_vm(
             let ptr = callee.as_gc_ptr();
             let descriptor = match &(*ptr).data {
                 GcData::StructConstructor(desc) => desc.clone(),
-                _ => unreachable!(),
+                _ => return -1,
             };
             let mut args = Vec::with_capacity(arg_count as usize);
             for i in 0..arg_count {
@@ -1301,10 +1415,7 @@ pub extern "C" fn er_jit_call_non_vm(
                     let body_val = map.get(&MapKey(Value::string(body_key))).cloned().unwrap_or(Value::null());
                     if callee.is_method_json() {
                         if body_val.is_string() {
-                            let s = match &(*body_val.as_gc_ptr()).data {
-                                GcData::String(st) => st.as_ref(),
-                                _ => "",
-                            };
+                            let s = body_val.as_str().unwrap_or("");
                             if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(s) {
                                 crate::vm::gc::json_to_value(json_val)
                             } else {
@@ -1317,7 +1428,7 @@ pub extern "C" fn er_jit_call_non_vm(
                         body_val
                     }
                 }
-                _ => unreachable!(),
+                _ => Value::null(),
             };
             *dest = result;
             0
@@ -1366,7 +1477,7 @@ pub extern "C" fn er_jit_call_non_vm(
                         arr.pop().unwrap_or(Value::null())
                     }
                 }
-                _ => unreachable!(),
+                _ => Value::null(),
             };
             *dest = result;
             0
@@ -1395,7 +1506,7 @@ pub extern "C" fn er_jit_array_push(arr_val: Value, arg: Value) -> Value {
                 arr.push(arg);
                 Value::number(arr.len() as f64)
             }
-            _ => unreachable!(),
+            _ => Value::null(),
         };
         if JIT_PROFILING {
             JIT_PROFILER.with(|p| {
@@ -1417,7 +1528,7 @@ pub extern "C" fn er_jit_array_pop(arr_val: Value) -> Value {
             GcData::Array(arr) => {
                 arr.pop().unwrap_or(Value::null())
             }
-            _ => unreachable!(),
+            _ => Value::null(),
         };
         if JIT_PROFILING {
             JIT_PROFILER.with(|p| {
@@ -1436,15 +1547,16 @@ pub extern "C" fn er_jit_get_upvalue(vm: *mut VM, upval_idx: i64) -> Value {
         let frame = (*vm).frames.last().unwrap();
         let upval_ptr = match &(*frame.function).data {
             GcData::Closure(c) => c.upvalues[upval_idx as usize],
-            _ => unreachable!(),
+            _ => return Value::null(),
         };
-        match &(*upval_ptr).data {
+        let val = match &(*upval_ptr).data {
             GcData::Upvalue(u) => match u.location {
                 crate::vm::gc::UpvalueLocation::Open(slot) => (*vm).stack.as_ptr().add(slot).read(),
                 crate::vm::gc::UpvalueLocation::Closed(val) => val,
             },
-            _ => unreachable!(),
-        }
+            _ => Value::null(),
+        };
+        val
     }
 }
 
@@ -1454,7 +1566,7 @@ pub extern "C" fn er_jit_set_upvalue(vm: *mut VM, upval_idx: i64, val: Value) ->
         let frame = (*vm).frames.last().unwrap();
         let upval_ptr = match &(*frame.function).data {
             GcData::Closure(c) => c.upvalues[upval_idx as usize],
-            _ => unreachable!(),
+            _ => return -1,
         };
         match &mut (*upval_ptr).data {
             GcData::Upvalue(u) => match u.location {
@@ -1465,7 +1577,7 @@ pub extern "C" fn er_jit_set_upvalue(vm: *mut VM, upval_idx: i64, val: Value) ->
                     *v = val;
                 }
             },
-            _ => unreachable!(),
+            _ => return -1,
         }
         0
     }
@@ -1478,7 +1590,7 @@ pub extern "C" fn er_jit_make_closure(vm: *mut VM, raw_fn_val: Value) -> Value {
         let raw_fn_ptr = raw_fn_val.as_gc_ptr();
         let fn_proto = match &(*raw_fn_ptr).data {
             GcData::Function(f) => f,
-            _ => unreachable!(),
+            _ => return Value::null(),
         };
         let frame = (*vm).frames.last().unwrap();
         let slots_offset = frame.slots_offset;
@@ -1491,7 +1603,7 @@ pub extern "C" fn er_jit_make_closure(vm: *mut VM, raw_fn_val: Value) -> Value {
             } else {
                 let parent_uv_ptr = match &(*frame.function).data {
                     GcData::Closure(c) => c.upvalues[uv_desc.index as usize],
-                    _ => unreachable!(),
+                    _ => return Value::null(),
                 };
                 upvalue_ptrs.push(parent_uv_ptr);
             }
@@ -1524,7 +1636,7 @@ pub extern "C" fn er_jit_await(vm: *mut VM, await_val: Value, dest: *mut Value) 
             let promise_ptr = await_val.as_gc_ptr();
             let state = match &(*promise_ptr).data {
                 crate::vm::gc::GcData::Promise(prom) => prom.state.clone(),
-                _ => unreachable!(),
+                _ => return -1,
             };
             let promise_status = {
                 let lock = state.lock().unwrap();

@@ -29,6 +29,25 @@ fn get_re_export() -> &'static regex::Regex {
     RE.get_or_init(|| regex::Regex::new(r#"^(\s*)export\s+"#).unwrap())
 }
 
+pub fn file_exists_or_vfs(path: &std::path::Path) -> bool {
+    if path.exists() {
+        return true;
+    }
+    let s = path.to_string_lossy();
+    crate::vm::embedded::has_vfs_file(&s)
+}
+
+pub fn read_file_or_vfs(path: &std::path::Path) -> anyhow::Result<String> {
+    if path.exists() && path.is_file() {
+        return Ok(std::fs::read_to_string(path)?);
+    }
+    let s = path.to_string_lossy();
+    if let Some(text) = crate::vm::embedded::get_vfs_text(&s) {
+        return Ok(text);
+    }
+    anyhow::bail!("File not found on disk or in VFS: {}", path.display())
+}
+
 
 
 fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
@@ -919,7 +938,7 @@ pub fn process_component_tree(
                         i += tag_end + 1;
                         continue;
                     }
-                    if tag_name == "Suspense" {
+                    if tag_name == "Loading" || tag_name == "Suspense" {
                         let mut parent_scripts = String::new();
                         let mut temp_search = 0;
                         while let Some(start_idx) = content[temp_search..].find("<script") {
@@ -982,21 +1001,28 @@ pub fn process_component_tree(
                             "".to_string()
                         };
 
-                        // Find matching </Suspense> tag
+                        // Find matching </Loading> or </Suspense> tag
+                        let open_prefix = format!("<{}", tag_name);
+                        let close_tag = format!("</{}>", tag_name);
+                        let open_len = open_prefix.len();
+                        let close_len = close_tag.len();
+
                         let mut depth = 1;
                         let mut search_pos = i + tag_end + 1;
                         let mut closing_idx = None;
                         while search_pos < content.len() {
-                            if content[search_pos..].starts_with("<Suspense") {
+                            if content[search_pos..].starts_with(&open_prefix)
+                                && content[search_pos + open_len..].chars().next().map_or(true, |c| c.is_whitespace() || c == '>' || c == '/')
+                            {
                                 depth += 1;
-                                search_pos += 9;
-                            } else if content[search_pos..].starts_with("</Suspense>") {
+                                search_pos += open_len;
+                            } else if content[search_pos..].starts_with(&close_tag) {
                                 depth -= 1;
                                 if depth == 0 {
                                     closing_idx = Some(search_pos);
                                     break;
                                 }
-                                search_pos += 11;
+                                search_pos += close_len;
                             } else {
                                 search_pos += 1;
                             }
@@ -1042,10 +1068,10 @@ pub fn process_component_tree(
                                 suspense_id, suspense_id, fallback_html, suspense_id, children_res.html
                             ));
 
-                            i = closing + 11;
+                            i = closing + close_len;
                             continue;
                         } else {
-                            return Err(anyhow::anyhow!("Unclosed <Suspense> tag"));
+                            return Err(anyhow::anyhow!("Unclosed <{}> tag", tag_name));
                         }
                     }
 
@@ -1076,12 +1102,12 @@ pub fn process_component_tree(
                             let mut curr = std::path::PathBuf::from(&base_dir);
                             loop {
                                 let p_comp = curr.join(&comp_filename);
-                                if p_comp.exists() {
+                                if file_exists_or_vfs(&p_comp) {
                                     comp_path = Some(p_comp);
                                     break;
                                 }
                                 let p_comp_dir = curr.join("components").join(&comp_filename);
-                                if p_comp_dir.exists() {
+                                if file_exists_or_vfs(&p_comp_dir) {
                                     comp_path = Some(p_comp_dir);
                                     break;
                                 }
@@ -1094,10 +1120,20 @@ pub fn process_component_tree(
                                     break;
                                 }
                             }
+                            if comp_path.is_none() {
+                                let fallback_app = std::path::PathBuf::from("app/components").join(&comp_filename);
+                                if file_exists_or_vfs(&fallback_app) {
+                                    comp_path = Some(fallback_app);
+                                }
+                            }
                         }
 
                         if let Some(comp_path) = comp_path {
-                            let canonical_comp_path = std::fs::canonicalize(&comp_path).unwrap_or(comp_path);
+                            let canonical_comp_path = if comp_path.exists() {
+                                std::fs::canonicalize(&comp_path).unwrap_or(comp_path.clone())
+                            } else {
+                                comp_path.clone()
+                            };
                             let comp_path_str = canonical_comp_path.to_string_lossy().into_owned();
 
                             let anchor_id = format!("erm-anchor-{}-{}", tag_name.to_lowercase(), i);
@@ -1114,7 +1150,7 @@ pub fn process_component_tree(
 
                             let sub_html = if !visited.contains_key(&comp_path_str) {
                                 visited.insert(comp_path_str.clone(), "".to_string()); // placeholder to avoid infinite recursion
-                                let comp_content = std::fs::read_to_string(&canonical_comp_path)?;
+                                let comp_content = read_file_or_vfs(&canonical_comp_path)?;
                                 let mut sub_res = process_component_tree(&comp_path_str, &comp_content, visited, None, params, if_counter, for_counter, state_var_sources)?;
                                 println!("DEBUG: compiled component {} scripts count = {}", tag_name, sub_res.scripts.len());
                                 for (idx, s) in sub_res.scripts.iter().enumerate() {
@@ -1894,8 +1930,13 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut curr = std::path::PathBuf::from(base_dir);
     loop {
         let p_layouts = curr.join("layouts").join("layout.erm");
-        if p_layouts.exists() {
+        if file_exists_or_vfs(&p_layouts) {
             layout_path = Some(p_layouts);
+            break;
+        }
+        let p_direct = curr.join("layout.erm");
+        if file_exists_or_vfs(&p_direct) {
+            layout_path = Some(p_direct);
             break;
         }
         if let Some(parent) = curr.parent() {
@@ -1907,18 +1948,29 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             break;
         }
     }
+    if layout_path.is_none() {
+        let fallback_app_layout = std::path::PathBuf::from("app/layouts/layout.erm");
+        if file_exists_or_vfs(&fallback_app_layout) {
+            layout_path = Some(fallback_app_layout);
+        } else {
+            let fallback_layout = std::path::PathBuf::from("layouts/layout.erm");
+            if file_exists_or_vfs(&fallback_layout) {
+                layout_path = Some(fallback_layout);
+            }
+        }
+    }
 
     // Automatic Loading support: search for loading.erm in current and parent directories.
     let mut loading_path = None;
     let mut curr_load = std::path::PathBuf::from(base_dir);
     loop {
         let p_loadings = curr_load.join("layouts").join("loading.erm");
-        if p_loadings.exists() {
+        if file_exists_or_vfs(&p_loadings) {
             loading_path = Some(p_loadings);
             break;
         }
         let p_loading_direct = curr_load.join("loading.erm");
-        if p_loading_direct.exists() {
+        if file_exists_or_vfs(&p_loading_direct) {
             loading_path = Some(p_loading_direct);
             break;
         }
@@ -1931,12 +1983,18 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             break;
         }
     }
+    if loading_path.is_none() {
+        let fallback_app_loading = std::path::PathBuf::from("app/layouts/loading.erm");
+        if file_exists_or_vfs(&fallback_app_loading) {
+            loading_path = Some(fallback_app_loading);
+        }
+    }
 
     let mut if_counter = 0;
     let mut for_counter = 0;
 
     let loading_res = if let Some(ref l_path) = loading_path {
-        let loading_content = std::fs::read_to_string(l_path)?;
+        let loading_content = read_file_or_vfs(l_path)?;
         let res = process_component_tree(&l_path.to_string_lossy(), &loading_content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
         Some(res)
     } else {
@@ -1945,7 +2003,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     let mut result = if let Some(lp) = layout_path {
         if !content.contains("<!DOCTYPE html>") && !content.contains("<html") {
-            let layout_content = std::fs::read_to_string(&lp)?;
+            let layout_content = read_file_or_vfs(&lp)?;
             if content.trim() != layout_content.trim() {
                 let page_res = process_component_tree(file_path, content, &mut visited, None, params, &mut if_counter, &mut for_counter, &mut state_var_sources)?;
                 
@@ -2083,14 +2141,14 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         }
     }
 
-    let mut assets = String::new();
+    let mut style_assets = String::new();
     if has_global_ermcss {
-        assets.push_str("\n<link rel=\"stylesheet\" id=\"__erm_styles\" href=\"/css/global.css\">\n");
+        style_assets.push_str("\n<link rel=\"stylesheet\" id=\"__erm_styles\" href=\"/css/global.css\">\n");
     }
     if !result.styles.is_empty() {
-        assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
-        for s in &result.styles { assets.push_str(s); assets.push('\n'); }
-        assets.push_str("</style>\n");
+        style_assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
+        for s in &result.styles { style_assets.push_str(s); style_assets.push('\n'); }
+        style_assets.push_str("</style>\n");
     }
 
     let mut params_js = String::from("window.__erm_params = {");
@@ -2156,17 +2214,33 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         scripts_to_inject.insert(0, declarations);
     }
 
+    let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
-        assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
-        assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/modules/erm/runtime.js';\n");
-        assets.push_str("{\n");
-        for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
-        assets.push_str("}\n");
-        assets.push_str("</script>\n");
+        script_assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
+        script_assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/modules/erm/runtime.js';\n");
+        script_assets.push_str("{\n");
+        for s in &scripts_to_inject { script_assets.push_str(s); script_assets.push('\n'); }
+        script_assets.push_str("}\n");
+        script_assets.push_str("</script>\n");
     }
 
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
-    
+
+    if !output.contains("<html") {
+        let mut final_res = String::new();
+        final_res.push_str("<!DOCTYPE html><html><head>");
+        if !is_prod {
+            final_res.push_str("<script src=\"/modules/erm/hmr.js\"></script>\n");
+        }
+        final_res.push_str(&style_assets);
+        final_res.push_str("</head><body>\n");
+        final_res.push_str(&output);
+        final_res.push_str("\n");
+        final_res.push_str(&script_assets);
+        final_res.push_str("</body></html>");
+        return Ok(final_res);
+    }
+
     if !is_prod {
         let hmr_script = "<script src=\"/modules/erm/hmr.js\"></script>";
         if let Some(pos) = output.find("<head>") {
@@ -2177,19 +2251,15 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     }
 
     if let Some(pos) = output.find("</head>") {
-        output.insert_str(pos, &assets);
-    } else if let Some(pos) = output.find("</body>") {
-        output.insert_str(pos, &assets);
+        output.insert_str(pos, &style_assets);
     } else {
-        output.push_str(&assets);
+        output.insert_str(0, &style_assets);
     }
 
-    if !output.contains("<html") {
-        let mut final_res = String::new();
-        final_res.push_str("<!DOCTYPE html><html><head></head><body>");
-        final_res.push_str(&output);
-        final_res.push_str("</body></html>");
-        return Ok(final_res);
+    if let Some(pos) = output.find("</body>") {
+        output.insert_str(pos, &script_assets);
+    } else {
+        output.push_str(&script_assets);
     }
 
     Ok(output)
@@ -2670,30 +2740,63 @@ pub fn parse_ermcss_config(base_path: &std::path::Path) -> ErmcssConfig {
         content: Vec::new(),
     };
     let toml_path = base_path.join("eronom.toml");
-    if toml_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&toml_path) {
-            if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-                if let Some(package) = toml_val.get("package") {
-                    if let Some(ermcss) = package.get("ermcss") {
-                        if ermcss.as_bool().unwrap_or(false) {
+    let toml_content_opt = if toml_path.exists() {
+        std::fs::read_to_string(&toml_path).ok()
+    } else {
+        crate::vm::embedded::get_vfs_text("eronom.toml")
+    };
+
+    let mut explicitly_disabled = false;
+
+    if let Some(content) = toml_content_opt {
+        if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
+            if let Some(package) = toml_val.get("package") {
+                if let Some(ermcss) = package.get("ermcss") {
+                    if let Some(b) = ermcss.as_bool() {
+                        if b {
                             config.enabled = true;
+                        } else {
+                            explicitly_disabled = true;
                         }
                     }
                 }
-                if let Some(ermcss) = toml_val.get("ermcss") {
-                    if let Some(content_arr) = ermcss.get("content") {
-                        if let Some(arr) = content_arr.as_array() {
-                            for item in arr {
-                                if let Some(s) = item.as_str() {
-                                    config.content.push(s.to_string());
-                                }
+            }
+            if let Some(ermcss) = toml_val.get("ermcss") {
+                if let Some(enabled) = ermcss.get("enabled").and_then(|v| v.as_bool()) {
+                    if enabled {
+                        config.enabled = true;
+                    } else {
+                        explicitly_disabled = true;
+                    }
+                } else {
+                    config.enabled = true;
+                }
+                if let Some(content_arr) = ermcss.get("content") {
+                    if let Some(arr) = content_arr.as_array() {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                config.content.push(s.to_string());
                             }
                         }
                     }
                 }
-                return config;
             }
         }
+    }
+
+    // Auto-enable ermcss if not explicitly disabled and compiler is found
+    if !explicitly_disabled && !config.enabled {
+        if find_ermcss_path(base_path.to_str().unwrap_or(".")).is_some() {
+            config.enabled = true;
+        }
+    }
+
+    if config.enabled && config.content.is_empty() {
+        config.content = vec![
+            "./app/**/*.erm".to_string(),
+            "./pages/**/*.erm".to_string(),
+            "./**/*.erm".to_string(),
+        ];
     }
     config
 }
@@ -3038,6 +3141,23 @@ mod tests {
             transform_use_effect("useEffect(() => { const x = [1, 2]; }, [count, x])"),
             "useEffect(() => { const x = [1, 2]; }, () => [count, x])"
         );
+    }
+
+    #[test]
+    fn test_loading_tag_compilation() {
+        let content = r#"
+        <script>
+            let ready = useState(false);
+        </script>
+        <Loading fallback={<div>Loading skeleton...</div>}>
+            <div>Actual Content Loaded</div>
+        </Loading>
+        "#;
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(".", content, false, &params).unwrap();
+        assert!(res.contains("erm-suspense-container"));
+        assert!(res.contains("Loading skeleton..."));
+        assert!(res.contains("Actual Content Loaded"));
     }
 }
 

@@ -384,7 +384,65 @@ for i in 1..50000 {
     };
     let compile_rss = run_self_subprocess("--run-compiler");
 
+    // Benchmark VM (Interpreter pure)
+    let baseline = COUNTER.allocated.load(Ordering::SeqCst);
+    COUNTER.reset_peak();
+    let tokens = eronom::frontend::lex(source);
+    let mut parser = eronom::frontend::Parser::new(tokens);
+    let stmts = parser.parse().unwrap();
+    let compiler = eronom::backend::Compiler::new();
+    let function = compiler.compile(&stmts).unwrap();
+    let func_ptr = eronom::backend::gc_allocate(eronom::backend::GcData::Function(function));
+    let mut vm = eronom::backend::VM::new();
+    vm.use_jit = false;
+    vm.register_global("print", eronom::backend::Value::native_function(noop_print));
+    vm.run_function_ptr(func_ptr).ok();
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        vm.run_function_ptr(func_ptr).ok();
+    }
+    let vm_interpreter_pure_elapsed = start.elapsed();
+    let vm_interpreter_pure_avg = vm_interpreter_pure_elapsed / iterations;
+    let vm_interpreter_pure_peak_heap = COUNTER.peak.load(Ordering::SeqCst).saturating_sub(baseline);
+
+    // Benchmark VM (JIT pure)
+    let baseline = COUNTER.allocated.load(Ordering::SeqCst);
+    COUNTER.reset_peak();
+    let mut vm_jit_pure_peak_heap = 0;
+    let vm_jit_pure_avg = if run_jit {
+        let tokens = eronom::frontend::lex(source);
+        let mut parser = eronom::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = eronom::backend::Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        let func_ptr = eronom::backend::gc_allocate(eronom::backend::GcData::Function(function));
+        let mut vm = eronom::backend::VM::new();
+        vm.use_jit = true;
+        vm.register_global("print", eronom::backend::Value::native_function(noop_print));
+        // Warmup: compile to native code
+        vm.run_function_ptr(func_ptr).ok();
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            vm.run_function_ptr(func_ptr).ok();
+        }
+        let elapsed = start.elapsed();
+        vm_jit_pure_peak_heap = COUNTER.peak.load(Ordering::SeqCst).saturating_sub(baseline);
+        elapsed / iterations
+    } else {
+        std::time::Duration::from_nanos(0)
+    };
+
     // --- Bun benchmark ---
+    let bun_cmd = if std::process::Command::new("bun").arg("-v").output().is_ok() {
+        "bun"
+    } else if std::path::Path::new("/home/vishnus/.bun/bin/bun").exists() {
+        "/home/vishnus/.bun/bin/bun"
+    } else {
+        "bun"
+    };
+
     let run_bun_file =
         |args: &[&str], source: &str| -> Result<(String, Option<usize>), Box<dyn std::error::Error>> {
             let temp_filename = "temp_bench_bun.js";
@@ -393,7 +451,7 @@ for i in 1..50000 {
             let mut full_args = args.to_vec();
             full_args.push(temp_filename);
             
-            let result = run_command_with_metrics("bun", &full_args);
+            let result = run_command_with_metrics(bun_cmd, &full_args);
             let _ = std::fs::remove_file(temp_filename);
             
             if let (Some(stdout), rss) = result {
@@ -443,7 +501,7 @@ console.log((performance.now() - start) / 1000);
 
     let mut bun_cli_avg = std::time::Duration::from_secs(0);
     let mut bun_cli_rss = None;
-    if std::process::Command::new("bun")
+    if std::process::Command::new(bun_cmd)
         .arg("-v")
         .output()
         .is_ok()
@@ -453,7 +511,7 @@ console.log((performance.now() - start) / 1000);
             let start = Instant::now();
             let mut success = true;
             for _ in 0..iterations {
-                if !std::process::Command::new("bun")
+                if !std::process::Command::new(bun_cmd)
                     .arg(temp_filename)
                     .output()
                     .map(|o| o.status.success())
@@ -465,7 +523,7 @@ console.log((performance.now() - start) / 1000);
             }
             if success {
                 bun_cli_avg = start.elapsed() / iterations;
-                let (_, rss) = run_command_with_metrics("bun", &[temp_filename]);
+                let (_, rss) = run_command_with_metrics(bun_cmd, &[temp_filename]);
                 bun_cli_rss = rss;
             }
             let _ = std::fs::remove_file(temp_filename);
@@ -897,6 +955,10 @@ print(time.perf_counter() - start)
     if vm_jit_avg.as_nanos() > 0 {
         print_row("VM (JIT)", vm_jit_avg, vm_jit_rss, Some(vm_jit_peak_heap));
     }
+    print_row("VM (Interp pure)", vm_interpreter_pure_avg, None, Some(vm_interpreter_pure_peak_heap));
+    if vm_jit_pure_avg.as_nanos() > 0 {
+        print_row("VM (JIT pure)", vm_jit_pure_avg, None, Some(vm_jit_pure_peak_heap));
+    }
     print_row("Compile only", compile_avg, compile_rss, Some(compile_peak_heap));
 
     if bun_pure_avg.as_nanos() > 0 {
@@ -951,15 +1013,17 @@ print(time.perf_counter() - start)
     }
 
     let vm_avg = if vm_jit_avg.as_nanos() > 0 { vm_jit_avg } else { vm_interpreter_avg };
+    let vm_pure_avg = if vm_jit_pure_avg.as_nanos() > 0 { vm_jit_pure_avg } else { vm_interpreter_pure_avg };
+    let engine_name = if vm_jit_avg.as_nanos() > 0 { "JIT" } else { "Interpreter" };
 
     if bun_pure_avg.as_nanos() > 0 {
-        if vm_avg < bun_pure_avg {
-            let speedup = bun_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Bun (pure)", speedup);
-            print_footer("✅", &text);
+        if vm_pure_avg < bun_pure_avg {
+            let speedup = bun_pure_avg.as_nanos() as f64 / vm_pure_avg.as_nanos() as f64;
+            let text = format!("{} (pure) is {:.2}x FASTER than Bun (pure)", engine_name, speedup);
+            print_footer("⚡", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / bun_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Bun (pure)", slowdown);
+            let slowdown = vm_pure_avg.as_nanos() as f64 / bun_pure_avg.as_nanos() as f64;
+            let text = format!("{} (pure) is {:.2}x SLOWER than Bun (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -967,11 +1031,11 @@ print(time.perf_counter() - start)
     if bun_cli_avg.as_nanos() > 0 {
         if vm_avg < bun_cli_avg {
             let speedup = bun_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Bun (CLI)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Bun (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / bun_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Bun (CLI)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Bun (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -979,11 +1043,11 @@ print(time.perf_counter() - start)
     if node_pure_avg.as_nanos() > 0 {
         if vm_avg < node_pure_avg {
             let speedup = node_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Node (pure)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Node (pure)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Node (pure)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Node (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -991,11 +1055,11 @@ print(time.perf_counter() - start)
     if node_cli_avg.as_nanos() > 0 {
         if vm_avg < node_cli_avg {
             let speedup = node_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Node (CLI)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Node (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Node (CLI)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Node (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1003,11 +1067,11 @@ print(time.perf_counter() - start)
     if deno_pure_avg.as_nanos() > 0 {
         if vm_avg < deno_pure_avg {
             let speedup = deno_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Deno (pure)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Deno (pure)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / deno_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Deno (pure)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Deno (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1015,11 +1079,11 @@ print(time.perf_counter() - start)
     if deno_cli_avg.as_nanos() > 0 {
         if vm_avg < deno_cli_avg {
             let speedup = deno_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Deno (CLI)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Deno (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / deno_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Deno (CLI)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Deno (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1027,11 +1091,11 @@ print(time.perf_counter() - start)
     if go_pure_avg.as_nanos() > 0 {
         if vm_avg < go_pure_avg {
             let speedup = go_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Go (pure)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Go (pure)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / go_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Go (pure)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Go (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1039,11 +1103,11 @@ print(time.perf_counter() - start)
     if go_cli_avg.as_nanos() > 0 {
         if vm_avg < go_cli_avg {
             let speedup = go_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Go (CLI)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Go (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / go_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Go (CLI)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Go (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1051,11 +1115,11 @@ print(time.perf_counter() - start)
     if py_pure_avg.as_nanos() > 0 {
         if vm_avg < py_pure_avg {
             let speedup = py_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Py (pure)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Py (pure)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / py_pure_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Py (pure)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Py (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1063,11 +1127,11 @@ print(time.perf_counter() - start)
     if py_cli_avg.as_nanos() > 0 {
         if vm_avg < py_cli_avg {
             let speedup = py_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x FASTER than Py (CLI)", speedup);
+            let text = format!("{} is {:.2}x FASTER than Py (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / py_cli_avg.as_nanos() as f64;
-            let text = format!("VM is {:.2}x SLOWER than Py (CLI)", slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Py (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }

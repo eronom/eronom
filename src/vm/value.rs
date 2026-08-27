@@ -1,7 +1,9 @@
 use super::gc::{GcObject, GcData};
 use std::fmt;
 
-pub const TAG_NUMBER_MASK: u64 = 0xfff0_0000_0000_0000;
+pub const TAG_NUMBER_MASK: u64    = 0xffe8_0000_0000_0000;
+pub const TAG_INLINE_STR_BASE: u64 = 0xffe8_0000_0000_0000;
+pub const TAG_INLINE_STR_MAX: u64  = 0xffef_ffff_ffff_ffff;
 pub const TAG_METHOD_FILE: u64  = 0xfff0_0000_0000_0000;
 pub const TAG_NULL: u64        = 0xfff1_0000_0000_0000;
 pub const TAG_FALSE: u64       = 0xfff2_0000_0000_0000;
@@ -19,6 +21,11 @@ pub const TAG_METHOD_SEND_JSON: u64 = 0xfffd_0000_0000_0000;
 pub const TAG_PROMISE: u64     = 0xfffe_0000_0000_0000;
 pub const TAG_METHOD_RESOLVE: u64 = 0xffff_0000_0000_0000;
 pub const PTR_MASK: u64        = 0x0000_ffff_ffff_ffff;
+
+thread_local! {
+    static SSO_BUF: std::cell::UnsafeCell<[[u8; 8]; 8]> = const { std::cell::UnsafeCell::new([[0u8; 8]; 8]) };
+    static SSO_IDX: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
@@ -38,7 +45,7 @@ impl Value {
     #[inline(always)]
     pub fn number(n: f64) -> Self {
         let bits = n.to_bits();
-        if (bits & TAG_NUMBER_MASK) == TAG_NUMBER_MASK {
+        if bits >= TAG_NUMBER_MASK {
             // NaN or infinity that overlaps with our tags - box it as a normal number representation
             Value(0x7ff8_0000_0000_0000)
         } else {
@@ -49,6 +56,31 @@ impl Value {
     #[inline(always)]
     pub fn number_unchecked(n: f64) -> Self {
         Value(n.to_bits())
+    }
+
+    #[inline(always)]
+    pub fn inline_string(s: &str) -> Option<Self> {
+        let len = s.len();
+        if len <= 6 {
+            let bytes = s.as_bytes();
+            let mut bits = TAG_INLINE_STR_BASE | ((len as u64) << 48);
+            for i in 0..len {
+                bits |= (bytes[i] as u64) << (i * 8);
+            }
+            Some(Value(bits))
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub fn string_from_str(s: &str) -> Self {
+        if let Some(inline) = Self::inline_string(s) {
+            inline
+        } else {
+            let ptr = crate::vm::gc::gc_alloc_string(s);
+            Self::string(ptr)
+        }
     }
 
     #[inline(always)]
@@ -117,8 +149,13 @@ impl Value {
     }
 
     #[inline(always)]
+    pub fn is_inline_string(self) -> bool {
+        self.0 >= TAG_INLINE_STR_BASE && self.0 <= TAG_INLINE_STR_MAX
+    }
+
+    #[inline(always)]
     pub fn is_string(self) -> bool {
-        (self.0 & 0xffff_0000_0000_0000) == TAG_STRING
+        self.is_inline_string() || (self.0 & 0xffff_0000_0000_0000) == TAG_STRING
     }
 
     #[inline(always)]
@@ -193,10 +230,24 @@ impl Value {
 
     #[inline]
     pub fn as_str(&self) -> Option<&str> {
-        if self.is_string() {
+        if self.is_inline_string() {
+            let len = ((self.0 >> 48) & 0x7) as usize;
+            SSO_IDX.with(|idx_cell| {
+                let idx = idx_cell.get();
+                idx_cell.set((idx + 1) & 7);
+                SSO_BUF.with(|buf_cell| unsafe {
+                    let buf = &mut (*buf_cell.get())[idx];
+                    let bits = (self.0 & 0x0000_ffff_ffff_ffff).to_le_bytes();
+                    buf[..6].copy_from_slice(&bits[..6]);
+                    buf[6] = 0;
+                    buf[7] = 0;
+                    Some(std::str::from_utf8_unchecked(&buf[..len]))
+                })
+            })
+        } else if (self.0 & 0xffff_0000_0000_0000) == TAG_STRING {
             unsafe {
                 match &(*self.as_gc_ptr()).data {
-                    GcData::String(s) => Some(s),
+                    GcData::String(s) => Some(s.as_ref()),
                     _ => None,
                 }
             }
@@ -208,22 +259,20 @@ impl Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
+        if self.0 == other.0 {
+            return true;
+        }
         if self.is_number() && other.is_number() {
             self.as_number() == other.as_number()
         } else if self.is_string() && other.is_string() {
-            unsafe {
-                let a = self.as_gc_ptr();
-                let b = other.as_gc_ptr();
-                if a == b {
-                    return true;
-                }
-                match (&(*a).data, &(*b).data) {
-                    (GcData::String(sa), GcData::String(sb)) => sa == sb,
-                    _ => false,
-                }
+            if self.is_inline_string() && other.is_inline_string() {
+                return false;
             }
+            let s1 = self.as_str().unwrap_or("");
+            let s2 = other.as_str().unwrap_or("");
+            s1 == s2
         } else {
-            self.0 == other.0
+            false
         }
     }
 }
@@ -237,11 +286,10 @@ impl fmt::Debug for Value {
         } else if self.is_number() {
             write!(f, "Number({})", self.as_number())
         } else if self.is_string() {
-            unsafe {
-                match &(*self.as_gc_ptr()).data {
-                    GcData::String(s) => write!(f, "String({:?})", s),
-                    _ => write!(f, "String(invalid gc object)"),
-                }
+            if let Some(s) = self.as_str() {
+                write!(f, "String({:?})", s)
+            } else {
+                write!(f, "String(invalid gc object)")
             }
         } else if self.is_array() {
             write!(f, "Array({:p})", self.as_gc_ptr())
@@ -280,11 +328,10 @@ impl fmt::Display for Value {
         } else if self.is_number() {
             write!(f, "{}", self.as_number())
         } else if self.is_string() {
-            unsafe {
-                match &(*self.as_gc_ptr()).data {
-                    GcData::String(s) => write!(f, "{}", s),
-                    _ => unreachable!(),
-                }
+            if let Some(s) = self.as_str() {
+                write!(f, "{}", s)
+            } else {
+                write!(f, "")
             }
         } else if self.is_array() {
             unsafe {
@@ -303,10 +350,7 @@ impl fmt::Display for Value {
                         let items: Vec<String> = obj
                             .iter()
                             .map(|(k, v)| {
-                                let s = match &(*k.0.as_gc_ptr()).data {
-                                    GcData::String(s) => s.as_ref(),
-                                    _ => unreachable!(),
-                                };
+                                let s = k.0.as_str().unwrap_or("");
                                 format!("\"{}\": {}", s, v)
                             })
                             .collect();
@@ -381,17 +425,9 @@ impl PartialEq for MapKey {
             return true;
         }
         if self.0.is_string() && other.0.is_string() {
-            unsafe {
-                let s1 = match &(*self.0.as_gc_ptr()).data {
-                    GcData::String(s) => s.as_ref(),
-                    _ => unreachable!(),
-                };
-                let s2 = match &(*other.0.as_gc_ptr()).data {
-                    GcData::String(s) => s.as_ref(),
-                    _ => unreachable!(),
-                };
-                s1 == s2
-            }
+            let s1 = self.0.as_str().unwrap_or("");
+            let s2 = other.0.as_str().unwrap_or("");
+            s1 == s2
         } else {
             false
         }
@@ -404,11 +440,10 @@ impl std::hash::Hash for MapKey {
     #[inline(always)]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         if self.0.is_string() {
-            unsafe {
-                match &(*self.0.as_gc_ptr()).data {
-                    GcData::String(s) => s.as_ref().hash(state),
-                    _ => unreachable!(),
-                }
+            if let Some(s) = self.0.as_str() {
+                s.hash(state);
+            } else {
+                self.0.0.hash(state);
             }
         } else {
             self.0.0.hash(state);
