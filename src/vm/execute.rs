@@ -229,9 +229,11 @@ impl VM {
     pub fn new() -> Self {
         let use_jit = std::env::var("ER_NO_JIT").is_err();
         let jit_threshold = if let Ok(val) = std::env::var("ER_JIT_THRESHOLD") {
-            val.parse::<usize>().unwrap_or(0)
-        } else {
+            val.parse::<usize>().unwrap_or(30)
+        } else if std::env::var("ER_EAGER_JIT").is_ok() {
             0
+        } else {
+            30
         };
         Self {
             has_error_flag: 0,
