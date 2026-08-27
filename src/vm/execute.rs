@@ -236,7 +236,7 @@ impl VM {
         Self {
             has_error_flag: 0,
             frames: Vec::new(),
-            stack: Vec::with_capacity(1048576),
+            stack: Vec::with_capacity(65536),
             globals: FnvHashMap::default(),
             error: None,
             mir_ctx: None,
@@ -411,7 +411,7 @@ impl VM {
     }
 
     pub fn run(&mut self, function: Function) -> Result<Value, String> {
-        let func_ptr = gc_allocate(GcData::Function(function));
+        let func_ptr = gc_allocate(GcData::Function(Box::new(function)));
         self.run_function_ptr(func_ptr)
     }
 
@@ -757,6 +757,27 @@ impl VM {
             return Ok(Value::null());
         }
 
+        if callee.is_array_method_push() || callee.is_array_method_pop() {
+            let ptr = callee.as_gc_ptr();
+            let result = unsafe {
+                match &mut (*ptr).data {
+                    GcData::Array(arr) => {
+                        if callee.is_array_method_push() {
+                            for arg in &args {
+                                super::gc::gc_write_barrier(ptr, arg);
+                                arr.push(*arg);
+                            }
+                            Value::number(arr.len() as f64)
+                        } else {
+                            arr.pop().unwrap_or(Value::null())
+                        }
+                    }
+                    _ => Value::null(),
+                }
+            };
+            return Ok(result);
+        }
+
         if !callee.is_function() {
             if callee.is_native_function() {
                 let func = callee.as_native_fn();
@@ -771,7 +792,7 @@ impl VM {
             if let GcData::BuiltinMethod(builtin) = &(*func_ptr).data {
                 let receiver = builtin.receiver;
                 let method = builtin.method;
-                return self.execute_builtin_method(receiver, method, final_args);
+                return self.execute_builtin_method(receiver, method, &final_args);
             }
             if let GcData::BoundMethod(bound_method) = &(*func_ptr).data {
                 final_args.insert(0, bound_method.receiver);
@@ -854,7 +875,7 @@ impl VM {
         &mut self,
         receiver: Value,
         method: super::gc::BuiltinMethodId,
-        args: Vec<Value>,
+        args: &[Value],
     ) -> Result<Value, String> {
         use super::gc::BuiltinMethodId::*;
         match method {
@@ -1104,7 +1125,7 @@ impl VM {
                 unsafe {
                     match &mut (*ptr).data {
                         GcData::Array(arr) => {
-                            for arg in args {
+                            for &arg in args {
                                 super::gc::gc_write_barrier(ptr, &arg);
                                 arr.push(arg);
                             }
@@ -1146,7 +1167,7 @@ impl VM {
                     match &mut (*ptr).data {
                         GcData::Array(arr) => {
                             arr.splice(0..0, args.iter().copied());
-                            for arg in &args {
+                            for arg in args {
                                 super::gc::gc_write_barrier(ptr, arg);
                             }
                             Ok(Value::number(arr.len() as f64))
@@ -1440,7 +1461,7 @@ impl VM {
                         _ => vec![],
                     }
                 };
-                for arg in args {
+                for &arg in args {
                     if arg.is_array() {
                         unsafe {
                             if let GcData::Array(sub) = &(*arg.as_gc_ptr()).data {
@@ -1826,10 +1847,7 @@ impl VM {
                         if let GcData::BuiltinMethod(builtin) = &(*func_ptr).data {
                             let receiver = builtin.receiver;
                             let method = builtin.method;
-                            let mut args = Vec::with_capacity(arg_count_out);
-                            for i in 0..arg_count_out {
-                                args.push(*frame_slots.add(func_reg_out + 1 + i));
-                            }
+                            let args = std::slice::from_raw_parts(frame_slots.add(func_reg_out + 1), arg_count_out);
                             frame.ip = ip_out;
                             let result = self.execute_builtin_method(receiver, method, args)?;
                             reload_stack!();
@@ -2749,7 +2767,11 @@ impl VM {
                             let ptr = obj.as_gc_ptr();
                             match &(*ptr).data {
                                 GcData::Array(arr) => {
-                                    if name == "length" {
+                                    if name == "push" {
+                                        *frame_slots.add(dest) = Value::array_method_push(ptr);
+                                    } else if name == "pop" {
+                                        *frame_slots.add(dest) = Value::array_method_pop(ptr);
+                                    } else if name == "length" {
                                         *frame_slots.add(dest) = Value::number(arr.len() as f64);
                                     } else if let Some(m) = get_array_builtin_method_id(name) {
                                         let ptr = super::gc::gc_alloc_builtin_method(obj, m);
@@ -2984,10 +3006,7 @@ impl VM {
                             if let GcData::BuiltinMethod(builtin) = &(*func_ptr).data {
                                 let receiver = builtin.receiver;
                                 let method = builtin.method;
-                                let mut args = Vec::with_capacity(arg_count);
-                                for i in 0..arg_count {
-                                    args.push(*frame_slots.add(func_reg + 1 + i));
-                                }
+                                let args = std::slice::from_raw_parts(frame_slots.add(func_reg + 1), arg_count);
                                 sync_stack!();
                                 frame.ip = ip.offset_from(code_ptr) as usize - 1;
                                 let result = self.execute_builtin_method(receiver, method, args)?;

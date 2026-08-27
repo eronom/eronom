@@ -728,7 +728,7 @@ impl Compiler {
                     compiler.current_chunk().write_instruction(OpCode::Return, 0, 0, 0, 0);
 
                     let func = compiler.function;
-                    let func_ptr = gc_allocate(GcData::Function(func));
+                    let func_ptr = gc_allocate(GcData::Function(Box::new(func)));
                     let func_val = Value::function(func_ptr);
 
                     methods_map.insert(crate::vm::value::MapKey(Value::string_from_str(m_name.as_str())), func_val);
@@ -1533,7 +1533,7 @@ impl Compiler {
                                         compiler.current_chunk().write_instruction(OpCode::Return, 0, 0, 0, 0);
 
                                         let func = compiler.function;
-                                        let func_ptr = gc_allocate(GcData::Function(func));
+                                        let func_ptr = gc_allocate(GcData::Function(Box::new(func)));
                                         let func_val = Value::function(func_ptr);
 
                                         let func_idx = self.current_chunk().add_constant(func_val);
@@ -1694,7 +1694,7 @@ impl Compiler {
 
                 let mut func = compiler.function;
                 func.upvalues = compiler.upvalues;
-                let func_ptr = gc_allocate(GcData::Function(func));
+                let func_ptr = gc_allocate(GcData::Function(Box::new(func)));
                 let idx = self
                     .current_chunk()
                     .add_constant(Value::function(func_ptr));

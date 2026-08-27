@@ -746,7 +746,11 @@ pub fn er_jit_get_property_slow(vm: *mut VM, obj: Value, name_val: Value) -> Val
             let ptr = obj.as_gc_ptr();
             match &(*ptr).data {
                 GcData::Array(arr) => {
-                    if name == "length" {
+                    if name == "push" {
+                        Value::array_method_push(ptr)
+                    } else if name == "pop" {
+                        Value::array_method_pop(ptr)
+                    } else if name == "length" {
                         Value::number(arr.len() as f64)
                     } else if let Some(m) = crate::vm::execute::get_array_builtin_method_id(name) {
                         let ptr = crate::vm::gc::gc_alloc_builtin_method(obj, m);
@@ -1237,10 +1241,7 @@ pub extern "C" fn er_jit_call_non_vm(
             if let GcData::BuiltinMethod(builtin) = &(*func_ptr).data {
                 let receiver = builtin.receiver;
                 let method = builtin.method;
-                let mut args = Vec::with_capacity(arg_count as usize);
-                for i in 0..arg_count as usize {
-                    args.push(*frame_slots.offset((func_reg + 1 + i as i64) as isize));
-                }
+                let args = std::slice::from_raw_parts(frame_slots.offset((func_reg + 1) as isize), arg_count as usize);
                 match (*_vm).execute_builtin_method(receiver, method, args) {
                     Ok(res) => {
                         *dest = res;

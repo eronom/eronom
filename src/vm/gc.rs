@@ -219,7 +219,7 @@ pub enum GcData {
     String(Rc<str>),
     Array(Vec<Value>),
     Object(ObjectMap),
-    Function(Function),
+    Function(Box<Function>),
     Promise(GcPromise),
     Struct(GcStruct),
     BoundMethod(GcBoundMethod),

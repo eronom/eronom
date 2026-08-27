@@ -392,7 +392,7 @@ for i in 1..50000 {
     let stmts = parser.parse().unwrap();
     let compiler = eronom::backend::Compiler::new();
     let function = compiler.compile(&stmts).unwrap();
-    let func_ptr = eronom::backend::gc_allocate(eronom::backend::GcData::Function(function));
+    let func_ptr = eronom::backend::gc_allocate(eronom::backend::GcData::Function(Box::new(function)));
     let mut vm = eronom::backend::VM::new();
     vm.use_jit = false;
     vm.register_global("print", eronom::backend::Value::native_function(noop_print));
@@ -416,7 +416,7 @@ for i in 1..50000 {
         let stmts = parser.parse().unwrap();
         let compiler = eronom::backend::Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
-        let func_ptr = eronom::backend::gc_allocate(eronom::backend::GcData::Function(function));
+        let func_ptr = eronom::backend::gc_allocate(eronom::backend::GcData::Function(Box::new(function)));
         let mut vm = eronom::backend::VM::new();
         vm.use_jit = true;
         vm.register_global("print", eronom::backend::Value::native_function(noop_print));
