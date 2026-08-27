@@ -316,6 +316,14 @@ pub fn collect_std_library_files() -> HashMap<String, Vec<u8>> {
         files.insert("std/test.er".to_string(), include_bytes!("../../std/test.er").to_vec());
     }
 
+    // Built-in ERM client reactive runtime files
+    if !files.contains_key("modules/erm/runtime.js") {
+        files.insert("modules/erm/runtime.js".to_string(), include_bytes!("../../libs/init/modules/erm/runtime.js").to_vec());
+    }
+    if !files.contains_key("modules/erm/hmr.js") {
+        files.insert("modules/erm/hmr.js".to_string(), include_bytes!("../../libs/init/modules/erm/hmr.js").to_vec());
+    }
+
     files
 }
 
@@ -349,6 +357,8 @@ pub fn build_standalone_executable(
             fs::create_dir_all(parent)?;
         }
     }
+
+    let _ = fs::remove_file(output_path);
 
     let mut out_file = OpenOptions::new()
         .create(true)

@@ -2083,14 +2083,14 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         }
     }
 
-    let mut assets = String::new();
+    let mut style_assets = String::new();
     if has_global_ermcss {
-        assets.push_str("\n<link rel=\"stylesheet\" id=\"__erm_styles\" href=\"/css/global.css\">\n");
+        style_assets.push_str("\n<link rel=\"stylesheet\" id=\"__erm_styles\" href=\"/css/global.css\">\n");
     }
     if !result.styles.is_empty() {
-        assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
-        for s in &result.styles { assets.push_str(s); assets.push('\n'); }
-        assets.push_str("</style>\n");
+        style_assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
+        for s in &result.styles { style_assets.push_str(s); style_assets.push('\n'); }
+        style_assets.push_str("</style>\n");
     }
 
     let mut params_js = String::from("window.__erm_params = {");
@@ -2156,17 +2156,33 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         scripts_to_inject.insert(0, declarations);
     }
 
+    let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
-        assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
-        assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/modules/erm/runtime.js';\n");
-        assets.push_str("{\n");
-        for s in &scripts_to_inject { assets.push_str(s); assets.push('\n'); }
-        assets.push_str("}\n");
-        assets.push_str("</script>\n");
+        script_assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
+        script_assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/modules/erm/runtime.js';\n");
+        script_assets.push_str("{\n");
+        for s in &scripts_to_inject { script_assets.push_str(s); script_assets.push('\n'); }
+        script_assets.push_str("}\n");
+        script_assets.push_str("</script>\n");
     }
 
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
-    
+
+    if !output.contains("<html") {
+        let mut final_res = String::new();
+        final_res.push_str("<!DOCTYPE html><html><head>");
+        if !is_prod {
+            final_res.push_str("<script src=\"/modules/erm/hmr.js\"></script>\n");
+        }
+        final_res.push_str(&style_assets);
+        final_res.push_str("</head><body>\n");
+        final_res.push_str(&output);
+        final_res.push_str("\n");
+        final_res.push_str(&script_assets);
+        final_res.push_str("</body></html>");
+        return Ok(final_res);
+    }
+
     if !is_prod {
         let hmr_script = "<script src=\"/modules/erm/hmr.js\"></script>";
         if let Some(pos) = output.find("<head>") {
@@ -2177,19 +2193,15 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     }
 
     if let Some(pos) = output.find("</head>") {
-        output.insert_str(pos, &assets);
-    } else if let Some(pos) = output.find("</body>") {
-        output.insert_str(pos, &assets);
+        output.insert_str(pos, &style_assets);
     } else {
-        output.push_str(&assets);
+        output.insert_str(0, &style_assets);
     }
 
-    if !output.contains("<html") {
-        let mut final_res = String::new();
-        final_res.push_str("<!DOCTYPE html><html><head></head><body>");
-        final_res.push_str(&output);
-        final_res.push_str("</body></html>");
-        return Ok(final_res);
+    if let Some(pos) = output.find("</body>") {
+        output.insert_str(pos, &script_assets);
+    } else {
+        output.push_str(&script_assets);
     }
 
     Ok(output)
@@ -2670,30 +2682,63 @@ pub fn parse_ermcss_config(base_path: &std::path::Path) -> ErmcssConfig {
         content: Vec::new(),
     };
     let toml_path = base_path.join("eronom.toml");
-    if toml_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&toml_path) {
-            if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-                if let Some(package) = toml_val.get("package") {
-                    if let Some(ermcss) = package.get("ermcss") {
-                        if ermcss.as_bool().unwrap_or(false) {
+    let toml_content_opt = if toml_path.exists() {
+        std::fs::read_to_string(&toml_path).ok()
+    } else {
+        crate::vm::embedded::get_vfs_text("eronom.toml")
+    };
+
+    let mut explicitly_disabled = false;
+
+    if let Some(content) = toml_content_opt {
+        if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
+            if let Some(package) = toml_val.get("package") {
+                if let Some(ermcss) = package.get("ermcss") {
+                    if let Some(b) = ermcss.as_bool() {
+                        if b {
                             config.enabled = true;
+                        } else {
+                            explicitly_disabled = true;
                         }
                     }
                 }
-                if let Some(ermcss) = toml_val.get("ermcss") {
-                    if let Some(content_arr) = ermcss.get("content") {
-                        if let Some(arr) = content_arr.as_array() {
-                            for item in arr {
-                                if let Some(s) = item.as_str() {
-                                    config.content.push(s.to_string());
-                                }
+            }
+            if let Some(ermcss) = toml_val.get("ermcss") {
+                if let Some(enabled) = ermcss.get("enabled").and_then(|v| v.as_bool()) {
+                    if enabled {
+                        config.enabled = true;
+                    } else {
+                        explicitly_disabled = true;
+                    }
+                } else {
+                    config.enabled = true;
+                }
+                if let Some(content_arr) = ermcss.get("content") {
+                    if let Some(arr) = content_arr.as_array() {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                config.content.push(s.to_string());
                             }
                         }
                     }
                 }
-                return config;
             }
         }
+    }
+
+    // Auto-enable ermcss if not explicitly disabled and compiler is found
+    if !explicitly_disabled && !config.enabled {
+        if find_ermcss_path(base_path.to_str().unwrap_or(".")).is_some() {
+            config.enabled = true;
+        }
+    }
+
+    if config.enabled && config.content.is_empty() {
+        config.content = vec![
+            "./app/**/*.erm".to_string(),
+            "./pages/**/*.erm".to_string(),
+            "./**/*.erm".to_string(),
+        ];
     }
     config
 }

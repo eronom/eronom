@@ -642,6 +642,9 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     backend::std_json::register_json_natives(&mut vm);
     backend::std_system::register_system_natives(&mut vm);
     backend::er_http::set_target_script_path(path);
+    if let Some(css_text) = backend::embedded::get_vfs_text("css/global.css") {
+        eronom::compiler::set_global_ermcss(css_text);
+    }
     let main_path = std::path::Path::new(path);
     let mut config_loaded = false;
     if let Some(parent_dir) = main_path.parent() {

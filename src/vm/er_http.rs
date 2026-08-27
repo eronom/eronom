@@ -2459,11 +2459,29 @@ pub extern "C" fn er_http_on_request(
             resp.set(std::ptr::null_mut());
         });
     } else {
-        unsafe {
-            let status = CString::new("404 Not Found").unwrap();
-            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-            let c_str = CString::new("{\"error\": \"Not Found\"}").unwrap();
-            er_http_response_end_json(res, c_str.as_ptr(), c_str.as_bytes().len());
+        let req_path = if clean_path.starts_with('/') { &clean_path[1..] } else { clean_path };
+        let mut served = serve_static_file(res, Path::new(req_path), &headers_map);
+        
+        if !served && !req_path.starts_with("public/") {
+            served = serve_static_file(res, Path::new(&format!("public/{}", req_path)), &headers_map);
+        }
+        if !served && !req_path.starts_with("build/") {
+            served = serve_static_file(res, Path::new(&format!("build/{}", req_path)), &headers_map);
+        }
+        if !served && !req_path.starts_with("css/") {
+            served = serve_static_file(res, Path::new(&format!("css/{}", req_path)), &headers_map);
+        }
+        if !served && clean_path.starts_with("/modules/") {
+            served = serve_static_file(res, Path::new(&clean_path[1..]), &headers_map);
+        }
+
+        if !served {
+            unsafe {
+                let status = CString::new("404 Not Found").unwrap();
+                er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+                let c_str = CString::new("{\"error\": \"Not Found\"}").unwrap();
+                er_http_response_end_json(res, c_str.as_ptr(), c_str.as_bytes().len());
+            }
         }
     }
 }
