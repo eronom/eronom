@@ -85,9 +85,12 @@ unsafe extern "C" {
     fn er_http_response_end_html(res: *mut c_void, html_str: *const c_char, html_len: usize) -> bool;
     fn er_http_response_write_status(res: *mut c_void, status_str: *const c_char, status_len: usize) -> bool;
     fn er_http_response_write_header(res: *mut c_void, key_str: *const c_char, key_len: usize, val_str: *const c_char, val_len: usize) -> bool;
+    fn er_http_response_write(res: *mut c_void, data_str: *const c_char, data_len: usize) -> bool;
+    fn er_http_response_get_buffered_amount(res: *mut c_void) -> usize;
     fn er_http_response_end(res: *mut c_void, data_str: *const c_char, data_len: usize) -> bool;
     fn er_http_response_is_alive(res: *mut c_void) -> bool;
     fn er_http_response_release(res: *mut c_void);
+    fn er_ws_get_buffered_amount(ws: *mut c_void) -> usize;
     
     fn er_ws_register_route(path: *const c_char);
     fn er_ws_send(ws: *mut c_void, message: *const c_char, message_len: usize, is_binary: i32);
@@ -1229,8 +1232,7 @@ pub fn flush_response(
     unsafe {
         // 1. Status
         let status_line = status_code_to_status_line(status_code);
-        let s_c = CString::new(status_line).unwrap();
-        er_http_response_write_status(res_ptr, s_c.as_ptr(), s_c.as_bytes().len());
+        er_http_response_write_status(res_ptr, status_line.as_ptr() as *const c_char, status_line.len());
 
         // 2. Content-Type
         let mut has_content_type = false;
@@ -1242,24 +1244,20 @@ pub fn flush_response(
         }
         if !has_content_type {
             if let Some(ct) = default_content_type {
-                let k_c = CString::new("Content-Type").unwrap();
-                let v_c = CString::new(ct).unwrap();
-                er_http_response_write_header(res_ptr, k_c.as_ptr(), k_c.as_bytes().len(), v_c.as_ptr(), v_c.as_bytes().len());
+                let k = "Content-Type";
+                er_http_response_write_header(res_ptr, k.as_ptr() as *const c_char, k.len(), ct.as_ptr() as *const c_char, ct.len());
             }
         }
 
         // 3. Headers
-        for (k, v) in headers {
-            let k_c = CString::new(k).unwrap();
-            let v_c = CString::new(v).unwrap();
-            er_http_response_write_header(res_ptr, k_c.as_ptr(), k_c.as_bytes().len(), v_c.as_ptr(), v_c.as_bytes().len());
+        for (k, v) in &headers {
+            er_http_response_write_header(res_ptr, k.as_ptr() as *const c_char, k.len(), v.as_ptr() as *const c_char, v.len());
         }
 
         // 4. Cookies
-        for cookie_str in cookies {
-            let k_c = CString::new("Set-Cookie").unwrap();
-            let v_c = CString::new(cookie_str).unwrap();
-            er_http_response_write_header(res_ptr, k_c.as_ptr(), k_c.as_bytes().len(), v_c.as_ptr(), v_c.as_bytes().len());
+        let set_cookie = "Set-Cookie";
+        for cookie_str in &cookies {
+            er_http_response_write_header(res_ptr, set_cookie.as_ptr() as *const c_char, set_cookie.len(), cookie_str.as_ptr() as *const c_char, cookie_str.len());
         }
 
         // 5. Body
@@ -1575,9 +1573,8 @@ pub fn end_http_response_json(res: *mut std::ffi::c_void, json: &str) {
     if res.is_null() {
         return;
     }
-    let c_str = std::ffi::CString::new(json).unwrap();
     unsafe {
-        er_http_response_end_json(res, c_str.as_ptr(), c_str.as_bytes().len());
+        er_http_response_end_json(res, json.as_ptr() as *const c_char, json.len());
     }
 }
 
@@ -3016,7 +3013,7 @@ pub fn native_get_io_mode(_args: Vec<Value>) -> Value {
     if !vm_ptr.is_null() {
         let vm = unsafe { &*vm_ptr };
         let mode = if vm.use_evented_io { "evented" } else { "threaded" };
-        let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::String(std::rc::Rc::from(mode)));
+        let ptr = crate::vm::gc::get_or_create_string(mode);
         Value::string(ptr)
     } else {
         Value::null()

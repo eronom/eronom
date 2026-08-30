@@ -511,6 +511,34 @@ extern "C" bool er_http_response_end(void* token_ptr, const char* data_str, size
     return true;
 }
 
+extern "C" bool er_http_response_write(void* token_ptr, const char* data_str, size_t data_len) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return false;
+    auto* http_res = token->res.load(std::memory_order_acquire);
+    if (!http_res) return false;
+    return http_res->write(std::string_view(data_str, data_len));
+}
+
+struct AsyncSocketAccessor : public uWS::AsyncSocket<false> {
+    using uWS::AsyncSocket<false>::getBufferedAmount;
+};
+
+extern "C" size_t er_http_response_get_buffered_amount(void* token_ptr) {
+    if (!token_ptr) return 0;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return 0;
+    auto* http_res = token->res.load(std::memory_order_acquire);
+    if (!http_res) return 0;
+    return static_cast<AsyncSocketAccessor*>(static_cast<void*>(http_res))->getBufferedAmount();
+}
+
+extern "C" size_t er_ws_get_buffered_amount(void* ws) {
+    if (!ws) return 0;
+    auto* websocket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    return websocket->getBufferedAmount();
+}
+
 extern "C" void er_http_create_timer(int ms, void (*cb)(void*)) {
     auto* loop = uWS::Loop::get();
     struct us_timer_t *timer = us_create_timer((struct us_loop_t *) loop, 0, sizeof(void (*)(void*)));

@@ -2027,9 +2027,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                     mir.push_str("          mov desc_ptr, i64:24(obj_ptr)\n");
 
                     // Check fast_fields[0]
-                    mir.push_str("          mov tmp1, i64:32(desc_ptr)\n");
+                    mir.push_str("          mov tmp1, i64:16(desc_ptr)\n");
                     mir.push_str(&format!("          bne check_ff1_{}, tmp1, name_ptr\n", idx));
-                    mir.push_str("          mov tmp2, i64:40(desc_ptr)\n");
+                    mir.push_str("          mov tmp2, i64:24(desc_ptr)\n");
                     mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                     mir.push_str("          mul tmp3, tmp2, 8\n");
                     mir.push_str("          add start_ptr, start_ptr, tmp3\n");
@@ -2042,9 +2042,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
                     // Check fast_fields[1]
                     mir.push_str(&format!("check_ff1_{}:\n", idx));
-                    mir.push_str("          mov tmp1, i64:48(desc_ptr)\n");
+                    mir.push_str("          mov tmp1, i64:32(desc_ptr)\n");
                     mir.push_str(&format!("          bne check_ff2_{}, tmp1, name_ptr\n", idx));
-                    mir.push_str("          mov tmp2, i64:56(desc_ptr)\n");
+                    mir.push_str("          mov tmp2, i64:40(desc_ptr)\n");
                     mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                     mir.push_str("          mul tmp3, tmp2, 8\n");
                     mir.push_str("          add start_ptr, start_ptr, tmp3\n");
@@ -2057,9 +2057,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
                     // Check fast_fields[2]
                     mir.push_str(&format!("check_ff2_{}:\n", idx));
-                    mir.push_str("          mov tmp1, i64:64(desc_ptr)\n");
+                    mir.push_str("          mov tmp1, i64:48(desc_ptr)\n");
                     mir.push_str(&format!("          bne check_ff3_{}, tmp1, name_ptr\n", idx));
-                    mir.push_str("          mov tmp2, i64:72(desc_ptr)\n");
+                    mir.push_str("          mov tmp2, i64:56(desc_ptr)\n");
                     mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                     mir.push_str("          mul tmp3, tmp2, 8\n");
                     mir.push_str("          add start_ptr, start_ptr, tmp3\n");
@@ -2072,9 +2072,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
                     // Check fast_fields[3]
                     mir.push_str(&format!("check_ff3_{}:\n", idx));
-                    mir.push_str("          mov tmp1, i64:80(desc_ptr)\n");
+                    mir.push_str("          mov tmp1, i64:64(desc_ptr)\n");
                     mir.push_str(&format!("          bne fallback_get_prop_{}, tmp1, name_ptr\n", idx));
-                    mir.push_str("          mov tmp2, i64:88(desc_ptr)\n");
+                    mir.push_str("          mov tmp2, i64:72(desc_ptr)\n");
                     mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                     mir.push_str("          mul tmp3, tmp2, 8\n");
                     mir.push_str("          add start_ptr, start_ptr, tmp3\n");
@@ -2119,9 +2119,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
                 mir.push_str("          mov desc_ptr, i64:24(obj_ptr)\n");
 
                 // Check fast_fields[0]
-                mir.push_str("          mov tmp1, i64:32(desc_ptr)\n");
+                mir.push_str("          mov tmp1, i64:16(desc_ptr)\n");
                 mir.push_str(&format!("          bne check_set_ff1_{}, tmp1, name_ptr\n", idx));
-                mir.push_str("          mov tmp2, i64:40(desc_ptr)\n");
+                mir.push_str("          mov tmp2, i64:24(desc_ptr)\n");
                 mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                 mir.push_str("          mul tmp3, tmp2, 8\n");
                 mir.push_str("          add start_ptr, start_ptr, tmp3\n");
@@ -2130,9 +2130,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
                 // Check fast_fields[1]
                 mir.push_str(&format!("check_set_ff1_{}:\n", idx));
-                mir.push_str("          mov tmp1, i64:48(desc_ptr)\n");
+                mir.push_str("          mov tmp1, i64:32(desc_ptr)\n");
                 mir.push_str(&format!("          bne check_set_ff2_{}, tmp1, name_ptr\n", idx));
-                mir.push_str("          mov tmp2, i64:56(desc_ptr)\n");
+                mir.push_str("          mov tmp2, i64:40(desc_ptr)\n");
                 mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                 mir.push_str("          mul tmp3, tmp2, 8\n");
                 mir.push_str("          add start_ptr, start_ptr, tmp3\n");
@@ -2141,9 +2141,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
                 // Check fast_fields[2]
                 mir.push_str(&format!("check_set_ff2_{}:\n", idx));
-                mir.push_str("          mov tmp1, i64:64(desc_ptr)\n");
+                mir.push_str("          mov tmp1, i64:48(desc_ptr)\n");
                 mir.push_str(&format!("          bne check_set_ff3_{}, tmp1, name_ptr\n", idx));
-                mir.push_str("          mov tmp2, i64:72(desc_ptr)\n");
+                mir.push_str("          mov tmp2, i64:56(desc_ptr)\n");
                 mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                 mir.push_str("          mul tmp3, tmp2, 8\n");
                 mir.push_str("          add start_ptr, start_ptr, tmp3\n");
@@ -2152,9 +2152,9 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
 
                 // Check fast_fields[3]
                 mir.push_str(&format!("check_set_ff3_{}:\n", idx));
-                mir.push_str("          mov tmp1, i64:80(desc_ptr)\n");
+                mir.push_str("          mov tmp1, i64:64(desc_ptr)\n");
                 mir.push_str(&format!("          bne fallback_set_prop_{}, tmp1, name_ptr\n", idx));
-                mir.push_str("          mov tmp2, i64:88(desc_ptr)\n");
+                mir.push_str("          mov tmp2, i64:72(desc_ptr)\n");
                 mir.push_str("          mov start_ptr, i64:40(obj_ptr)\n");
                 mir.push_str("          mul tmp3, tmp2, 8\n");
                 mir.push_str("          add start_ptr, start_ptr, tmp3\n");

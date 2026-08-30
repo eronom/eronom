@@ -460,37 +460,55 @@ impl VM {
                         super::gc::mark_object(upval_ptr);
                     }
                     mark_value(&self.thrown_value);
-                    if let Ok(queue) = self.event_loop_queue.lock() {
-                        for task in queue.iter() {
-                            mark_value(&task.callback);
-                            for arg in task.args.iter() {
-                                mark_value(arg);
+                    if let Ok(queue) = self.event_loop_queue.try_lock() {
+                        if !queue.is_empty() {
+                            for task in queue.iter() {
+                                mark_value(&task.callback);
+                                for arg in task.args.iter() {
+                                    mark_value(arg);
+                                }
                             }
                         }
                     }
-                    if let Ok(pending) = self.pending_callbacks.lock() {
-                        for item in pending.iter() {
-                            mark_value(&item.callback);
-                            for arg in item.args.iter() {
-                                mark_value(arg);
+                    if let Ok(pending) = self.pending_callbacks.try_lock() {
+                        if !pending.is_empty() {
+                            for item in pending.iter() {
+                                mark_value(&item.callback);
+                                for arg in item.args.iter() {
+                                    mark_value(arg);
+                                }
                             }
                         }
                     }
-                    if let Ok(timers) = self.timers.lock() {
-                        for timer in timers.iter() {
-                            match &timer.action {
-                                VmTimerAction::Callback { callback, args } => {
-                                    mark_value(callback);
-                                    for arg in args {
-                                        mark_value(arg);
+                    if let Ok(timers) = self.timers.try_lock() {
+                        if !timers.is_empty() {
+                            for timer in timers.iter() {
+                                match &timer.action {
+                                    VmTimerAction::Callback { callback, args } => {
+                                        mark_value(callback);
+                                        for arg in args {
+                                            mark_value(arg);
+                                        }
+                                    }
+                                    VmTimerAction::ResolvePromise { value, .. } => {
+                                        mark_value(value);
                                     }
                                 }
-                                VmTimerAction::ResolvePromise { value, .. } => {
-                                    mark_value(value);
-                                }
                             }
                         }
                     }
+                    super::gc::GC_TEMP_SLICES.with(|slices| {
+                        if let Ok(borrowed) = slices.try_borrow() {
+                            for &(ptr, len) in borrowed.iter() {
+                                if !ptr.is_null() && len > 0 {
+                                    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                                    for val in slice {
+                                        mark_value(val);
+                                    }
+                                }
+                            }
+                        }
+                    });
                     GC_ROOTS.with(|roots| {
                         if let Ok(borrowed) = roots.try_borrow() {
                             for root_fn in borrowed.iter() {
@@ -532,37 +550,55 @@ impl VM {
                     super::gc::mark_object(upval_ptr);
                 }
                 mark_value(&self.thrown_value);
-                if let Ok(queue) = self.event_loop_queue.lock() {
-                    for task in queue.iter() {
-                        mark_value(&task.callback);
-                        for arg in task.args.iter() {
-                            mark_value(arg);
+                if let Ok(queue) = self.event_loop_queue.try_lock() {
+                    if !queue.is_empty() {
+                        for task in queue.iter() {
+                            mark_value(&task.callback);
+                            for arg in task.args.iter() {
+                                mark_value(arg);
+                            }
                         }
                     }
                 }
-                if let Ok(pending) = self.pending_callbacks.lock() {
-                    for item in pending.iter() {
-                        mark_value(&item.callback);
-                        for arg in item.args.iter() {
-                            mark_value(arg);
+                if let Ok(pending) = self.pending_callbacks.try_lock() {
+                    if !pending.is_empty() {
+                        for item in pending.iter() {
+                            mark_value(&item.callback);
+                            for arg in item.args.iter() {
+                                mark_value(arg);
+                            }
                         }
                     }
                 }
-                if let Ok(timers) = self.timers.lock() {
-                    for timer in timers.iter() {
-                        match &timer.action {
-                            VmTimerAction::Callback { callback, args } => {
-                                mark_value(callback);
-                                for arg in args {
-                                    mark_value(arg);
+                if let Ok(timers) = self.timers.try_lock() {
+                    if !timers.is_empty() {
+                        for timer in timers.iter() {
+                            match &timer.action {
+                                VmTimerAction::Callback { callback, args } => {
+                                    mark_value(callback);
+                                    for arg in args {
+                                        mark_value(arg);
+                                    }
+                                }
+                                VmTimerAction::ResolvePromise { value, .. } => {
+                                    mark_value(value);
                                 }
                             }
-                            VmTimerAction::ResolvePromise { value, .. } => {
-                                mark_value(value);
-                            }
                         }
                     }
                 }
+                super::gc::GC_TEMP_SLICES.with(|slices| {
+                    if let Ok(borrowed) = slices.try_borrow() {
+                        for &(ptr, len) in borrowed.iter() {
+                            if !ptr.is_null() && len > 0 {
+                                let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                                for val in slice {
+                                    mark_value(val);
+                                }
+                            }
+                        }
+                    }
+                });
                 GC_ROOTS.with(|roots| {
                     if let Ok(borrowed) = roots.try_borrow() {
                         for root_fn in borrowed.iter() {
@@ -830,14 +866,8 @@ impl VM {
             dest_reg: 0,
         });
         
-        let old_fns: Vec<*mut GcObject> = old_frames.iter().map(|f| f.function).collect();
-        super::gc::GC_ROOTS.with(|roots| {
-            roots.borrow_mut().push(Box::new(move || {
-                for &func in &old_fns {
-                    super::gc::mark_value(&Value::function(func));
-                }
-            }));
-        });
+        let old_fn_vals: Vec<Value> = old_frames.iter().map(|f| Value::function(f.function)).collect();
+        super::gc::gc_push_temp_slice(old_fn_vals.as_ptr(), old_fn_vals.len());
         
         if self.stack.len() < old_stack_len + 65536 {
             self.stack.resize(old_stack_len + 65536, Value::null());
@@ -849,9 +879,7 @@ impl VM {
             self.execute_loop_interpreter(0)
         };
         
-        super::gc::GC_ROOTS.with(|roots| {
-            roots.borrow_mut().pop();
-        });
+        super::gc::gc_pop_temp_slice();
         
         self.frames = old_frames;
         self.stack.truncate(old_stack_len);
@@ -1190,22 +1218,12 @@ impl VM {
                     }
                 };
                 let mut mapped = Vec::with_capacity(items.len());
-                let mapped_ptr = &mapped as *const Vec<Value>;
-                super::gc::GC_ROOTS.with(|roots| {
-                    roots.borrow_mut().push(Box::new(move || {
-                        let vec = unsafe { &*mapped_ptr };
-                        for val in vec {
-                            super::gc::mark_value(val);
-                        }
-                    }));
-                });
                 for (i, item) in items.iter().enumerate() {
+                    super::gc::gc_push_temp_slice(mapped.as_ptr(), mapped.len());
                     let res = self.call_function_reentrant(cb, vec![*item, Value::number(i as f64), receiver])?;
+                    super::gc::gc_pop_temp_slice();
                     mapped.push(res);
                 }
-                super::gc::GC_ROOTS.with(|roots| {
-                    roots.borrow_mut().pop();
-                });
                 let ptr = super::gc::gc_alloc_array(&mapped);
                 Ok(Value::array(ptr))
             }
@@ -1221,25 +1239,15 @@ impl VM {
                     }
                 };
                 let mut filtered = Vec::new();
-                let filtered_ptr = &filtered as *const Vec<Value>;
-                super::gc::GC_ROOTS.with(|roots| {
-                    roots.borrow_mut().push(Box::new(move || {
-                        let vec = unsafe { &*filtered_ptr };
-                        for val in vec {
-                            super::gc::mark_value(val);
-                        }
-                    }));
-                });
                 for (i, item) in items.iter().enumerate() {
+                    super::gc::gc_push_temp_slice(filtered.as_ptr(), filtered.len());
                     let res = self.call_function_reentrant(cb, vec![*item, Value::number(i as f64), receiver])?;
+                    super::gc::gc_pop_temp_slice();
                     let is_truthy = !res.is_null() && (!res.is_boolean() || res.as_boolean());
                     if is_truthy {
                         filtered.push(*item);
                     }
                 }
-                super::gc::GC_ROOTS.with(|roots| {
-                    roots.borrow_mut().pop();
-                });
                 let ptr = super::gc::gc_alloc_array(&filtered);
                 Ok(Value::array(ptr))
             }
@@ -1950,7 +1958,7 @@ impl VM {
                             }
                             1 => { // text
                                 if let Ok(content) = std::fs::read_to_string(&path_str) {
-                                    let ptr = super::gc::gc_allocate(GcData::String(std::rc::Rc::from(content)));
+                                    let ptr = super::gc::gc_alloc_string(&content);
                                     Value::string(ptr)
                                 } else {
                                     Value::null()
@@ -2477,7 +2485,7 @@ impl VM {
                             self.gc_trigger();
                             reload_stack!();
                             let chars: Vec<Value> = match &(*s_ptr).data {
-                                GcData::String(s) => s.chars().map(|c| {
+                                GcData::String(s) => s.as_str().chars().map(|c| {
                                     let cp = super::gc::gc_alloc_string(&c.to_string());
                                     Value::string(cp)
                                 }).collect(),
@@ -3161,7 +3169,7 @@ impl VM {
                                 }
                                 1 => { // text
                                     if let Ok(content) = std::fs::read_to_string(&path_str) {
-                                        let ptr = super::gc::gc_allocate(GcData::String(std::rc::Rc::from(content)));
+                                        let ptr = super::gc::gc_alloc_string(&content);
                                         Value::string(ptr)
                                     } else {
                                         Value::null()

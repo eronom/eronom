@@ -213,10 +213,35 @@ pub struct GcClosure {
     pub upvalues: Vec<*mut GcObject>,
 }
 
+#[repr(C)]
+#[derive(Clone)]
+pub struct GcInlineString {
+    pub len: u8,
+    pub bytes: [u8; 31],
+}
+
+#[derive(Clone)]
+pub enum GcString {
+    Inline(GcInlineString),
+    Heap(Rc<str>),
+}
+
+impl GcString {
+    #[inline(always)]
+    pub fn as_str(&self) -> &str {
+        match self {
+            GcString::Inline(inline) => unsafe {
+                std::str::from_utf8_unchecked(&inline.bytes[..inline.len as usize])
+            },
+            GcString::Heap(s) => s.as_ref(),
+        }
+    }
+}
+
 #[repr(C, u8)]
 pub enum GcData {
     Empty,
-    String(Rc<str>),
+    String(GcString),
     Array(Vec<Value>),
     Object(ObjectMap),
     Function(Box<Function>),
@@ -271,6 +296,21 @@ thread_local! {
         map_pool: Vec::new(),
     }) };
     pub static GC_ROOTS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
+    pub static GC_TEMP_SLICES: RefCell<Vec<(*const Value, usize)>> = RefCell::new(Vec::new());
+}
+
+#[inline(always)]
+pub fn gc_push_temp_slice(ptr: *const Value, len: usize) {
+    GC_TEMP_SLICES.with(|s| {
+        s.borrow_mut().push((ptr, len));
+    });
+}
+
+#[inline(always)]
+pub fn gc_pop_temp_slice() {
+    GC_TEMP_SLICES.with(|s| {
+        s.borrow_mut().pop();
+    });
 }
 
 pub static GC_NEEDS_STEP: AtomicBool = AtomicBool::new(false);
@@ -637,8 +677,18 @@ pub fn gc_sweep_string_cache() {
 
 #[inline(always)]
 pub fn gc_alloc_string(s: &str) -> *mut GcObject {
-    let rc_str: Rc<str> = Rc::from(s);
-    gc_allocate(GcData::String(rc_str))
+    let len = s.len();
+    let str_data = if len <= 31 {
+        let mut bytes = [0u8; 31];
+        bytes[..len].copy_from_slice(s.as_bytes());
+        GcString::Inline(GcInlineString {
+            len: len as u8,
+            bytes,
+        })
+    } else {
+        GcString::Heap(Rc::from(s))
+    };
+    gc_allocate(GcData::String(str_data))
 }
 
 #[inline(always)]
@@ -648,7 +698,18 @@ pub fn gc_alloc_builtin_method(receiver: Value, method: BuiltinMethodId) -> *mut
 
 #[inline(always)]
 pub fn gc_alloc_string_rc(rc_str: Rc<str>) -> *mut GcObject {
-    gc_allocate(GcData::String(rc_str))
+    let len = rc_str.len();
+    let str_data = if len <= 31 {
+        let mut bytes = [0u8; 31];
+        bytes[..len].copy_from_slice(rc_str.as_bytes());
+        GcString::Inline(GcInlineString {
+            len: len as u8,
+            bytes,
+        })
+    } else {
+        GcString::Heap(rc_str)
+    };
+    gc_allocate(GcData::String(str_data))
 }
 
 #[inline(always)]
@@ -659,7 +720,7 @@ pub fn intern_string(s: &str) -> *mut GcObject {
             ptr
         } else {
             let rc_str: Rc<str> = Rc::from(s);
-            let ptr = gc_allocate(GcData::String(rc_str.clone()));
+            let ptr = gc_alloc_string(s);
             cache.insert(rc_str, ptr);
             ptr
         }

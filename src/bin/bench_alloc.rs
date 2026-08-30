@@ -49,7 +49,7 @@ struct TrackingAllocator;
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { std::alloc::System.alloc(layout) };
+        let ptr = unsafe { mimalloc::MiMalloc.alloc(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -57,12 +57,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { std::alloc::System.dealloc(ptr, layout) };
+        unsafe { mimalloc::MiMalloc.dealloc(ptr, layout) };
         COUNTER.sub(layout.size());
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { std::alloc::System.alloc_zeroed(layout) };
+        let ptr = unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
         }
@@ -70,7 +70,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let new_ptr = unsafe { std::alloc::System.realloc(ptr, layout, new_size) };
+        let new_ptr = unsafe { mimalloc::MiMalloc.realloc(ptr, layout, new_size) };
         if !new_ptr.is_null() {
             COUNTER.sub(layout.size());
             COUNTER.add(new_size);

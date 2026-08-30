@@ -312,7 +312,7 @@ pub extern "C" fn er_jit_to_iter(vm: *mut VM, val: Value) -> Value {
         } else if val.is_string() {
             let s_ptr = val.as_gc_ptr();
             let chars: Vec<Value> = match &(*s_ptr).data {
-                GcData::String(s) => s.chars().map(|c| {
+                GcData::String(s) => s.as_str().chars().map(|c| {
                     let cp = gc_alloc_string(&c.to_string());
                     Value::string(cp)
                 }).collect(),

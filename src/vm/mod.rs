@@ -12,6 +12,7 @@ pub mod std_json;
 pub mod std_system;
 pub mod shape;
 pub mod embedded;
+pub mod alloc;
 
 // Re-export key structures to maintain public API compatibility
 pub use value::Value;

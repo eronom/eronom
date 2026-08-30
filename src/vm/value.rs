@@ -247,7 +247,7 @@ impl Value {
         } else if (self.0 & 0xffff_0000_0000_0000) == TAG_STRING {
             unsafe {
                 match &(*self.as_gc_ptr()).data {
-                    GcData::String(s) => Some(s.as_ref()),
+                    GcData::String(s) => Some(s.as_str()),
                     _ => None,
                 }
             }

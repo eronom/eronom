@@ -2,6 +2,9 @@ pub use eronom::vm as backend;
 pub use eronom::frontend;
 pub use eronom::jit;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use backend::{Compiler, VM, Value};
 use frontend::{Expr, LiteralValue, Stmt};
 
@@ -120,10 +123,7 @@ fn value_to_json(val: Value) -> String {
                 backend::GcData::Object(obj) => {
                     let mut items = Vec::new();
                     for (k, &v) in obj {
-                        let s = match &(*k.0.as_gc_ptr()).data {
-                            backend::GcData::String(s) => s.as_ref(),
-                            _ => continue,
-                        };
+                        let s = k.0.as_str().unwrap_or("");
                         items.push(format!("\"{}\":{}", s, value_to_json(v)));
                     }
                     format!("{{{}}}", items.join(","))

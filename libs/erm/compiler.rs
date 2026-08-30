@@ -2852,7 +2852,17 @@ pub fn matches_glob(base_path: &std::path::Path, path: &std::path::Path, glob: &
 pub fn compile_project_ermcss(base_path: &std::path::Path, content_globs: &[String]) -> anyhow::Result<String> {
     let mut classes_set = HashSet::new();
     
-    fn scan_for_classes(dir: &std::path::Path, base_path: &std::path::Path, globs: &[String], classes: &mut HashSet<String>) {
+    let re_class1 = regex::Regex::new(r#"class\s*=\s*"([^"]*)""#).ok();
+    let re_class2 = regex::Regex::new(r#"class\s*=\s*'([^']*)'"#).ok();
+    
+    fn scan_for_classes(
+        dir: &std::path::Path,
+        base_path: &std::path::Path,
+        globs: &[String],
+        classes: &mut HashSet<String>,
+        re1: Option<&regex::Regex>,
+        re2: Option<&regex::Regex>,
+    ) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -2867,7 +2877,7 @@ pub fn compile_project_ermcss(base_path: &std::path::Path, content_globs: &[Stri
                 }
                 
                 if path.is_dir() {
-                    scan_for_classes(&path, base_path, globs, classes);
+                    scan_for_classes(&path, base_path, globs, classes, re1, re2);
                 } else if path.is_file() {
                     let mut matched = false;
                     for glob in globs {
@@ -2879,19 +2889,19 @@ pub fn compile_project_ermcss(base_path: &std::path::Path, content_globs: &[Stri
                     
                     if matched {
                         if let Ok(html_content) = std::fs::read_to_string(&path) {
-                            if let Ok(re_class1) = regex::Regex::new(r#"class\s*=\s*"([^"]*)""#) {
-                                for cap in re_class1.captures_iter(&html_content) {
+                            if let Some(re) = re1 {
+                                for cap in re.captures_iter(&html_content) {
                                     for cls in cap[1].split_whitespace() {
                                         classes.insert(cls.to_string());
                                     }
                                 }
                             }
-                            if let Ok(re_class2) = regex::Regex::new(r#"class\s*=\s*'([^']*)'"#) {
-                                  for cap in re_class2.captures_iter(&html_content) {
-                                      for cls in cap[1].split_whitespace() {
-                                          classes.insert(cls.to_string());
-                                      }
-                                  }
+                            if let Some(re) = re2 {
+                                for cap in re.captures_iter(&html_content) {
+                                    for cls in cap[1].split_whitespace() {
+                                        classes.insert(cls.to_string());
+                                    }
+                                }
                             }
                         }
                     }
@@ -2900,7 +2910,7 @@ pub fn compile_project_ermcss(base_path: &std::path::Path, content_globs: &[Stri
         }
     }
     
-    scan_for_classes(base_path, base_path, content_globs, &mut classes_set);
+    scan_for_classes(base_path, base_path, content_globs, &mut classes_set, re_class1.as_ref(), re_class2.as_ref());
     
     if classes_set.is_empty() {
         return Ok(String::new());

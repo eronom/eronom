@@ -19,9 +19,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 toml = "0.8.19"
 ureq = "3.3.0"
 ring = "0.17"
-
-
-
+mimalloc = { version = "0.1", default-features = false }
 [build-dependencies]
 cc = "1.0"
 
