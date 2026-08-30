@@ -241,6 +241,16 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             }
         }
     }
+    for handler in &func.chunk.handlers {
+        if handler.catch_ip < is_resume_target.len() {
+            is_resume_target[handler.catch_ip] = true;
+        }
+        if let Some(finally_ip) = handler.finally_ip {
+            if finally_ip < is_resume_target.len() {
+                is_resume_target[finally_ip] = true;
+            }
+        }
+    }
 
     let resolve_branch_target = |code: &[crate::vm::bytecode::Instruction], mut target: usize| -> usize {
         let mut depth = 0;
@@ -268,6 +278,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             mir.push_str(&format!("          beq entry_{}, start_ip, {}\n", ip_target, ip_target));
         }
     }
+    mir.push_str("          jmp err_label\n");
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     enum RegType {
@@ -293,7 +304,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         }
     }
 
-    let (is_dead, live_in, _live_out) = eliminate_dead_instructions(func, num_regs);
+    let (is_dead, live_in, _live_out) = eliminate_dead_instructions(func, num_regs, &is_resume_target);
 
     let mut worklist = vec![0];
     let mut in_worklist = vec![false; func.chunk.code.len()];
@@ -2735,6 +2746,7 @@ fn array_escapes(
 fn eliminate_dead_instructions(
     func: &crate::vm::bytecode::Function,
     num_regs: usize,
+    is_resume_target: &[bool],
 ) -> (Vec<bool>, Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let n = func.chunk.code.len();
     let has_closures = func.chunk.code.iter().any(|inst| inst.op == OpCode::Closure);
@@ -2753,7 +2765,7 @@ fn eliminate_dead_instructions(
         let mut changed = false;
 
         for pc in 0..n {
-            if is_dead[pc] {
+            if is_dead[pc] || (pc < is_resume_target.len() && is_resume_target[pc]) {
                 continue;
             }
             let inst = &func.chunk.code[pc];

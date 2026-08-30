@@ -229,11 +229,11 @@ impl VM {
     pub fn new() -> Self {
         let use_jit = std::env::var("ER_NO_JIT").is_err();
         let jit_threshold = if let Ok(val) = std::env::var("ER_JIT_THRESHOLD") {
-            val.parse::<usize>().unwrap_or(30)
+            val.parse::<usize>().unwrap_or(20)
         } else if std::env::var("ER_EAGER_JIT").is_ok() {
             0
         } else {
-            30
+            20
         };
         Self {
             has_error_flag: 0,
@@ -1796,10 +1796,19 @@ impl VM {
                 let count = raw_func.invocation_count.get() + 1;
                 raw_func.invocation_count.set(count);
 
-                let native_ptr = if let Some(ptr) = raw_func.jit_ptr.get() {
+                let can_jit = self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty();
+                let native_ptr = if !can_jit {
+                    None
+                } else if let Some(ptr) = raw_func.jit_ptr.get() {
+                    Some(ptr)
+                } else if self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold || self.frames.len() <= 1 {
+                    Some(crate::jit::compile_function(self, raw_fn_ptr))
+                } else {
+                    None
+                };
+
+                let native_ptr = if let Some(ptr) = native_ptr {
                     ptr
-                } else if self.jit_threshold == 0 || count >= self.jit_threshold || self.frames.len() <= 1 {
-                    crate::jit::compile_function(self, raw_fn_ptr)
                 } else {
                     let child_dest_reg = frame.dest_reg;
                     let initial_depth = self.frames.len() - 1;
@@ -2142,7 +2151,7 @@ impl VM {
                     let mut handled = false;
 
                     let initial_frame_idx = self.frames.len() - 1;
-                    while !self.frames.is_empty() {
+                    while self.frames.len() > target_depth {
                         let frame_idx = self.frames.len() - 1;
                         let curr_ip = if frame_idx == initial_frame_idx {
                             let offset = ip.offset_from(code_ptr) as usize;
@@ -2172,7 +2181,7 @@ impl VM {
                             handled = true;
                             break;
                         } else {
-                            if self.frames.len() > 1 {
+                            if self.frames.len() > target_depth + 1 {
                                 self.frames.pop();
                                 if !self.frames.is_empty() {
                                     frame_ptr = {
@@ -2193,6 +2202,7 @@ impl VM {
                     }
 
                     if !handled {
+                        self.thrown_value = thrown;
                         let err_str = match thrown.as_str() {
                             Some(s) => s.to_string(),
                             None => format!("{}", thrown),
@@ -2571,7 +2581,7 @@ impl VM {
                         };
                         let count = raw_func.invocation_count.get() + 1;
                         raw_func.invocation_count.set(count);
-                        if self.use_jit && !raw_func.is_async && raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || count >= self.jit_threshold) {
+                        if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() && raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold) {
                             crate::jit::compile_function(self, raw_fn_ptr);
                         }
                         ip = ip.sub(instruction.operand as usize);
@@ -3052,8 +3062,8 @@ impl VM {
                             let count = raw_func.invocation_count.get() + 1;
                             raw_func.invocation_count.set(count);
 
-                            if self.use_jit && !raw_func.is_async {
-                                if raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || count >= self.jit_threshold) {
+                            if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() {
+                                if raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold) {
                                     crate::jit::compile_function(self, raw_fn_ptr);
                                 }
                                 if raw_func.jit_ptr.get().is_some() {

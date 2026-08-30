@@ -20,6 +20,7 @@ pub struct Function {
     pub jit_ptr: std::cell::Cell<Option<*const std::ffi::c_void>>,
     pub invocation_count: std::cell::Cell<usize>,
     pub is_async: bool,
+    pub has_loop: bool,
     pub upvalues: Vec<UpvalueDescriptor>,
 }
 

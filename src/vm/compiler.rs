@@ -73,6 +73,7 @@ impl Compiler {
                 jit_ptr: std::cell::Cell::new(None),
                 invocation_count: std::cell::Cell::new(0),
                 is_async: false,
+                has_loop: false,
                 upvalues: Vec::new(),
             },
             locals: Vec::new(),
@@ -1873,6 +1874,7 @@ impl Compiler {
     }
 
     fn emit_loop(&mut self, loop_start: usize) {
+        self.function.has_loop = true;
         let offset = self.current_chunk().code.len() - loop_start + 1;
         self.current_chunk().write_instruction(OpCode::Loop, 0, 0, 0, offset as u32);
     }

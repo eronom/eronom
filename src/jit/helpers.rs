@@ -1134,7 +1134,7 @@ pub extern "C" fn er_jit_call_fast(
             _ => return -1,
         };
 
-        if func.is_async {
+        if func.is_async || !func.chunk.handlers.is_empty() {
             return -1;
         }
 
@@ -1143,7 +1143,7 @@ pub extern "C" fn er_jit_call_fast(
 
         let native_ptr = if let Some(ptr) = func.jit_ptr.get() {
             ptr
-        } else if (*vm).jit_threshold == 0 || count >= (*vm).jit_threshold {
+        } else if (*vm).jit_threshold == 0 || func.has_loop || count >= (*vm).jit_threshold {
             crate::jit::compile_function(&mut *vm, raw_fn_ptr)
         } else {
             return -1;
@@ -1290,8 +1290,8 @@ pub extern "C" fn er_jit_call_non_vm(
                 return -2;
             }
 
-            if func_val.is_async {
-                return -1; // Fallback to host VM loop for async
+            if func_val.is_async || !func_val.chunk.handlers.is_empty() {
+                return -1; // Fallback to host VM loop for async or exception handlers
             } else {
                 let offset_from_base = callee_frame_slots.offset_from((*_vm).stack.as_ptr()) as usize;
                 if offset_from_base + 512 >= (*_vm).stack.len() {
@@ -1305,7 +1305,7 @@ pub extern "C" fn er_jit_call_non_vm(
 
                 let native_ptr = if let Some(ptr) = func_val.jit_ptr.get() {
                     ptr
-                } else if (*_vm).jit_threshold == 0 || count >= (*_vm).jit_threshold {
+                } else if (*_vm).jit_threshold == 0 || func_val.has_loop || count >= (*_vm).jit_threshold {
                     crate::jit::compile_function(&mut *_vm, raw_fn_ptr)
                 } else {
                     return -1;
