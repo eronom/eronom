@@ -235,10 +235,11 @@ impl VM {
         } else {
             20
         };
+        crate::vm::alloc::init_allocator_options();
         Self {
             has_error_flag: 0,
             frames: Vec::new(),
-            stack: Vec::with_capacity(65536),
+            stack: Vec::with_capacity(1024),
             globals: FnvHashMap::default(),
             error: None,
             mir_ctx: None,
@@ -438,7 +439,7 @@ impl VM {
         match phase {
             GcPhase::Pause => {
                 let should_mark = gc_with_state(|state| {
-                    if state.alloc_count >= 10000 {
+                    if state.alloc_count >= state.alloc_threshold {
                         state.phase = GcPhase::Mark;
                         state.gray_stack.clear();
                         true
@@ -761,8 +762,8 @@ impl VM {
                 }
             }
             state.live_count = live_objects;
-            // Adaptive threshold: 2× the live set, but at least 10000
-            state.alloc_threshold = (live_objects * 2).max(10000);
+            // Adaptive threshold: 2× the live set, bounded between 512 and 2048
+            state.alloc_threshold = (live_objects * 2).max(512).min(2048);
             state.alloc_count = 0;
             state.phase = GcPhase::Pause;
             state.sweep_ptr = std::ptr::null_mut();
@@ -869,8 +870,9 @@ impl VM {
         let old_fn_vals: Vec<Value> = old_frames.iter().map(|f| Value::function(f.function)).collect();
         super::gc::gc_push_temp_slice(old_fn_vals.as_ptr(), old_fn_vals.len());
         
-        if self.stack.len() < old_stack_len + 65536 {
-            self.stack.resize(old_stack_len + 65536, Value::null());
+        let needed = old_stack_len + 256;
+        if self.stack.len() < needed {
+            self.stack.resize(needed, Value::null());
         }
 
         let res = if self.use_jit {
@@ -889,7 +891,10 @@ impl VM {
 
     fn execute(&mut self) -> Result<Value, String> {
         let original_len = self.stack.len();
-        self.stack.resize(original_len + 65536, Value::null());
+        let needed = original_len + 256;
+        if self.stack.len() < needed {
+            self.stack.resize(needed, Value::null());
+        }
         
         let res = if self.use_jit {
             self.execute_loop(0)
@@ -1735,6 +1740,7 @@ impl VM {
         }
     }
 
+    #[allow(unused_assignments)]
     fn execute_loop(&mut self, target_depth: usize) -> Result<Value, String> {
         unsafe {
             type JitFn = unsafe extern "C" fn(
@@ -1776,6 +1782,7 @@ impl VM {
             let mut slots_offset = frame.slots_offset;
 
             let mut stack_start;
+            #[allow(unused_assignments)]
             let mut frame_slots;
 
             macro_rules! reload_stack {
@@ -1898,6 +1905,10 @@ impl VM {
                         // Save current IP (call instruction index: ip_out)
                         frame.ip = ip_out;
                         let new_slots_offset = slots_offset + func_reg_out + 1;
+                        let needed = new_slots_offset + 256;
+                        if self.stack.len() < needed {
+                            self.stack.resize(needed, Value::null());
+                        }
                         self.frames.push(CallFrame {
                             function: func_ptr,
                             ip: 0,
@@ -1912,6 +1923,7 @@ impl VM {
                         func = get_func!(frame.function);
                         constants_ptr = func.chunk.constants.as_ptr();
                         slots_offset = frame.slots_offset;
+                        reload_stack!();
                         ip_val = 0;
                     } else if callee.is_native_function() {
                         let native = callee.as_native_fn();
@@ -3077,6 +3089,10 @@ impl VM {
                                 if raw_func.jit_ptr.get().is_some() {
                                     frame.ip = ip.offset_from(code_ptr) as usize - 1;
                                     let new_slots_offset = slots_offset + func_reg + 1;
+                                    let needed = new_slots_offset + 256;
+                                    if self.stack.len() < needed {
+                                        self.stack.resize(needed, Value::null());
+                                    }
                                     self.frames.push(CallFrame {
                                         function: func_ptr,
                                         ip: 0,
@@ -3107,6 +3123,10 @@ impl VM {
 
                             frame.ip = ip.offset_from(code_ptr) as usize - 1;
                             let new_slots_offset = slots_offset + func_reg + 1;
+                            let needed = new_slots_offset + 256;
+                            if self.stack.len() < needed {
+                                self.stack.resize(needed, Value::null());
+                            }
                             self.frames.push(CallFrame {
                                 function: func_ptr,
                                 ip: 0,
@@ -3122,7 +3142,7 @@ impl VM {
                             code_ptr = func.chunk.code.as_ptr();
                             constants_ptr = func.chunk.constants.as_ptr();
                             slots_offset = frame.slots_offset;
-                            frame_slots = stack_start.add(slots_offset);
+                            reload_stack!();
                             ip = code_ptr.add(frame.ip);
                         } else if callee.is_native_function() {
                             let native = callee.as_native_fn();

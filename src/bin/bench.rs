@@ -54,6 +54,7 @@ struct TrackingAllocator;
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        eronom::backend::alloc::init_allocator_options();
         let ptr = unsafe { mimalloc::MiMalloc.alloc(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
@@ -67,6 +68,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        eronom::backend::alloc::init_allocator_options();
         let ptr = unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) };
         if !ptr.is_null() {
             COUNTER.add(layout.size());
@@ -75,6 +77,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        eronom::backend::alloc::init_allocator_options();
         let new_ptr = unsafe { mimalloc::MiMalloc.realloc(ptr, layout, new_size) };
         if !new_ptr.is_null() {
             COUNTER.sub(layout.size());
@@ -1096,6 +1099,7 @@ fn print_consolidated_summary(results: &[BenchResultRow]) {
 }
 
 fn main() {
+    eronom::backend::alloc::init_allocator_options();
     let suite = get_benchmark_suite();
 
     fn noop_print(args: Vec<eronom::backend::Value>) -> eronom::backend::Value {

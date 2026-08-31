@@ -1750,7 +1750,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
             OpCode::Loop => {
                 let target = (idx as i32 + 1 - instruction.operand as i32) as usize;
                 mir.push_str("          add loop_counter, loop_counter, 1\n");
-                mir.push_str("          and tmp, loop_counter, 4095\n");
+                mir.push_str("          and tmp, loop_counter, 127\n");
                 mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
                 mir.push_str("          mov tmp1, er_gc_needs_step\n");
                 mir.push_str("          mov status, u8:0(tmp1)\n");

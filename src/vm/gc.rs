@@ -282,7 +282,7 @@ thread_local! {
     pub static GC_STATE: std::cell::UnsafeCell<GcState> = const { std::cell::UnsafeCell::new(GcState {
         head: std::ptr::null_mut(),
         alloc_count: 0,
-        alloc_threshold: 10000,
+        alloc_threshold: 512,
         live_count: 0,
         phase: GcPhase::Pause,
         gray_stack: Vec::new(),
@@ -330,11 +330,7 @@ pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
             }
             v
         } else {
-            let cap = capacity.max(8);
-            for _ in 0..63 {
-                s.vector_pool.push(Vec::with_capacity(cap));
-            }
-            Vec::with_capacity(cap)
+            Vec::with_capacity(capacity.max(4))
         }
     })
 }
@@ -349,11 +345,7 @@ pub fn get_pooled_map(capacity: usize) -> ObjectMap {
             }
             m
         } else {
-            let cap = capacity.max(4);
-            for _ in 0..31 {
-                s.map_pool.push(ObjectMap::with_capacity_and_hasher(cap, Default::default()));
-            }
-            ObjectMap::with_capacity_and_hasher(cap, Default::default())
+            ObjectMap::with_capacity_and_hasher(capacity.max(4), Default::default())
         }
     })
 }
@@ -363,7 +355,7 @@ pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
     GC_STATE.with(|state| unsafe {
         let s = &mut *state.get();
         let count = slice.len();
-        let cap = if count < 4 { 8 } else { count + (count >> 1) };
+        let cap = if count < 4 { 4 } else { count };
         let mut elements = if let Some(mut v) = s.vector_pool.pop() {
             if v.capacity() < cap {
                 v.reserve(cap - v.capacity());
@@ -371,9 +363,6 @@ pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
             v.clear();
             v
         } else {
-            for _ in 0..63 {
-                s.vector_pool.push(Vec::with_capacity(cap));
-            }
             Vec::with_capacity(cap)
         };
         elements.extend_from_slice(slice);
@@ -388,7 +377,7 @@ pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
     })
 }
 
-const GC_POOL_MAX: usize = 2048;
+const GC_POOL_MAX: usize = 128;
 
 #[inline(always)]
 pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
@@ -423,7 +412,7 @@ pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
     }
 }
 
-const CHUNK_COUNT: usize = 4096;
+const CHUNK_COUNT: usize = 256;
 
 #[inline(always)]
 pub fn gc_alloc_object(state: &mut GcState, data: GcData) -> *mut GcObject {
@@ -530,6 +519,7 @@ pub fn gc_free_all() {
         gc_clear_string_cache();
         super::shape::reset_shape_state();
         crate::jit::helpers::reset_global_ic();
+        crate::vm::alloc::scavenge_idle_memory();
     }
 }
 
