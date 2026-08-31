@@ -43,6 +43,11 @@ impl Value {
     }
 
     #[inline(always)]
+    pub fn is_truthy(&self) -> bool {
+        self.0 != TAG_FALSE && self.0 != TAG_NULL
+    }
+
+    #[inline(always)]
     pub fn number(n: f64) -> Self {
         let bits = n.to_bits();
         if bits >= TAG_NUMBER_MASK {
