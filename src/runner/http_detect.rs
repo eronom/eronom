@@ -46,7 +46,7 @@ pub fn has_http_import_in_stmt(stmt: &Stmt) -> bool {
                 return true;
             }
         }
-        Stmt::For(_, start, end, body) => {
+        Stmt::For(_, _, _, body) => {
             if has_http_import_in_stmt(body) {
                 return true;
             }

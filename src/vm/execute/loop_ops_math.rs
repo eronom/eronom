@@ -1,6 +1,6 @@
 use crate::vm::value::{Value, push_positive_integer, ADD_SCRATCH};
 use crate::vm::bytecode::{Instruction, OpCode};
-use crate::vm::gc::{gc_allocate, gc_alloc_string, get_or_create_string, GcData};
+use crate::vm::gc::{gc_alloc_string, get_or_create_string, GcData};
 
 pub unsafe fn execute_math_and_cmp_op(
     instruction: &Instruction,

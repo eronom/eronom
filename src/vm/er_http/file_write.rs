@@ -1,5 +1,4 @@
 use crate::vm::value::Value;
-use crate::vm::execute::VM;
 use super::types::*;
 
 pub fn write_file_helper(path: &str, data: &str, is_src_file: bool) -> Result<usize, String> {

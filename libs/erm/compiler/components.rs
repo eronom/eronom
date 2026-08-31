@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use super::utils::*;
-use super::tree::{process_component_tree, ProcessResult};
+use super::tree::process_component_tree;
 
 pub fn resolve_suspense_loading(
     tag_name: &str,

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::vm::value::Value;
 use crate::vm::execute::VM;
-use crate::vm::gc::{gc_allocate, get_or_create_string, GcData};
+use crate::vm::gc::GcData;
 
 pub fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)

@@ -1,6 +1,6 @@
 use crate::vm::execute::types::VM;
 use crate::vm::value::Value;
-use crate::vm::gc::{gc_free_all, gc_allocate, gc_with_state, GC_NEEDS_STEP, GcColor, GcPhase, GcData};
+use crate::vm::gc::{gc_free_all, gc_allocate, gc_with_state, GC_NEEDS_STEP, GcPhase, GcData};
 use crate::vm::compiler::Compiler;
 use std::sync::atomic::Ordering;
 

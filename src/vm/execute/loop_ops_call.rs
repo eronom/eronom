@@ -20,7 +20,7 @@ impl VM {
         code_ptr: *const Instruction,
         ip: *const Instruction,
         target_depth: usize,
-        get_raw_func: impl Fn(*mut GcObject) -> &'static Function,
+        _get_raw_func: impl Fn(*mut GcObject) -> &'static Function,
     ) -> Result<CallOpOutcome, String> {
         let dest = instruction.ra as usize;
         let func_reg = instruction.rb as usize;

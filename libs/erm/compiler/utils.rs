@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use crate::eval::{self, ErmEval};
+use crate::eval;
 
 pub fn get_re_attr_brace() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -174,7 +174,7 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
                 None => true,
             };
 
-            let is_object_key = if let Some(nc) = next_char {
+            let is_object_key = if next_char.is_some() {
                 let mut k = i + word_chars.len();
                 while k < chars.len() && chars[k].is_whitespace() {
                     k += 1;

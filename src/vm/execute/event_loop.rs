@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 
 use crate::vm::value::Value;
 use crate::vm::bytecode::OpCode;
-use super::types::{VM, AsyncResult, EventLoopTask, VmTimer, VmTimerAction};
+use super::types::{VM, AsyncResult, EventLoopTask, VmTimerAction};
 
 impl VM {
     pub fn run_event_loop(&mut self) -> Result<(), String> {
