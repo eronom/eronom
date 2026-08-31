@@ -26,7 +26,7 @@ impl VM {
             let mut frame = &mut *frame_ptr;
 
             #[inline(always)]
-            unsafe fn get_raw_func<'a>(mut p: *mut GcObject) -> &'a Function {
+            unsafe fn get_raw_func<'a>(mut p: *mut GcObject) -> &'a Function { unsafe {
                 if let GcData::BoundMethod(bm) = &(*p).data {
                     p = bm.function;
                 }
@@ -37,7 +37,7 @@ impl VM {
                     GcData::Function(func) => func,
                     _ => unreachable!(),
                 }
-            }
+            }}
 
             let mut func = get_raw_func(frame.function);
             let mut constants_ptr = func.chunk.constants.as_ptr();

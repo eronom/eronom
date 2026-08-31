@@ -21,7 +21,7 @@ impl VM {
         ip: *const Instruction,
         target_depth: usize,
         _get_raw_func: impl Fn(*mut GcObject) -> &'static Function,
-    ) -> Result<CallOpOutcome, String> {
+    ) -> Result<CallOpOutcome, String> { unsafe {
         let dest = instruction.ra as usize;
         let func_reg = instruction.rb as usize;
         let arg_count = instruction.operand as usize;
@@ -284,14 +284,14 @@ impl VM {
             return Err(format!("Can only call functions (callee: 0x{:x})", callee.0).into());
         }
         Ok(CallOpOutcome::ContinueLoop)
-    }
+    }}
 
     pub unsafe fn execute_await_op(
         &mut self,
         instruction: &Instruction,
         frame_slots: *mut Value,
         curr_ip: usize,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, String> { unsafe {
         let await_value = *frame_slots.add(instruction.rb as usize);
         if await_value.is_promise() {
             let promise_ptr = await_value.as_gc_ptr();
@@ -333,13 +333,13 @@ impl VM {
             *frame_slots.add(instruction.ra as usize) = await_value;
             Ok(None)
         }
-    }
+    }}
 
     pub unsafe fn execute_define_struct_op(
         &mut self,
         instruction: &Instruction,
         constants_ptr: *const Value,
-    ) {
+    ) { unsafe {
         let name_val = *constants_ptr.add(instruction.operand as usize);
         let fields_val = *constants_ptr.add(instruction.ra as usize);
         let name_rc: Rc<str> = Rc::from(name_val.as_str().unwrap_or(""));
@@ -372,7 +372,7 @@ impl VM {
         self.structs.insert(name_rc.clone(), descriptor.clone());
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
         self.globals.insert(name_rc, Value::object(ptr));
-    }
+    }}
 
     pub unsafe fn execute_closure_op(
         &mut self,
@@ -381,7 +381,7 @@ impl VM {
         slots_offset: usize,
         constants_ptr: *const Value,
         frame_slots: *mut Value,
-    ) {
+    ) { unsafe {
         let dest = instruction.ra as usize;
         let const_idx = instruction.operand as usize;
         let raw_fn_val = *constants_ptr.add(const_idx);
@@ -409,5 +409,5 @@ impl VM {
             upvalues: upvalue_ptrs,
         }));
         *frame_slots.add(dest) = Value::function(closure_ptr);
-    }
+    }}
 }

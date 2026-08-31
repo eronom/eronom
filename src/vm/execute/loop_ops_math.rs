@@ -5,7 +5,7 @@ use crate::vm::gc::{gc_alloc_string, get_or_create_string, GcData};
 pub unsafe fn execute_math_and_cmp_op(
     instruction: &Instruction,
     frame_slots: *mut Value,
-) -> Result<bool, String> {
+) -> Result<bool, String> { unsafe {
     match instruction.op {
         OpCode::Negate => {
             let dest = instruction.ra as usize;
@@ -286,4 +286,4 @@ pub unsafe fn execute_math_and_cmp_op(
         }
         _ => Ok(false),
     }
-}
+}}

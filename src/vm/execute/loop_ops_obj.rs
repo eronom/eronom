@@ -13,7 +13,7 @@ impl VM {
         start_reg: usize,
         count: usize,
         frame_slots: *mut Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), String> { unsafe {
         let ptr = if count == 0 {
             let obj = get_pooled_map(0);
             gc_allocate(GcData::Object(obj))
@@ -94,7 +94,7 @@ impl VM {
         };
         *frame_slots.add(dest) = Value::object(ptr);
         Ok(())
-    }
+    }}
 
     pub unsafe fn execute_get_property(
         &mut self,
@@ -102,7 +102,7 @@ impl VM {
         obj: Value,
         name_val: Value,
         frame_slots: *mut Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), String> { unsafe {
         let name = name_val.as_str().unwrap_or("");
         if obj.is_object() {
             let ptr = obj.as_gc_ptr();
@@ -226,14 +226,14 @@ impl VM {
             return Err("Only objects, arrays, and strings have properties".into());
         }
         Ok(())
-    }
+    }}
 
     pub unsafe fn execute_set_property(
         &mut self,
         obj: Value,
         val: Value,
         name_val: Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), String> { unsafe {
         if obj.is_object() {
             let ptr = obj.as_gc_ptr();
             match &mut (*ptr).data {
@@ -284,7 +284,7 @@ impl VM {
             return Err("Only objects and arrays have properties".into());
         }
         Ok(())
-    }
+    }}
 
     pub unsafe fn execute_get_index(
         &mut self,
@@ -292,7 +292,7 @@ impl VM {
         obj: Value,
         index: Value,
         frame_slots: *mut Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), String> { unsafe {
         if obj.is_array() {
             let ptr = obj.as_gc_ptr();
             if index.is_number() {
@@ -347,14 +347,14 @@ impl VM {
             return Err("Only arrays can be indexed by numbers, and objects by strings".into());
         }
         Ok(())
-    }
+    }}
 
     pub unsafe fn execute_set_index(
         &mut self,
         obj: Value,
         index: Value,
         val: Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), String> { unsafe {
         if obj.is_array() {
             let ptr = obj.as_gc_ptr();
             if index.is_number() {
@@ -432,5 +432,5 @@ impl VM {
             return Err("Only arrays can be indexed by numbers, and objects by strings".into());
         }
         Ok(())
-    }
+    }}
 }
