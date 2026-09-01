@@ -14,6 +14,7 @@ fn main() {
         .file(mir_dir.join("mir.c"))
         .file(mir_dir.join("mir-gen.c"))
         .include(&mir_dir)
+        .flag_if_supported("-Wno-psabi")
         .warnings(false)
         .compile("mir");
 
