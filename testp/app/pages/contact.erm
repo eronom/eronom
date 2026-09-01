@@ -9,8 +9,9 @@
     let isSlowDataLoaded = useState(false);
     async function loadSlowData() {
         try {
+            await new Promise(resolve => setTimeout(resolve, 2000));
             await fetch('/api/slow');
-            isSlowDataLoaded.value = true;
+            isSlowDataLoaded = true;
         } catch (e) {
             console.error("Failed to fetch slow data:", e);
         }
