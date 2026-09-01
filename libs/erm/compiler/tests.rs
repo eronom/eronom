@@ -159,6 +159,8 @@ fn test_contact_page_id() {
     let params = std::collections::HashMap::new();
     let res = process_erm_component("libs/init/app/pages/contact.erm", &content, true, &params).unwrap();
     assert!(!res.is_empty());
+    assert!(!res.contains("Status: false"));
+    assert!(res.contains("Status: ⚡ Syncing API Data..."));
 }
 
 #[test]

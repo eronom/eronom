@@ -410,6 +410,7 @@
       }
     });
   }
+  window.__erm_init_reactivity = _initReactivity;
 
   // DOM Reconciliation/Diffing Helper
   function reconcileNodes(parent, newNodes) {
@@ -535,7 +536,7 @@
 
     setTimeout(() => {
       checkLoadingFinished();
-    }, 100);
+    }, 300);
   }
 
   initLoadingSwap();
@@ -668,6 +669,16 @@
         oldScopedStyle.remove();
       }
 
+      // Collect page scripts before reconciling body
+      const scriptElements = Array.from(doc.querySelectorAll('script.__erm_script'));
+      const scriptData = scriptElements.map(s => ({
+        type: s.type,
+        text: s.textContent || s.text || ''
+      }));
+
+      // Remove script tags from doc so they are not inserted as inert elements into body
+      scriptElements.forEach(s => s.remove());
+
       // Reconcile body children
       reconcileNodes(document.body, Array.from(doc.body.childNodes));
 
@@ -686,18 +697,20 @@
       window.__erm_events = [];
       window.__erm_dynamic_events = {};
       nextDynamicEventId = 0;
+      statesRegistry.clear();
+
+      // Clean up previous dynamically injected page scripts
+      document.querySelectorAll('head script.__erm_script').forEach(s => s.remove());
 
       // Execute page scripts
-      const scripts = doc.querySelectorAll('script.__erm_script');
-      scripts.forEach(script => {
+      scriptData.forEach(item => {
         const newScript = document.createElement('script');
         newScript.className = '__erm_script';
-        if (script.type) {
-          newScript.type = script.type;
+        if (item.type) {
+          newScript.type = item.type;
         }
-        newScript.text = script.text;
+        newScript.textContent = item.text;
         document.head.appendChild(newScript);
-        newScript.remove();
       });
 
       if (push) {

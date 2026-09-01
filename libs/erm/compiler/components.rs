@@ -104,7 +104,8 @@ pub fn resolve_suspense_loading(
             }
             search_pos += close_len;
         } else {
-            search_pos += 1;
+            let c = content[search_pos..].chars().next().unwrap();
+            search_pos += c.len_utf8();
         }
     }
 

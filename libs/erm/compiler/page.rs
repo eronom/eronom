@@ -319,6 +319,8 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         script_assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/modules/erm/runtime.js';\n");
         script_assets.push_str("{\n");
         for s in &scripts_to_inject { script_assets.push_str(s); script_assets.push('\n'); }
+        script_assets.push_str("if (typeof window.__erm_init_reactivity === 'function') window.__erm_init_reactivity();\n");
+        script_assets.push_str("if (typeof window.__erm_update === 'function') window.__erm_update();\n");
         script_assets.push_str("}\n");
         script_assets.push_str("</script>\n");
     }

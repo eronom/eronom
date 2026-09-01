@@ -78,7 +78,12 @@ impl ErmEval {
 
     pub fn eval(&mut self, expr: &str) -> anyhow::Result<Value> {
         let mut parser = ExprParser { input: expr, pos: 0, ev: self };
-        parser.parse_expr()
+        let val = parser.parse_expr()?;
+        parser.skip();
+        if parser.pos < parser.input.len() {
+            anyhow::bail!("Unexpected trailing characters in expression: '{}'", &parser.input[parser.pos..]);
+        }
+        Ok(val)
     }
 
     pub fn eval_bool(&mut self, expr: &str) -> anyhow::Result<bool> {
@@ -150,7 +155,25 @@ impl<'a> ExprParser<'a> {
     }
 
     fn parse_expr(&mut self) -> anyhow::Result<Value> {
-        self.parse_or()
+        self.parse_ternary()
+    }
+
+    fn parse_ternary(&mut self) -> anyhow::Result<Value> {
+        let cond = self.parse_or()?;
+        self.skip();
+        if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b'?' {
+            self.pos += 1;
+            let true_val = self.parse_expr()?;
+            self.skip();
+            if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b':' {
+                self.pos += 1;
+                let false_val = self.parse_expr()?;
+                return Ok(if cond.to_bool() { true_val } else { false_val });
+            } else {
+                anyhow::bail!("Expected ':' in ternary expression");
+            }
+        }
+        Ok(cond)
     }
 
     fn parse_or(&mut self) -> anyhow::Result<Value> {
@@ -314,22 +337,33 @@ impl<'a> ExprParser<'a> {
 
         if c == '"' || c == '\'' || c == '`' {
             let quote = c;
-            self.pos += 1;
+            self.pos += c.len_utf8();
             let mut s = String::new();
-            while self.pos < self.input.len() && self.input.as_bytes()[self.pos] as char != quote {
-                if self.input.as_bytes()[self.pos] == b'\\' && self.pos + 1 < self.input.len() {
+            while self.pos < self.input.len() {
+                let ch = self.input[self.pos..].chars().next().unwrap();
+                if ch == quote {
+                    break;
+                }
+                if ch == '\\' && self.pos + 1 < self.input.len() {
                     self.pos += 1;
-                    match self.input.as_bytes()[self.pos] as char {
+                    let esc = self.input[self.pos..].chars().next().unwrap();
+                    match esc {
                         'n' => s.push('\n'),
                         't' => s.push('\t'),
-                        c => s.push(c),
+                        'r' => s.push('\r'),
+                        '\\' => s.push('\\'),
+                        other => s.push(other),
                     }
+                    self.pos += esc.len_utf8();
                 } else {
-                    s.push(self.input.as_bytes()[self.pos] as char);
+                    s.push(ch);
+                    self.pos += ch.len_utf8();
                 }
-                self.pos += 1;
             }
-            if self.pos < self.input.len() { self.pos += 1; }
+            if self.pos < self.input.len() {
+                let end_quote = self.input[self.pos..].chars().next().unwrap();
+                self.pos += end_quote.len_utf8();
+            }
             return Ok(Value::String(s));
         }
 
@@ -413,13 +447,20 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
         return Ok((Some(Value::Map(m)), p));
     }
 
-    if s.as_bytes()[p] == b'"' || s.as_bytes()[p] == b'\'' || s.as_bytes()[p] == b'`' {
-        let quote = s.as_bytes()[p];
-        p += 1;
+    if s[p..].starts_with('"') || s[p..].starts_with('\'') || s[p..].starts_with('`') {
+        let quote = s[p..].chars().next().unwrap();
+        p += quote.len_utf8();
         let start = p;
-        while p < s.len() && s.as_bytes()[p] != quote { p += 1; }
+        while p < s.len() {
+            let ch = s[p..].chars().next().unwrap();
+            if ch == quote { break; }
+            p += ch.len_utf8();
+        }
         let val = s[start..p].to_string();
-        if p < s.len() { p += 1; }
+        if p < s.len() {
+            let ch = s[p..].chars().next().unwrap();
+            p += ch.len_utf8();
+        }
         return Ok((Some(Value::String(val)), p));
     }
 
@@ -451,13 +492,20 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
         let mut map = HashMap::new();
         while p < s.len() && s.as_bytes()[p] != b'}' {
             while p < s.len() && s.as_bytes()[p].is_ascii_whitespace() { p += 1; }
-            let key = if s.as_bytes()[p] == b'"' || s.as_bytes()[p] == b'\'' {
-                let quote = s.as_bytes()[p];
-                p += 1;
+            let key = if s[p..].starts_with('"') || s[p..].starts_with('\'') || s[p..].starts_with('`') {
+                let quote = s[p..].chars().next().unwrap();
+                p += quote.len_utf8();
                 let start = p;
-                while p < s.len() && s.as_bytes()[p] != quote { p += 1; }
+                while p < s.len() {
+                    let ch = s[p..].chars().next().unwrap();
+                    if ch == quote { break; }
+                    p += ch.len_utf8();
+                }
                 let k_val = s[start..p].to_string();
-                if p < s.len() { p += 1; }
+                if p < s.len() {
+                    let ch = s[p..].chars().next().unwrap();
+                    p += ch.len_utf8();
+                }
                 k_val
             } else {
                 let start = p;
@@ -482,4 +530,35 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
     if s[p..].starts_with("undefined") { return Ok((Some(Value::Null), p + 9)); }
 
     Ok((None, p))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_eval_ternary() {
+        let mut ev = ErmEval::new();
+        let mut is_slow = HashMap::new();
+        is_slow.insert("value".to_string(), Value::Boolean(false));
+        ev.set("isSlowDataLoaded", Value::Map(is_slow));
+
+        let res = ev.eval("isSlowDataLoaded.value ? '✓ API Data Synced' : '⚡ Syncing API Data...'").unwrap();
+        assert_eq!(res, Value::String("⚡ Syncing API Data...".to_string()));
+
+        let mut is_slow_true = HashMap::new();
+        is_slow_true.insert("value".to_string(), Value::Boolean(true));
+        ev.set("isSlowDataLoaded", Value::Map(is_slow_true));
+
+        let res2 = ev.eval("isSlowDataLoaded.value ? '✓ API Data Synced' : '⚡ Syncing API Data...'").unwrap();
+        assert_eq!(res2, Value::String("✓ API Data Synced".to_string()));
+    }
+
+    #[test]
+    fn test_eval_trailing_error() {
+        let mut ev = ErmEval::new();
+        ev.set("val", Value::Boolean(false));
+        // Missing colon in ternary
+        assert!(ev.eval("val ? 'a'").is_err());
+    }
 }
