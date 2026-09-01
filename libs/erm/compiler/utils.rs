@@ -154,6 +154,7 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
     let mut result = String::new();
     let chars: Vec<char> = input.chars().collect();
     let word_chars: Vec<char> = word.chars().collect();
+    let suffix_chars: Vec<char> = suffix.chars().collect();
     let mut i = 0;
 
     while i < chars.len() {
@@ -172,6 +173,12 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
             let is_boundary_end = match next_char {
                 Some(c) => !c.is_alphanumeric() && c != '_' && c != '$',
                 None => true,
+            };
+
+            let already_suffixed = if !suffix_chars.is_empty() && i + word_chars.len() + suffix_chars.len() <= chars.len() {
+                chars[i + word_chars.len()..i + word_chars.len() + suffix_chars.len()] == suffix_chars[..]
+            } else {
+                false
             };
 
             let is_object_key = if next_char.is_some() {
@@ -211,7 +218,7 @@ pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
                 false
             };
 
-            if is_boundary_start && is_boundary_end && !is_object_key && !is_declaration {
+            if is_boundary_start && is_boundary_end && !is_object_key && !is_declaration && !already_suffixed {
                 result.push_str(word);
                 result.push_str(suffix);
                 i += word_chars.len();
@@ -255,7 +262,45 @@ pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
             }
             if depth == 0 {
                 let init_expr = input[i..j - 1].trim();
-                if init_expr.contains(',') {
+                let mut has_top_level_comma = false;
+                let mut paren_d = 0;
+                let mut brace_d = 0;
+                let mut bracket_d = 0;
+                let mut in_str = None;
+                let mut escaped = false;
+                for ch in init_expr.chars() {
+                    if escaped {
+                        escaped = false;
+                        continue;
+                    }
+                    if ch == '\\' {
+                        escaped = true;
+                        continue;
+                    }
+                    if let Some(quote) = in_str {
+                        if ch == quote {
+                            in_str = None;
+                        }
+                    } else if ch == '"' || ch == '\'' || ch == '`' {
+                        in_str = Some(ch);
+                    } else if ch == '(' {
+                        paren_d += 1;
+                    } else if ch == ')' {
+                        if paren_d > 0 { paren_d -= 1; }
+                    } else if ch == '{' {
+                        brace_d += 1;
+                    } else if ch == '}' {
+                        if brace_d > 0 { brace_d -= 1; }
+                    } else if ch == '[' {
+                        bracket_d += 1;
+                    } else if ch == ']' {
+                        if bracket_d > 0 { bracket_d -= 1; }
+                    } else if ch == ',' && paren_d == 0 && brace_d == 0 && bracket_d == 0 {
+                        has_top_level_comma = true;
+                        break;
+                    }
+                }
+                if has_top_level_comma {
                     result.push_str(init_expr);
                 } else {
                     result.push_str(&format!("{}, \"{}\"", init_expr, scoped_name));

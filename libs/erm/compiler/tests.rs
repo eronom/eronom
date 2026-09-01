@@ -142,6 +142,8 @@ fn test_for_loop_compilation() {
     let res = process_erm_component(".", content, true, &params).unwrap();
     println!("{}", res);
     assert!(res.contains("Item key as 0 : 1"));
+    assert!(res.contains("() => (items.value)"));
+    assert!(!res.contains("items.value.value"));
 }
 
 #[test]
