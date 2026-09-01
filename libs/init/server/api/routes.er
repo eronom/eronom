@@ -14,3 +14,10 @@ app.get('/todo', (c) => {
   return c.json(todos)
 })
 
+app.get('/slow', (c) => {
+  return c.json({
+    status: "ok",
+    message: "Slow API data fetched successfully"
+  })
+})
+

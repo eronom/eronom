@@ -7,10 +7,13 @@
     let errorMsg = useState('');
 
     let isSlowDataLoaded = useState(false);
+    let slowMessage = useState('');
     async function loadSlowData() {
         try {
             await new Promise(resolve => setTimeout(resolve, 2000));
-            await fetch('/api/slow');
+            const res = await fetch('/api/slow');
+            const data = await res.json();
+            slowMessage = data.message;
             isSlowDataLoaded = true;
         } catch (e) {
             console.error("Failed to fetch slow data:", e);
@@ -284,7 +287,7 @@
                 <h2 class="title">Get in touch</h2>
                 <p class="subtitle">Have a question or want to work together? Let us know.</p>
                 <p style="color: #38ef7d; font-size: 0.95rem; margin-top: -16px; margin-bottom: 24px; font-weight: 500; text-shadow: 0 0 10px rgba(56, 239, 125, 0.2);">
-                    Status: {isSlowDataLoaded ? '✓ API Data Synced' : '⚡ Syncing API Data...'}
+                    Status: {isSlowDataLoaded ? ('✓ ' + slowMessage) : '⚡ Syncing API Data...'}
                 </p>
                 
                 <span class="error-banner">{errorMsg}</span>
