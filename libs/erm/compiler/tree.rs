@@ -154,7 +154,6 @@ pub fn process_component_tree(
     let content = &compiled_content;
 
     let mut scripts = Vec::new();
-    scripts.extend(block_logic);
     let mut styles = Vec::new();
     let mut state_vars = Vec::new();
 
@@ -323,8 +322,8 @@ pub fn process_component_tree(
                         html_buf.push_str(&format!("<span id=\"{}\" style=\"display:contents;\">", provider_id));
                         
                         let logic = format!(
-                            "window.__erm_bindings.push({{ id: \"{}\", isProvider: true, get: () => ({}), update() {{ let el = document.getElementById(this.id); if (el) {{ if (!el.__erm_providers) el.__erm_providers = {{}}; el.__erm_providers[{}.id] = this.get(); }} }} }});",
-                            provider_id, value_expr, context_var
+                            "bindProvider(\"{}\", {}, () => ({}));",
+                            provider_id, context_var, value_expr
                         );
                         scripts.push(logic);
                         i += tag_end + 1;
@@ -429,6 +428,8 @@ pub fn process_component_tree(
         transformed = transformed.replace("import.meta.hot", "window.hmr");
         *s = transformed;
     }
+
+    scripts.extend(block_logic);
 
     let mut bindings = Vec::new();
     let mut events = Vec::new();

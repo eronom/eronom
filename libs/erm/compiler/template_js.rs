@@ -37,9 +37,9 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
                             js_expr = temp_js_trimmed;
                         }
                     }
-                    js_expr.push_str(&format!("${{window.__erm_register_event('{}', (event) => {{ ({})(event); }})}}", event_type, sub_expr));
+                    js_expr.push_str(&format!("${{registerEvent('{}', (event) => {{ ({})(event); }})}}", event_type, sub_expr));
                 } else {
-                    js_expr.push_str("${window.__erm_escape(");
+                    js_expr.push_str("${escapeHtml(");
                     js_expr.push_str(&sub_expr);
                     js_expr.push_str(")}");
                 }

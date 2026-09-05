@@ -158,6 +158,7 @@ fn test_contact_page_id() {
     assert!(!tree_res.html.is_empty());
     let params = std::collections::HashMap::new();
     let res = process_erm_component("libs/init/app/pages/contact.erm", &content, true, &params).unwrap();
+    println!("=== CONTACT COMPILED RESULT ===\n{}\n===============================", res);
     assert!(!res.is_empty());
     assert!(!res.contains("Status: false"));
     assert!(res.contains("Status: ⚡ Syncing API Data..."));
@@ -244,3 +245,67 @@ fn test_loading_tag_compilation() {
     assert!(res.contains("Loading skeleton..."));
     assert!(res.contains("Actual Content Loaded"));
 }
+
+#[test]
+fn test_solid_reactivity_compilation() {
+    let content = r#"
+    <script>
+        let count = useState(0);
+    </script>
+    <button onClick={() => { count++ }}>Count {count}</button>
+    "#;
+    let mut visited = std::collections::HashMap::new();
+    let mut if_counter = 0;
+    let mut for_counter = 0;
+    let params = std::collections::HashMap::new();
+    let mut state_var_sources = std::collections::HashMap::new();
+    let res = process_component_tree(".", content, &mut visited, None, &params, &mut if_counter, &mut for_counter, &mut state_var_sources).unwrap();
+    let combined = res.scripts.join("\n");
+    assert!(combined.contains("bindText("));
+    assert!(combined.contains("bindEvent("));
+    assert!(!combined.contains("window.__erm_bindings"));
+    assert!(!combined.contains("window.__erm_events"));
+    assert!(!combined.contains("window.__erm_update"));
+}
+
+#[test]
+fn test_solid_createroot_module_generation() {
+    let content = r#"
+    <script>
+        let count = useState(0);
+    </script>
+    <h1>Count: {count}</h1>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("createRoot((dispose) => {"));
+    assert!(res.contains("import {"));
+    assert!(res.contains("createSignal"));
+    assert!(res.contains("createEffect"));
+    assert!(res.contains("bindText"));
+    assert!(!res.contains("window.__erm_init_reactivity"));
+    assert!(!res.contains("window.__erm_update"));
+}
+
+#[test]
+fn test_clean_blocks_compilation() {
+    let content = r#"
+    <script>
+        let items = useState([1, 2]);
+        let show = useState(true);
+    </script>
+    if show {
+        <p>Visible</p>
+    }
+    for item in items {
+        <span>Item: {item}</span>
+    }
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("renderIf("));
+    assert!(res.contains("renderFor("));
+    assert!(!res.contains("window.__erm_register_if"));
+    assert!(!res.contains("window.__erm_register_for"));
+}
+

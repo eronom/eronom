@@ -292,7 +292,7 @@ pub fn process_for_block_at(
     let scoped_body = scope_html(&body, scope_id)?;
     let compiled_body = compile_template_to_js(&scoped_body, state_vars);
     let logic = format!(
-        r#"window.__erm_register_for("{}", () => ({}), "", ({}) => {});"#,
+        r#"renderFor("{}", () => ({}), ({}) => {});"#,
         anchor_id, collection_expr, js_params, compiled_body
     );
     block_logic.push(logic);
@@ -377,7 +377,7 @@ pub fn process_if_block_at(
     }
 
     let logic = format!(
-        r#"window.__erm_register_if("{}", () => {{ let __erm_new = ""; {}; return __erm_new; }});"#,
+        r#"renderIf("{}", () => {{ let __erm_new = ""; {}; return __erm_new; }});"#,
         anchor_id, branches_js
     );
     block_logic.push(logic);

@@ -3,400 +3,676 @@
   window.__hmr_initialized = true;
   console.log("[HMR] Initialized");
 
-  function checkAdjacentJsx(content) {
-    const re = /^\s*export\s+(?:default\s+)?(?:fn|function)\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{/m;
-    const match = content.match(re);
-    if (!match) return null;
+  // Helper to escape HTML characters
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
-    const fnBodyStart = match.index + match[0].length;
-    let depth = 1;
-    let i = fnBodyStart;
-    let inSingleQuote = false;
-    let inDoubleQuote = false;
-    let inTemplateLiteral = false;
-    let inLineComment = false;
-    let inBlockComment = false;
-    let escaped = false;
-    let fnBodyEnd = content.length;
+  // Enhanced ERM & JSX Template Syntax Validator
+  function validateErmSource(content, filename) {
+    if (!content) return null;
+
+    const fnRe = /^\s*export\s+(?:default\s+)?(?:fn|function)\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{/m;
+    const fnMatch = content.match(fnRe);
+
+    let scanStart = 0;
+    let scanEnd = content.length;
+    if (fnMatch) {
+      scanStart = fnMatch.index + fnMatch[0].length;
+      let depth = 1;
+      let i = scanStart;
+      let escaped = false;
+      let inStr = null;
+      let inLineComment = false;
+      let inBlockComment = false;
+      while (i < content.length) {
+        const c = content[i];
+        if (escaped) { escaped = false; i++; continue; }
+        if (c === '\\') { escaped = true; i++; continue; }
+        if (inLineComment) {
+          if (c === '\n') inLineComment = false;
+        } else if (inBlockComment) {
+          if (c === '/' && i > 0 && content[i - 1] === '*') inBlockComment = false;
+        } else if (inStr) {
+          if (c === inStr) inStr = null;
+        } else {
+          if (c === '/' && i + 1 < content.length && content[i + 1] === '/') {
+            inLineComment = true; i++;
+          } else if (c === '/' && i + 1 < content.length && content[i + 1] === '*') {
+            inBlockComment = true; i++;
+          } else if (c === '\'' || c === '"' || c === '`') {
+            inStr = c;
+          } else if (c === '{') {
+            depth++;
+          } else if (c === '}') {
+            depth--;
+            if (depth === 0) {
+              scanEnd = i;
+              break;
+            }
+          }
+        }
+        i++;
+      }
+    }
+
+    let line = 1;
+    let col = 1;
+    let tagStack = [];
+    let rootCount = 0;
+    let inScript = false;
+    let i = 0;
 
     while (i < content.length) {
-      const c = content[i];
-      if (escaped) {
-        escaped = false;
+      if (content[i] === '\n') {
+        line++;
+        col = 1;
         i++;
         continue;
       }
-      if (c === '\\') {
-        escaped = true;
+
+      // Check for <script>...</script>
+      if (!inScript && content.startsWith('<script', i) && (content[i + 7] === '>' || /\s/.test(content[i + 7]))) {
+        inScript = true;
+        const endScript = content.indexOf('</script>', i);
+        if (endScript !== -1) {
+          for (let k = i; k < endScript + 9; k++) {
+            if (content[k] === '\n') { line++; col = 1; } else { col++; }
+          }
+          i = endScript + 9;
+          inScript = false;
+          continue;
+        }
+      }
+
+      // Check for HTML comments
+      if (content.startsWith('<!--', i)) {
+        const endComment = content.indexOf('-->', i);
+        if (endComment !== -1) {
+          for (let k = i; k < endComment + 3; k++) {
+            if (content[k] === '\n') { line++; col = 1; } else { col++; }
+          }
+          i = endComment + 3;
+          continue;
+        }
+      }
+
+      // Check for <style>...</style>
+      if (content.startsWith('<style', i) && (content[i + 6] === '>' || /\s/.test(content[i + 6]))) {
+        const endStyle = content.indexOf('</style>', i);
+        if (endStyle !== -1) {
+          for (let k = i; k < endStyle + 8; k++) {
+            if (content[k] === '\n') { line++; col = 1; } else { col++; }
+          }
+          i = endStyle + 8;
+          continue;
+        }
+      }
+
+      // If function template, only check JSX in markup section
+      if (fnMatch && (i < scanStart || i >= scanEnd)) {
+        col++;
         i++;
         continue;
       }
-      if (inLineComment) {
-        if (c === '\n') inLineComment = false;
-      } else if (inBlockComment) {
-        if (c === '/' && i > 0 && content[i - 1] === '*') inBlockComment = false;
-      } else if (inSingleQuote) {
-        if (c === '\'') inSingleQuote = false;
-      } else if (inDoubleQuote) {
-        if (c === '"') inDoubleQuote = false;
-      } else if (inTemplateLiteral) {
-        if (c === '`') inTemplateLiteral = false;
-      } else {
-        if (c === '/' && i + 1 < content.length && content[i + 1] === '/') {
-          inLineComment = true;
-          i++;
-        } else if (c === '/' && i + 1 < content.length && content[i + 1] === '*') {
-          inBlockComment = true;
-          i++;
-        } else if (c === '\'') {
-          inSingleQuote = true;
-        } else if (c === '"') {
-          inDoubleQuote = true;
-        } else if (c === '`') {
-          inTemplateLiteral = true;
-        } else if (c === '{') {
-          depth++;
-        } else if (c === '}') {
-          depth--;
-          if (depth === 0) {
-            fnBodyEnd = i;
-            break;
+
+      // Look for JSX tag opening
+      if (content[i] === '<') {
+        const tagStartLine = line;
+        const tagStartCol = col;
+        const tagStartPos = i;
+
+        // Closing tag: </...
+        if (content[i + 1] === '/') {
+          // Fragment closing: </>
+          if (content[i + 2] === '>') {
+            const closingCol = tagStartCol + 2; // Position of '>'
+            if (tagStack.length === 0) {
+              return {
+                title: "Expression expected",
+                message: "Expression expected",
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: closingCol,
+                pos: tagStartPos
+              };
+            }
+            const top = tagStack.pop();
+            if (top.tag !== '') {
+              // Mismatched closing tag! Expected tag closing, encountered </>
+              return {
+                title: "Expression expected",
+                message: "Expression expected",
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: closingCol,
+                pos: tagStartPos
+              };
+            }
+            col += 3;
+            i += 3;
+            continue;
+          } else {
+            // Named closing tag: </tag_name>
+            let tagCloseEnd = content.indexOf('>', i + 2);
+            if (tagCloseEnd === -1) {
+              return {
+                title: "Expected '>', got '<eof>'",
+                message: "Expected '>', got '<eof>'",
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: tagStartCol,
+                pos: tagStartPos
+              };
+            }
+            const closeTagName = content.slice(i + 2, tagCloseEnd).trim();
+            if (tagStack.length === 0) {
+              return {
+                title: `Unexpected closing tag </${closeTagName}>`,
+                message: `Unexpected closing tag </${closeTagName}>`,
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: tagStartCol,
+                pos: tagStartPos
+              };
+            }
+            const top = tagStack.pop();
+            if (top.tag === '') {
+              return {
+                title: `Expected '</>', got '</${closeTagName}>'`,
+                message: `Expected '</>', got '</${closeTagName}>'`,
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: tagStartCol,
+                pos: tagStartPos
+              };
+            }
+            if (top.tag !== closeTagName) {
+              return {
+                title: `Expected '</${top.tag}>', got '</${closeTagName}>'`,
+                message: `Expected '</${top.tag}>', got '</${closeTagName}>'`,
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: tagStartCol,
+                pos: tagStartPos
+              };
+            }
+            for (let k = i; k <= tagCloseEnd; k++) {
+              if (content[k] === '\n') { line++; col = 1; } else { col++; }
+            }
+            i = tagCloseEnd + 1;
+            continue;
           }
         }
-      }
-      i++;
-    }
 
-    const bodyStr = content.slice(fnBodyStart, fnBodyEnd);
-    const lines = bodyStr.split('\n');
-    let scriptMode = true;
-    const markupLines = [];
-
-    for (let line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (scriptMode) {
-        const startsWithMarkup = trimmed.startsWith('<') ||
-          trimmed.startsWith('if ') ||
-          trimmed.startsWith('for ') ||
-          trimmed.startsWith('return');
-        if (startsWithMarkup) {
-          scriptMode = false;
-        }
-      }
-      if (!scriptMode) {
-        markupLines.push(line);
-      }
-    }
-
-    const cleanedMarkup = [];
-    for (let line of markupLines) {
-      let cleaned = line.trim();
-      if (cleaned.startsWith('return')) {
-        cleaned = cleaned.slice(6).trim();
-        if (cleaned.startsWith('(')) {
-          cleaned = cleaned.slice(1).trim();
-        }
-      }
-      if (cleaned === '(') continue;
-      if (cleaned === ')' || cleaned === ');' || cleaned === '}' || cleaned === '};') continue;
-      if (cleaned.endsWith(';')) cleaned = cleaned.slice(0, -1);
-      if (cleaned) cleanedMarkup.push(cleaned);
-    }
-
-    const markupOnly = cleanedMarkup.join('\n');
-    let chars = markupOnly;
-    let rootCount = 0;
-    let markupDepth = 0;
-    let idx = 0;
-
-    while (idx < chars.length) {
-      if (chars[idx] === '<') {
-        if (idx + 1 < chars.length && chars[idx + 1] === '!') {
-          idx += 4;
-          while (idx < chars.length && !(chars[idx] === '-' && chars[idx - 1] === '-' && chars[idx - 2] === '>')) {
-            idx++;
+        // Fragment opening: <>
+        if (content[i + 1] === '>') {
+          if (fnMatch && tagStack.length === 0) {
+            rootCount++;
+            if (rootCount > 1) {
+              return {
+                title: "Adjacent JSX elements must be wrapped in an enclosing tag",
+                message: "Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>?",
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: tagStartCol,
+                pos: tagStartPos
+              };
+            }
           }
-          idx++;
+          tagStack.push({ tag: '', line: tagStartLine, col: tagStartCol });
+          col += 2;
+          i += 2;
           continue;
         }
 
-        let isClosing = false;
-        if (idx + 1 < chars.length && chars[idx + 1] === '/') {
-          isClosing = true;
-          idx++;
-        }
-
-        idx++;
-        let tagContent = '';
-        while (idx < chars.length && chars[idx] !== '>') {
-          tagContent += chars[idx];
-          idx++;
-        }
-
-        if (chars[idx] === '>') {
-          idx++;
-        }
-
-        let isSelfClosing = false;
-        if (!isClosing) {
-          if (tagContent.trim().endsWith('/')) {
-            isSelfClosing = true;
-          }
-          if (markupDepth === 0) {
-            rootCount++;
-            if (rootCount > 1) {
-              return "Adjacent JSX elements must be wrapped in a fragment tag <> </>. Like: <> <h1>...</h1> <button>...</button> </>.";
+        // Standard tag opening: <tag_name ...>
+        const nextChar = content[i + 1];
+        if (nextChar && (/[a-zA-Z]/.test(nextChar) || nextChar === '_')) {
+          let tagEnd = -1;
+          let braceDepth = 0;
+          let quoteChar = null;
+          for (let k = i + 1; k < content.length; k++) {
+            const ch = content[k];
+            if (quoteChar) {
+              if (ch === quoteChar && content[k - 1] !== '\\') quoteChar = null;
+            } else if (ch === '"' || ch === '\'' || ch === '`') {
+              quoteChar = ch;
+            } else if (ch === '{') {
+              braceDepth++;
+            } else if (ch === '}') {
+              if (braceDepth > 0) braceDepth--;
+            } else if (ch === '>' && braceDepth === 0) {
+              tagEnd = k;
+              break;
             }
           }
+
+          if (tagEnd === -1) {
+            return {
+              title: "Expected '>', got '<eof>'",
+              message: "Expected '>', got '<eof>'",
+              description: "Parsing ecmascript source code failed",
+              line: tagStartLine,
+              col: tagStartCol,
+              pos: tagStartPos
+            };
+          }
+
+          const tagInner = content.slice(i + 1, tagEnd).trim();
+          const matchTagName = tagInner.match(/^([a-zA-Z0-9_\-\.]+)/);
+          const tagName = matchTagName ? matchTagName[1] : '';
+          const isCustomComponent = tagName.length > 0 && tagName[0] >= 'A' && tagName[0] <= 'Z';
+          const isSelfClosing = tagInner.endsWith('/') || (!isCustomComponent && ['img', 'input', 'br', 'hr', 'meta', 'link'].includes(tagName.toLowerCase()));
+
+          if (fnMatch && tagStack.length === 0) {
+            rootCount++;
+            if (rootCount > 1) {
+              return {
+                title: "Adjacent JSX elements must be wrapped in an enclosing tag",
+                message: "Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>?",
+                description: "Parsing ecmascript source code failed",
+                line: tagStartLine,
+                col: tagStartCol,
+                pos: tagStartPos
+              };
+            }
+          }
+
           if (!isSelfClosing) {
-            markupDepth++;
+            tagStack.push({ tag: tagName, line: tagStartLine, col: tagStartCol });
           }
-        } else {
-          if (markupDepth > 0) {
-            markupDepth--;
+
+          for (let k = i; k <= tagEnd; k++) {
+            if (content[k] === '\n') { line++; col = 1; } else { col++; }
           }
+          i = tagEnd + 1;
+          continue;
         }
-      } else {
-        idx++;
       }
+
+      col++;
+      i++;
+    }
+
+    if (tagStack.length > 0) {
+      const top = tagStack[tagStack.length - 1];
+      return {
+        title: top.tag ? `Unclosed <${top.tag}> tag` : "Expected '>', got '<eof>'",
+        message: top.tag ? `Unclosed <${top.tag}> tag` : "Expected '>', got '<eof>'",
+        description: "Parsing ecmascript source code failed",
+        line: top.line,
+        col: top.col,
+        pos: top.pos
+      };
     }
 
     return null;
   }
 
-  function validateSourceAndRun(next) {
-    if (!window.__erm_filename) {
-      next(false);
-      return;
+  // Next.js Codeframe Generator with Line Highlight and Column Caret Pointer
+  function buildCodeFrame(source, line, col, errorTitle) {
+    if (!source || !line) return '';
+    const lines = source.split('\n');
+    const startLine = Math.max(1, line - 2);
+    const endLine = Math.min(lines.length, line + 3);
+    const maxLineNumWidth = String(endLine).length;
+
+    let out = '';
+    if (errorTitle) {
+      out += `<div class="nextjs-codeframe-headline">Error: ${escapeHtml(errorTitle)}</div>`;
     }
-    fetch('/__erm_src/' + window.__erm_filename)
-      .then(r => r.ok ? r.text() : '')
-      .then(src => {
-        const error = checkAdjacentJsx(src);
-        if (error) {
-          if (typeof window.__erm_show_error_overlay === 'function') {
-            window.__erm_show_error_overlay({
-              type: 'Failed to compile',
-              file: window.__erm_filename,
-              title: 'An error occurred during template compilation.',
-              message: error
-            });
-            const closeBtn = document.querySelector('.erm-error-close-btn');
-            if (closeBtn) closeBtn.style.display = 'none';
-          }
-        } else {
-          const hasOverlay = !!document.getElementById('erm-error-overlay');
-          const overlay = document.getElementById('erm-error-overlay');
-          if (overlay) overlay.remove();
-          const styleOverlay = document.getElementById('erm-error-overlay-styles');
-          if (styleOverlay) styleOverlay.remove();
-          next(hasOverlay);
+
+    for (let l = startLine; l <= endLine; l++) {
+      const lineText = lines[l - 1] || '';
+      const isErr = (l === line);
+      const paddedNum = String(l).padStart(maxLineNumWidth, ' ');
+
+      if (isErr) {
+        out += `<div class="nextjs-codeframe-line nextjs-line-errored">` +
+          `<span class="nextjs-line-marker">&gt;</span> ` +
+          `<span class="nextjs-line-num">${paddedNum} |</span> ` +
+          `<span class="nextjs-line-code">${escapeHtml(lineText)}</span>` +
+          `</div>`;
+
+        if (col && col > 0) {
+          const caretIndent = Math.max(0, col - 1);
+          const pointerSpaces = ' '.repeat(caretIndent);
+          const gutterSpaces = ' '.repeat(maxLineNumWidth);
+          out += `<div class="nextjs-codeframe-line nextjs-line-caret">` +
+            `<span class="nextjs-line-marker"> </span> ` +
+            `<span class="nextjs-line-num">${gutterSpaces} |</span> ` +
+            `<span class="nextjs-caret-pointer">${pointerSpaces}^</span>` +
+            `</div>`;
         }
-      })
-      .catch(err => {
-        console.error("Failed to fetch source for validation:", err);
-        next(false);
-      });
+      } else {
+        out += `<div class="nextjs-codeframe-line">` +
+          `<span class="nextjs-line-marker"> </span> ` +
+          `<span class="nextjs-line-num">${paddedNum} |</span> ` +
+          `<span class="nextjs-line-code">${escapeHtml(lineText)}</span>` +
+          `</div>`;
+      }
+    }
+    return out;
   }
 
+  // Next.js Dev Overlay CSS Styles
   const OVERLAY_CSS = `
 #erm-error-overlay {
   position: fixed;
   top: 0;
+  right: 0;
+  bottom: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(10, 10, 12, 0.85);
+  z-index: 2147483647;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10vh 16px 24px;
+  background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  z-index: 999999;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  color: #f3f4f6;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  animation: erm-fade-in 0.25s ease-out;
+  color: #ededed;
+  overflow-y: auto;
+  box-sizing: border-box;
+  animation: nextjs-fade-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes erm-fade-in {
+@keyframes nextjs-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-.erm-error-card {
-  background: #18181b;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.nextjs-dialog-card {
+  background: #0a0a0a;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 16px;
-  width: 90%;
-  max-width: 800px;
-  max-height: 85vh;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  width: 100%;
+  max-width: 860px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: erm-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  animation: nextjs-scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
 }
 
-@keyframes erm-slide-up {
-  from { transform: translateY(20px) scale(0.98); }
-  to { transform: translateY(0) scale(1); }
+@keyframes nextjs-scale-in {
+  from { transform: scale(0.97); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
-.erm-error-header {
-  padding: 20px 24px;
+.nextjs-dialog-header {
+  padding: 20px 24px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  background: #0a0a0a;
+}
+
+.nextjs-header-top-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #202024;
+  margin-bottom: 12px;
 }
 
-.erm-error-badge {
-  background: #ef4444;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 4px 10px;
-  border-radius: 9999px;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
-}
-
-.erm-error-file {
-  color: #a1a1aa;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13px;
-  margin-left: 12px;
-  flex-grow: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.erm-error-close-btn {
-  background: transparent;
-  border: none;
-  color: #71717a;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
+.nextjs-error-type-badge {
+  background: #2a1314;
+  color: #ff6369;
+  border: 1px solid rgba(255, 99, 105, 0.25);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  padding: 2px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
 }
 
-.erm-error-close-btn:hover {
-  color: #f4f4f5;
-  background: rgba(255, 255, 255, 0.05);
+.nextjs-error-type-badge.badge-runtime {
+  background: #2a1314;
+  color: #ff6369;
 }
 
-.erm-error-body {
-  padding: 24px;
-  overflow-y: auto;
-  flex-grow: 1;
+.nextjs-error-type-badge.badge-warning {
+  background: #271700;
+  color: #f1a10d;
+  border-color: rgba(241, 161, 13, 0.3);
 }
 
-.erm-error-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-top: 0;
-  margin-bottom: 16px;
-  color: #ffffff;
-  line-height: 1.4;
-}
-
-.erm-error-msg {
-  background: #09090b;
-  border-left: 4px solid #ef4444;
-  padding: 16px;
-  border-radius: 0 8px 8px 0;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: #f3f4f6;
-  white-space: pre-wrap;
-  overflow-x: auto;
-  margin-bottom: 20px;
-}
-
-.erm-error-stack-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #a1a1aa;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 8px;
-}
-
-.erm-error-stack {
-  background: #09090b;
-  padding: 16px;
-  border-radius: 8px;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #a1a1aa;
-  white-space: pre-wrap;
-  overflow-x: auto;
-  max-height: 250px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.erm-error-footer {
-  padding: 16px 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 12px;
-  color: #71717a;
-  background: #1b1b1f;
+.nextjs-header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.erm-error-footer svg {
-  width: 14px;
-  height: 14px;
-  fill: currentColor;
-}
-.erm-snippet-line {
+.nextjs-close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #8f8f8f;
+  cursor: pointer;
   display: flex;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.nextjs-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.nextjs-error-title {
+  margin: 0 0 6px 0;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #ededed;
+  letter-spacing: -0.02em;
+  word-break: break-word;
+}
+
+.nextjs-error-location {
   font-size: 13px;
-  line-height: 1.6;
-  border-radius: 4px;
+  font-family: "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  color: #a0a0a0;
+  margin: 0;
 }
-.erm-snippet-line-error {
-  background: rgba(239, 68, 68, 0.1);
+
+.nextjs-dialog-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  max-height: calc(85vh - 180px);
+  box-sizing: border-box;
 }
-.erm-snippet-ln {
-  width: 40px;
+
+.nextjs-codeframe {
+  background: #000000;
+  border: 1px solid #2e2e2e;
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  margin: 0 0 16px 0;
+}
+
+.nextjs-codeframe-header {
+  background: #121214;
+  border-bottom: 1px solid #242426;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #8f8f8f;
+}
+
+.nextjs-codeframe-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nextjs-codeframe-link svg {
   color: #71717a;
-  text-align: right;
-  padding-right: 12px;
-  user-select: none;
+  flex-shrink: 0;
 }
-.erm-snippet-marker {
-  width: 15px;
-  color: #ef4444;
-  font-weight: bold;
-  user-select: none;
+
+.nextjs-copy-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #a0a0a0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
 }
-.erm-snippet-code {
-  color: #f3f4f6;
+
+.nextjs-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.nextjs-codeframe-pre {
+  margin: 0;
+  padding: 14px;
+  background: #000000;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 20px;
+  color: #ededed;
+}
+
+.nextjs-codeframe-headline {
+  color: #ff6369;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.nextjs-codeframe-line {
+  display: flex;
+  align-items: center;
   white-space: pre;
 }
-.erm-snippet-line-error .erm-snippet-code {
-  color: #fca5a5;
+
+.nextjs-line-marker {
+  width: 14px;
+  color: #ff6369;
+  font-weight: bold;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.nextjs-line-num {
+  color: #636366;
+  user-select: none;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.nextjs-line-code {
+  color: #ededed;
+}
+
+.nextjs-line-errored {
+  background: rgba(229, 72, 77, 0.16);
+  box-shadow: inset 3px 0 0 #e5484d;
+  margin-left: -14px;
+  margin-right: -14px;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.nextjs-line-errored .nextjs-line-code {
+  color: #ff8589;
   font-weight: 500;
 }
-.erm-snippet-container {
-  margin-bottom: 20px;
+
+.nextjs-caret-pointer {
+  color: #ff6369;
+  font-weight: bold;
+}
+
+.nextjs-error-description {
+  color: #a0a0a0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin: 14px 0 0;
+  word-break: break-word;
+}
+
+.nextjs-stack-toggle {
+  margin-top: 16px;
+}
+
+.nextjs-stack-toggle summary {
+  font-size: 12px;
+  color: #8f8f8f;
+  font-family: "Geist Mono", monospace;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 8px;
+}
+
+.nextjs-stack-toggle summary:hover {
+  color: #ededed;
+}
+
+.nextjs-stack-pre {
+  background: #000000;
+  border: 1px solid #242426;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8f8f8f;
+  font-family: "Geist Mono", monospace;
+  overflow-x: auto;
+  max-height: 200px;
+  margin: 0;
+}
+
+.nextjs-dialog-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px 24px;
+  font-size: 12px;
+  color: #71717a;
+  background: #0d0d0f;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nextjs-footer-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  flex-shrink: 0;
 }
   `;
 
+  // Main Next.js Dev Overlay Renderer
   window.__erm_show_error_overlay = function (err) {
     let overlay = document.getElementById('erm-error-overlay');
     if (overlay) overlay.remove();
@@ -413,53 +689,97 @@
     overlay.id = 'erm-error-overlay';
 
     const card = document.createElement('div');
-    card.className = 'erm-error-card';
+    card.className = 'nextjs-dialog-card';
 
-    const header = document.createElement('div');
-    header.className = 'erm-error-header';
-    header.innerHTML = `
-      <span class="erm-error-badge">${err.type || 'Error'}</span>
-      <span class="erm-error-file">${err.file || ''}</span>
-      <button class="erm-error-close-btn" onclick="document.getElementById('erm-error-overlay').remove()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    `;
+    const errorType = err.type || 'Build Error';
+    let file = err.file || window.__erm_filename || 'unknown';
+    let line = err.line;
+    let col = err.col;
 
-    const body = document.createElement('div');
-    body.className = 'erm-error-body';
-
-    const title = document.createElement('h2');
-    title.className = 'erm-error-title';
-    title.textContent = err.title || 'An error occurred';
-
-    const msg = document.createElement('div');
-    msg.className = 'erm-error-msg';
-    msg.textContent = err.message || '';
-
-    body.appendChild(title);
-    body.appendChild(msg);
-
-    if (err.stack) {
-      const stackTitle = document.createElement('div');
-      stackTitle.className = 'erm-error-stack-title';
-      stackTitle.textContent = 'Call Stack';
-
-      const stack = document.createElement('pre');
-      stack.className = 'erm-error-stack';
-      stack.textContent = err.stack;
-
-      body.appendChild(stackTitle);
-      body.appendChild(stack);
+    // Parse coordinates from file string if present (e.g. "path/file.erm:5:17")
+    const coordMatch = file.match(/:(\d+)(?::(\d+))?$/);
+    if (coordMatch) {
+      if (!line) line = parseInt(coordMatch[1], 10);
+      if (!col && coordMatch[2]) col = parseInt(coordMatch[2], 10);
+      file = file.replace(/:(\d+)(?::(\d+))?$/, '');
     }
 
+    let title = err.title || 'Expression expected';
+    title = title.replace(/^Error:\s*/, '');
+    const description = err.description || 'Parsing ecmascript source code failed';
+
+    // Format location display e.g. "./app/page.tsx (5:17)"
+    const displayFilePath = file.startsWith('/') || file.startsWith('./') ? file : `./${file}`;
+    const locationStr = line ? `${displayFilePath} (${line}${col ? `:${col}` : ''})` : displayFilePath;
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'nextjs-dialog-header';
+    header.innerHTML = `
+      <div class="nextjs-header-top-row">
+        <span class="nextjs-error-type-badge ${errorType.toLowerCase().includes('runtime') ? 'badge-runtime' : ''}">${escapeHtml(errorType)}</span>
+        <div class="nextjs-header-actions">
+          <button class="nextjs-close-btn" aria-label="Close" title="Close (Esc)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <h1 class="nextjs-error-title">${escapeHtml(title)}</h1>
+      <div class="nextjs-error-location">${escapeHtml(locationStr)}</div>
+    `;
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'nextjs-dialog-body';
+
+    const codeFrameContainer = document.createElement('div');
+    codeFrameContainer.className = 'nextjs-codeframe';
+    codeFrameContainer.innerHTML = `
+      <div class="nextjs-codeframe-header">
+        <div class="nextjs-codeframe-link">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+          </svg>
+          <span class="nextjs-codeframe-path">${escapeHtml(displayFilePath)}${line ? `:${line}${col ? `:${col}` : ''}` : ''}</span>
+        </div>
+        <button class="nextjs-copy-btn" title="Copy error">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <span class="copy-text">Copy</span>
+        </button>
+      </div>
+      <pre class="nextjs-codeframe-pre"><code class="nextjs-codeframe-content">${buildCodeFrame(err.source, line, col, title)}</code></pre>
+    `;
+
+    body.appendChild(codeFrameContainer);
+
+    const descEl = document.createElement('div');
+    descEl.className = 'nextjs-error-description';
+    descEl.textContent = description;
+    body.appendChild(descEl);
+
+    if (err.stack) {
+      const stackToggle = document.createElement('details');
+      stackToggle.className = 'nextjs-stack-toggle';
+      stackToggle.innerHTML = `
+        <summary>Call Stack</summary>
+        <pre class="nextjs-stack-pre">${escapeHtml(err.stack)}</pre>
+      `;
+      body.appendChild(stackToggle);
+    }
+
+    // Footer
     const footer = document.createElement('div');
-    footer.className = 'erm-error-footer';
+    footer.className = 'nextjs-dialog-footer';
     footer.innerHTML = `
-      <svg viewBox="0 0 20 20"><path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
-      <span>Fix the issue in your code to automatically reload/clear.</span>
+      <span class="nextjs-footer-dot"></span>
+      <span>Fix the issue in your code to automatically reload.</span>
     `;
 
     card.appendChild(header);
@@ -467,115 +787,111 @@
     card.appendChild(footer);
     overlay.appendChild(card);
 
+    // Event Listeners
+    const closeOverlay = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', escHandler);
+    };
+
     const escHandler = (e) => {
       if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', escHandler);
+        closeOverlay();
       }
     };
     document.addEventListener('keydown', escHandler);
 
+    const closeBtn = card.querySelector('.nextjs-close-btn');
+    if (closeBtn) closeBtn.onclick = closeOverlay;
+
+    // Copy error action
+    const copyBtn = card.querySelector('.nextjs-copy-btn');
+    if (copyBtn) {
+      copyBtn.onclick = () => {
+        const fullErrorText = `${errorType}\n\n${title}\n${locationStr}\n\nError: ${title}\n` +
+          (err.source && line ? buildCodeFrame(err.source, line, col, '').replace(/<[^>]+>/g, '') + '\n' : '') +
+          `${description}`;
+        navigator.clipboard.writeText(fullErrorText).then(() => {
+          const copyLabel = copyBtn.querySelector('.copy-text');
+          if (copyLabel) copyLabel.textContent = 'Copied!';
+          setTimeout(() => {
+            if (copyLabel) copyLabel.textContent = 'Copy';
+          }, 1500);
+        });
+      };
+    }
+
     (document.body || document.documentElement).appendChild(overlay);
 
-    const escapeHtml = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-    if (window.__erm_filename && err.file) {
-      let resolvePromise;
-      let compiledCol = 0;
-
-      if (err.origLine !== undefined && err.origLine !== null) {
-        const colMatch = err.file.match(/:(\d+)(?::(\d+))?$/) || (err.stack && err.stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m));
-        if (colMatch) {
-          compiledCol = colMatch[2] ? parseInt(colMatch[2], 10) : 0;
-        }
-        resolvePromise = Promise.resolve(err.origLine);
-      } else {
-        const match = err.file.match(/(?::|\()(\d+)(?::(\d+))?\)?$/) || (err.stack && err.stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m));
-        if (match) {
-          const compiledLine = parseInt(match[1], 10);
-          compiledCol = match[2] ? parseInt(match[2], 10) : 0;
-
-          resolvePromise = fetch(location.href)
-            .then(r => r.text())
-            .then(html => {
-              const lines = html.split('\n');
-              let origLine = null;
-              for (let idx = compiledLine - 1; idx >= 0; idx--) {
-                const lineContent = lines[idx] || '';
-                const commentMatch = lineContent.match(/\/\/\s*line:(\d+)\s*$/);
-                if (commentMatch) {
-                  origLine = parseInt(commentMatch[1], 10);
-                  break;
-                }
-              }
-              return origLine;
-            });
-        }
-      }
-
-      if (resolvePromise) {
-        resolvePromise
-          .then(origLine => {
-            if (origLine !== null && origLine !== undefined) {
-              return fetch('/__erm_src/' + window.__erm_filename)
-                .then(r => r.text())
-                .then(src => {
-                  const srcLines = src.split('\n');
-                  const start = Math.max(0, origLine - 3);
-                  const end = Math.min(srcLines.length, origLine + 2);
-
-                  let snippetHtml = '';
-                  for (let i = start; i < end; i++) {
-                    const ln = i + 1;
-                    const isErrLine = ln === origLine;
-                    const lineText = srcLines[i] || '';
-                    snippetHtml += `<div class="erm-snippet-line${isErrLine ? ' erm-snippet-line-error' : ''}">` +
-                      `<span class="erm-snippet-ln">${ln}</span>` +
-                      `<span class="erm-snippet-marker">${isErrLine ? '>' : ' '}</span>` +
-                      `<span class="erm-snippet-code">${escapeHtml(lineText)}</span>` +
-                      `</div>`;
-                  }
-
-                  const fileEl = card.querySelector('.erm-error-file');
-                  if (fileEl) {
-                    fileEl.textContent = `${window.__erm_filename}:${origLine}${compiledCol ? ':' + compiledCol : ''}`;
-                  }
-
-                  const bodyEl = card.querySelector('.erm-error-body');
-                  let snippetContainer = bodyEl.querySelector('.erm-snippet-container');
-                  if (!snippetContainer) {
-                    snippetContainer = document.createElement('div');
-                    snippetContainer.className = 'erm-snippet-container';
-
-                    const snippetTitle = document.createElement('div');
-                    snippetTitle.className = 'erm-error-stack-title';
-                    snippetTitle.textContent = 'Source Code';
-                    snippetContainer.appendChild(snippetTitle);
-
-                    const snippetPre = document.createElement('pre');
-                    snippetPre.className = 'erm-error-stack';
-                    snippetPre.style.background = '#09090b';
-                    snippetPre.style.borderLeft = '4px solid #ef4444';
-                    snippetPre.style.padding = '12px';
-                    snippetPre.style.maxHeight = 'none';
-                    snippetContainer.appendChild(snippetPre);
-
-                    const stackTitle = bodyEl.querySelector('.erm-error-stack-title');
-                    if (stackTitle) {
-                      bodyEl.insertBefore(snippetContainer, stackTitle);
-                    } else {
-                      bodyEl.appendChild(snippetContainer);
-                    }
-                  }
-
-                  snippetContainer.querySelector('pre').innerHTML = snippetHtml;
-                });
+    // If source wasn't passed directly, fetch it dynamically from /__erm_src/
+    if (!err.source && file) {
+      fetch('/__erm_src/' + file.replace(/^\.?\//, ''))
+        .then(r => r.ok ? r.text() : '')
+        .then(src => {
+          if (!src) return;
+          err.source = src;
+          // If line wasn't known, try running the validator
+          if (!line) {
+            const detected = validateErmSource(src, file);
+            if (detected) {
+              line = detected.line;
+              col = detected.col;
+              title = detected.title;
             }
-          })
-          .catch(e => console.error("Error resolving source mapping:", e));
-      }
+          }
+          const locEl = card.querySelector('.nextjs-error-location');
+          if (locEl && line) {
+            locEl.textContent = `${displayFilePath} (${line}${col ? `:${col}` : ''})`;
+          }
+          const pathEl = card.querySelector('.nextjs-codeframe-path');
+          if (pathEl && line) {
+            pathEl.textContent = `${displayFilePath}:${line}${col ? `:${col}` : ''}`;
+          }
+          const codeEl = card.querySelector('.nextjs-codeframe-content');
+          if (codeEl) {
+            codeEl.innerHTML = buildCodeFrame(src, line, col, title);
+          }
+        })
+        .catch(e => console.error("[HMR] Error resolving source for code frame:", e));
     }
   };
+
+  // Source Validation and HMR Execution
+  function validateSourceAndRun(next) {
+    if (!window.__erm_filename) {
+      next(false);
+      return;
+    }
+    fetch('/__erm_src/' + window.__erm_filename)
+      .then(r => r.ok ? r.text() : '')
+      .then(src => {
+        const error = validateErmSource(src, window.__erm_filename);
+        if (error) {
+          if (typeof window.__erm_show_error_overlay === 'function') {
+            window.__erm_show_error_overlay({
+              type: 'Build Error',
+              file: window.__erm_filename,
+              title: error.title || 'Expression expected',
+              message: error.message || error.title,
+              description: error.description || 'Parsing ecmascript source code failed',
+              line: error.line,
+              col: error.col,
+              source: src
+            });
+          }
+        } else {
+          const overlay = document.getElementById('erm-error-overlay');
+          const hasOverlay = !!overlay;
+          if (overlay) overlay.remove();
+          const styleOverlay = document.getElementById('erm-error-overlay-styles');
+          if (styleOverlay) styleOverlay.remove();
+          next(hasOverlay);
+        }
+      })
+      .catch(err => {
+        console.error("Failed to fetch source for validation:", err);
+        next(false);
+      });
+  }
 
   if (window.__erm_filename) {
     validateSourceAndRun(() => { });
@@ -652,13 +968,12 @@
                 if (file && message) {
                   if (typeof window.__erm_show_error_overlay === 'function') {
                     window.__erm_show_error_overlay({
-                      type: 'Failed to compile',
+                      type: 'Build Error',
                       file: file,
-                      title: 'An error occurred during template compilation.',
-                      message: message
+                      title: message.replace(/^Error:\s*/, ''),
+                      message: message,
+                      description: 'Parsing ecmascript source code failed'
                     });
-                    const closeBtn = document.querySelector('.erm-error-close-btn');
-                    if (closeBtn) closeBtn.style.display = 'none';
                   }
                 } else {
                   console.error("Server compilation failed:", text);
@@ -791,8 +1106,9 @@
                     file: file,
                     title: err.name || 'SyntaxError',
                     message: err.message || 'Invalid or unexpected token',
+                    description: 'Runtime execution error in component script',
                     stack: stack,
-                    origLine: origLine
+                    line: origLine
                   });
                 }
               }
@@ -820,13 +1136,12 @@
       const message = bodyEl.getAttribute('data-compile-error-message');
       if (file && message) {
         window.__erm_show_error_overlay({
-          type: 'Failed to compile',
+          type: 'Build Error',
           file: file,
-          title: 'An error occurred during template compilation.',
-          message: message
+          title: message.replace(/^Error:\s*/, ''),
+          message: message,
+          description: 'Parsing ecmascript source code failed'
         });
-        const closeBtn = document.querySelector('.erm-error-close-btn');
-        if (closeBtn) closeBtn.style.display = 'none';
       }
     }
   };

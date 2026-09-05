@@ -201,7 +201,28 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     
     // Extract bindings and evaluate them on the server to pre-populate spans
     for s in &result.scripts {
-        if s.starts_with("window.__erm_bindings.push(") {
+        if s.starts_with("bindText(\"") {
+            if let Some(id_end) = s[10..].find('"') {
+                let id = &s[10..10 + id_end];
+                if let Some(get_start) = s.find("() => (") {
+                    if let Some(get_end) = s[get_start + 7..].rfind(')') {
+                        let expr = &s[get_start + 7..get_start + 7 + get_end];
+                        if let Ok(val) = ev.eval(expr) {
+                            if val != eval::Value::Null {
+                                let val_str = val.to_string();
+                                let id_pattern = format!("id=\"{}\"", id);
+                                if let Some(pos) = res_html.find(&id_pattern) {
+                                    if let Some(close_tag) = res_html[pos..].find('>') {
+                                        let insert_pos = pos + close_tag + 1;
+                                        res_html.insert_str(insert_pos, &val_str);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if s.starts_with("window.__erm_bindings.push(") {
             if let Some(id_start) = s.find("id: \"") {
                 let id_end = s[id_start + 5..].find('"').unwrap_or(0);
                 let id = &s[id_start + 5..id_start + 5 + id_end];
@@ -316,12 +337,17 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
         script_assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
-        script_assets.push_str("import { useState, useEffect, onMount, useParams, effect } from '/modules/erm/runtime.js';\n");
-        script_assets.push_str("{\n");
+        script_assets.push_str("import {\n");
+        script_assets.push_str("  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n");
+        script_assets.push_str("  onMount, onCleanup, batch, untrack,\n");
+        script_assets.push_str("  useState, useEffect, useParams, effect,\n");
+        script_assets.push_str("  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n");
+        script_assets.push_str("  Show, For, setCurrentPageDispose\n");
+        script_assets.push_str("} from '/modules/erm/runtime.js';\n");
+        script_assets.push_str("createRoot((dispose) => {\n");
+        script_assets.push_str("  setCurrentPageDispose(dispose);\n");
         for s in &scripts_to_inject { script_assets.push_str(s); script_assets.push('\n'); }
-        script_assets.push_str("if (typeof window.__erm_init_reactivity === 'function') window.__erm_init_reactivity();\n");
-        script_assets.push_str("if (typeof window.__erm_update === 'function') window.__erm_update();\n");
-        script_assets.push_str("}\n");
+        script_assets.push_str("});\n");
         script_assets.push_str("</script>\n");
     }
 
