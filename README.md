@@ -8,7 +8,8 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
 
 ## 🚀 Key Features
 
-* **High Performance**: Outperforms Node.js and Bun, matching the throughput and latency of Deno.
+* **High Performance**: Engineered for high-throughput, low-latency web services, delivering tens of thousands of requests per second with sub-millisecond response times.
+* **Ultra-Low Memory Footprint**: Minimal RAM overhead powered by a lightweight Rust runtime, GC object pooling, and kernel-level I/O event demultiplexing (epoll/kqueue).
 * **Hybrid Execution Engine**:
   * **Bytecode Interpreter**: Standard VM executing custom Eronom bytecode.
   * **JIT Compiler**: Compile bytecode directly to native machine code on-the-fly via the integrated **MIR JIT compiler** (C backend).

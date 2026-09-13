@@ -51,6 +51,10 @@ pub enum Commands {
         /// Add ermcss capability for the project
         #[arg(long)]
         ermcss: bool,
+
+        /// Initialize using local template files without cloning from GitHub
+        #[arg(long)]
+        offline: bool,
     },
     /// Build the project or compile into a standalone binary
     Build {

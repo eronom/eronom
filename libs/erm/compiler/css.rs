@@ -20,7 +20,7 @@ pub fn scope_css(css: &str, scope_id: &str) -> anyhow::Result<String> {
             if !first { result.push_str(", "); }
             let trimmed = s.trim();
             if !trimmed.is_empty() {
-                if trimmed.contains('%') || trimmed == "to" || trimmed == "from" || trimmed.starts_with("body") || trimmed.starts_with("html") {
+                if trimmed.contains('%') || trimmed == "to" || trimmed == "from" || trimmed.starts_with("body") || trimmed.starts_with("html") || trimmed.starts_with(":root") || trimmed.starts_with('@') {
                     result.push_str(trimmed);
                 } else {
                     if let Some(idx) = trimmed.find(':') {

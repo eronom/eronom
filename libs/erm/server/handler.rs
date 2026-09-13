@@ -227,6 +227,19 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers:
                     let base_fallback = base_path.join(&target[1..]);
                     if base_fallback.exists() {
                         base_fallback
+                    } else if target == "/favicon.ico" {
+                        let logo_app = app_dir.join("eronom_logo.png");
+                        let logo_pages = app_dir.join("pages").join("eronom_logo.png");
+                        let logo_base = base_path.join("eronom_logo.png");
+                        if logo_app.exists() {
+                            logo_app
+                        } else if logo_pages.exists() {
+                            logo_pages
+                        } else if logo_base.exists() {
+                            logo_base
+                        } else {
+                            primary_fallback
+                        }
                     } else {
                         primary_fallback
                     }

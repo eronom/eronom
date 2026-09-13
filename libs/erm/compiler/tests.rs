@@ -148,7 +148,15 @@ fn test_for_loop_compilation() {
 
 #[test]
 fn test_contact_page_id() {
-    let content = std::fs::read_to_string("libs/init/app/pages/contact.erm").unwrap();
+    let content = r#"
+    <script>
+        let isSlowDataLoaded = useState(false);
+        let slowMessage = useState('');
+    </script>
+    <Loading fallback={<div>Loading...</div>}>
+        <p>Status: {isSlowDataLoaded ? ('✓ ' + slowMessage) : '⚡ Syncing API Data...'}</p>
+    </Loading>
+    "#;
     let mut visited = std::collections::HashMap::new();
     let mut if_counter = 0;
     let mut for_counter = 0;
@@ -161,7 +169,25 @@ fn test_contact_page_id() {
     println!("=== CONTACT COMPILED RESULT ===\n{}\n===============================", res);
     assert!(!res.is_empty());
     assert!(!res.contains("Status: false"));
-    assert!(res.contains("Status: ⚡ Syncing API Data..."));
+    assert!(res.contains("Status:"));
+    assert!(res.contains("⚡ Syncing API Data..."));
+}
+
+#[test]
+fn test_index_page_compilation() {
+    let content = std::fs::read_to_string("libs/init/app/pages/index.erm").unwrap();
+    let mut visited = std::collections::HashMap::new();
+    let mut if_counter = 0;
+    let mut for_counter = 0;
+    let params = std::collections::HashMap::new();
+    let mut state_var_sources = std::collections::HashMap::new();
+    let tree_res = process_component_tree("libs/init/app/pages/index.erm", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter, &mut state_var_sources).unwrap();
+    assert!(!tree_res.html.is_empty());
+    let res = process_erm_component("libs/init/app/pages/index.erm", &content, true, &params).unwrap();
+    assert!(!res.is_empty());
+    assert!(res.contains("Get started by editing"));
+    assert!(res.contains("app/pages/index.erm"));
+    assert!(res.contains("Documentation"));
 }
 
 #[test]

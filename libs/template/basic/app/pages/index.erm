@@ -1,0 +1,222 @@
+<script>
+    export let activeTheme = useState('light');
+
+    let count = useState(0);
+    let double = useState(() => count * 2);
+    let todoText = useState('');
+    let todos = useState([]);
+    
+    async function fetchTodos() {
+        try {
+            const res = await fetch('/api/todo');
+            todos = await res.json();
+        } catch (e) {
+            console.error("Failed to fetch todos:", e);
+        }
+    }
+    fetchTodos();
+    
+    let showExtraContent = useState(true);
+    let porridge = useState({ temperature: 180 });
+    
+    let effectMessage = useState('Effect has not run yet');
+    useEffect(() => {
+        effectMessage = "Effect triggered! Count is now: " + count;
+    }, [count]);
+    
+
+
+
+
+    let time = useState("");
+    onMount(() => {
+        const id = setInterval(() => {
+            time = new Date().toLocaleTimeString();
+        }, 1000);
+
+        return () => clearInterval(id);
+    });
+
+    // TEST: Background updates now work automatically!
+    let timer = useState(0);
+    setInterval(() => {
+        timer++;
+    }, 1000);
+
+    let randomNum = Math.floor(Math.random() * 1000);
+    let items = useState([1, 2, 3, 4, 5]);
+    let submitted = useState(false);
+</script>
+
+
+<h1>HMRssssvvvvvssssvssssss is now running from a dedicated server module!</h1>
+<h2>hello</h2>
+<p>vcbc fdh scvxhhhhhhhhhhhhhh
+fdvchgvyufdnb
+gvfcjb hyun</p>
+<p>helloo DHBVYUCBHNFDBVH BHYU</p>
+<div style="padding: 20px; border: 2px solid cyan; border-radius: 10px; margin-bottom: 20px;">
+    <h3>Reactive Signal Demo</h3>
+    <button onClick={()=>{count++}}>Count {count}</button>
+    <p>Double (Count * 2): <strong>{double}</strong></p>
+    <p>Background Timer: <strong>{timer}s</strong></p>
+    <p>useEffect status: <strong style="color: #2ecc71;">{effectMessage}</strong></p>
+</div>
+
+<div class="flex items-center justify-center bg-gray-100">
+  <div class="w-80 rounded-xl bg-white p-6 shadow-lg border border-gray-200">
+    <h2 class="text-2xl font-bold text-gray-800">Hello Eronom</h2>
+    <p class="mt-2 text-gray-600">
+      This is a simple card built with Eronom.
+    </p>
+    <button
+      class="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 transition"
+    >
+      Get Started
+    </button>
+  </div>
+</div>
+
+<p>HMRsss is now EFddFIaaCIENTss and CLEAN! Edited <code>index.erm</code>.</p>
+<h3>Current time: {time}</h3>
+<h2>Hellloo web added h2 tag</h2>
+<p>Random: {randomNum}</p>
+<h2>Hwwwssselaaaaaallsvvsssssssvvvvsssssssssssooooooovvvvaa wesb added h2paaaaaaaaaaaaaaaaaaaappppppssppppppppppk tag</h2>
+<h2>Hellsslssvvaaaaavslo weaaaaaaab added h2 tag</h2>
+
+<div style="padding: 20px; border: 2px solid #3498db; border-radius: 10px; margin-bottom: 20px;">
+    <h3>For Loop Demo</h3>
+    <div style="margin-bottom: 10px;">
+        <button onClick={()=>{items.push(items.length + 1)}}>Add Item</button>
+        <button onClick={()=>{items.pop()}}>Remove Item</button>
+    </div>
+
+    for item,i in items{
+        <p>Item key as {i} : {item}</p>
+    }
+</div>
+
+<h1>hello api todos </h1>
+
+<div style="padding: 20px; border: 2px solid #e67e22; border-radius: 10px; margin-bottom: 20px;">
+    <h3>API Todo Demosss (from <code>/api/todo</code>)</h3>
+    <button onClick={fetchTodos}>Refresh API Todos</button>
+    <div style="margin-top: 10px;">
+        for todo in todos {
+            <div style="padding: 10px; background: #2c3e50; border-radius: 5px; margin-bottom: 5px; color: white;">
+                <strong>{todo.text}</strong> - {todo.done ? '✅' : '❌'}
+            </div>
+        }
+    </div>
+</div>
+
+if porridge.temperature > 100 {
+    <p>too hot!</p>
+    if porridge.temperature > 150 {
+        <p>Extremely hot! (over 150)</p>
+    } else {
+        <p>Moderately hot. (between 100 and 150)</p>
+    }
+} else if 80 > porridge.temperature {
+    <p>too cold!</p>
+    if porridge.temperature < 40 {
+        <p>Extremely cold! (under 40)</p>
+    } else {
+        <p>Moderately cold. (between 40 and 80)</p>
+    }
+} else {
+    <p>just right!</p>
+}
+
+<div style="padding: 20px; border: 2px solid #9b5de5; border-radius: 10px; margin-bottom: 20px;">
+    <h3>Newsletter Signup (Global State Collision Demo)</h3>
+    <p>This form uses the state variable <code>submitted</code>.</p>
+    if submitted {
+        <p style="color: #38ef7d; font-weight: bold;">🎉 Thank you for subscribing to our newsletter!</p>
+    } else {
+        <div>
+            <input type="email" placeholder="enter your email..." style="padding: 8px; border-radius: 5px; border: 1px solid #ccc; margin-right: 10px;" />
+            <button onClick={() => { submitted = true }}>Subscribe</button>
+        </div>
+    }
+</div>
+
+<Link to="/contact">Contact</Link>
+
+<style>
+    .demo-box {
+        padding: 24px;
+        border-radius: 16px;
+        margin-top: 20px;
+        margin-bottom: 24px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(4px);
+        transition: all 0.3s ease;
+    }
+    .context-demo {
+        border-color: rgba(155, 93, 229, 0.3);
+    }
+    .context-demo:hover {
+        border-color: rgba(155, 93, 229, 0.6);
+        box-shadow: 0 12px 40px 0 rgba(155, 93, 229, 0.15);
+    }
+    .demo-desc {
+        color: #a0aec0;
+        font-size: 0.95rem;
+        margin-top: 4px;
+        margin-bottom: 16px;
+    }
+    .control-row {
+        margin-bottom: 20px;
+    }
+    .btn {
+        padding: 10px 20px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .theme-btn {
+        background: linear-gradient(135deg, #9b5de5, #f15bb5);
+        color: white;
+        box-shadow: 0 4px 14px rgba(155, 93, 229, 0.4);
+    }
+    .theme-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(155, 93, 229, 0.6);
+    }
+    .theme-btn:active {
+        transform: translateY(0);
+    }
+</style>
+
+    <div class="demo-box context-demo">
+        <h3>🌐 Context API Demo</h3>
+        <p class="demo-desc">Changing the state below propagates the value to child components via <code>activeTheme</code>.</p>
+        <div class="control-row">
+            <button class="btn theme-btn" onClick={()=>{activeTheme = activeTheme == 'light' ? 'dark' : 'light'}}>
+                Toggle Theme (Current: {activeTheme})
+            </button>
+        </div>
+        <Header />
+    </div>
+
+if showExtraContent {
+    <div id="extra-content" style="margin-top: 20px; padding: 15px; border: 2px dashed #42b983;">
+        <h3>🎉 Condsfssitsionalssssssss Rendered Boxxxxxssaaa</h3>
+        <p>This block only loads because <code>showExtraContent</code> is <strong>true</strong>.</p>
+    </div>
+    <button onclick={()=>{showExtraContent=false}}>Hide Content</button>
+} else {
+    <div><p>showExtraContent is false</p></div>
+    <button onclick={()=>{showExtraContent=true}}>Show Content</button>
+}
+
+
+
+
+<Footer />

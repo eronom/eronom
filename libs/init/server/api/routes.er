@@ -3,11 +3,11 @@ import { router } from "std/http"
 let app = router()
 
 let todos = [
-  { id: 1, text: "Learn Eronomss", done: false },
-  { id: 2, text: "Learn Er", done: false },
-  { id: 3, text: "Learn Erm", done: false },
-  { id: 4, text: "Learn E", done: false },
-  { id: 5, text: "Learn Eronom", done: false }
+  { id: 1, text: "Explore app/pages/index.erm", done: true },
+  { id: 2, text: "Experience connection-preserving HMR", done: true },
+  { id: 3, text: "Create API routes in server/api/routes.er", done: false },
+  { id: 4, text: "Compile components with reactive signals", done: true },
+  { id: 5, text: "Deploy with native MIR JIT acceleration", done: false }
 ]
 
 app.get('/todo', (c) => {
@@ -17,7 +17,6 @@ app.get('/todo', (c) => {
 app.get('/slow', (c) => {
   return c.json({
     status: "ok",
-    message: "Slow API data fetched successfully"
+    message: "API data fetched successfully from Eronom server"
   })
 })
-
