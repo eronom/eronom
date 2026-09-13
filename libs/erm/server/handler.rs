@@ -61,16 +61,37 @@ pub extern "C" fn dev_ws_open_callback(
     if !conns.contains(&(ws as usize)) {
         conns.push(ws as usize);
     }
+    let connected_msg = serde_json::json!({
+        "type": "connected"
+    }).to_string();
+    let msg_c = CString::new(connected_msg).unwrap();
+    unsafe {
+        er_ws_send(ws, msg_c.as_ptr(), msg_c.as_bytes().len(), 0);
+    }
 }
 
 pub extern "C" fn dev_ws_message_callback(
-    _ws: *mut c_void,
+    ws: *mut c_void,
     _path_ptr: *const c_char,
     _path_len: usize,
-    _msg_ptr: *const c_char,
-    _msg_len: usize,
+    msg_ptr: *const c_char,
+    msg_len: usize,
     _is_binary: i32,
 ) {
+    if !msg_ptr.is_null() && msg_len > 0 {
+        let msg_slice = unsafe { std::slice::from_raw_parts(msg_ptr as *const u8, msg_len) };
+        if let Ok(msg_str) = std::str::from_utf8(msg_slice) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(msg_str) {
+                if val.get("type").and_then(|t| t.as_str()) == Some("ping") {
+                    let pong = serde_json::json!({ "type": "pong" }).to_string();
+                    let msg_c = CString::new(pong).unwrap();
+                    unsafe {
+                        er_ws_send(ws, msg_c.as_ptr(), msg_c.as_bytes().len(), 0);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub extern "C" fn dev_ws_close_callback(
@@ -126,6 +147,46 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers:
                 return Ok(());
             }
         }
+    }
+
+    if target == "/modules/erm/hmr.js" {
+        let content: std::borrow::Cow<'static, [u8]> = if base_path.join("modules/erm/hmr.js").exists() {
+            fs::read(base_path.join("modules/erm/hmr.js"))?.into()
+        } else if base_path.join("core/hmr.js").exists() {
+            fs::read(base_path.join("core/hmr.js"))?.into()
+        } else {
+            include_bytes!("../../init/modules/erm/hmr.js").as_slice().into()
+        };
+
+        unsafe {
+            let status = CString::new("200 OK").unwrap();
+            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+            let content_type = CString::new("application/javascript; charset=utf-8").unwrap();
+            let content_type_key = CString::new("Content-Type").unwrap();
+            er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
+            er_http_response_end(res, content.as_ptr() as *const c_char, content.len());
+        }
+        return Ok(());
+    }
+
+    if target == "/modules/erm/runtime.js" {
+        let content: std::borrow::Cow<'static, [u8]> = if base_path.join("modules/erm/runtime.js").exists() {
+            fs::read(base_path.join("modules/erm/runtime.js"))?.into()
+        } else if base_path.join("core/runtime.js").exists() {
+            fs::read(base_path.join("core/runtime.js"))?.into()
+        } else {
+            include_bytes!("../../init/modules/erm/runtime.js").as_slice().into()
+        };
+
+        unsafe {
+            let status = CString::new("200 OK").unwrap();
+            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
+            let content_type = CString::new("application/javascript; charset=utf-8").unwrap();
+            let content_type_key = CString::new("Content-Type").unwrap();
+            er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
+            er_http_response_end(res, content.as_ptr() as *const c_char, content.len());
+        }
+        return Ok(());
     }
 
     let app_dir = if base_path.join("app").exists() {

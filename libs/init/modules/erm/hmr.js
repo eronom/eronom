@@ -1,839 +1,700 @@
-(function () {
-  if (window.__hmr_initialized) return;
-  window.__hmr_initialized = true;
-  console.log("[HMR] Initialized");
+/**
+ * Eronom Hot Module Replacement (HMR) Client
+ * High-performance Hot Module Replacement (HMR) architecture.
+ * Features:
+ * - Pure ES class architecture (HMRClient, HMRContext)
+ * - Shadow DOM isolated <erm-error-overlay>
+ * - In-place CSS hot updates without DOM re-render or state loss
+ * - Standard hot.accept(), hot.dispose(), hot.data, hot.invalidate() lifecycle
+ * - Clean WebSocket reconnect with heartbeat ping/pong
+ */
 
-  function checkAdjacentJsx(content) {
-    const re = /^\s*export\s+(?:default\s+)?(?:fn|function)\s+[A-Za-z0-9_]+\s*\([^)]*\)\s*\{/m;
-    const match = content.match(re);
-    if (!match) return null;
+// --- 1. Shadow DOM Error Overlay ---
 
-    const fnBodyStart = match.index + match[0].length;
-    let depth = 1;
-    let i = fnBodyStart;
-    let inSingleQuote = false;
-    let inDoubleQuote = false;
-    let inTemplateLiteral = false;
-    let inLineComment = false;
-    let inBlockComment = false;
-    let escaped = false;
-    let fnBodyEnd = content.length;
-
-    while (i < content.length) {
-      const c = content[i];
-      if (escaped) {
-        escaped = false;
-        i++;
-        continue;
-      }
-      if (c === '\\') {
-        escaped = true;
-        i++;
-        continue;
-      }
-      if (inLineComment) {
-        if (c === '\n') inLineComment = false;
-      } else if (inBlockComment) {
-        if (c === '/' && i > 0 && content[i - 1] === '*') inBlockComment = false;
-      } else if (inSingleQuote) {
-        if (c === '\'') inSingleQuote = false;
-      } else if (inDoubleQuote) {
-        if (c === '"') inDoubleQuote = false;
-      } else if (inTemplateLiteral) {
-        if (c === '`') inTemplateLiteral = false;
-      } else {
-        if (c === '/' && i + 1 < content.length && content[i + 1] === '/') {
-          inLineComment = true;
-          i++;
-        } else if (c === '/' && i + 1 < content.length && content[i + 1] === '*') {
-          inBlockComment = true;
-          i++;
-        } else if (c === '\'') {
-          inSingleQuote = true;
-        } else if (c === '"') {
-          inDoubleQuote = true;
-        } else if (c === '`') {
-          inTemplateLiteral = true;
-        } else if (c === '{') {
-          depth++;
-        } else if (c === '}') {
-          depth--;
-          if (depth === 0) {
-            fnBodyEnd = i;
-            break;
-          }
-        }
-      }
-      i++;
-    }
-
-    const bodyStr = content.slice(fnBodyStart, fnBodyEnd);
-    const lines = bodyStr.split('\n');
-    let scriptMode = true;
-    const markupLines = [];
-
-    for (let line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (scriptMode) {
-        const startsWithMarkup = trimmed.startsWith('<') ||
-          trimmed.startsWith('if ') ||
-          trimmed.startsWith('for ') ||
-          trimmed.startsWith('return');
-        if (startsWithMarkup) {
-          scriptMode = false;
-        }
-      }
-      if (!scriptMode) {
-        markupLines.push(line);
-      }
-    }
-
-    const cleanedMarkup = [];
-    for (let line of markupLines) {
-      let cleaned = line.trim();
-      if (cleaned.startsWith('return')) {
-        cleaned = cleaned.slice(6).trim();
-        if (cleaned.startsWith('(')) {
-          cleaned = cleaned.slice(1).trim();
-        }
-      }
-      if (cleaned === '(') continue;
-      if (cleaned === ')' || cleaned === ');' || cleaned === '}' || cleaned === '};') continue;
-      if (cleaned.endsWith(';')) cleaned = cleaned.slice(0, -1);
-      if (cleaned) cleanedMarkup.push(cleaned);
-    }
-
-    const markupOnly = cleanedMarkup.join('\n');
-    let chars = markupOnly;
-    let rootCount = 0;
-    let markupDepth = 0;
-    let idx = 0;
-
-    while (idx < chars.length) {
-      if (chars[idx] === '<') {
-        if (idx + 1 < chars.length && chars[idx + 1] === '!') {
-          idx += 4;
-          while (idx < chars.length && !(chars[idx] === '-' && chars[idx - 1] === '-' && chars[idx - 2] === '>')) {
-            idx++;
-          }
-          idx++;
-          continue;
-        }
-
-        let isClosing = false;
-        if (idx + 1 < chars.length && chars[idx + 1] === '/') {
-          isClosing = true;
-          idx++;
-        }
-
-        idx++;
-        let tagContent = '';
-        while (idx < chars.length && chars[idx] !== '>') {
-          tagContent += chars[idx];
-          idx++;
-        }
-
-        if (chars[idx] === '>') {
-          idx++;
-        }
-
-        let isSelfClosing = false;
-        if (!isClosing) {
-          if (tagContent.trim().endsWith('/')) {
-            isSelfClosing = true;
-          }
-          if (markupDepth === 0) {
-            rootCount++;
-            if (rootCount > 1) {
-              return "Adjacent JSX elements must be wrapped in a fragment tag <> </>. Like: <> <h1>...</h1> <button>...</button> </>.";
-            }
-          }
-          if (!isSelfClosing) {
-            markupDepth++;
-          }
-        } else {
-          if (markupDepth > 0) {
-            markupDepth--;
-          }
-        }
-      } else {
-        idx++;
-      }
-    }
-
-    return null;
+class ErmErrorOverlay extends HTMLElement {
+  constructor(err) {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this.err = err || {};
+    this.render();
   }
 
-  function validateSourceAndRun(next) {
-    if (!window.__erm_filename) {
-      next(false);
-      return;
-    }
-    fetch('/__erm_src/' + window.__erm_filename)
-      .then(r => r.ok ? r.text() : '')
-      .then(src => {
-        const error = checkAdjacentJsx(src);
-        if (error) {
-          if (typeof window.__erm_show_error_overlay === 'function') {
-            window.__erm_show_error_overlay({
-              type: 'Failed to compile',
-              file: window.__erm_filename,
-              title: 'An error occurred during template compilation.',
-              message: error
-            });
-            const closeBtn = document.querySelector('.erm-error-close-btn');
-            if (closeBtn) closeBtn.style.display = 'none';
-          }
-        } else {
-          const hasOverlay = !!document.getElementById('erm-error-overlay');
-          const overlay = document.getElementById('erm-error-overlay');
-          if (overlay) overlay.remove();
-          const styleOverlay = document.getElementById('erm-error-overlay-styles');
-          if (styleOverlay) styleOverlay.remove();
-          next(hasOverlay);
-        }
-      })
-      .catch(err => {
-        console.error("Failed to fetch source for validation:", err);
-        next(false);
-      });
+  static get observedAttributes() {
+    return [];
   }
 
-  const OVERLAY_CSS = `
-#erm-error-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(10, 10, 12, 0.85);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  z-index: 999999;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  color: #f3f4f6;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  animation: erm-fade-in 0.25s ease-out;
-}
-
-@keyframes erm-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.erm-error-card {
-  background: #18181b;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  width: 90%;
-  max-width: 800px;
-  max-height: 85vh;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: erm-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes erm-slide-up {
-  from { transform: translateY(20px) scale(0.98); }
-  to { transform: translateY(0) scale(1); }
-}
-
-.erm-error-header {
-  padding: 20px 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #202024;
-}
-
-.erm-error-badge {
-  background: #ef4444;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 4px 10px;
-  border-radius: 9999px;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
-}
-
-.erm-error-file {
-  color: #a1a1aa;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13px;
-  margin-left: 12px;
-  flex-grow: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.erm-error-close-btn {
-  background: transparent;
-  border: none;
-  color: #71717a;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.erm-error-close-btn:hover {
-  color: #f4f4f5;
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.erm-error-body {
-  padding: 24px;
-  overflow-y: auto;
-  flex-grow: 1;
-}
-
-.erm-error-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-top: 0;
-  margin-bottom: 16px;
-  color: #ffffff;
-  line-height: 1.4;
-}
-
-.erm-error-msg {
-  background: #09090b;
-  border-left: 4px solid #ef4444;
-  padding: 16px;
-  border-radius: 0 8px 8px 0;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: #f3f4f6;
-  white-space: pre-wrap;
-  overflow-x: auto;
-  margin-bottom: 20px;
-}
-
-.erm-error-stack-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #a1a1aa;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 8px;
-}
-
-.erm-error-stack {
-  background: #09090b;
-  padding: 16px;
-  border-radius: 8px;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #a1a1aa;
-  white-space: pre-wrap;
-  overflow-x: auto;
-  max-height: 250px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.erm-error-footer {
-  padding: 16px 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 12px;
-  color: #71717a;
-  background: #1b1b1f;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.erm-error-footer svg {
-  width: 14px;
-  height: 14px;
-  fill: currentColor;
-}
-.erm-snippet-line {
-  display: flex;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  border-radius: 4px;
-}
-.erm-snippet-line-error {
-  background: rgba(239, 68, 68, 0.1);
-}
-.erm-snippet-ln {
-  width: 40px;
-  color: #71717a;
-  text-align: right;
-  padding-right: 12px;
-  user-select: none;
-}
-.erm-snippet-marker {
-  width: 15px;
-  color: #ef4444;
-  font-weight: bold;
-  user-select: none;
-}
-.erm-snippet-code {
-  color: #f3f4f6;
-  white-space: pre;
-}
-.erm-snippet-line-error .erm-snippet-code {
-  color: #fca5a5;
-  font-weight: 500;
-}
-.erm-snippet-container {
-  margin-bottom: 20px;
-}
-  `;
-
-  window.__erm_show_error_overlay = function (err) {
-    let overlay = document.getElementById('erm-error-overlay');
-    if (overlay) overlay.remove();
-
-    let style = document.getElementById('erm-error-overlay-styles');
-    if (!style) {
-      style = document.createElement('style');
-      style.id = 'erm-error-overlay-styles';
-      style.textContent = OVERLAY_CSS;
-      (document.head || document.documentElement).appendChild(style);
-    }
-
-    overlay = document.createElement('div');
-    overlay.id = 'erm-error-overlay';
-
-    const card = document.createElement('div');
-    card.className = 'erm-error-card';
-
-    const header = document.createElement('div');
-    header.className = 'erm-error-header';
-    header.innerHTML = `
-      <span class="erm-error-badge">${err.type || 'Error'}</span>
-      <span class="erm-error-file">${err.file || ''}</span>
-      <button class="erm-error-close-btn" onclick="document.getElementById('erm-error-overlay').remove()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    `;
-
-    const body = document.createElement('div');
-    body.className = 'erm-error-body';
-
-    const title = document.createElement('h2');
-    title.className = 'erm-error-title';
-    title.textContent = err.title || 'An error occurred';
-
-    const msg = document.createElement('div');
-    msg.className = 'erm-error-msg';
-    msg.textContent = err.message || '';
-
-    body.appendChild(title);
-    body.appendChild(msg);
-
-    if (err.stack) {
-      const stackTitle = document.createElement('div');
-      stackTitle.className = 'erm-error-stack-title';
-      stackTitle.textContent = 'Call Stack';
-
-      const stack = document.createElement('pre');
-      stack.className = 'erm-error-stack';
-      stack.textContent = err.stack;
-
-      body.appendChild(stackTitle);
-      body.appendChild(stack);
-    }
-
-    const footer = document.createElement('div');
-    footer.className = 'erm-error-footer';
-    footer.innerHTML = `
-      <svg viewBox="0 0 20 20"><path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>
-      <span>Fix the issue in your code to automatically reload/clear.</span>
-    `;
-
-    card.appendChild(header);
-    card.appendChild(body);
-    card.appendChild(footer);
-    overlay.appendChild(card);
-
-    const escHandler = (e) => {
+  connectedCallback() {
+    this.onKeyDown = (e) => {
       if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', escHandler);
+        this.close();
       }
     };
-    document.addEventListener('keydown', escHandler);
-
-    (document.body || document.documentElement).appendChild(overlay);
-
-    const escapeHtml = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-    if (window.__erm_filename && err.file) {
-      let resolvePromise;
-      let compiledCol = 0;
-
-      if (err.origLine !== undefined && err.origLine !== null) {
-        const colMatch = err.file.match(/:(\d+)(?::(\d+))?$/) || (err.stack && err.stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m));
-        if (colMatch) {
-          compiledCol = colMatch[2] ? parseInt(colMatch[2], 10) : 0;
-        }
-        resolvePromise = Promise.resolve(err.origLine);
-      } else {
-        const match = err.file.match(/(?::|\()(\d+)(?::(\d+))?\)?$/) || (err.stack && err.stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m));
-        if (match) {
-          const compiledLine = parseInt(match[1], 10);
-          compiledCol = match[2] ? parseInt(match[2], 10) : 0;
-
-          resolvePromise = fetch(location.href)
-            .then(r => r.text())
-            .then(html => {
-              const lines = html.split('\n');
-              let origLine = null;
-              for (let idx = compiledLine - 1; idx >= 0; idx--) {
-                const lineContent = lines[idx] || '';
-                const commentMatch = lineContent.match(/\/\/\s*line:(\d+)\s*$/);
-                if (commentMatch) {
-                  origLine = parseInt(commentMatch[1], 10);
-                  break;
-                }
-              }
-              return origLine;
-            });
-        }
-      }
-
-      if (resolvePromise) {
-        resolvePromise
-          .then(origLine => {
-            if (origLine !== null && origLine !== undefined) {
-              return fetch('/__erm_src/' + window.__erm_filename)
-                .then(r => r.text())
-                .then(src => {
-                  const srcLines = src.split('\n');
-                  const start = Math.max(0, origLine - 3);
-                  const end = Math.min(srcLines.length, origLine + 2);
-
-                  let snippetHtml = '';
-                  for (let i = start; i < end; i++) {
-                    const ln = i + 1;
-                    const isErrLine = ln === origLine;
-                    const lineText = srcLines[i] || '';
-                    snippetHtml += `<div class="erm-snippet-line${isErrLine ? ' erm-snippet-line-error' : ''}">` +
-                      `<span class="erm-snippet-ln">${ln}</span>` +
-                      `<span class="erm-snippet-marker">${isErrLine ? '>' : ' '}</span>` +
-                      `<span class="erm-snippet-code">${escapeHtml(lineText)}</span>` +
-                      `</div>`;
-                  }
-
-                  const fileEl = card.querySelector('.erm-error-file');
-                  if (fileEl) {
-                    fileEl.textContent = `${window.__erm_filename}:${origLine}${compiledCol ? ':' + compiledCol : ''}`;
-                  }
-
-                  const bodyEl = card.querySelector('.erm-error-body');
-                  let snippetContainer = bodyEl.querySelector('.erm-snippet-container');
-                  if (!snippetContainer) {
-                    snippetContainer = document.createElement('div');
-                    snippetContainer.className = 'erm-snippet-container';
-
-                    const snippetTitle = document.createElement('div');
-                    snippetTitle.className = 'erm-error-stack-title';
-                    snippetTitle.textContent = 'Source Code';
-                    snippetContainer.appendChild(snippetTitle);
-
-                    const snippetPre = document.createElement('pre');
-                    snippetPre.className = 'erm-error-stack';
-                    snippetPre.style.background = '#09090b';
-                    snippetPre.style.borderLeft = '4px solid #ef4444';
-                    snippetPre.style.padding = '12px';
-                    snippetPre.style.maxHeight = 'none';
-                    snippetContainer.appendChild(snippetPre);
-
-                    const stackTitle = bodyEl.querySelector('.erm-error-stack-title');
-                    if (stackTitle) {
-                      bodyEl.insertBefore(snippetContainer, stackTitle);
-                    } else {
-                      bodyEl.appendChild(snippetContainer);
-                    }
-                  }
-
-                  snippetContainer.querySelector('pre').innerHTML = snippetHtml;
-                });
-            }
-          })
-          .catch(e => console.error("Error resolving source mapping:", e));
-      }
-    }
-  };
-
-  if (window.__erm_filename) {
-    validateSourceAndRun(() => { });
+    addEventListener('keydown', this.onKeyDown);
   }
 
-  window.__hmr_hooks = window.__hmr_hooks || { dispose: [], accept: [] };
-  window.hmr = {
-    data: window.__hmr_data || {},
-    accept: (cb) => window.__hmr_hooks.accept.push(cb),
-    dispose: (cb) => window.__hmr_hooks.dispose.push(cb),
-    invalidate: () => location.reload()
-  };
-  window.__hmr_data = window.hmr.data;
+  disconnectedCallback() {
+    removeEventListener('keydown', this.onKeyDown);
+  }
 
-  window.__hmr_intervals = window.__hmr_intervals || [];
-  const originalSetInterval = window.setInterval;
-  window.setInterval = function (fn, t) {
-    let id = originalSetInterval(fn, t);
-    window.__hmr_intervals.push(id);
-    return id;
-  };
+  close() {
+    this.remove();
+  }
 
-  window.__hmr_listeners = window.__hmr_listeners || [];
-  const originalDocAddEventListener = document.addEventListener;
-  document.addEventListener = function (type, listener, options) {
-    window.__hmr_listeners.push({ target: document, type, listener, options });
-    return originalDocAddEventListener.call(document, type, listener, options);
-  };
+  escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
-  const originalWinAddEventListener = window.addEventListener;
-  window.addEventListener = function (type, listener, options) {
-    window.__hmr_listeners.push({ target: window, type, listener, options });
-    return originalWinAddEventListener.call(window, type, listener, options);
-  };
+  formatCodeFrame(frame) {
+    if (!frame) return '';
+    return frame
+      .split('\n')
+      .map((line) => {
+        const isHighlight = line.trimStart().startsWith('>') || line.includes('^');
+        const escaped = this.escapeHtml(line);
+        return isHighlight
+          ? `<span class="frame-line highlight">${escaped}</span>`
+          : `<span class="frame-line">${escaped}</span>`;
+      })
+      .join('\n');
+  }
 
-  const originalElementAddEventListener = Element.prototype.addEventListener;
-  Element.prototype.addEventListener = function (type, listener, options) {
-    window.__hmr_listeners.push({ target: this, type, listener, options });
-    return originalElementAddEventListener.call(this, type, listener, options);
-  };
+  render() {
+    const err = this.err;
+    const title = err.title || err.type || 'Build Error';
+    const message = this.escapeHtml(err.message || 'An unknown error occurred');
+    const file = this.escapeHtml(err.id || err.file || '');
+    const frame = this.formatCodeFrame(err.frame || '');
+    const stack = this.escapeHtml(err.stack || '');
 
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(protocol + '//' + location.host + '/__hmr');
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'reload') {
-      location.reload();
-    } else if (data.type === 'update') {
-      const path = data.path || 'unknown';
-      console.log("[HMR] Update received for: " + path);
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100vw;
+          height: 100vh;
+          box-sizing: border-box;
+          z-index: 999999;
+          --bg-backdrop: rgba(10, 10, 14, 0.75);
+          --card-bg: #141418;
+          --card-border: rgba(255, 255, 255, 0.08);
+          --text-main: #f3f3f6;
+          --text-muted: #8e8e9f;
+          --red-badge: #e03131;
+          --red-bg: rgba(224, 49, 49, 0.12);
+          --red-border: rgba(224, 49, 49, 0.3);
+          --code-bg: #0d0d11;
+          --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+          background: var(--bg-backdrop);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+          font-family: var(--font-sans);
+          color: var(--text-main);
+          line-height: 1.5;
+        }
 
-      if (path.endsWith('.css')) {
-        let links = document.querySelectorAll('link[rel="stylesheet"]');
-        let found = false;
-        links.forEach(link => {
-          if (link.href.includes(path)) {
-            link.href = path + '?t=' + new Date().getTime();
-            found = true;
-          }
-        });
-        if (found) return;
-      }
+        * {
+          box-sizing: border-box;
+        }
 
-      validateSourceAndRun((wasError) => {
-        fetch(location.href)
-          .then(r => {
-            if (!r.ok || r.status === 500) {
-              return r.text().then(text => {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(text, 'text/html');
-                const bodyEl = doc.body || doc.documentElement;
-                const file = bodyEl.getAttribute('data-compile-error-file');
-                const message = bodyEl.getAttribute('data-compile-error-message');
-                if (file && message) {
-                  if (typeof window.__erm_show_error_overlay === 'function') {
-                    window.__erm_show_error_overlay({
-                      type: 'Failed to compile',
-                      file: file,
-                      title: 'An error occurred during template compilation.',
-                      message: message
-                    });
-                    const closeBtn = document.querySelector('.erm-error-close-btn');
-                    if (closeBtn) closeBtn.style.display = 'none';
-                  }
-                } else {
-                  console.error("Server compilation failed:", text);
-                }
-                throw new Error("Compilation error overlay shown");
-              });
-            }
-            return r.text();
-          })
-          .then(html => {
-            if (wasError || !document.querySelector('script.__erm_script') || (document.body.firstElementChild && document.body.firstElementChild.id === 'erm-error-overlay')) {
-              location.reload();
-              return;
-            }
+        .overlay-card {
+          background: var(--card-bg);
+          border: 1px solid var(--card-border);
+          border-radius: 14px;
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+          width: 100%;
+          max-width: 900px;
+          max-height: 88vh;
+          overflow-y: auto;
+          padding: 28px;
+          position: relative;
+        }
 
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            document.title = doc.title;
+        .header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
 
-            function morph(oldNode, newNode) {
-              if (oldNode.nodeType !== newNode.nodeType || oldNode.tagName !== newNode.tagName) {
-                oldNode.replaceWith(newNode.cloneNode(true));
-                return;
-              }
-              if (oldNode.nodeType === Node.TEXT_NODE) {
-                if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
-                return;
-              }
-              const oldAttrs = oldNode.attributes;
-              const newAttrs = newNode.attributes;
-              if (oldAttrs && newAttrs) {
-                for (let i = 0; i < newAttrs.length; i++) {
-                  const attr = newAttrs[i];
-                  if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
-                }
-                for (let i = 0; i < oldAttrs.length; i++) {
-                  const attr = oldAttrs[i];
-                  if (!newNode.hasAttribute(attr.name)) oldNode.removeAttribute(attr.name);
-                }
-              }
-              const oldChildren = Array.from(oldNode.childNodes);
-              const newChildren = Array.from(newNode.childNodes);
-              const max = Math.max(oldChildren.length, newChildren.length);
-              for (let i = 0; i < max; i++) {
-                if (i >= oldChildren.length) {
-                  oldNode.appendChild(newChildren[i].cloneNode(true));
-                } else if (i >= newChildren.length) {
-                  oldNode.removeChild(oldChildren[i]);
-                } else {
-                  morph(oldChildren[i], newChildren[i]);
-                }
-              }
-            }
+        .header-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
 
-            const newStyles = doc.querySelectorAll('style');
-            if (newStyles.length > 0) {
-              let styleContainer = document.getElementById('__erm_styles');
-              if (!styleContainer) {
-                styleContainer = document.createElement('div');
-                styleContainer.id = '__erm_styles';
-                document.head.appendChild(styleContainer);
-              }
-              styleContainer.innerHTML = '';
-              newStyles.forEach(s => styleContainer.appendChild(s.cloneNode(true)));
-            }
+        .badge {
+          background: var(--red-bg);
+          color: var(--red-badge);
+          border: 1px solid var(--red-border);
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          padding: 4px 10px;
+          border-radius: 6px;
+        }
 
-            window.__hmr_hooks.dispose.forEach(cb => { try { cb(window.hmr.data); } catch (err) { } });
-            window.__hmr_hooks.dispose = [];
+        .file-path {
+          font-family: var(--font-mono);
+          font-size: 13px;
+          color: var(--text-muted);
+          word-break: break-all;
+        }
 
-            const oldAccepts = window.__hmr_hooks.accept;
-            window.__hmr_hooks.accept = [];
+        .close-btn {
+          background: transparent;
+          border: 1px solid var(--card-border);
+          color: var(--text-muted);
+          width: 30px;
+          height: 30px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          font-size: 16px;
+          transition: all 0.15s ease;
+        }
 
-            window.__hmr_intervals.forEach(clearInterval);
-            window.__hmr_intervals = [];
-            window.__hmr_listeners.forEach(({ target, type, listener, options }) => {
-              target.removeEventListener(type, listener, options);
-              if (target.__erm_listener_added) delete target.__erm_listener_added;
-            });
-            window.__hmr_listeners = [];
+        .close-btn:hover {
+          color: var(--text-main);
+          border-color: rgba(255, 255, 255, 0.2);
+          background: rgba(255, 255, 255, 0.05);
+        }
 
-            // Clean up old erm scripts
-            document.querySelectorAll('script.__erm_script').forEach(s => s.remove());
+        .message {
+          font-size: 17px;
+          font-weight: 600;
+          color: #ff6b6b;
+          margin: 0 0 18px 0;
+          word-break: break-word;
+        }
 
-            morph(document.body, doc.body);
+        .code-block {
+          background: var(--code-bg);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 10px;
+          padding: 16px;
+          overflow-x: auto;
+          font-family: var(--font-mono);
+          font-size: 13px;
+          line-height: 1.6;
+          margin-bottom: 18px;
+        }
 
-            const newScripts = doc.querySelectorAll('script');
-            newScripts.forEach(s => {
-              if (s.textContent.includes("__hmr_initialized")) return;
-              const newScript = document.createElement('script');
-              newScript.text = s.innerHTML;
-              if (s.className) newScript.className = s.className;
-              const sType = s.getAttribute('type');
-              if (sType) newScript.type = sType;
-              try {
-                if (s.src) {
-                  let sUrl = new URL(s.src, location.href);
-                  sUrl.searchParams.set('t', new Date().getTime());
-                  newScript.src = sUrl.href;
-                  document.head.appendChild(newScript);
-                } else if (sType === 'module') {
-                  document.head.appendChild(newScript);
-                } else {
-                  (0, eval)(s.innerHTML);
-                }
-              } catch (err) {
-                console.error("[HMR] Script evaluation failed:", err);
-                if (typeof window.__erm_show_error_overlay === 'function') {
-                  let file = window.__erm_filename || location.pathname;
-                  let stack = err.stack || '';
-                  let origLine = null;
-                  const match = stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/m) || stack.match(/(?::|\()(\d+)(?::(\d+))?\)?$/);
-                  if (match) {
-                    const inlineLine = parseInt(match[1], 10);
-                    const inlineCol = match[2] ? parseInt(match[2], 10) : 0;
-                    const scriptLines = s.innerHTML.split('\n');
-                    for (let idx = inlineLine - 1; idx >= 0; idx--) {
-                      const lineContent = scriptLines[idx] || '';
-                      const commentMatch = lineContent.match(/\/\/\s*line:(\d+)\s*$/);
-                      if (commentMatch) {
-                        origLine = parseInt(commentMatch[1], 10);
-                        break;
-                      }
-                    }
-                    if (origLine !== null) {
-                      file = `${file}:${origLine}${inlineCol ? ':' + inlineCol : ''}`;
-                    }
-                  }
-                  window.__erm_show_error_overlay({
-                    type: 'Runtime Error',
-                    file: file,
-                    title: err.name || 'SyntaxError',
-                    message: err.message || 'Invalid or unexpected token',
-                    stack: stack,
-                    origLine: origLine
-                  });
-                }
-              }
-            });
-            document.dispatchEvent(new Event('DOMContentLoaded'));
-            window.dispatchEvent(new Event('load'));
+        .frame-line {
+          display: block;
+          white-space: pre;
+          color: #d1d1db;
+        }
 
-            oldAccepts.forEach(cb => { try { cb(); } catch (err) { } });
+        .frame-line.highlight {
+          color: #ff8787;
+          background: rgba(255, 107, 107, 0.12);
+          border-left: 3px solid #ff6b6b;
+          margin-left: -16px;
+          padding-left: 13px;
+        }
 
-            if (window.__erm_update) window.__erm_update();
-          })
-          .catch(err => {
-            if (err.message !== "Compilation error overlay shown") {
-              console.error("[HMR] Update failed:", err);
-            }
-          });
+        .stack-block {
+          margin-top: 14px;
+        }
+
+        .stack-summary {
+          font-size: 12px;
+          color: var(--text-muted);
+          cursor: pointer;
+          user-select: none;
+          margin-bottom: 8px;
+        }
+
+        .stack-content {
+          background: var(--code-bg);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 8px;
+          padding: 14px;
+          font-family: var(--font-mono);
+          font-size: 12px;
+          color: #9c9cae;
+          white-space: pre-wrap;
+          overflow-x: auto;
+        }
+
+        .footer {
+          margin-top: 20px;
+          font-size: 12px;
+          color: var(--text-muted);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .kbd-hint {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        kbd {
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 4px;
+          padding: 2px 6px;
+          font-family: var(--font-mono);
+          font-size: 11px;
+        }
+      </style>
+
+      <div class="overlay-card">
+        <div class="header">
+          <div class="header-left">
+            <span class="badge">[eronom] ${title}</span>
+            ${file ? `<span class="file-path">${file}</span>` : ''}
+          </div>
+          <button class="close-btn" id="close" title="Dismiss (Esc)">&times;</button>
+        </div>
+
+        <div class="message">${message}</div>
+
+        ${frame ? `<div class="code-block">${frame}</div>` : ''}
+
+        ${stack ? `
+          <details class="stack-block">
+            <summary class="stack-summary">View Stack Trace</summary>
+            <div class="stack-content">${stack}</div>
+          </details>
+        ` : ''}
+
+        <div class="footer">
+          <span>Fix the problem in your editor to clear this screen automatically.</span>
+          <span class="kbd-hint">Press <kbd>Esc</kbd> to dismiss</span>
+        </div>
+      </div>
+    `;
+
+    this.shadowRoot.getElementById('close')?.addEventListener('click', () => this.close());
+  }
+}
+
+if (!customElements.get('erm-error-overlay')) {
+  customElements.define('erm-error-overlay', ErmErrorOverlay);
+}
+
+// --- 2. HMRContext (Module Hot Context) ---
+
+export class HMRContext {
+  constructor(client, ownerPath) {
+    this._client = client;
+    this._ownerPath = ownerPath;
+
+    // Reset callbacks on new context instantiation
+    const mod = this._client.hotModulesMap.get(ownerPath);
+    if (mod) {
+      mod.callbacks = [];
+    }
+
+    if (!this._client.dataMap.has(ownerPath)) {
+      this._client.dataMap.set(ownerPath, {});
+    }
+  }
+
+  /**
+   * Persistent state dictionary preserved across hot updates.
+   */
+  get data() {
+    return this._client.dataMap.get(this._ownerPath);
+  }
+
+  /**
+   * Accept updates for this module or explicit dependencies.
+   * @param {string|string[]|Function} [deps]
+   * @param {Function} [callback]
+   */
+  accept(deps, callback) {
+    if (typeof deps === 'function' || !deps) {
+      // Self-accepting: hot.accept(() => {})
+      this._acceptDeps([this._ownerPath], ([newMod]) => deps && deps(newMod));
+    } else if (typeof deps === 'string') {
+      // Single dependency
+      this._acceptDeps([deps], ([newMod]) => callback && callback(newMod));
+    } else if (Array.isArray(deps)) {
+      // Multiple dependencies
+      this._acceptDeps(deps, callback);
+    }
+  }
+
+  acceptExports(_exports, callback) {
+    this._acceptDeps([this._ownerPath], ([newMod]) => callback && callback(newMod));
+  }
+
+  /**
+   * Clean up side effects before module re-evaluation.
+   * @param {(data: Record<string, any>) => void} cb
+   */
+  dispose(cb) {
+    this._client.disposeMap.set(this._ownerPath, cb);
+  }
+
+  /**
+   * Called when a module is pruned from the graph.
+   * @param {(data: Record<string, any>) => void} cb
+   */
+  prune(cb) {
+    this._client.pruneMap.set(this._ownerPath, cb);
+  }
+
+  /**
+   * Mark this module as cannot-be-hot-updated and request full reload.
+   */
+  invalidate(reason) {
+    console.log(`[eronom] [invalidate] ${this._ownerPath}${reason ? `: ${reason}` : ''}`);
+    this._client.send({
+      type: 'custom',
+      event: 'eronom:invalidate',
+      data: { path: this._ownerPath, reason }
+    });
+    location.reload();
+  }
+
+  on(event, cb) {
+    const list = this._client.customListenersMap.get(event) || [];
+    list.push(cb);
+    this._client.customListenersMap.set(event, list);
+  }
+
+  off(event, cb) {
+    const list = this._client.customListenersMap.get(event);
+    if (list) {
+      this._client.customListenersMap.set(event, list.filter(fn => fn !== cb));
+    }
+  }
+
+  send(event, data) {
+    this._client.send({ type: 'custom', event, data });
+  }
+
+  _acceptDeps(deps, callback) {
+    let mod = this._client.hotModulesMap.get(this._ownerPath);
+    if (!mod) {
+      mod = { id: this._ownerPath, callbacks: [] };
+      this._client.hotModulesMap.set(this._ownerPath, mod);
+    }
+    mod.callbacks.push({
+      deps,
+      fn: callback || (() => {})
+    });
+  }
+}
+
+// --- 3. HMRClient Core ---
+
+export class HMRClient {
+  constructor() {
+    this.hotModulesMap = new Map();
+    this.disposeMap = new Map();
+    this.pruneMap = new Map();
+    this.dataMap = new Map();
+    this.customListenersMap = new Map();
+    this.ws = null;
+    this.reconnectAttempts = 0;
+    this.lastSeq = 0;
+    this.activeOverlay = null;
+
+    this.connect();
+    this.checkInitialCompilerError();
+  }
+
+  connect() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${location.host}/__hmr`;
+
+    try {
+      this.ws = new WebSocket(wsUrl);
+    } catch (err) {
+      this.scheduleReconnect();
+      return;
+    }
+
+    this.ws.onopen = () => {
+      this.reconnectAttempts = 0;
+    };
+
+    this.ws.onmessage = (e) => {
+      this.handleMessage(e.data);
+    };
+
+    this.ws.onclose = () => {
+      this.scheduleReconnect();
+    };
+
+    this.ws.onerror = () => {
+      // Handled in onclose
+    };
+  }
+
+  scheduleReconnect() {
+    if (this.reconnectAttempts > 30) return;
+    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 5000);
+    this.reconnectAttempts++;
+    setTimeout(() => this.connect(), delay);
+  }
+
+  send(payload) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(typeof payload === 'string' ? payload : JSON.stringify(payload));
+    }
+  }
+
+  createContext(ownerPath) {
+    return new HMRContext(this, ownerPath);
+  }
+
+  clearError() {
+    if (this.activeOverlay) {
+      this.activeOverlay.remove();
+      this.activeOverlay = null;
+    }
+    document.querySelectorAll('erm-error-overlay').forEach(el => el.remove());
+  }
+
+  showError(err) {
+    this.clearError();
+    const overlay = new ErmErrorOverlay(err);
+    document.body.appendChild(overlay);
+    this.activeOverlay = overlay;
+  }
+
+  checkInitialCompilerError() {
+    if (typeof document === 'undefined') return;
+    const body = document.body;
+    if (!body) return;
+
+    const errorFile = body.getAttribute('data-compile-error-file');
+    const errorMessage = body.getAttribute('data-compile-error-message');
+    if (errorFile && errorMessage) {
+      this.showError({
+        type: 'Build Error',
+        file: errorFile,
+        message: errorMessage,
+        id: errorFile
       });
     }
-  };
+  }
 
-  const checkInitialCompileError = () => {
-    const bodyEl = document.body || document.documentElement;
-    if (bodyEl) {
-      const file = bodyEl.getAttribute('data-compile-error-file');
-      const message = bodyEl.getAttribute('data-compile-error-message');
-      if (file && message) {
-        window.__erm_show_error_overlay({
-          type: 'Failed to compile',
-          file: file,
-          title: 'An error occurred during template compilation.',
-          message: message
-        });
-        const closeBtn = document.querySelector('.erm-error-close-btn');
-        if (closeBtn) closeBtn.style.display = 'none';
+  handleMessage(raw) {
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (err) {
+      return;
+    }
+
+    switch (payload.type) {
+      case 'connected':
+        console.log('[eronom] connected.');
+        break;
+
+      case 'ping':
+        this.send({ type: 'pong' });
+        break;
+
+      case 'pong':
+        break;
+
+      case 'error':
+        this.showError(payload.err || payload);
+        break;
+
+      case 'full-reload':
+        console.log('[eronom] [full-reload] ' + (payload.path || payload.reason || ''));
+        location.reload();
+        break;
+
+      case 'update':
+        this.clearError();
+        const updates = payload.updates || (payload.path ? [{
+          type: payload.path.endsWith('.css') ? 'css-update' : 'js-update',
+          path: payload.path,
+          acceptedPath: payload.path,
+          timestamp: Date.now()
+        }] : []);
+
+        for (const update of updates) {
+          if (update.type === 'css-update' || (update.path && update.path.endsWith('.css'))) {
+            this.updateCss(update.path, update.timestamp || Date.now());
+          } else {
+            this.updateJs(update.path, update.acceptedPath || update.path, update.timestamp || Date.now());
+          }
+        }
+        break;
+
+      case 'prune':
+        if (payload.paths && Array.isArray(payload.paths)) {
+          for (const path of payload.paths) {
+            const pruner = this.pruneMap.get(path);
+            if (pruner) {
+              try { pruner(this.dataMap.get(path)); } catch (e) { console.error(e); }
+            }
+            this.hotModulesMap.delete(path);
+            this.disposeMap.delete(path);
+            this.pruneMap.delete(path);
+            this.dataMap.delete(path);
+          }
+        }
+        break;
+
+      case 'custom':
+        if (payload.event) {
+          const listeners = this.customListenersMap.get(payload.event) || [];
+          for (const listener of listeners) {
+            try { listener(payload.data); } catch (e) { console.error(e); }
+          }
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  /**
+   * In-place CSS hot reloading without DOM mutation or state loss.
+   */
+  updateCss(rawPath, timestamp) {
+    const cleanPath = rawPath.split('?')[0];
+    const isGlobalErmCss = cleanPath.includes('eronom.toml') || cleanPath.includes('global') || cleanPath.endsWith('.css');
+
+    let updated = false;
+
+    // 1. Update <link rel="stylesheet">
+    const links = document.querySelectorAll('link[rel="stylesheet"]');
+    links.forEach((link) => {
+      const href = link.getAttribute('href');
+      if (href && (href.includes(cleanPath) || (isGlobalErmCss && href.includes('ermcss')))) {
+        const url = new URL(link.href, location.href);
+        url.searchParams.set('t', String(timestamp));
+        link.href = url.href;
+        updated = true;
+      }
+    });
+
+    // 2. Update <style id="__erm_styles"> if inline
+    const inlineStyle = document.getElementById('__erm_styles') || document.getElementById('__erm_scoped_styles');
+    if (inlineStyle && !updated) {
+      fetch(location.href, { headers: { 'Accept': 'text/html' } })
+        .then(r => r.text())
+        .then(html => {
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const newInline = doc.getElementById('__erm_styles');
+          if (newInline && inlineStyle) {
+            inlineStyle.textContent = newInline.textContent;
+            updated = true;
+          }
+        })
+        .catch(() => {});
+    }
+
+    console.log(`[eronom] [css-update] ${cleanPath}`);
+  }
+
+  /**
+   * JavaScript & ERM Component hot reloading.
+   */
+  async updateJs(path, acceptedPath, timestamp) {
+    const targetPath = acceptedPath || path;
+    const mod = this.hotModulesMap.get(targetPath);
+
+    // Run registered disposers
+    const disposer = this.disposeMap.get(targetPath);
+    if (disposer) {
+      try {
+        disposer(this.dataMap.get(targetPath));
+      } catch (err) {
+        console.error(`[eronom] Error in hot.dispose for ${targetPath}:`, err);
       }
     }
-  };
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', checkInitialCompileError);
-  } else {
-    checkInitialCompileError();
+    if (mod && mod.callbacks.length > 0) {
+      try {
+        const url = new URL(targetPath, location.origin);
+        url.searchParams.set('t', String(timestamp));
+        const newMod = await import(url.href);
+
+        for (const cb of mod.callbacks) {
+          cb.fn([newMod]);
+        }
+        console.log(`[eronom] [hmr] ${targetPath}`);
+        return;
+      } catch (err) {
+        console.error(`[eronom] Failed to hot update ${targetPath}:`, err);
+        this.showError({
+          type: 'Runtime Error',
+          file: targetPath,
+          message: err.message,
+          stack: err.stack
+        });
+        return;
+      }
+    }
+
+    // Default ERM component boundary behavior:
+    // If the page itself is an ERM document, reload cleanly
+    console.log(`[eronom] [full-reload] ${targetPath}`);
+    location.reload();
   }
-})();
+}
+
+// --- 4. Initialization & Export ---
+
+export const hmrClient = new HMRClient();
+
+export function createHotContext(ownerPath) {
+  return hmrClient.createContext(ownerPath);
+}
+
+export function showError(err) {
+  hmrClient.showError(err);
+}
+
+export function clearError() {
+  hmrClient.clearError();
+}
+
+// Global runtime error listeners for development overlay
+addEventListener('error', (event) => {
+  const error = event.error || { message: event.message };
+  const stack = error.stack || '';
+  const filename = event.filename ? event.filename.replace(location.origin, '') : 'unknown';
+  hmrClient.showError({
+    type: 'Runtime Error',
+    file: filename + (event.lineno ? `:${event.lineno}:${event.colno}` : ''),
+    title: error.name || 'Error',
+    message: error.message || event.message,
+    stack: stack
+  });
+});
+
+addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason || {};
+  const stack = reason.stack || '';
+  hmrClient.showError({
+    type: 'Unhandled Rejection',
+    file: 'Promise Rejection',
+    title: reason.name || 'Error',
+    message: reason.message || String(reason),
+    stack: stack
+  });
+});

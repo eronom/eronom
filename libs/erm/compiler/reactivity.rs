@@ -39,7 +39,7 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                         }
                         let id = format!("erm-bind-{}", j);
                         out.push_str(&format!("<span id=\"{}\"></span>", id));
-                        bindings.push(format!("window.__erm_bindings.push({{ id: \"{}\", get: () => ({}) }});", id, expr));
+                        bindings.push(format!("bindText(\"{}\", () => ({}));", id, expr));
                         i = j;
                         continue;
                     }
@@ -138,7 +138,7 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                                 html[..i].chars().filter(|&ch| ch == '\n').count() + 1
                             });
 
-                            events.push(format!("window.__erm_events.push({{ id: \"{}\", event: \"{}\", handler: (event) => {{ ({})(event); if (typeof window.__erm_update === 'function') window.__erm_update(); }} }}); // line:{}", id, event_type, expr, event_line));
+                            events.push(format!("bindEvent(\"{}\", \"{}\", (event) => {{ ({})(event); }}); // line:{}", id, event_type, expr, event_line));
                             i = j;
                             continue;
                         }

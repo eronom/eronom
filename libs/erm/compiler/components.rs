@@ -257,7 +257,7 @@ pub fn resolve_custom_component(
             
             let sub_combined_script = sub_scripts.join("\n");
             let component_def = format!(
-                "window.{} = function(anchorId, props) {{\n  try {{\n    let el = document.getElementById(anchorId);\n    if (el && el.innerHTML.trim() === \"\") {{\n      el.innerHTML = `{}`;\n    }}\n  }} catch(e) {{ console.error(e); }}\n  {}\n}};\n",
+                "function {}(anchorId, props) {{\n  try {{\n    let el = document.getElementById(anchorId);\n    if (el && el.innerHTML.trim() === \"\") {{\n      el.innerHTML = `{}`;\n    }}\n  }} catch(e) {{ console.error(e); }}\n  {}\n}};\n",
                 tag_name, sub_html.replace("__erm_anchor_id_prefix__", "${anchorId}").replace("`", "\\`"), sub_combined_script
             );
             
