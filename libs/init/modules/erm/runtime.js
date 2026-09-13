@@ -1,15 +1,45 @@
-// Eronom Reactive Runtime - Powered by SolidJS-style Fine-Grained Reactivity
+// Eronom Reactive Runtime - Fine-Grained Reactivity
 // Pure reactive graph, dependency tracking, zero-polling DOM bindings
 
-// --- Backward Compatibility & HMR Data ---
-window.__hmr_data = window.__hmr_data || { states: {} };
-if (!window.__hmr_data.states) window.__hmr_data.states = {};
+// --- HMR State Store ---
+const getHmrState = (name) => {
+  if (typeof window !== 'undefined' && window.__eronom_hot__) {
+    const hot = window.__eronom_hot__('/modules/erm/runtime.js');
+    if (hot && hot.data && hot.data.states) {
+      return hot.data.states[name];
+    }
+  }
+  return undefined;
+};
+
+const setHmrState = (name, val) => {
+  if (typeof window !== 'undefined' && window.__eronom_hot__) {
+    const hot = window.__eronom_hot__('/modules/erm/runtime.js');
+    if (hot) {
+      hot.data.states = hot.data.states || {};
+      hot.data.states[name] = val;
+    }
+  }
+};
+
+const clearHmrState = () => {
+  if (typeof window !== 'undefined' && window.__eronom_hot__) {
+    const hot = window.__eronom_hot__('/modules/erm/runtime.js');
+    if (hot && hot.data) {
+      hot.data.states = {};
+    }
+  }
+};
 
 export function b64utf8(str) {
   if (!str) return '';
-  return decodeURIComponent(escape(window.atob(str)));
+  const binary = atob(str);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
 }
-window.__erm_b64utf8 = b64utf8;
 
 export function escapeHtml(val) {
   if (val === null || val === undefined) return '';
@@ -20,7 +50,6 @@ export function escapeHtml(val) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
-window.__erm_escape = escapeHtml;
 
 // --- Reactive Graph Core ---
 const equalFn = (a, b) => a === b;
@@ -95,8 +124,8 @@ function cleanNode(node) {
 
 function handleError(err) {
   console.error("[Reactivity Error]", err);
-  if (typeof window.__erm_show_error_overlay === 'function') {
-    window.__erm_show_error_overlay({
+  if (typeof window !== 'undefined' && window.__eronom_hmr_client__?.showError) {
+    window.__eronom_hmr_client__.showError({
       type: 'Reactivity Error',
       file: 'runtime.js',
       title: err?.name || 'Error',
@@ -316,7 +345,7 @@ export function batch(fn) {
   return runUpdates(fn, false);
 }
 
-// --- SolidJS-Style Array Reconciliation (mapArray) ---
+// --- Keyed Array Reconciliation (mapArray) ---
 const FALLBACK = Symbol("fallback");
 
 export function mapArray(listAccessor, mapFn, options = {}) {
@@ -571,7 +600,6 @@ export function registerEvent(event, handler) {
   dynamicEvents[id] = { event, handler };
   return `data-erm-evt-id="${id}"`;
 }
-window.__erm_register_event = registerEvent;
 
 // DOM Reconciliation / Diffing Helper for HTML chunks
 function reconcileNodes(parent, newNodes) {
@@ -652,8 +680,8 @@ function createArrayProxy(arr, setter, name) {
         if (mutators.includes(prop)) {
           return (...args) => {
             const ret = target[prop].apply(target, args);
-            if (name && window.__hmr_data?.states) {
-              window.__hmr_data.states[name] = target;
+            if (name) {
+              setHmrState(name, target);
             }
             setter([...target]);
             return ret;
@@ -665,8 +693,8 @@ function createArrayProxy(arr, setter, name) {
     },
     set(target, prop, newVal) {
       target[prop] = newVal;
-      if (name && window.__hmr_data?.states) {
-        window.__hmr_data.states[name] = target;
+      if (name) {
+        setHmrState(name, target);
       }
       setter([...target]);
       return true;
@@ -678,8 +706,9 @@ export function useState(val, name) {
   if (name && statesRegistry.has(name)) {
     return statesRegistry.get(name);
   }
-  if (name && window.__hmr_data?.states && window.__hmr_data.states[name] !== undefined) {
-    val = window.__hmr_data.states[name];
+  const hmrVal = name ? getHmrState(name) : undefined;
+  if (hmrVal !== undefined) {
+    val = hmrVal;
   }
 
   if (typeof val === 'function') {
@@ -712,8 +741,8 @@ export function useState(val, name) {
       return current;
     },
     set(newVal) {
-      if (name && window.__hmr_data?.states) {
-        window.__hmr_data.states[name] = newVal;
+      if (name) {
+        setHmrState(name, newVal);
       }
       set(newVal);
     },
@@ -860,9 +889,7 @@ export function setCurrentPageDispose(dispose) {
 
 async function navigate(path, push = true) {
   try {
-    if (window.__hmr_data) {
-      window.__hmr_data.states = {};
-    }
+    clearHmrState();
     const res = await fetch(path);
     const html = await res.text();
 
@@ -974,11 +1001,11 @@ window.addEventListener('popstate', () => {
 
 // Error handling overlays
 window.addEventListener('error', (event) => {
-  if (typeof window.__erm_show_error_overlay === 'function') {
+  if (typeof window !== 'undefined' && window.__eronom_hmr_client__?.showError) {
     const error = event.error || { message: event.message };
     const stack = error.stack || '';
     const filename = event.filename ? event.filename.replace(window.location.origin, '') : 'unknown';
-    window.__erm_show_error_overlay({
+    window.__eronom_hmr_client__.showError({
       type: 'Runtime Error',
       file: filename + (event.lineno ? `:${event.lineno}:${event.colno}` : ''),
       title: error.name || 'Error',
@@ -989,14 +1016,10 @@ window.addEventListener('error', (event) => {
 });
 
 window.addEventListener('unhandledrejection', (event) => {
-  if (typeof window.__erm_show_error_overlay === 'function') {
+  if (typeof window !== 'undefined' && window.__eronom_hmr_client__?.showError) {
     const reason = event.reason || {};
     const stack = reason.stack || '';
-    if (reason.message === "Compilation error overlay shown") {
-      event.preventDefault();
-      return;
-    }
-    window.__erm_show_error_overlay({
+    window.__eronom_hmr_client__.showError({
       type: 'Unhandled Rejection',
       file: 'Promise Rejection',
       title: reason.name || 'Error',
@@ -1006,10 +1029,4 @@ window.addEventListener('unhandledrejection', (event) => {
   }
 });
 
-// Backward-compatibility shims
-window.__erm_bindings = window.__erm_bindings || [];
-window.__erm_events = window.__erm_events || [];
-window.__erm_update = function () { batch(() => {}); };
-window.__erm_init_reactivity = function () { };
-window.__erm_register_for = renderFor;
-window.__erm_register_if = renderIf;
+

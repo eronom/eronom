@@ -143,15 +143,28 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                         }
                     }
                     
+                    let is_css = rel_path.ends_with(".css") || rel_path == "eronom.toml";
+                    let update_type = if is_css { "css-update" } else { "js-update" };
+                    let timestamp = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+
                     let path_str = if rel_path.starts_with('/') {
                         rel_path
                     } else {
                         format!("/{}", rel_path)
                     };
-                    
+
                     let msg = serde_json::json!({
                         "type": "update",
-                        "path": path_str
+                        "path": path_str,
+                        "updates": [{
+                            "type": update_type,
+                            "path": path_str,
+                            "acceptedPath": path_str,
+                            "timestamp": timestamp
+                        }]
                     }).to_string();
                     
                     HMR_QUEUE.lock().unwrap().push(msg);

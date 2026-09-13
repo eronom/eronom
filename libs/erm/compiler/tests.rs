@@ -247,7 +247,7 @@ fn test_loading_tag_compilation() {
 }
 
 #[test]
-fn test_solid_reactivity_compilation() {
+fn test_fine_grained_reactivity_compilation() {
     let content = r#"
     <script>
         let count = useState(0);
@@ -269,7 +269,7 @@ fn test_solid_reactivity_compilation() {
 }
 
 #[test]
-fn test_solid_createroot_module_generation() {
+fn test_createroot_module_generation() {
     let content = r#"
     <script>
         let count = useState(0);
