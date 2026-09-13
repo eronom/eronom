@@ -29,11 +29,11 @@ class ErmErrorOverlay extends HTMLElement {
         this.close();
       }
     };
-    window.addEventListener('keydown', this.onKeyDown);
+    addEventListener('keydown', this.onKeyDown);
   }
 
   disconnectedCallback() {
-    window.removeEventListener('keydown', this.onKeyDown);
+    removeEventListener('keydown', this.onKeyDown);
   }
 
   close() {
@@ -665,8 +665,36 @@ export function createHotContext(ownerPath) {
   return hmrClient.createContext(ownerPath);
 }
 
-// Attach to window for script access
-if (typeof window !== 'undefined') {
-  window.__eronom_hot__ = createHotContext;
-  window.__eronom_hmr_client__ = hmrClient;
+export function showError(err) {
+  hmrClient.showError(err);
 }
+
+export function clearError() {
+  hmrClient.clearError();
+}
+
+// Global runtime error listeners for development overlay
+addEventListener('error', (event) => {
+  const error = event.error || { message: event.message };
+  const stack = error.stack || '';
+  const filename = event.filename ? event.filename.replace(location.origin, '') : 'unknown';
+  hmrClient.showError({
+    type: 'Runtime Error',
+    file: filename + (event.lineno ? `:${event.lineno}:${event.colno}` : ''),
+    title: error.name || 'Error',
+    message: error.message || event.message,
+    stack: stack
+  });
+});
+
+addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason || {};
+  const stack = reason.stack || '';
+  hmrClient.showError({
+    type: 'Unhandled Rejection',
+    file: 'Promise Rejection',
+    title: reason.name || 'Error',
+    message: reason.message || String(reason),
+    stack: stack
+  });
+});

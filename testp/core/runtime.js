@@ -1,33 +1,27 @@
 // Eronom Reactive Runtime - Fine-Grained Reactivity
 // Pure reactive graph, dependency tracking, zero-polling DOM bindings
 
+import { createHotContext, showError } from './hmr.js';
+
 // --- HMR State Store ---
+const hot = typeof import.meta !== 'undefined' && import.meta.hot
+  ? import.meta.hot
+  : createHotContext('/modules/erm/runtime.js');
+
 const getHmrState = (name) => {
-  if (typeof window !== 'undefined' && window.__eronom_hot__) {
-    const hot = window.__eronom_hot__('/modules/erm/runtime.js');
-    if (hot && hot.data && hot.data.states) {
-      return hot.data.states[name];
-    }
-  }
-  return undefined;
+  return hot?.data?.states?.[name];
 };
 
 const setHmrState = (name, val) => {
-  if (typeof window !== 'undefined' && window.__eronom_hot__) {
-    const hot = window.__eronom_hot__('/modules/erm/runtime.js');
-    if (hot) {
-      hot.data.states = hot.data.states || {};
-      hot.data.states[name] = val;
-    }
+  if (hot) {
+    hot.data.states = hot.data.states || {};
+    hot.data.states[name] = val;
   }
 };
 
 const clearHmrState = () => {
-  if (typeof window !== 'undefined' && window.__eronom_hot__) {
-    const hot = window.__eronom_hot__('/modules/erm/runtime.js');
-    if (hot && hot.data) {
-      hot.data.states = {};
-    }
+  if (hot?.data) {
+    hot.data.states = {};
   }
 };
 
@@ -124,15 +118,13 @@ function cleanNode(node) {
 
 function handleError(err) {
   console.error("[Reactivity Error]", err);
-  if (typeof window !== 'undefined' && window.__eronom_hmr_client__?.showError) {
-    window.__eronom_hmr_client__.showError({
-      type: 'Reactivity Error',
-      file: 'runtime.js',
-      title: err?.name || 'Error',
-      message: err?.message || String(err),
-      stack: err?.stack || ''
-    });
-  }
+  showError({
+    type: 'Reactivity Error',
+    file: 'runtime.js',
+    title: err?.name || 'Error',
+    message: err?.message || String(err),
+    stack: err?.stack || ''
+  });
 }
 
 function runUpdates(fn, init) {
@@ -493,7 +485,7 @@ export function For(props) {
   return createMemo(mapArray(() => props.each, props.children, fallback));
 }
 
-// --- High-Performance Fine-Grained DOM Bindings (No window pollution) ---
+// --- High-Performance Fine-Grained DOM Bindings
 export function bindText(target, accessor) {
   createRenderEffect(() => {
     const el = typeof target === 'string' ? document.getElementById(target) : target;
@@ -816,7 +808,7 @@ export const effect = createEffect;
 
 let currentParams = {};
 export function setParams(p) { currentParams = p; }
-export function useParams() { return currentParams || window.__erm_params || {}; }
+export function useParams() { return currentParams; }
 
 // --- Suspense & Loading Swap ---
 function initLoadingSwap() {
@@ -839,7 +831,7 @@ function initLoadingSwap() {
     }
   });
 
-  const originalFetch = window.fetch;
+  const originalFetch = globalThis.fetch;
   let activeInitFetches = 0;
   let finished = false;
 
@@ -848,7 +840,7 @@ function initLoadingSwap() {
     setTimeout(() => {
       if (activeInitFetches <= 0) {
         finished = true;
-        window.fetch = originalFetch;
+        globalThis.fetch = originalFetch;
         if (fallback && content) {
           fallback.style.display = 'none';
           content.style.display = 'contents';
@@ -865,7 +857,7 @@ function initLoadingSwap() {
     }, 20);
   }
 
-  window.fetch = function (...args) {
+  globalThis.fetch = function (...args) {
     if (finished) return originalFetch(...args);
     activeInitFetches++;
     return originalFetch(...args).finally(() => {
@@ -949,7 +941,7 @@ async function navigate(path, push = true) {
     // Execute new page scripts
     for (const item of scriptData) {
       if (item.type === 'module') {
-        const origin = window.location.origin;
+        const origin = location.origin;
         const moduleCode = item.text
           .replace(/\bfrom\s+(['"])(\/[^'"]+)\1/g, `from "${origin}$2"`)
           .replace(/\bimport\s+(['"])(\/[^'"]+)\1/g, `import "${origin}$2"`)
@@ -977,7 +969,7 @@ async function navigate(path, push = true) {
     }
   } catch (err) {
     console.error("Navigation failed:", err);
-    window.location.href = path;
+    location.href = path;
   }
 }
 
@@ -987,7 +979,7 @@ document.addEventListener('click', e => {
     link.href &&
     !link.target &&
     !link.hasAttribute('download') &&
-    new URL(link.href).origin === window.location.origin) {
+    new URL(link.href).origin === location.origin) {
     const targetPath = new URL(link.href).pathname;
     if (targetPath.startsWith('/api/')) return;
     e.preventDefault();
@@ -995,38 +987,8 @@ document.addEventListener('click', e => {
   }
 });
 
-window.addEventListener('popstate', () => {
-  navigate(window.location.pathname, false);
-});
-
-// Error handling overlays
-window.addEventListener('error', (event) => {
-  if (typeof window !== 'undefined' && window.__eronom_hmr_client__?.showError) {
-    const error = event.error || { message: event.message };
-    const stack = error.stack || '';
-    const filename = event.filename ? event.filename.replace(window.location.origin, '') : 'unknown';
-    window.__eronom_hmr_client__.showError({
-      type: 'Runtime Error',
-      file: filename + (event.lineno ? `:${event.lineno}:${event.colno}` : ''),
-      title: error.name || 'Error',
-      message: error.message || event.message,
-      stack: stack
-    });
-  }
-});
-
-window.addEventListener('unhandledrejection', (event) => {
-  if (typeof window !== 'undefined' && window.__eronom_hmr_client__?.showError) {
-    const reason = event.reason || {};
-    const stack = reason.stack || '';
-    window.__eronom_hmr_client__.showError({
-      type: 'Unhandled Rejection',
-      file: 'Promise Rejection',
-      title: reason.name || 'Error',
-      message: reason.message || String(reason),
-      stack: stack
-    });
-  }
+addEventListener('popstate', () => {
+  navigate(location.pathname, false);
 });
 
 
