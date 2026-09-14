@@ -366,7 +366,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         let mut final_res = String::new();
         final_res.push_str("<!DOCTYPE html><html><head>");
         if !is_prod {
-            final_res.push_str("<script src=\"/modules/erm/hmr.js\"></script>\n");
+            final_res.push_str("<script type=\"module\" src=\"/modules/erm/hmr.js\"></script>\n");
         }
         final_res.push_str(&style_assets);
         final_res.push_str("</head><body>\n");
@@ -378,7 +378,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     }
 
     if !is_prod {
-        let hmr_script = "<script src=\"/modules/erm/hmr.js\"></script>";
+        let hmr_script = "<script type=\"module\" src=\"/modules/erm/hmr.js\"></script>";
         if let Some(pos) = output.find("<head>") {
             output.insert_str(pos + 6, hmr_script);
         } else {

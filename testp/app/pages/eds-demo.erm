@@ -9,14 +9,14 @@
     }
 </script>
 
-<Box as="main" p="xl" bg="canvas" width="full" style="min-height: 100vh;">
+<Box as="main" p="xl" bg="canvas" width="full" class="newds" style="min-height: 100vh;">
     <Stack gap="xl" width="full" style="max-width: 56rem; margin: 0 auto;">
         
         <!-- Header Banner Card -->
         <Card>
             <Stack gap="xs">
                 <Text as="h1" variant="title-lg" weight="bold" color="primary">
-                    Eronom Design System (EDS) Showcase
+                    Eronom Design System (EDS) - Fast HMR Verified!
                 </Text>
                 <Text variant="body" color="secondary">
                     Built with compiler-enforced intent tokens, polymorphic primitives, and zero-effort dark mode via CSS <code>light-dark()</code>.
@@ -26,6 +26,8 @@
             <Cluster gap="md" align="center">
                 <Badge status="success">System: {status}</Badge>
                 <Badge status="info">Pending Alerts: {notificationCount}</Badge>
+                <Badge status="warning">⚡ HMR Preserved</Badge>
+                <Badge status="danger">Zero Reload</Badge>
             </Cluster>
         </Card>
 
@@ -81,3 +83,5 @@
 
     </Stack>
 </Box>
+
+
