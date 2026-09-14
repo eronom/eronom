@@ -1,0 +1,538 @@
+// libs/eds/compiler.er - Eronom Design System (EDS) Native Implementation
+
+let LBRACE = "\{"
+let RBRACE = "\}"
+
+let allowed_spacings = ["none", "xs", "sm", "md", "lg", "xl", "2xl", "3xl"]
+let allowed_colors = ["canvas", "card", "muted", "overlay", "primary", "danger", "success", "transparent"]
+let allowed_text_colors = ["primary", "secondary", "muted", "on-primary", "danger", "success"]
+let allowed_borders = ["subtle", "strong", "focus", "none"]
+let allowed_radii = ["none", "sm", "md", "lg", "xl", "full"]
+let allowed_shadows = ["none", "sm", "md", "lg"]
+
+let allowed_text_variants = [
+  "display", "title-lg", "title-md", "heading", "body", "body-sm", "caption", "mono"
+]
+let allowed_weights = ["normal", "medium", "semibold", "bold"]
+let allowed_aligns = ["start", "center", "end", "stretch", "baseline"]
+let allowed_justifies = ["start", "center", "end", "between", "around"]
+let allowed_directions = ["row", "col"]
+let allowed_as_elements = [
+  "div", "section", "nav", "main", "header", "footer", "article", "aside", "ul", "li",
+  "p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "code", "a", "button", "form"
+]
+
+export const getSurfaceColor = (k) => {
+  if (k == "canvas") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(240, 10%, 4%)" } }
+  if (k == "card") { return { light: "hsl(0, 0%, 98%)", dark: "hsl(240, 8%, 8%)" } }
+  if (k == "muted") { return { light: "hsl(240, 5%, 96%)", dark: "hsl(240, 6%, 12%)" } }
+  if (k == "overlay") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(240, 8%, 10%)" } }
+  if (k == "primary") { return { light: "hsl(221, 83%, 53%)", dark: "hsl(217, 91%, 60%)" } }
+  if (k == "danger") { return { light: "hsl(0, 84%, 60%)", dark: "hsl(0, 72%, 51%)" } }
+  if (k == "success") { return { light: "hsl(142, 71%, 45%)", dark: "hsl(142, 70%, 40%)" } }
+  if (k == "transparent") { return { light: "transparent", dark: "transparent" } }
+  return null
+}
+
+export const getTextColor = (k) => {
+  if (k == "primary") { return { light: "hsl(240, 10%, 4%)", dark: "hsl(0, 0%, 98%)" } }
+  if (k == "secondary") { return { light: "hsl(240, 5%, 45%)", dark: "hsl(240, 5%, 65%)" } }
+  if (k == "muted") { return { light: "hsl(240, 4%, 60%)", dark: "hsl(240, 4%, 45%)" } }
+  if (k == "on-primary") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(0, 0%, 100%)" } }
+  if (k == "danger") { return { light: "hsl(0, 84%, 60%)", dark: "hsl(0, 72%, 51%)" } }
+  if (k == "success") { return { light: "hsl(142, 71%, 45%)", dark: "hsl(142, 70%, 40%)" } }
+  return null
+}
+
+export const getBorder = (k) => {
+  if (k == "subtle") { return { light: "hsl(240, 6%, 90%)", dark: "hsl(240, 6%, 16%)" } }
+  if (k == "strong") { return { light: "hsl(240, 6%, 80%)", dark: "hsl(240, 6%, 24%)" } }
+  if (k == "focus") { return { light: "hsl(221, 83%, 53%)", dark: "hsl(217, 91%, 60%)" } }
+  if (k == "none") { return { light: "transparent", dark: "transparent" } }
+  return null
+}
+
+export const getSpacingValue = (k) => {
+  if (k == "none") { return "0" }
+  if (k == "xs") { return "0.25rem" }
+  if (k == "sm") { return "0.5rem" }
+  if (k == "md") { return "0.75rem" }
+  if (k == "lg") { return "1rem" }
+  if (k == "xl") { return "1.5rem" }
+  if (k == "2xl") { return "2rem" }
+  if (k == "3xl") { return "3rem" }
+  return "0"
+}
+
+export const getRadius = (k) => {
+  if (k == "none") { return "0" }
+  if (k == "sm") { return "0.25rem" }
+  if (k == "md") { return "0.5rem" }
+  if (k == "lg") { return "0.75rem" }
+  if (k == "xl") { return "1rem" }
+  if (k == "full") { return "9999px" }
+  return "0"
+}
+
+export const getShadow = (k) => {
+  if (k == "none") { return "none" }
+  if (k == "sm") { return "0 1px 2px 0 rgba(0, 0, 0, 0.05)" }
+  if (k == "md") { return "0 4px 6px -1px rgba(0, 0, 0, 0.1)" }
+  if (k == "lg") { return "0 10px 15px -3px rgba(0, 0, 0, 0.1)" }
+  return "none"
+}
+
+let cleanAttrVal = (val) => {
+  if (val == null) { return "" }
+  let s = val.trim()
+  if (s.startsWith("\"") and s.endsWith("\"") and s.length >= 2) {
+    s = s.substring(1, s.length - 1).trim()
+  } else if (s.startsWith("'") and s.endsWith("'") and s.length >= 2) {
+    s = s.substring(1, s.length - 1).trim()
+  }
+  return s
+}
+
+let formatAllowedList = (arr) => {
+  let parts = []
+  for item in arr {
+    parts.push("\"" + item + "\"")
+  }
+  return "\{" + parts.join(", ") + "\}"
+}
+
+let formatPassthroughAttr = (k, v) => {
+  if (v == null) { return " " + k }
+  let vTrimmed = v.trim()
+  if (vTrimmed.startsWith("\{") and vTrimmed.endsWith("\}")) {
+    return " " + k + "=" + vTrimmed
+  }
+  if (vTrimmed == "") {
+    return " " + k
+  }
+  let inner = cleanAttrVal(vTrimmed)
+  return " " + k + "=\"" + inner + "\""
+}
+
+export const generateRootCss = (projectDir) => {
+  let out = ""
+  out = out + "/* === Eronom Design System (EDS): LLM-Safe Tokens & Styles === */\n"
+  out = out + ":root " + LBRACE + "\n  color-scheme: light dark;\n"
+
+  // Surface / Background variables
+  for k in allowed_colors {
+    let token = getSurfaceColor(k)
+    out = out + "  --eds-bg-" + k + ": light-dark(" + token.light + ", " + token.dark + ");\n"
+  }
+
+  // Text variables
+  for k in allowed_text_colors {
+    let token = getTextColor(k)
+    out = out + "  --eds-text-" + k + ": light-dark(" + token.light + ", " + token.dark + ");\n"
+  }
+
+  // Border variables
+  for k in allowed_borders {
+    let token = getBorder(k)
+    out = out + "  --eds-border-" + k + ": light-dark(" + token.light + ", " + token.dark + ");\n"
+  }
+
+  // Spacing variables
+  for k in allowed_spacings {
+    out = out + "  --eds-space-" + k + ": " + getSpacingValue(k) + ";\n"
+  }
+
+  // Radii variables
+  for k in allowed_radii {
+    out = out + "  --eds-radius-" + k + ": " + getRadius(k) + ";\n"
+  }
+
+  // Shadow variables
+  for k in allowed_shadows {
+    out = out + "  --eds-shadow-" + k + ": " + getShadow(k) + ";\n"
+  }
+
+  out = out + RBRACE + "\n\n"
+
+  // Box layout helpers
+  out = out + ".eds-box " + LBRACE + " box-sizing: border-box; " + RBRACE + "\n"
+  out = out + ".eds-row " + LBRACE + " display: flex; flex-direction: row; " + RBRACE + "\n"
+  out = out + ".eds-col " + LBRACE + " display: flex; flex-direction: column; " + RBRACE + "\n"
+  out = out + ".eds-wrap " + LBRACE + " flex-wrap: wrap; " + RBRACE + "\n"
+
+  // Align & Justify
+  out = out + ".eds-align-start " + LBRACE + " align-items: flex-start; " + RBRACE + "\n"
+  out = out + ".eds-align-center " + LBRACE + " align-items: center; " + RBRACE + "\n"
+  out = out + ".eds-align-end " + LBRACE + " align-items: flex-end; " + RBRACE + "\n"
+  out = out + ".eds-align-stretch " + LBRACE + " align-items: stretch; " + RBRACE + "\n"
+  out = out + ".eds-align-baseline " + LBRACE + " align-items: baseline; " + RBRACE + "\n"
+
+  out = out + ".eds-justify-start " + LBRACE + " justify-content: flex-start; " + RBRACE + "\n"
+  out = out + ".eds-justify-center " + LBRACE + " justify-content: center; " + RBRACE + "\n"
+  out = out + ".eds-justify-end " + LBRACE + " justify-content: flex-end; " + RBRACE + "\n"
+  out = out + ".eds-justify-between " + LBRACE + " justify-content: space-between; " + RBRACE + "\n"
+  out = out + ".eds-justify-around " + LBRACE + " justify-content: space-around; " + RBRACE + "\n"
+
+  // Widths & Heights
+  out = out + ".eds-w-full " + LBRACE + " width: 100%; " + RBRACE + "\n"
+  out = out + ".eds-w-screen " + LBRACE + " width: 100vw; " + RBRACE + "\n"
+  out = out + ".eds-w-auto " + LBRACE + " width: auto; " + RBRACE + "\n"
+  out = out + ".eds-w-fit " + LBRACE + " width: fit-content; " + RBRACE + "\n"
+
+  out = out + ".eds-h-full " + LBRACE + " height: 100%; " + RBRACE + "\n"
+  out = out + ".eds-h-screen " + LBRACE + " height: 100vh; " + RBRACE + "\n"
+  out = out + ".eds-h-auto " + LBRACE + " height: auto; " + RBRACE + "\n"
+
+  // Gaps
+  for k in allowed_spacings {
+    out = out + ".eds-gap-" + k + " " + LBRACE + " gap: var(--eds-space-" + k + "); " + RBRACE + "\n"
+  }
+
+  // Paddings
+  for k in allowed_spacings {
+    out = out + ".eds-p-" + k + " " + LBRACE + " padding: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-px-" + k + " " + LBRACE + " padding-left: var(--eds-space-" + k + "); padding-right: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-py-" + k + " " + LBRACE + " padding-top: var(--eds-space-" + k + "); padding-bottom: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-pt-" + k + " " + LBRACE + " padding-top: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-pb-" + k + " " + LBRACE + " padding-bottom: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-pl-" + k + " " + LBRACE + " padding-left: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-pr-" + k + " " + LBRACE + " padding-right: var(--eds-space-" + k + "); " + RBRACE + "\n"
+  }
+
+  // Backgrounds
+  for k in allowed_colors {
+    out = out + ".eds-bg-" + k + " " + LBRACE + " background-color: var(--eds-bg-" + k + "); " + RBRACE + "\n"
+  }
+
+  // Borders
+  for k in allowed_borders {
+    out = out + ".eds-border-" + k + " " + LBRACE + " border: 1px solid var(--eds-border-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-border-t-" + k + " " + LBRACE + " border-top: 1px solid var(--eds-border-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-border-b-" + k + " " + LBRACE + " border-bottom: 1px solid var(--eds-border-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-border-l-" + k + " " + LBRACE + " border-left: 1px solid var(--eds-border-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-border-r-" + k + " " + LBRACE + " border-right: 1px solid var(--eds-border-" + k + "); " + RBRACE + "\n"
+  }
+
+  // Radii
+  for k in allowed_radii {
+    out = out + ".eds-radius-" + k + " " + LBRACE + " border-radius: var(--eds-radius-" + k + "); " + RBRACE + "\n"
+  }
+
+  // Shadows
+  for k in allowed_shadows {
+    out = out + ".eds-shadow-" + k + " " + LBRACE + " box-shadow: var(--eds-shadow-" + k + "); " + RBRACE + "\n"
+  }
+
+  // Typography
+  out = out + ".eds-text " + LBRACE + " margin: 0; font-family: inherit; " + RBRACE + "\n"
+  out = out + ".eds-variant-display " + LBRACE + " font-size: 2.25rem; line-height: 2.5rem; font-weight: 700; letter-spacing: -0.025em; " + RBRACE + "\n"
+  out = out + ".eds-variant-title-lg " + LBRACE + " font-size: 1.875rem; line-height: 2.25rem; font-weight: 600; letter-spacing: -0.02em; " + RBRACE + "\n"
+  out = out + ".eds-variant-title-md " + LBRACE + " font-size: 1.5rem; line-height: 2rem; font-weight: 600; letter-spacing: -0.015em; " + RBRACE + "\n"
+  out = out + ".eds-variant-heading " + LBRACE + " font-size: 1.25rem; line-height: 1.75rem; font-weight: 600; " + RBRACE + "\n"
+  out = out + ".eds-variant-body " + LBRACE + " font-size: 1rem; line-height: 1.5rem; font-weight: 400; " + RBRACE + "\n"
+  out = out + ".eds-variant-body-sm " + LBRACE + " font-size: 0.875rem; line-height: 1.25rem; font-weight: 400; " + RBRACE + "\n"
+  out = out + ".eds-variant-caption " + LBRACE + " font-size: 0.75rem; line-height: 1rem; font-weight: 500; " + RBRACE + "\n"
+  out = out + ".eds-variant-mono " + LBRACE + " font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.875rem; " + RBRACE + "\n"
+
+  for k in allowed_text_colors {
+    out = out + ".eds-color-" + k + " " + LBRACE + " color: var(--eds-text-" + k + "); " + RBRACE + "\n"
+  }
+
+  out = out + ".eds-weight-normal " + LBRACE + " font-weight: 400; " + RBRACE + "\n"
+  out = out + ".eds-weight-medium " + LBRACE + " font-weight: 500; " + RBRACE + "\n"
+  out = out + ".eds-weight-semibold " + LBRACE + " font-weight: 600; " + RBRACE + "\n"
+  out = out + ".eds-weight-bold " + LBRACE + " font-weight: 700; " + RBRACE + "\n"
+
+  out = out + ".eds-text-left " + LBRACE + " text-align: left; " + RBRACE + "\n"
+  out = out + ".eds-text-center " + LBRACE + " text-align: center; " + RBRACE + "\n"
+  out = out + ".eds-text-right " + LBRACE + " text-align: right; " + RBRACE + "\n"
+  out = out + ".eds-truncate " + LBRACE + " overflow: hidden; text-overflow: ellipsis; white-space: nowrap; " + RBRACE + "\n"
+
+  // High-level UI Components
+  out = out + ".eds-card " + LBRACE + " display: flex; flex-direction: column; background-color: var(--eds-bg-card); border: 1px solid var(--eds-border-subtle); border-radius: var(--eds-radius-lg); box-shadow: var(--eds-shadow-sm); padding: var(--eds-space-lg); box-sizing: border-box; " + RBRACE + "\n"
+  out = out + ".eds-btn " + LBRACE + " display: inline-flex; align-items: center; justify-content: center; gap: var(--eds-space-xs); font-family: inherit; font-weight: 600; border-radius: var(--eds-radius-md); border: 1px solid transparent; cursor: pointer; transition: background-color 0.15s ease, opacity 0.15s ease; box-sizing: border-box; text-decoration: none; " + RBRACE + "\n"
+  out = out + ".eds-btn-primary " + LBRACE + " background-color: var(--eds-bg-primary); color: var(--eds-text-on-primary); " + RBRACE + "\n"
+  out = out + ".eds-btn-primary:hover " + LBRACE + " opacity: 0.9; " + RBRACE + "\n"
+  out = out + ".eds-btn-secondary " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-primary); border-color: var(--eds-border-subtle); " + RBRACE + "\n"
+  out = out + ".eds-btn-secondary:hover " + LBRACE + " background-color: var(--eds-bg-card); " + RBRACE + "\n"
+  out = out + ".eds-btn-subtle " + LBRACE + " background-color: transparent; color: var(--eds-text-secondary); " + RBRACE + "\n"
+  out = out + ".eds-btn-subtle:hover " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-primary); " + RBRACE + "\n"
+  out = out + ".eds-btn-danger " + LBRACE + " background-color: var(--eds-bg-danger); color: var(--eds-text-on-primary); " + RBRACE + "\n"
+  out = out + ".eds-btn-danger:hover " + LBRACE + " opacity: 0.9; " + RBRACE + "\n"
+  out = out + ".eds-btn-sm " + LBRACE + " padding: 0.25rem 0.5rem; font-size: 0.75rem; " + RBRACE + "\n"
+  out = out + ".eds-btn-md " + LBRACE + " padding: 0.5rem 1rem; font-size: 0.875rem; " + RBRACE + "\n"
+  out = out + ".eds-btn-lg " + LBRACE + " padding: 0.75rem 1.25rem; font-size: 1rem; " + RBRACE + "\n"
+
+  out = out + ".eds-badge " + LBRACE + " display: inline-flex; align-items: center; font-size: 0.75rem; font-weight: 600; padding: 0.125rem 0.5rem; border-radius: var(--eds-radius-full); box-sizing: border-box; " + RBRACE + "\n"
+  out = out + ".eds-badge-default " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-secondary); " + RBRACE + "\n"
+  out = out + ".eds-badge-success " + LBRACE + " background-color: rgba(34, 197, 94, 0.15); color: var(--eds-text-success); " + RBRACE + "\n"
+  out = out + ".eds-badge-warning " + LBRACE + " background-color: rgba(234, 179, 8, 0.15); color: #d97706; " + RBRACE + "\n"
+  out = out + ".eds-badge-danger " + LBRACE + " background-color: rgba(239, 68, 68, 0.15); color: var(--eds-text-danger); " + RBRACE + "\n"
+  out = out + ".eds-badge-info " + LBRACE + " background-color: rgba(59, 130, 246, 0.15); color: var(--eds-bg-primary); " + RBRACE + "\n"
+
+  return out
+}
+
+export const validateTag = (tagName, attrs, file, line) => {
+  if (attrs == null) { return null }
+  let keys = attrs.keys()
+
+  if (tagName == "Box" or tagName == "Stack" or tagName == "Cluster") {
+    for key in keys {
+      let val = cleanAttrVal(attrs[key])
+      if (key == "p" or key == "px" or key == "py" or key == "pt" or key == "pb" or key == "pl" or key == "pr" or key == "gap") {
+        if (!allowed_spacings.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_spacings)
+        }
+      } else if (key == "bg") {
+        if (!allowed_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid background color token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_colors)
+        }
+      } else if (key == "border" or key == "borderTop" or key == "borderBottom" or key == "borderLeft" or key == "borderRight") {
+        if (!allowed_borders.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid border token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_borders)
+        }
+      } else if (key == "radius") {
+        if (!allowed_radii.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid radius token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_radii)
+        }
+      } else if (key == "shadow") {
+        if (!allowed_shadows.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid shadow token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_shadows)
+        }
+      } else if (key == "align") {
+        if (!allowed_aligns.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid align token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_aligns)
+        }
+      } else if (key == "justify") {
+        if (!allowed_justifies.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid justify token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_justifies)
+        }
+      } else if (key == "direction") {
+        if (!allowed_directions.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid direction token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_directions)
+        }
+      } else if (key == "as") {
+        if (!allowed_as_elements.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_as_elements)
+        }
+      }
+    }
+  } else if (tagName == "Text") {
+    for key in keys {
+      let val = cleanAttrVal(attrs[key])
+      if (key == "variant") {
+        if (!allowed_text_variants.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid typography variant '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_variants)
+        }
+      } else if (key == "color") {
+        if (!allowed_text_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_colors)
+        }
+      } else if (key == "weight") {
+        if (!allowed_weights.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_weights)
+        }
+      } else if (key == "as") {
+        if (!allowed_as_elements.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+export const transformPrimitive = (tagName, attrs) => {
+  if (attrs == null) { return null }
+  let keys = attrs.keys()
+
+  if (tagName == "Box") {
+    let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "div"
+    let classes = ["eds-box"]
+
+    if (attrs.hasOwnProperty("direction")) {
+      let dir = cleanAttrVal(attrs["direction"])
+      if (dir == "row") {
+        classes.push("eds-row")
+      } else if (dir == "col") {
+        classes.push("eds-col")
+      }
+    }
+
+    if (attrs.hasOwnProperty("gap")) {
+      classes.push("eds-gap-" + cleanAttrVal(attrs["gap"]))
+    }
+    if (attrs.hasOwnProperty("align")) {
+      classes.push("eds-align-" + cleanAttrVal(attrs["align"]))
+    }
+    if (attrs.hasOwnProperty("justify")) {
+      classes.push("eds-justify-" + cleanAttrVal(attrs["justify"]))
+    }
+
+    if (attrs.hasOwnProperty("p")) { classes.push("eds-p-" + cleanAttrVal(attrs["p"])) }
+    if (attrs.hasOwnProperty("px")) { classes.push("eds-px-" + cleanAttrVal(attrs["px"])) }
+    if (attrs.hasOwnProperty("py")) { classes.push("eds-py-" + cleanAttrVal(attrs["py"])) }
+    if (attrs.hasOwnProperty("pt")) { classes.push("eds-pt-" + cleanAttrVal(attrs["pt"])) }
+    if (attrs.hasOwnProperty("pb")) { classes.push("eds-pb-" + cleanAttrVal(attrs["pb"])) }
+    if (attrs.hasOwnProperty("pl")) { classes.push("eds-pl-" + cleanAttrVal(attrs["pl"])) }
+    if (attrs.hasOwnProperty("pr")) { classes.push("eds-pr-" + cleanAttrVal(attrs["pr"])) }
+
+    if (attrs.hasOwnProperty("bg")) { classes.push("eds-bg-" + cleanAttrVal(attrs["bg"])) }
+    if (attrs.hasOwnProperty("border")) { classes.push("eds-border-" + cleanAttrVal(attrs["border"])) }
+    if (attrs.hasOwnProperty("borderTop")) { classes.push("eds-border-t-" + cleanAttrVal(attrs["borderTop"])) }
+    if (attrs.hasOwnProperty("borderBottom")) { classes.push("eds-border-b-" + cleanAttrVal(attrs["borderBottom"])) }
+    if (attrs.hasOwnProperty("borderLeft")) { classes.push("eds-border-l-" + cleanAttrVal(attrs["borderLeft"])) }
+    if (attrs.hasOwnProperty("borderRight")) { classes.push("eds-border-r-" + cleanAttrVal(attrs["borderRight"])) }
+
+    if (attrs.hasOwnProperty("radius")) { classes.push("eds-radius-" + cleanAttrVal(attrs["radius"])) }
+    if (attrs.hasOwnProperty("shadow")) { classes.push("eds-shadow-" + cleanAttrVal(attrs["shadow"])) }
+
+    if (attrs.hasOwnProperty("width")) { classes.push("eds-w-" + cleanAttrVal(attrs["width"])) }
+    if (attrs.hasOwnProperty("height")) { classes.push("eds-h-" + cleanAttrVal(attrs["height"])) }
+
+    let passthrough = ""
+    for k in keys {
+      if (k == "as" or k == "direction" or k == "gap" or k == "align" or k == "justify" or
+          k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
+          k == "bg" or k == "border" or k == "borderTop" or k == "borderBottom" or k == "borderLeft" or k == "borderRight" or
+          k == "radius" or k == "shadow" or k == "width" or k == "height") {
+        // Skip handled layout attributes
+      } else if (k == "class") {
+        let userClass = cleanAttrVal(attrs["class"])
+        if (userClass != "") {
+          classes.push(userClass)
+        }
+      } else {
+        passthrough = passthrough + formatPassthroughAttr(k, attrs[k])
+      }
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    return [openTag, htmlTag]
+  }
+
+  if (tagName == "Stack") {
+    let boxAttrs = {}
+    for k in keys {
+      boxAttrs[k] = attrs[k]
+    }
+    boxAttrs["direction"] = "\"col\""
+    return transformPrimitive("Box", boxAttrs)
+  }
+
+  if (tagName == "Cluster") {
+    let boxAttrs = {}
+    for k in keys {
+      boxAttrs[k] = attrs[k]
+    }
+    boxAttrs["direction"] = "\"row\""
+    let res = transformPrimitive("Box", boxAttrs)
+    if (res != null) {
+      let openWithWrap = res[0].replace("class=\"eds-box eds-row", "class=\"eds-box eds-row eds-wrap")
+      return [openWithWrap, res[1]]
+    }
+    return null
+  }
+
+  if (tagName == "Text") {
+    let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "p"
+    let classes = ["eds-text"]
+    let variant = attrs.hasOwnProperty("variant") ? cleanAttrVal(attrs["variant"]) : "body"
+    classes.push("eds-variant-" + variant)
+
+    if (attrs.hasOwnProperty("color")) { classes.push("eds-color-" + cleanAttrVal(attrs["color"])) }
+    if (attrs.hasOwnProperty("weight")) { classes.push("eds-weight-" + cleanAttrVal(attrs["weight"])) }
+    if (attrs.hasOwnProperty("align")) { classes.push("eds-text-" + cleanAttrVal(attrs["align"])) }
+    if (attrs.hasOwnProperty("truncate")) { classes.push("eds-truncate") }
+
+    let passthrough = ""
+    for k in keys {
+      if (k == "as" or k == "variant" or k == "color" or k == "weight" or k == "align" or k == "truncate") {
+        // Skip handled text attributes
+      } else if (k == "class") {
+        let userClass = cleanAttrVal(attrs["class"])
+        if (userClass != "") {
+          classes.push(userClass)
+        }
+      } else {
+        passthrough = passthrough + formatPassthroughAttr(k, attrs[k])
+      }
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    return [openTag, htmlTag]
+  }
+
+  if (tagName == "Card") {
+    let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "div"
+    let classes = ["eds-card"]
+    let passthrough = ""
+
+    for k in keys {
+      if (k == "as") {
+        // Skip as
+      } else if (k == "class") {
+        let userClass = cleanAttrVal(attrs["class"])
+        if (userClass != "") {
+          classes.push(userClass)
+        }
+      } else {
+        passthrough = passthrough + formatPassthroughAttr(k, attrs[k])
+      }
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    return [openTag, htmlTag]
+  }
+
+  if (tagName == "Button") {
+    let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "button"
+    let variant = attrs.hasOwnProperty("variant") ? cleanAttrVal(attrs["variant"]) : "primary"
+    let size = attrs.hasOwnProperty("size") ? cleanAttrVal(attrs["size"]) : "md"
+
+    let classes = ["eds-btn", "eds-btn-" + variant, "eds-btn-" + size]
+    let passthrough = ""
+
+    for k in keys {
+      if (k == "as" or k == "variant" or k == "size") {
+        // Skip handled attributes
+      } else if (k == "class") {
+        let userClass = cleanAttrVal(attrs["class"])
+        if (userClass != "") {
+          classes.push(userClass)
+        }
+      } else {
+        passthrough = passthrough + formatPassthroughAttr(k, attrs[k])
+      }
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    return [openTag, htmlTag]
+  }
+
+  if (tagName == "Badge") {
+    let status = attrs.hasOwnProperty("status") ? cleanAttrVal(attrs["status"]) : "default"
+    let classes = ["eds-badge", "eds-badge-" + status]
+    let passthrough = ""
+
+    for k in keys {
+      if (k == "status") {
+        // Skip status
+      } else if (k == "class") {
+        let userClass = cleanAttrVal(attrs["class"])
+        if (userClass != "") {
+          classes.push(userClass)
+        }
+      } else {
+        passthrough = passthrough + formatPassthroughAttr(k, attrs[k])
+      }
+    }
+
+    let openTag = "<span class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    return [openTag, "span"]
+  }
+
+  return null
+}

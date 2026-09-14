@@ -19,7 +19,7 @@ pub use value::Value;
 pub use bytecode::{Function, Chunk, OpCode, ArrayMethodType};
 pub use gc::{
     gc_allocate, gc_free_all, gc_mark_value, gc_mark_object, gc_blacken_object,
-    mark_value, mark_object, gc_write_barrier,
+    mark_value, mark_object, gc_write_barrier, gc_epoch,
     GcColor, GcPhase, GcData, GcObject,
     GC_STATE, GC_ROOTS, GC_NEEDS_STEP
 };
