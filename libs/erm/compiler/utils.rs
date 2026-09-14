@@ -121,6 +121,132 @@ pub fn parse_tag_attributes(tag_content: &str) -> HashMap<String, String> {
     attrs
 }
 
+pub fn parse_raw_attributes(tag_content: &str) -> HashMap<String, String> {
+    let mut attrs = HashMap::new();
+    let bytes = tag_content.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    // Skip the tag name (first word)
+    while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/' && bytes[i] != b'>' {
+        i += 1;
+    }
+
+    while i < len {
+        // Skip whitespace
+        while i < len && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= len || bytes[i] == b'/' || bytes[i] == b'>' {
+            break;
+        }
+
+        // Read attribute name
+        let name_start = i;
+        while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'/' && bytes[i] != b'>' {
+            i += 1;
+        }
+        let name = tag_content[name_start..i].trim().to_string();
+        if name.is_empty() || name == "/" {
+            continue;
+        }
+
+        // Skip whitespace before '='
+        while i < len && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+
+        if i < len && bytes[i] == b'=' {
+            i += 1; // skip '='
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= len {
+                attrs.insert(name, String::new());
+                break;
+            }
+
+            if bytes[i] == b'"' {
+                i += 1; // skip opening quote
+                let val_start = i;
+                while i < len && bytes[i] != b'"' {
+                    if bytes[i] == b'\\' && i + 1 < len {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                let val = &tag_content[val_start..i];
+                if i < len && bytes[i] == b'"' {
+                    i += 1; // skip closing quote
+                }
+                attrs.insert(name, val.to_string());
+            } else if bytes[i] == b'\'' {
+                i += 1; // skip opening quote
+                let val_start = i;
+                while i < len && bytes[i] != b'\'' {
+                    if bytes[i] == b'\\' && i + 1 < len {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                let val = &tag_content[val_start..i];
+                if i < len && bytes[i] == b'\'' {
+                    i += 1; // skip closing quote
+                }
+                attrs.insert(name, val.to_string());
+            } else if bytes[i] == b'{' {
+                let val_start = i;
+                let mut depth = 1;
+                i += 1;
+                while i < len && depth > 0 {
+                    if bytes[i] == b'{' {
+                        depth += 1;
+                    } else if bytes[i] == b'}' {
+                        depth -= 1;
+                    } else if bytes[i] == b'"' {
+                        i += 1;
+                        while i < len && bytes[i] != b'"' {
+                            if bytes[i] == b'\\' && i + 1 < len {
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    } else if bytes[i] == b'\'' {
+                        i += 1;
+                        while i < len && bytes[i] != b'\'' {
+                            if bytes[i] == b'\\' && i + 1 < len {
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    }
+                    if i < len {
+                        i += 1;
+                    }
+                }
+                let val = &tag_content[val_start..i];
+                attrs.insert(name, val.to_string());
+            } else {
+                let val_start = i;
+                while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/' && bytes[i] != b'>' {
+                    i += 1;
+                }
+                let val = &tag_content[val_start..i];
+                attrs.insert(name, val.to_string());
+            }
+        } else {
+            // Boolean attribute without '='
+            attrs.insert(name, String::new());
+        }
+    }
+
+    attrs
+}
+
 pub fn scope_component_ids(html: &mut String, scripts: &mut Vec<String>) {
     static RE_ID: OnceLock<regex::Regex> = OnceLock::new();
     let re_id = RE_ID.get_or_init(|| regex::Regex::new(r#"id\s*=\s*["']([^"']+)["']"#).unwrap());

@@ -335,3 +335,98 @@ fn test_clean_blocks_compilation() {
     assert!(!res.contains("window.__erm_register_for"));
 }
 
+#[test]
+fn test_eds_valid_primitive_compilation() {
+    let content = r#"
+    <Box as="nav" direction="row" gap="md" p="md" bg="card" border="subtle">
+        <Text as="h1" variant="title-lg" weight="bold" color="primary">Eronom Showcase</Text>
+        <Stack gap="sm">
+            <Card>
+                <Text variant="body" color="secondary">Card Description</Text>
+                <Cluster gap="xs" align="center">
+                    <Badge status="success">Active</Badge>
+                    <Button variant="primary" size="sm">Save</Button>
+                </Cluster>
+            </Card>
+        </Stack>
+    </Box>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    println!("EDS COMPILED RES:\n{}", res);
+
+    assert!(res.contains("<nav"));
+    assert!(res.contains("class=\"eds-box eds-row eds-gap-md eds-p-md eds-bg-card eds-border-subtle\""));
+    assert!(res.contains("<h1"));
+    assert!(res.contains("class=\"eds-text eds-variant-title-lg eds-color-primary eds-weight-bold\""));
+    assert!(res.contains("class=\"eds-card\""));
+    assert!(res.contains("class=\"eds-badge eds-badge-success\""));
+    assert!(res.contains("class=\"eds-btn eds-btn-primary eds-btn-sm\""));
+    assert!(res.contains("</nav>"));
+    assert!(res.contains("</h1>"));
+
+    // Check light-dark() CSS variables
+    assert!(res.contains("color-scheme: light dark;"));
+    assert!(res.contains("--eds-bg-card: light-dark("));
+    assert!(res.contains("--eds-text-primary: light-dark("));
+}
+
+#[test]
+fn test_eds_invalid_token_rejection() {
+    let content = r#"
+    <Box p="17px">
+        <Text>Hello</Text>
+    </Box>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component(".", content, false, &params);
+    assert!(err.is_err());
+    let err_msg = err.err().unwrap().to_string();
+    assert!(err_msg.contains("Invalid spacing token '17px' on <Box>"));
+
+    let content_bad_bg = r#"
+    <Box bg="neon-pink">
+        <Text>Hello</Text>
+    </Box>
+    "#;
+    let err_bg = process_erm_component(".", content_bad_bg, false, &params);
+    assert!(err_bg.is_err());
+    let err_bg_msg = err_bg.err().unwrap().to_string();
+    assert!(err_bg_msg.contains("Invalid background color token 'neon-pink' on <Box>"));
+
+    let content_bad_variant = r#"
+    <Text variant="gigantic">Hello</Text>
+    "#;
+    let err_var = process_erm_component(".", content_bad_variant, false, &params);
+    assert!(err_var.is_err());
+    let err_var_msg = err_var.err().unwrap().to_string();
+    assert!(err_var_msg.contains("Invalid typography variant 'gigantic' on <Text>"));
+}
+
+#[test]
+fn test_eds_bare_div_allowed() {
+    let config = DesignSystemConfig::default();
+    let mut attrs = std::collections::HashMap::new();
+    attrs.insert("class".to_string(), "\"p-4\"".to_string());
+    let res = config.validate_tag("div", &attrs, "test.erm", 10);
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_eds_demo_page_compilation() {
+    let demo_path = std::path::Path::new("testp/app/pages/eds-demo.erm");
+    if demo_path.exists() {
+        let content = std::fs::read_to_string(demo_path).unwrap();
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component("testp/app/pages/eds-demo.erm", &content, false, &params).unwrap();
+        println!("COMPILED EDS DEMO RES:\n{}", res);
+        assert!(res.contains("class=\"eds-box"));
+        assert!(res.contains("class=\"eds-card\""));
+        assert!(res.contains("class=\"eds-btn"));
+        assert!(res.contains("class=\"eds-badge"));
+        assert!(res.contains("color-scheme: light dark;"));
+    }
+}
+
+
+

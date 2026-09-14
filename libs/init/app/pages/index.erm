@@ -1,113 +1,24 @@
-<style>
-    .home-wrapper {
-        display: flex;
-        flex-direction: column;
-        flex: 1;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        background-color: var(--background);
-        color: var(--foreground);
-    }
-
-    .home-main {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 2rem;
-        text-align: center;
-        box-sizing: border-box;
-    }
-
-    /* Hero Text */
-    .hero-content {
-        display: flex;
-        flex-direction: column;
-        gap: 1.25rem;
-        align-items: center;
-    }
-
-    .hero-title {
-        max-width: 32rem;
-        font-size: 1.875rem;
-        line-height: 1.35;
-        font-weight: 600;
-        letter-spacing: -0.025em;
-        color: var(--foreground);
-    }
-
-    .code-snippet {
-        border-radius: 4px;
-        padding: 0.125rem 0.375rem;
-        font-family: var(--font-mono);
-        font-size: 0.9em;
-        background-color: rgba(0, 0, 0, 0.06);
-        color: var(--foreground);
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .code-snippet {
-            background-color: rgba(255, 255, 255, 0.08);
-        }
-    }
-
-    .hero-desc {
-        max-width: 28rem;
-        font-size: 1.125rem;
-        line-height: 1.8;
-        color: #71717a;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .hero-desc {
-            color: #a1a1aa;
-        }
-    }
-
-    .link-highlight {
-        font-weight: 500;
-        color: #09090b;
-        text-decoration: underline;
-        text-underline-offset: 4px;
-        transition: opacity 0.15s ease;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .link-highlight {
-            color: #f4f4f5;
-        }
-    }
-
-    .link-highlight:hover {
-        opacity: 0.8;
-    }
-</style>
-
-<div class="home-wrapper">
-    <main class="home-main">
-        <div class="hero-content">
-            <h1 class="hero-title">
-                Get started by editing<br />
-                <code class="code-snippet">app/pages/index.erm</code>
-            </h1>
-            <p class="hero-desc">
-                Save and see changes instantly. Explore the{" "}
-                <a
-                    href="https://github.com/eronom/eronom"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="link-highlight"
-                >
-                    Documentation
-                </a>{" "}
-                or{" "}
-                <a
-                    href="https://github.com/eronom/eronom"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="link-highlight">Templates</a>.
-            </p>
-        </div>
-    </main>
-</div>
+<Box as="main" p="xl" bg="canvas" width="full" style="min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+    <Stack gap="xl" align="center" style="max-width: 38rem; text-align: center;">
+        <Card style="align-items: center; padding: 2.5rem 2rem;">
+            <Stack gap="md" align="center">
+                <Badge status="info">Eronom ⚡ v0.9</Badge>
+                <Text as="h1" variant="title-lg" weight="bold" color="primary">
+                    Get started by editing<br />
+                    <code style="border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.85em; background-color: var(--eds-bg-muted); color: var(--eds-text-primary); font-family: var(--font-mono);">app/pages/index.erm</code>
+                </Text>
+                <Text variant="body" color="secondary">
+                    Save and see changes instantly. Powered by the Eronom Design System (EDS) with compiler-enforced intent tokens and native dual-theme support.
+                </Text>
+                <Cluster gap="md" align="center" style="margin-top: 0.75rem;">
+                    <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="primary" size="md">
+                        Documentation &rarr;
+                    </Button>
+                    <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="secondary" size="md">
+                        Explore Templates
+                    </Button>
+                </Cluster>
+            </Stack>
+        </Card>
+    </Stack>
+</Box>

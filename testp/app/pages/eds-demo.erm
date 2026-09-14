@@ -1,0 +1,83 @@
+<script>
+    let users = useState(1420);
+    let clicks = useState(8930);
+    let status = useState('Online');
+    let notificationCount = useState(3);
+    
+    function handleAlert() {
+        alert("EDS LLM-Safe Design System works natively in Eronom!");
+    }
+</script>
+
+<Box as="main" p="xl" bg="canvas" width="full" style="min-height: 100vh;">
+    <Stack gap="xl" width="full" style="max-width: 56rem; margin: 0 auto;">
+        
+        <!-- Header Banner Card -->
+        <Card>
+            <Stack gap="xs">
+                <Text as="h1" variant="title-lg" weight="bold" color="primary">
+                    Eronom Design System (EDS) Showcase
+                </Text>
+                <Text variant="body" color="secondary">
+                    Built with compiler-enforced intent tokens, polymorphic primitives, and zero-effort dark mode via CSS <code>light-dark()</code>.
+                </Text>
+            </Stack>
+
+            <Cluster gap="md" align="center">
+                <Badge status="success">System: {status}</Badge>
+                <Badge status="info">Pending Alerts: {notificationCount}</Badge>
+            </Cluster>
+        </Card>
+
+        <!-- Stats Grid -->
+        <Box direction="row" gap="lg" width="full">
+            <!-- Stat 1 -->
+            <Card style="flex: 1;">
+                <Text variant="caption" weight="semibold" color="muted">TOTAL ACTIVE USERS</Text>
+                <Text variant="display" weight="bold" color="primary">{users}</Text>
+                
+                <Cluster gap="sm">
+                    <Button variant="primary" size="sm" onClick={() => { users++ }}>
+                        + Add User
+                    </Button>
+                    <Button variant="subtle" size="sm" onClick={() => { if(users > 0) users-- }}>
+                        - Remove
+                    </Button>
+                </Cluster>
+            </Card>
+
+            <!-- Stat 2 -->
+            <Card style="flex: 1;">
+                <Text variant="caption" weight="semibold" color="muted">TOTAL INTERACTIONS</Text>
+                <Text variant="display" weight="bold" color="primary">{clicks}</Text>
+                
+                <Cluster gap="sm">
+                    <Button variant="primary" size="sm" onClick={() => { clicks = clicks + 10 }}>
+                        + 10 Clicks
+                    </Button>
+                    <Button variant="subtle" size="sm" onClick={() => { clicks = 0 }}>
+                        Reset
+                    </Button>
+                </Cluster>
+            </Card>
+        </Box>
+
+        <!-- Actions Card -->
+        <Card>
+            <Text as="h2" variant="heading" weight="bold" color="primary">Theming & Actions</Text>
+            <Text variant="body-sm" color="secondary">
+                Notice how background, card surfaces, borders, and text automatically adapt between light and dark modes with zero <code>dark:</code> overrides.
+            </Text>
+            
+            <Cluster gap="md" align="center">
+                <Button variant="primary" size="md" onClick={handleAlert}>
+                    Trigger System Notification
+                </Button>
+                <Button variant="secondary" size="md" onClick={() => { notificationCount = 0 }}>
+                    Clear Alerts
+                </Button>
+            </Cluster>
+        </Card>
+
+    </Stack>
+</Box>
