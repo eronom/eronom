@@ -53,6 +53,13 @@ thread_local! {
     pub static GC_TEMP_SLICES: RefCell<Vec<(*const Value, usize)>> = RefCell::new(Vec::new());
 }
 
+pub static GC_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[inline(always)]
+pub fn gc_epoch() -> u64 {
+    GC_EPOCH.load(Ordering::Relaxed)
+}
+
 #[inline(always)]
 pub fn gc_push_temp_slice(ptr: *const Value, len: usize) {
     GC_TEMP_SLICES.with(|s| {
@@ -243,6 +250,7 @@ pub fn gc_allocate(data: GcData) -> *mut GcObject {
 
 #[inline(always)]
 pub fn gc_free_all() {
+    GC_EPOCH.fetch_add(1, Ordering::Relaxed);
     unsafe {
         GC_STATE.with(|state| {
             let s_ref = &mut *state.get();

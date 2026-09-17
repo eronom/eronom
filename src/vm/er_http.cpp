@@ -426,7 +426,7 @@ extern "C" void er_http_listen_and_run(int port) {
         });
     });
     
-    g_app->listen(port, [port](auto* listen_socket) {
+    g_app->listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, [port](auto* listen_socket) {
         if (listen_socket) {
             er_http_on_listening();
         } else {

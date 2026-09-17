@@ -52,4 +52,19 @@ describe("Eronom Extension Configuration Tests", () => {
     const distPath = path.join(extensionDir, "dist", "extension.js");
     assert.strictEqual(fs.existsSync(distPath), true);
   });
+
+  test("ERM grammar defines tag-open and tag-close without invalid.illegal", () => {
+    const ermGrammarPath = path.join(extensionDir, "syntaxes", "erm.tmLanguage.json");
+    const ermGrammar = JSON.parse(fs.readFileSync(ermGrammarPath, "utf8"));
+    assert.ok(ermGrammar.repository["tag-open"], "tag-open pattern should exist");
+    assert.ok(ermGrammar.repository["tag-close"], "tag-close pattern should exist");
+    assert.strictEqual(
+      ermGrammar.repository["tag-open"].beginCaptures["2"].name,
+      "entity.name.tag.html"
+    );
+    assert.strictEqual(
+      ermGrammar.repository["tag-close"].captures["2"].name,
+      "entity.name.tag.html"
+    );
+  });
 });

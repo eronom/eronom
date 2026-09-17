@@ -595,13 +595,33 @@ export function registerEvent(event, handler) {
 
 // DOM Reconciliation / Diffing Helper for HTML chunks
 function reconcileNodes(parent, newNodes) {
-  const childNodes = Array.from(parent.childNodes);
-  for (let k = newNodes.length; k < childNodes.length; k++) {
-    parent.removeChild(childNodes[k]);
+  // Filter newNodes to exclude script tags and error overlays
+  const cleanNewNodes = newNodes.filter(n => {
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      const tag = n.tagName.toUpperCase();
+      return tag !== 'SCRIPT' && tag !== 'ERM-ERROR-OVERLAY';
+    }
+    return true;
+  });
+
+  // Filter parent childNodes to match content nodes
+  const childNodes = Array.from(parent.childNodes).filter(n => {
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      const tag = n.tagName.toUpperCase();
+      return tag !== 'SCRIPT' && tag !== 'ERM-ERROR-OVERLAY';
+    }
+    return true;
+  });
+
+  for (let k = cleanNewNodes.length; k < childNodes.length; k++) {
+    if (childNodes[k] && childNodes[k].parentNode === parent) {
+      parent.removeChild(childNodes[k]);
+    }
   }
-  for (let k = 0; k < newNodes.length; k++) {
-    let existing = parent.childNodes[k];
-    let incoming = newNodes[k];
+
+  for (let k = 0; k < cleanNewNodes.length; k++) {
+    let existing = childNodes[k];
+    let incoming = cleanNewNodes[k];
     if (!existing) {
       parent.appendChild(incoming);
     } else if (existing.nodeType !== incoming.nodeType) {
@@ -611,7 +631,7 @@ function reconcileNodes(parent, newNodes) {
         existing.nodeValue = incoming.nodeValue;
       }
     } else if (existing.nodeType === Node.ELEMENT_NODE) {
-      if (existing.tagName !== incoming.tagName || existing.id !== incoming.id) {
+      if (existing.tagName !== incoming.tagName) {
         parent.replaceChild(incoming, existing);
       } else {
         for (let attr of Array.from(existing.attributes)) {
@@ -629,7 +649,7 @@ function reconcileNodes(parent, newNodes) {
           if (existing.tagName === 'TEXTAREA' && incoming.hasAttribute('value')) {
             incomingVal = incoming.getAttribute('value');
           }
-          if (existing.value !== incomingVal) {
+          if (document.activeElement !== existing && existing.value !== incomingVal) {
             existing.value = incomingVal;
           }
           if (existing.checked !== incoming.checked) {
@@ -990,5 +1010,145 @@ document.addEventListener('click', e => {
 addEventListener('popstate', () => {
   navigate(location.pathname, false);
 });
+
+// --- In-Place ERM Hot Module Replacement (HMR) ---
+export async function applyErmHmr(targetPath, timestamp) {
+  try {
+    const url = new URL(location.href);
+    url.searchParams.set('__erm_hmr_t', String(timestamp || Date.now()));
+
+    const res = await fetch(url.href, {
+      headers: {
+        'Accept': 'text/html',
+        'X-ERM-HMR': '1'
+      }
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      const doc = new DOMParser().parseFromString(errText, 'text/html');
+      const errFile = doc.body?.getAttribute('data-compile-error-file') || targetPath;
+      const errMsg = doc.body?.getAttribute('data-compile-error-message') || `Server error (${res.status})`;
+      showError({
+        type: 'Build Error',
+        file: errFile,
+        message: errMsg,
+        id: errFile
+      });
+      return;
+    }
+
+    if (typeof window !== 'undefined' && window.hmrClient && typeof window.hmrClient.clearError === 'function') {
+      window.hmrClient.clearError();
+    }
+
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    // 1. Update Title
+    if (doc.title && document.title !== doc.title) {
+      document.title = doc.title;
+    }
+
+    // 2. Update Style blocks in-place
+    const newScopedStyle = doc.getElementById('__erm_scoped_styles');
+    const oldScopedStyle = document.getElementById('__erm_scoped_styles');
+    if (newScopedStyle && oldScopedStyle) {
+      oldScopedStyle.textContent = newScopedStyle.textContent;
+    } else if (newScopedStyle) {
+      document.head.appendChild(newScopedStyle.cloneNode(true));
+    } else if (oldScopedStyle) {
+      oldScopedStyle.remove();
+    }
+
+    const newStyle = doc.getElementById('__erm_styles');
+    const oldStyle = document.getElementById('__erm_styles');
+    if (newStyle && oldStyle) {
+      if (newStyle.tagName === 'LINK') {
+        const newHref = newStyle.getAttribute('href');
+        if (newHref && oldStyle.getAttribute('href') !== newHref) {
+          oldStyle.setAttribute('href', newHref);
+        }
+      } else {
+        oldStyle.textContent = newStyle.textContent;
+      }
+    } else if (newStyle) {
+      document.head.appendChild(newStyle.cloneNode(true));
+    } else if (oldStyle) {
+      oldStyle.remove();
+    }
+
+    // 3. Dispose old page reactive root (unsubscribes listeners & cleanups)
+    if (typeof currentPageRootDispose === 'function') {
+      try {
+        currentPageRootDispose();
+      } catch (e) {
+        console.error('[eronom] [hmr] Error disposing previous root:', e);
+      }
+      currentPageRootDispose = null;
+    }
+
+    // Notice: We intentionally do NOT clear statesRegistry!
+    // Active signals and state are preserved across HMR!
+
+    // 4. Collect incoming page scripts
+    const scriptElements = Array.from(doc.querySelectorAll('script.__erm_script'));
+    const scriptData = scriptElements.map(s => ({
+      type: s.type,
+      text: s.textContent || s.text || ''
+    }));
+    // Remove all scripts from doc so reconcileNodes only touches DOM content
+    doc.querySelectorAll('script').forEach(s => s.remove());
+
+    // Clean up previous dynamically injected page scripts in current head/body
+    document.querySelectorAll('head script.__erm_script').forEach(s => s.remove());
+    document.querySelectorAll('body script.__erm_script').forEach(s => s.remove());
+
+    // 5. Reconcile DOM in-place without page reload
+    reconcileNodes(document.body, Array.from(doc.body.childNodes));
+    initLoadingSwap();
+
+    // 6. Execute updated page scripts
+    for (const item of scriptData) {
+      if (item.type === 'module') {
+        const origin = location.origin;
+        const moduleCode = item.text
+          .replace(/\bfrom\s+(['"])(\/[^'"]+)\1/g, `from "${origin}$2"`)
+          .replace(/\bimport\s+(['"])(\/[^'"]+)\1/g, `import "${origin}$2"`)
+          .replace(/\bimport\s*\(\s*(['"])(\/[^'"]+)\1\s*\)/g, `import("${origin}$2")`);
+        const blob = new Blob([moduleCode], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        try {
+          await import(url);
+        } catch (err) {
+          console.error("[eronom] [hmr] Page module script failed:", err);
+          showError({
+            type: 'Runtime Error',
+            file: targetPath,
+            message: err.message,
+            stack: err.stack
+          });
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      } else {
+        const newScript = document.createElement('script');
+        newScript.className = '__erm_script';
+        if (item.type) newScript.type = item.type;
+        newScript.textContent = item.text;
+        document.head.appendChild(newScript);
+      }
+    }
+
+    console.log(`[eronom] [hmr] ${targetPath}`);
+  } catch (err) {
+    console.error('[eronom] [hmr] Update error:', err);
+    location.reload();
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.__erm_apply_hmr = applyErmHmr;
+}
 
 

@@ -201,6 +201,9 @@ pub fn process_component_tree(
         }
     }
 
+    let eds_cfg = crate::compiler::css::parse_design_system_config(std::path::Path::new(&base_dir));
+    let mut eds_closing_stack: Vec<String> = Vec::new();
+
     let mut html_buf = String::new();
     let mut i = 0;
     while i < content.len() {
@@ -290,6 +293,13 @@ pub fn process_component_tree(
                         i += tag_end + 1;
                         continue;
                     }
+                    if matches!(closing_tag_name, "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge") && !component_imports.contains_key(closing_tag_name) {
+                        if let Some(target_html_tag) = eds_closing_stack.pop() {
+                            html_buf.push_str(&format!("</{}>", target_html_tag));
+                            i += tag_end + 1;
+                            continue;
+                        }
+                    }
                 } else {
                     let mut parts = tag_content.split_whitespace();
                     let mut tag_name_str = parts.next().unwrap_or("").to_string();
@@ -297,6 +307,35 @@ pub fn process_component_tree(
                         tag_name_str.pop();
                     }
                     let tag_name = &tag_name_str;
+
+                    let raw_attrs = parse_raw_attributes(tag_content);
+                    let line_num = content[..i].chars().filter(|&c| c == '\n').count() + 1;
+
+                    // EDS compile-time primitives
+                    let is_eds_primitive = matches!(
+                        tag_name.as_str(),
+                        "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge"
+                    );
+
+                    if is_eds_primitive && !component_imports.contains_key(tag_name.as_str()) {
+                        let is_self_closing = tag_content.ends_with('/') || parts.last().map_or(false, |p| p.ends_with('/'));
+                        eds_cfg.validate_tag(tag_name, &raw_attrs, file_path, line_num)?;
+
+                        if let Some((open_tag_str, target_tag)) = eds_cfg.transform_primitive(tag_name, &raw_attrs) {
+                            if is_self_closing {
+                                if matches!(target_tag.as_str(), "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr") {
+                                    html_buf.push_str(&open_tag_str);
+                                } else {
+                                    html_buf.push_str(&format!("{}</{}>", open_tag_str, target_tag));
+                                }
+                            } else {
+                                eds_closing_stack.push(target_tag);
+                                html_buf.push_str(&open_tag_str);
+                            }
+                            i += tag_end + 1;
+                            continue;
+                        }
+                    }
                     if tag_name == "Link" {
                         let mut new_tag_content = tag_content.to_string();
                         new_tag_content = new_tag_content.replacen("Link", "a", 1);
@@ -438,6 +477,13 @@ pub fn process_component_tree(
 
     scripts.append(&mut bindings);
     scripts.append(&mut events);
+
+    if eds_cfg.enabled {
+        let eds_css = eds_cfg.generate_root_css();
+        if !styles.iter().any(|s| s.contains("Eronom Design System (EDS)")) {
+            styles.insert(0, eds_css);
+        }
+    }
 
     Ok(ProcessResult {
         html: scoped_html,

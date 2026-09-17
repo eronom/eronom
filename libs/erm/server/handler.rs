@@ -124,12 +124,18 @@ pub extern "C" fn check_hmr_queue(_timer: *mut c_void) {
     }
 }
 
-pub fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers: &str, body: &[u8]) -> anyhow::Result<()> {
+pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, headers: &str, body: &[u8]) -> anyhow::Result<()> {
     let base_path = BASE_PATH.lock().unwrap().clone().unwrap();
     let default_file = DEFAULT_FILE.lock().unwrap().clone();
     let is_prod = *IS_PROD.lock().unwrap();
 
-    println!("Request: {} {}", method, target);
+    let (target, query) = if let Some(pos) = raw_target.find('?') {
+        (&raw_target[..pos], Some(&raw_target[pos + 1..]))
+    } else {
+        (raw_target, None)
+    };
+
+    println!("Request: {} {}", method, raw_target);
 
     if target.starts_with("/__erm_src/") {
         let rel_file = &target["/__erm_src/".len()..];
@@ -196,6 +202,13 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, target: &str, headers:
     };
 
     let mut params = HashMap::new();
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            if let Some((k, v)) = pair.split_once('=') {
+                params.insert(k.to_string(), v.to_string());
+            }
+        }
+    }
     let file_path = if target == "/" {
         if let Some(ref def_file) = default_file {
             def_file.clone()

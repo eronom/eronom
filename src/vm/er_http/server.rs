@@ -64,7 +64,16 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
         return;
     }
     
-    let port = LISTEN_PORT.with(|p| p.get()).unwrap_or_else(|| get_port_from_config(vm));
+    let requested_port = LISTEN_PORT.with(|p| p.get()).unwrap_or_else(|| get_port_from_config(vm));
+    let port = if requested_port > 0 {
+        crate::server::find_available_port(requested_port as u16) as i32
+    } else {
+        requested_port
+    };
+    if port != requested_port {
+        println!("Port {} is already in use, trying port {} instead.", requested_port, port);
+        LISTEN_PORT.with(|p| p.set(Some(port)));
+    }
     println!("[HTTP] Starting uWebSockets HTTP server on port {}...", port);
     
     unsafe {

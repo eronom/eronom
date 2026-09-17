@@ -7,6 +7,7 @@ pub mod blocks;
 pub mod components;
 pub mod tree;
 pub mod page;
+pub mod design_system;
 
 #[cfg(test)]
 pub mod tests;
@@ -20,3 +21,4 @@ pub use blocks::*;
 pub use components::*;
 pub use tree::*;
 pub use page::*;
+pub use design_system::*;

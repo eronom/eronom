@@ -591,21 +591,25 @@ export class HMRClient {
       }
     });
 
-    // 2. Update <style id="__erm_styles"> if inline
-    const inlineStyle = document.getElementById('__erm_styles') || document.getElementById('__erm_scoped_styles');
-    if (inlineStyle && !updated) {
-      fetch(location.href, { headers: { 'Accept': 'text/html' } })
-        .then(r => r.text())
-        .then(html => {
-          const doc = new DOMParser().parseFromString(html, 'text/html');
-          const newInline = doc.getElementById('__erm_styles');
-          if (newInline && inlineStyle) {
-            inlineStyle.textContent = newInline.textContent;
-            updated = true;
-          }
-        })
-        .catch(() => {});
-    }
+    // 2. Update <style id="__erm_styles"> and <style id="__erm_scoped_styles">
+    fetch(location.href, { headers: { 'Accept': 'text/html' } })
+      .then(r => r.text())
+      .then(html => {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const newStyles = doc.getElementById('__erm_styles');
+        const curStyles = document.getElementById('__erm_styles');
+        if (newStyles && curStyles && newStyles.tagName !== 'LINK') {
+          curStyles.textContent = newStyles.textContent;
+          updated = true;
+        }
+        const newScoped = doc.getElementById('__erm_scoped_styles');
+        const curScoped = document.getElementById('__erm_scoped_styles');
+        if (newScoped && curScoped) {
+          curScoped.textContent = newScoped.textContent;
+          updated = true;
+        }
+      })
+      .catch(() => {});
 
     console.log(`[eronom] [css-update] ${cleanPath}`);
   }
@@ -650,8 +654,18 @@ export class HMRClient {
       }
     }
 
-    // Default ERM component boundary behavior:
-    // If the page itself is an ERM document, reload cleanly
+    // ERM Hot Module Replacement boundary:
+    // If runtime HMR handler is available, hot-update the ERM component/page in-place!
+    if (typeof window !== 'undefined' && typeof window.__erm_apply_hmr === 'function') {
+      try {
+        await window.__erm_apply_hmr(targetPath, timestamp);
+        return;
+      } catch (err) {
+        console.error(`[eronom] [hmr] Error during ERM hot update:`, err);
+      }
+    }
+
+    // Fallback only if no ERM HMR handler is registered
     console.log(`[eronom] [full-reload] ${targetPath}`);
     location.reload();
   }
@@ -660,6 +674,11 @@ export class HMRClient {
 // --- 4. Initialization & Export ---
 
 export const hmrClient = new HMRClient();
+
+if (typeof window !== 'undefined') {
+  window.hmrClient = hmrClient;
+  window.hmr = hmrClient;
+}
 
 export function createHotContext(ownerPath) {
   return hmrClient.createContext(ownerPath);
