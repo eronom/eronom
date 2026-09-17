@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -191,6 +192,12 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         }
     }
 
+    let initial_port = port;
+    let port = find_available_port(initial_port);
+    if port != initial_port {
+        println!("Port {} is already in use, trying port {} instead.", initial_port, port);
+    }
+
     println!("{} server running at http://localhost:{}", if is_prod { "Production" } else { "Dev" }, port);
 
     unsafe {
@@ -199,3 +206,61 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+pub fn is_port_in_use(port: u16) -> bool {
+    let v4 = SocketAddr::from(([127, 0, 0, 1], port));
+    if TcpStream::connect_timeout(&v4, Duration::from_millis(50)).is_ok() {
+        return true;
+    }
+
+    let v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port));
+    if TcpStream::connect_timeout(&v6, Duration::from_millis(50)).is_ok() {
+        return true;
+    }
+
+    if TcpListener::bind(("0.0.0.0", port)).is_err() {
+        return true;
+    }
+
+    if TcpListener::bind(("127.0.0.1", port)).is_err() {
+        return true;
+    }
+
+    false
+}
+
+pub fn find_available_port(start_port: u16) -> u16 {
+    if start_port == 0 {
+        return 0;
+    }
+    let mut port = start_port;
+    while is_port_in_use(port) {
+        if let Some(next) = port.checked_add(1) {
+            port = next;
+        } else {
+            break;
+        }
+    }
+    port
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_available_port_increments_when_busy() {
+        let initial_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = initial_listener.local_addr().unwrap().port();
+
+        assert!(is_port_in_use(port));
+
+        let next_port = find_available_port(port);
+        assert!(next_port > port);
+        assert!(!is_port_in_use(next_port));
+
+        drop(initial_listener);
+    }
+}
+
+
