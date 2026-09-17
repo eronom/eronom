@@ -287,27 +287,6 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
 
     let base_path = fs::canonicalize(dir)?;
 
-    // Parse ermcss config and compile if enabled
-    let ermcss_cfg = crate::compiler::parse_ermcss_config(&base_path);
-    if ermcss_cfg.enabled {
-        println!("[ermcss] Compiling project styles...");
-        match crate::compiler::compile_project_ermcss(&base_path, &ermcss_cfg.content) {
-            Ok(css) => {
-                crate::compiler::set_global_ermcss(css.clone());
-                println!("[ermcss] Styles compiled successfully.");
-                let css_dir = build_dir.join("css");
-                if !css_dir.exists() {
-                    fs::create_dir_all(&css_dir)?;
-                }
-                fs::write(css_dir.join("global.css"), css)?;
-            }
-            Err(e) => {
-                eprintln!("[Warning] Failed to compile global ermcss styles: {}", e);
-            }
-        }
-    } else {
-        crate::compiler::set_global_ermcss(String::new());
-    }
 
     let mut routes = Vec::new();
     let mut api_routes = Vec::new();

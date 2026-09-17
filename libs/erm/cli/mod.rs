@@ -33,10 +33,9 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             force,
             git,
             no_commit,
-            ermcss,
             offline,
         } => {
-            init_project(&dir, template, branch, force, git, no_commit, ermcss, offline)?;
+            init_project(&dir, template, branch, force, git, no_commit, offline)?;
         }
         Commands::Build {
             mut dir,

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use crate::eval::{self, ErmEval};
 use super::utils::*;
-use super::css::get_global_ermcss;
 use super::transform::{is_function_template, preprocess_function_template};
 use super::tree::{process_component_tree, ProcessResult};
 
@@ -258,22 +257,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         }
     }
 
-    // Inject precompiled global ermcss styles if populated
-    let mut has_global_ermcss = false;
-    if let Ok(global_css) = get_global_ermcss() {
-        if !global_css.trim().is_empty() {
-            if is_prod {
-                has_global_ermcss = true;
-            } else {
-                result.styles.push(global_css);
-            }
-        }
-    }
-
     let mut style_assets = String::new();
-    if has_global_ermcss {
-        style_assets.push_str("\n<link rel=\"stylesheet\" id=\"__erm_styles\" href=\"/css/global.css\">\n");
-    }
     if !result.styles.is_empty() {
         style_assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
         for s in &result.styles { style_assets.push_str(s); style_assets.push('\n'); }

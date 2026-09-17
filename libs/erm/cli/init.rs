@@ -59,7 +59,6 @@ pub fn init_project(
     force: bool,
     git: bool,
     no_commit: bool,
-    ermcss: bool,
     offline: bool,
 ) -> anyhow::Result<()> {
     let start_time = std::time::Instant::now();
@@ -140,12 +139,6 @@ pub fn init_project(
                     );
                 }
 
-                if ermcss {
-                    let ermcss_src = temp_dir.join("libs/ermcss");
-                    if ermcss_src.exists() {
-                        let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
-                    }
-                }
                 let _ = fs::remove_dir_all(&temp_dir);
             }
         } else {
@@ -187,30 +180,6 @@ pub fn init_project(
 
                 copy_dir_all(&temp_dir, dst_dir)?;
 
-                if ermcss {
-                    let eronom_temp_dir_name = format!(
-                        "eronom-ermcss-{}",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis())
-                            .unwrap_or(0)
-                    );
-                    let eronom_temp_dir = std::env::temp_dir().join(eronom_temp_dir_name);
-                    let eronom_temp_dir_str = eronom_temp_dir.to_str().unwrap_or("");
-                    let clone_args = vec!["--depth", "1", "https://github.com/eronom/eronom.git", eronom_temp_dir_str];
-
-                    if run_git_clone_with_spinner(
-                        &clone_args,
-                        "Initializing an eronom project...",
-                        "Failed to clone ermcss framework",
-                    ).is_ok() {
-                        let ermcss_src = eronom_temp_dir.join("libs/ermcss");
-                        if ermcss_src.exists() {
-                            let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
-                        }
-                    }
-                    let _ = fs::remove_dir_all(&eronom_temp_dir);
-                }
 
                 let _ = fs::remove_dir_all(&temp_dir);
             }
@@ -219,12 +188,6 @@ pub fn init_project(
         // When --offline is specified and no template, use local libs/init
         if let Some(init_path) = find_local_init() {
             copy_dir_all(&init_path, dst_dir)?;
-            if ermcss {
-                let ermcss_cand = init_path.parent().unwrap_or(Path::new("")).join("ermcss");
-                if ermcss_cand.exists() {
-                    let _ = copy_dir_all(&ermcss_cand, &dst_dir.join("ermcss"));
-                }
-            }
         } else {
             anyhow::bail!(
                 "Could not find local template files in `libs/init`. Run without `--offline` to clone from GitHub."
@@ -253,12 +216,6 @@ pub fn init_project(
             let repo_init = temp_dir.join("libs/init");
             copy_dir_all(&repo_init, dst_dir)?;
 
-            if ermcss {
-                let ermcss_src = temp_dir.join("libs/ermcss");
-                if ermcss_src.exists() {
-                    let _ = copy_dir_all(&ermcss_src, &dst_dir.join("ermcss"));
-                }
-            }
             let _ = fs::remove_dir_all(&temp_dir);
         } else if let Some(init_path) = find_local_init() {
             // Fallback to local init if clone fails
@@ -270,19 +227,6 @@ pub fn init_project(
         }
     }
 
-    if ermcss {
-        let toml_path = dst_dir.join("eronom.toml");
-        let mut toml_content = if toml_path.exists() {
-            fs::read_to_string(&toml_path).unwrap_or_default()
-        } else {
-            String::new()
-        };
-        
-        if !toml_content.contains("[ermcss]") {
-            toml_content.push_str("\n[package]\nermcss = true\n\n[ermcss]\ncontent = [\n    \"./app/**/*.erm\",\n    \"./pages/**/*.erm\",\n    \"./components/**/*.erm\"\n]\n\n[ermcss.theme.extend.colors]\nprimary = \"#2563eb\"\n");
-            let _ = fs::write(&toml_path, toml_content);
-        }
-    }
 
     if git {
         let mut git_init = std::process::Command::new("git");

@@ -575,7 +575,7 @@ export class HMRClient {
    */
   updateCss(rawPath, timestamp) {
     const cleanPath = rawPath.split('?')[0];
-    const isGlobalErmCss = cleanPath.includes('eronom.toml') || cleanPath.includes('global') || cleanPath.endsWith('.css');
+    const isGlobalCss = cleanPath.includes('eronom.toml') || cleanPath.includes('global') || cleanPath.endsWith('.css');
 
     let updated = false;
 
@@ -583,7 +583,7 @@ export class HMRClient {
     const links = document.querySelectorAll('link[rel="stylesheet"]');
     links.forEach((link) => {
       const href = link.getAttribute('href');
-      if (href && (href.includes(cleanPath) || (isGlobalErmCss && href.includes('ermcss')))) {
+      if (href && (href.includes(cleanPath) || (isGlobalCss && href.includes('global')))) {
         const url = new URL(link.href, location.href);
         url.searchParams.set('t', String(timestamp));
         link.href = url.href;

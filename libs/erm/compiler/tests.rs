@@ -1,51 +1,5 @@
 use super::*;
 
-#[test]
-fn test_ermcss_utility_compilation() {
-    let content = r#"
-    <div class="flex items-center justify-center min-h-screen bg-gray-100">
-        <h2 class="text-2xl font-bold text-gray-800">Hello Eronom</h2>
-    </div>
-    "#;
-    let params = std::collections::HashMap::new();
-    
-    let classes = vec![
-        "flex".to_string(),
-        "items-center".to_string(),
-        "justify-center".to_string(),
-        "min-h-screen".to_string(),
-        "bg-gray-100".to_string(),
-        "text-2xl".to_string(),
-        "font-bold".to_string(),
-        "text-gray-800".to_string(),
-    ];
-    if let Some(compiler_path) = find_ermcss_path(".") {
-        let css = run_ermcss_compiler(&compiler_path, std::path::Path::new("."), &classes).unwrap();
-        set_global_ermcss(css);
-    }
-    
-    let res = process_erm_component(".", content, false, &params).unwrap();
-    println!("ERMCSS COMPILATION RES:\n{}", res);
-    
-    assert!(res.contains(".flex { display: flex; }"));
-    assert!(res.contains(".items-center { align-items: center; }"));
-    assert!(res.contains(".justify-center { justify-content: center; }"));
-    assert!(res.contains(".min-h-screen { min-height: 100vh; }"));
-    assert!(res.contains(".bg-gray-100 { background-color: #f3f4f6; }"));
-    assert!(res.contains(".text-2xl { font-size: 1.5rem; line-height: 2rem; }"));
-    assert!(res.contains(".font-bold { font-weight: 700; }"));
-    assert!(res.contains(".text-gray-800 { color: #1f2937; }"));
-}
-
-#[test]
-fn test_testp_ermcss_compilation() {
-    let base_path = std::path::Path::new("testp");
-    let cfg = parse_ermcss_config(base_path);
-    println!("CFG ENABLED: {}, GLOBS: {:?}", cfg.enabled, cfg.content);
-    let res = compile_project_ermcss(base_path, &cfg.content).unwrap();
-    println!("COMPILED CSS LENGTH: {}", res.len());
-    println!("COMPILED CSS:\n{}", res);
-}
 
 #[test]
 fn test_function_based_template() {

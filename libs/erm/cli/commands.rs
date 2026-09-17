@@ -48,10 +48,6 @@ pub enum Commands {
         #[arg(long, requires = "git")]
         no_commit: bool,
 
-        /// Add ermcss capability for the project
-        #[arg(long)]
-        ermcss: bool,
-
         /// Initialize using local template files without cloning from GitHub
         #[arg(long)]
         offline: bool,

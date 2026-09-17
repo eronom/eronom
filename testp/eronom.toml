@@ -1,14 +1,3 @@
 [server]
 port = 3000
 
-[package]
-ermcss = true
-
-[ermcss]
-content = [
-    "./app/**/*.erm",
-    "./pages/**/*.erm"
-]
-
-[ermcss.theme.extend.colors]
-primary = "#2563eb"
