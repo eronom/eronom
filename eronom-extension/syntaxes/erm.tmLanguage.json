@@ -28,6 +28,9 @@
       "include": "#tag-close"
     },
     {
+      "include": "#fragment"
+    },
+    {
       "include": "#tag-open"
     },
     {
@@ -76,7 +79,7 @@
     },
     "top-level-script": {
       "name": "meta.embedded.block.javascript",
-      "begin": "\\A",
+      "begin": "\\A(?=\\s*(?:export\\b|import\\b|let\\b|const\\b|var\\b|fn\\b|function\\b|class\\b|struct\\b|interface\\b|//|/\\*))",
       "end": "(?m)^(?=\\s*(?:\\<|return\\b|if\\s|for\\s))",
       "patterns": [
         {
@@ -170,7 +173,7 @@
       "patterns": [
         {
           "name": "keyword.control.er",
-          "match": "\\b(if|else\\s+if|else|for|in)\\b"
+          "match": "\\b(if|else\\s+if|else|for|in|return)\\b"
         }
       ]
     },
@@ -202,6 +205,21 @@
         },
         "2": {
           "name": "entity.name.tag.html"
+        },
+        "3": {
+          "name": "punctuation.definition.tag.end.html"
+        }
+      },
+      "name": "meta.tag.other.html"
+    },
+    "fragment": {
+      "match": "(<)(/)?(>)",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.tag.begin.html"
+        },
+        "2": {
+          "name": "punctuation.definition.tag.begin.html"
         },
         "3": {
           "name": "punctuation.definition.tag.end.html"

@@ -67,4 +67,30 @@ describe("Eronom Extension Configuration Tests", () => {
       "entity.name.tag.html"
     );
   });
+
+  test("ERM grammar top-level-script does not swallow markup on line 1", () => {
+    const ermGrammarPath = path.join(extensionDir, "syntaxes", "erm.tmLanguage.json");
+    const ermGrammar = JSON.parse(fs.readFileSync(ermGrammarPath, "utf8"));
+    const topLevelScript = ermGrammar.repository["top-level-script"];
+    assert.ok(topLevelScript, "top-level-script pattern should exist");
+    assert.notStrictEqual(
+      topLevelScript.begin,
+      "\\A",
+      "top-level-script should not unconditionally match \\A without lookahead"
+    );
+    assert.ok(
+      topLevelScript.begin.includes("export") || topLevelScript.begin.includes("(?="),
+      "top-level-script should verify script keywords before starting"
+    );
+  });
+
+  test("ERM grammar includes fragment pattern and return in control-blocks", () => {
+    const ermGrammarPath = path.join(extensionDir, "syntaxes", "erm.tmLanguage.json");
+    const ermGrammar = JSON.parse(fs.readFileSync(ermGrammarPath, "utf8"));
+    assert.ok(ermGrammar.repository["fragment"], "fragment pattern should exist");
+    assert.ok(
+      ermGrammar.repository["control-blocks"].patterns[0].match.includes("return"),
+      "control-blocks should match return keyword"
+    );
+  });
 });
