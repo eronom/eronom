@@ -1,24 +1,22 @@
-<Box as="main" p="xl" bg="canvas" width="full" style="min-height: 100vh; display: flex; align-items: center; justify-content: center;">
-    <Stack gap="xl" align="center" style="max-width: 38rem; text-align: center;">
-        <Card style="align-items: center; padding: 2.5rem 2rem;">
-            <Stack gap="md" align="center">
-                <Badge status="info">Eronom ⚡ v0.9</Badge>
-                <Text as="h1" variant="title-lg" weight="bold" color="primary">
-                    Get started by editing<br />
-                    <code style="border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.85em; background-color: var(--eds-bg-muted); color: var(--eds-text-primary); font-family: var(--font-mono);">app/pages/index.erm</code>
-                </Text>
-                <Text variant="body" color="secondary">
-                    Save and see changes instantly. Powered by the Eronom Design System (EDS) with compiler-enforced intent tokens and native dual-theme support.
-                </Text>
-                <Cluster gap="md" align="center" style="margin-top: 0.75rem;">
-                    <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="primary" size="md">
-                        Documentation &rarr;
-                    </Button>
-                    <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="secondary" size="md">
-                        Explore Templates
-                    </Button>
-                </Cluster>
-            </Stack>
-        </Card>
-    </Stack>
-</Box>
+<Center as="main" screen p="xl" bg="canvas">
+    <Card maxW="md" p="2xl">
+        <Stack gap="md" align="center" style="text-align: center;">
+            <Badge status="info">Eronom ⚡ v0.9</Badge>
+            <Text as="h1" variant="title-lg" weight="bold" color="primary">
+                Get started by editing<br />
+                <code style="border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.85em; background-color: var(--eds-bg-muted); color: var(--eds-text-primary); font-family: var(--font-mono);">app/pages/index.erm</code>
+            </Text>
+            <Text variant="body" color="secondary">
+                Save and see changes instantly. Powered by the Eronom Design System (EDS) with compiler-enforced intent tokens and native dual-theme support.
+            </Text>
+            <Cluster gap="md" align="center" style="margin-top: 0.75rem;">
+                <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="primary" size="md">
+                    Documentation &rarr;
+                </Button>
+                <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="secondary" size="md">
+                    Explore Templates
+                </Button>
+            </Cluster>
+        </Stack>
+    </Card>
+</Center>

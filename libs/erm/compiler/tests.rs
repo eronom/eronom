@@ -138,10 +138,11 @@ fn test_index_page_compilation() {
     let tree_res = process_component_tree("libs/init/app/pages/index.erm", &content, &mut visited, None, &params, &mut if_counter, &mut for_counter, &mut state_var_sources).unwrap();
     assert!(!tree_res.html.is_empty());
     let res = process_erm_component("libs/init/app/pages/index.erm", &content, true, &params).unwrap();
-    assert!(!res.is_empty());
     assert!(res.contains("Get started by editing"));
     assert!(res.contains("app/pages/index.erm"));
     assert!(res.contains("Documentation"));
+    assert!(res.contains("class=\"eds-box eds-p-xl eds-bg-canvas eds-center eds-w-full eds-min-h-screen\""));
+    assert!(res.contains("class=\"eds-card eds-p-2xl eds-max-w-md\""));
 }
 
 #[test]
@@ -379,6 +380,34 @@ fn test_eds_demo_page_compilation() {
         assert!(res.contains("class=\"eds-badge"));
         assert!(res.contains("color-scheme: light dark;"));
     }
+}
+
+#[test]
+fn test_eds_center_and_layout_enhancements() {
+    let content = r#"
+    <Center as="main" screen p="xl" bg="canvas">
+        <Card maxW="md" p="2xl">
+            <Stack gap="md" align="center">
+                <Badge status="info">Eronom ⚡ v0.9</Badge>
+                <Text as="h1" variant="title-lg" weight="bold" color="primary">Title</Text>
+            </Stack>
+        </Card>
+    </Center>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    println!("EDS CENTER COMPILED RES:\n{}", res);
+
+    assert!(res.contains("<main"));
+    assert!(res.contains("class=\"eds-box eds-p-xl eds-bg-canvas eds-center eds-w-full eds-min-h-screen\""));
+    assert!(res.contains("class=\"eds-card eds-p-2xl eds-max-w-md\""));
+    assert!(res.contains("class=\"eds-box eds-col eds-gap-md eds-align-center\""));
+    assert!(res.contains("class=\"eds-badge eds-badge-info\""));
+    assert!(res.contains("class=\"eds-text eds-variant-title-lg eds-color-primary eds-weight-bold\""));
+    assert!(res.contains("</main>"));
+    assert!(res.contains(".eds-center { display: flex; align-items: center; justify-content: center; }"));
+    assert!(res.contains(".eds-min-h-screen { min-height: 100dvh; }"));
+    assert!(res.contains(".eds-max-w-md { max-width: 38rem; width: 100%; }"));
 }
 
 

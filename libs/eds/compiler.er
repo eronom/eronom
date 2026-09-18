@@ -21,7 +21,9 @@ let allowed_as_elements = [
   "div", "section", "nav", "main", "header", "footer", "article", "aside", "ul", "li",
   "p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "code", "a", "button", "form"
 ]
-let allowed_primitives = ["Box", "Text", "Stack", "Cluster", "Card", "Button", "Badge"]
+let allowed_primitives = ["Box", "Text", "Stack", "Cluster", "Card", "Button", "Badge", "Center"]
+let allowed_max_widths = ["xs", "sm", "md", "lg", "xl", "2xl", "3xl", "full"]
+let allowed_min_heights = ["screen", "full", "auto"]
 
 export const isPrimitive = (tagName) => {
   return allowed_primitives.includes(tagName)
@@ -83,6 +85,18 @@ export const getShadow = (k) => {
   if (k == "sm") { return "0 1px 2px 0 rgba(0, 0, 0, 0.05)" }
   if (k == "md") { return "0 4px 6px -1px rgba(0, 0, 0, 0.1)" }
   if (k == "lg") { return "0 10px 15px -3px rgba(0, 0, 0, 0.1)" }
+  return "none"
+}
+
+export const getMaxWidthValue = (k) => {
+  if (k == "xs") { return "20rem" }
+  if (k == "sm") { return "24rem" }
+  if (k == "md") { return "38rem" }
+  if (k == "lg") { return "48rem" }
+  if (k == "xl") { return "64rem" }
+  if (k == "2xl") { return "80rem" }
+  if (k == "3xl") { return "96rem" }
+  if (k == "full") { return "100%" }
   return "none"
 }
 
@@ -160,6 +174,7 @@ export const generateRootCss = (projectDir) => {
 
   // Box layout helpers
   out = out + ".eds-box " + LBRACE + " box-sizing: border-box; " + RBRACE + "\n"
+  out = out + ".eds-center " + LBRACE + " display: flex; align-items: center; justify-content: center; " + RBRACE + "\n"
   out = out + ".eds-row " + LBRACE + " display: flex; flex-direction: row; " + RBRACE + "\n"
   out = out + ".eds-col " + LBRACE + " display: flex; flex-direction: column; " + RBRACE + "\n"
   out = out + ".eds-wrap " + LBRACE + " flex-wrap: wrap; " + RBRACE + "\n"
@@ -177,6 +192,28 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-justify-between " + LBRACE + " justify-content: space-between; " + RBRACE + "\n"
   out = out + ".eds-justify-around " + LBRACE + " justify-content: space-around; " + RBRACE + "\n"
 
+  // High-level UI Components (placed before utility classes so utilities override defaults)
+  out = out + ".eds-card " + LBRACE + " display: flex; flex-direction: column; background-color: var(--eds-bg-card); border: 1px solid var(--eds-border-subtle); border-radius: var(--eds-radius-lg); box-shadow: var(--eds-shadow-sm); padding: var(--eds-space-lg); box-sizing: border-box; " + RBRACE + "\n"
+  out = out + ".eds-btn " + LBRACE + " display: inline-flex; align-items: center; justify-content: center; gap: var(--eds-space-xs); font-family: inherit; font-weight: 600; border-radius: var(--eds-radius-md); border: 1px solid transparent; cursor: pointer; transition: background-color 0.15s ease, opacity 0.15s ease; box-sizing: border-box; text-decoration: none; " + RBRACE + "\n"
+  out = out + ".eds-btn-primary " + LBRACE + " background-color: var(--eds-bg-primary); color: var(--eds-text-on-primary); " + RBRACE + "\n"
+  out = out + ".eds-btn-primary:hover " + LBRACE + " opacity: 0.9; " + RBRACE + "\n"
+  out = out + ".eds-btn-secondary " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-primary); border-color: var(--eds-border-subtle); " + RBRACE + "\n"
+  out = out + ".eds-btn-secondary:hover " + LBRACE + " background-color: var(--eds-bg-card); " + RBRACE + "\n"
+  out = out + ".eds-btn-subtle " + LBRACE + " background-color: transparent; color: var(--eds-text-secondary); " + RBRACE + "\n"
+  out = out + ".eds-btn-subtle:hover " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-primary); " + RBRACE + "\n"
+  out = out + ".eds-btn-danger " + LBRACE + " background-color: var(--eds-bg-danger); color: var(--eds-text-on-primary); " + RBRACE + "\n"
+  out = out + ".eds-btn-danger:hover " + LBRACE + " opacity: 0.9; " + RBRACE + "\n"
+  out = out + ".eds-btn-sm " + LBRACE + " padding: 0.25rem 0.5rem; font-size: 0.75rem; " + RBRACE + "\n"
+  out = out + ".eds-btn-md " + LBRACE + " padding: 0.5rem 1rem; font-size: 0.875rem; " + RBRACE + "\n"
+  out = out + ".eds-btn-lg " + LBRACE + " padding: 0.75rem 1.25rem; font-size: 1rem; " + RBRACE + "\n"
+
+  out = out + ".eds-badge " + LBRACE + " display: inline-flex; align-items: center; font-size: 0.75rem; font-weight: 600; padding: 0.125rem 0.5rem; border-radius: var(--eds-radius-full); box-sizing: border-box; " + RBRACE + "\n"
+  out = out + ".eds-badge-default " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-secondary); " + RBRACE + "\n"
+  out = out + ".eds-badge-success " + LBRACE + " background-color: rgba(34, 197, 94, 0.15); color: var(--eds-text-success); " + RBRACE + "\n"
+  out = out + ".eds-badge-warning " + LBRACE + " background-color: rgba(234, 179, 8, 0.15); color: #d97706; " + RBRACE + "\n"
+  out = out + ".eds-badge-danger " + LBRACE + " background-color: rgba(239, 68, 68, 0.15); color: var(--eds-text-danger); " + RBRACE + "\n"
+  out = out + ".eds-badge-info " + LBRACE + " background-color: rgba(59, 130, 246, 0.15); color: var(--eds-bg-primary); " + RBRACE + "\n"
+
   // Widths & Heights
   out = out + ".eds-w-full " + LBRACE + " width: 100%; " + RBRACE + "\n"
   out = out + ".eds-w-screen " + LBRACE + " width: 100vw; " + RBRACE + "\n"
@@ -186,6 +223,15 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-h-full " + LBRACE + " height: 100%; " + RBRACE + "\n"
   out = out + ".eds-h-screen " + LBRACE + " height: 100vh; " + RBRACE + "\n"
   out = out + ".eds-h-auto " + LBRACE + " height: auto; " + RBRACE + "\n"
+
+  out = out + ".eds-min-h-screen " + LBRACE + " min-height: 100dvh; " + RBRACE + "\n"
+  out = out + ".eds-min-h-full " + LBRACE + " min-height: 100%; " + RBRACE + "\n"
+  out = out + ".eds-min-h-auto " + LBRACE + " min-height: auto; " + RBRACE + "\n"
+
+  // Max-widths
+  for k in allowed_max_widths {
+    out = out + ".eds-max-w-" + k + " " + LBRACE + " max-width: " + getMaxWidthValue(k) + "; width: 100%; " + RBRACE + "\n"
+  }
 
   // Gaps
   for k in allowed_spacings {
@@ -252,28 +298,6 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-text-right " + LBRACE + " text-align: right; " + RBRACE + "\n"
   out = out + ".eds-truncate " + LBRACE + " overflow: hidden; text-overflow: ellipsis; white-space: nowrap; " + RBRACE + "\n"
 
-  // High-level UI Components
-  out = out + ".eds-card " + LBRACE + " display: flex; flex-direction: column; background-color: var(--eds-bg-card); border: 1px solid var(--eds-border-subtle); border-radius: var(--eds-radius-lg); box-shadow: var(--eds-shadow-sm); padding: var(--eds-space-lg); box-sizing: border-box; " + RBRACE + "\n"
-  out = out + ".eds-btn " + LBRACE + " display: inline-flex; align-items: center; justify-content: center; gap: var(--eds-space-xs); font-family: inherit; font-weight: 600; border-radius: var(--eds-radius-md); border: 1px solid transparent; cursor: pointer; transition: background-color 0.15s ease, opacity 0.15s ease; box-sizing: border-box; text-decoration: none; " + RBRACE + "\n"
-  out = out + ".eds-btn-primary " + LBRACE + " background-color: var(--eds-bg-primary); color: var(--eds-text-on-primary); " + RBRACE + "\n"
-  out = out + ".eds-btn-primary:hover " + LBRACE + " opacity: 0.9; " + RBRACE + "\n"
-  out = out + ".eds-btn-secondary " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-primary); border-color: var(--eds-border-subtle); " + RBRACE + "\n"
-  out = out + ".eds-btn-secondary:hover " + LBRACE + " background-color: var(--eds-bg-card); " + RBRACE + "\n"
-  out = out + ".eds-btn-subtle " + LBRACE + " background-color: transparent; color: var(--eds-text-secondary); " + RBRACE + "\n"
-  out = out + ".eds-btn-subtle:hover " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-primary); " + RBRACE + "\n"
-  out = out + ".eds-btn-danger " + LBRACE + " background-color: var(--eds-bg-danger); color: var(--eds-text-on-primary); " + RBRACE + "\n"
-  out = out + ".eds-btn-danger:hover " + LBRACE + " opacity: 0.9; " + RBRACE + "\n"
-  out = out + ".eds-btn-sm " + LBRACE + " padding: 0.25rem 0.5rem; font-size: 0.75rem; " + RBRACE + "\n"
-  out = out + ".eds-btn-md " + LBRACE + " padding: 0.5rem 1rem; font-size: 0.875rem; " + RBRACE + "\n"
-  out = out + ".eds-btn-lg " + LBRACE + " padding: 0.75rem 1.25rem; font-size: 1rem; " + RBRACE + "\n"
-
-  out = out + ".eds-badge " + LBRACE + " display: inline-flex; align-items: center; font-size: 0.75rem; font-weight: 600; padding: 0.125rem 0.5rem; border-radius: var(--eds-radius-full); box-sizing: border-box; " + RBRACE + "\n"
-  out = out + ".eds-badge-default " + LBRACE + " background-color: var(--eds-bg-muted); color: var(--eds-text-secondary); " + RBRACE + "\n"
-  out = out + ".eds-badge-success " + LBRACE + " background-color: rgba(34, 197, 94, 0.15); color: var(--eds-text-success); " + RBRACE + "\n"
-  out = out + ".eds-badge-warning " + LBRACE + " background-color: rgba(234, 179, 8, 0.15); color: #d97706; " + RBRACE + "\n"
-  out = out + ".eds-badge-danger " + LBRACE + " background-color: rgba(239, 68, 68, 0.15); color: var(--eds-text-danger); " + RBRACE + "\n"
-  out = out + ".eds-badge-info " + LBRACE + " background-color: rgba(59, 130, 246, 0.15); color: var(--eds-bg-primary); " + RBRACE + "\n"
-
   return out
 }
 
@@ -281,7 +305,7 @@ export const validateTag = (tagName, attrs, file, line) => {
   if (attrs == null) { return null }
   let keys = attrs.keys()
 
-  if (tagName == "Box" or tagName == "Stack" or tagName == "Cluster") {
+  if (tagName == "Box" or tagName == "Stack" or tagName == "Cluster" or tagName == "Center") {
     for key in keys {
       let val = cleanAttrVal(attrs[key])
       if (key == "p" or key == "px" or key == "py" or key == "pt" or key == "pb" or key == "pl" or key == "pr" or key == "gap") {
@@ -316,9 +340,56 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_directions.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid direction token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_directions)
         }
+      } else if (key == "maxW") {
+        if (!allowed_max_widths.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid maxW token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_max_widths)
+        }
+      } else if (key == "minH") {
+        if (!allowed_min_heights.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid minH token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_min_heights)
+        }
+      } else if (key == "screen" or key == "center") {
+        // Boolean or flag props
       } else if (key == "as") {
         if (!allowed_as_elements.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_as_elements)
+        }
+      }
+    }
+  } else if (tagName == "Card") {
+    for key in keys {
+      let val = cleanAttrVal(attrs[key])
+      if (key == "p" or key == "px" or key == "py" or key == "pt" or key == "pb" or key == "pl" or key == "pr" or key == "gap") {
+        if (!allowed_spacings.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_spacings)
+        }
+      } else if (key == "bg") {
+        if (!allowed_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid background color token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_colors)
+        }
+      } else if (key == "border") {
+        if (!allowed_borders.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid border token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_borders)
+        }
+      } else if (key == "radius") {
+        if (!allowed_radii.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid radius token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_radii)
+        }
+      } else if (key == "shadow") {
+        if (!allowed_shadows.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid shadow token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_shadows)
+        }
+      } else if (key == "align") {
+        if (!allowed_aligns.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid align token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_aligns)
+        }
+      } else if (key == "maxW") {
+        if (!allowed_max_widths.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid maxW token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_max_widths)
+        }
+      } else if (key == "as") {
+        if (!allowed_as_elements.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
         }
       }
     }
@@ -395,13 +466,24 @@ export const transformPrimitive = (tagName, attrs) => {
 
     if (attrs.hasOwnProperty("width")) { classes.push("eds-w-" + cleanAttrVal(attrs["width"])) }
     if (attrs.hasOwnProperty("height")) { classes.push("eds-h-" + cleanAttrVal(attrs["height"])) }
+    if (attrs.hasOwnProperty("minH")) { classes.push("eds-min-h-" + cleanAttrVal(attrs["minH"])) }
+    if (attrs.hasOwnProperty("maxW")) { classes.push("eds-max-w-" + cleanAttrVal(attrs["maxW"])) }
+
+    if (attrs.hasOwnProperty("center")) {
+      classes.push("eds-center")
+    }
+    if (attrs.hasOwnProperty("screen")) {
+      classes.push("eds-w-full")
+      classes.push("eds-min-h-screen")
+    }
 
     let passthrough = ""
     for k in keys {
       if (k == "as" or k == "direction" or k == "gap" or k == "align" or k == "justify" or
           k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
           k == "bg" or k == "border" or k == "borderTop" or k == "borderBottom" or k == "borderLeft" or k == "borderRight" or
-          k == "radius" or k == "shadow" or k == "width" or k == "height") {
+          k == "radius" or k == "shadow" or k == "width" or k == "height" or
+          k == "center" or k == "screen" or k == "minH" or k == "maxW") {
         // Skip handled layout attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -415,6 +497,15 @@ export const transformPrimitive = (tagName, attrs) => {
 
     let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
     return [openTag, htmlTag]
+  }
+
+  if (tagName == "Center") {
+    let boxAttrs = {}
+    for k in keys {
+      boxAttrs[k] = attrs[k]
+    }
+    boxAttrs["center"] = "\"\""
+    return transformPrimitive("Box", boxAttrs)
   }
 
   if (tagName == "Stack") {
@@ -472,11 +563,27 @@ export const transformPrimitive = (tagName, attrs) => {
   if (tagName == "Card") {
     let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "div"
     let classes = ["eds-card"]
-    let passthrough = ""
 
+    if (attrs.hasOwnProperty("p")) { classes.push("eds-p-" + cleanAttrVal(attrs["p"])) }
+    if (attrs.hasOwnProperty("px")) { classes.push("eds-px-" + cleanAttrVal(attrs["px"])) }
+    if (attrs.hasOwnProperty("py")) { classes.push("eds-py-" + cleanAttrVal(attrs["py"])) }
+    if (attrs.hasOwnProperty("pt")) { classes.push("eds-pt-" + cleanAttrVal(attrs["pt"])) }
+    if (attrs.hasOwnProperty("pb")) { classes.push("eds-pb-" + cleanAttrVal(attrs["pb"])) }
+    if (attrs.hasOwnProperty("pl")) { classes.push("eds-pl-" + cleanAttrVal(attrs["pl"])) }
+    if (attrs.hasOwnProperty("pr")) { classes.push("eds-pr-" + cleanAttrVal(attrs["pr"])) }
+    if (attrs.hasOwnProperty("gap")) { classes.push("eds-gap-" + cleanAttrVal(attrs["gap"])) }
+    if (attrs.hasOwnProperty("align")) { classes.push("eds-align-" + cleanAttrVal(attrs["align"])) }
+    if (attrs.hasOwnProperty("maxW")) { classes.push("eds-max-w-" + cleanAttrVal(attrs["maxW"])) }
+    if (attrs.hasOwnProperty("bg")) { classes.push("eds-bg-" + cleanAttrVal(attrs["bg"])) }
+    if (attrs.hasOwnProperty("border")) { classes.push("eds-border-" + cleanAttrVal(attrs["border"])) }
+    if (attrs.hasOwnProperty("radius")) { classes.push("eds-radius-" + cleanAttrVal(attrs["radius"])) }
+    if (attrs.hasOwnProperty("shadow")) { classes.push("eds-shadow-" + cleanAttrVal(attrs["shadow"])) }
+
+    let passthrough = ""
     for k in keys {
-      if (k == "as") {
-        // Skip as
+      if (k == "as" or k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
+          k == "gap" or k == "align" or k == "maxW" or k == "bg" or k == "border" or k == "radius" or k == "shadow") {
+        // Skip handled attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
         if (userClass != "") {
