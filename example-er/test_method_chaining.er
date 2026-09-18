@@ -129,7 +129,7 @@ describe("Array Method Chaining", () => {
 describe("Object Introspection Methods", () => {
   test("keys, values, entries, hasOwnProperty", () => {
     let person = {
-      name: "Eronom",
+      name: "Vishnu",
       age: 25,
       city: "Bengaluru"
     }

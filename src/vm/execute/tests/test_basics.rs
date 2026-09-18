@@ -102,8 +102,8 @@ fn test_object() {
 
 #[test]
 fn test_struct() {
-    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Eronom\",\n  age: 25,\n}\nlet val = p.name").unwrap();
-    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Eronom");
+    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\nlet val = p.name").unwrap();
+    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Vishnu");
 }
 
 #[test]
@@ -122,14 +122,14 @@ fn test_struct_type_safety() {
 
 #[test]
 fn test_struct_mutation() {
-    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Eronom\",\n  age: 25,\n}\np.age = 26\nlet val = p.age").unwrap();
+    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\np.age = 26\nlet val = p.age").unwrap();
     assert_eq!(vm.get_global("val").unwrap().as_number(), 26.0);
 }
 
 #[test]
 fn test_struct_methods() {
-    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n  fn printPlayer() {\n    return this.name\n  }\n}\nlet p : Player = {\n  name: \"Eronom\",\n  age: 25,\n}\nlet val = p.printPlayer()").unwrap();
-    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Eronom");
+    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n  fn printPlayer() {\n    return this.name\n  }\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\nlet val = p.printPlayer()").unwrap();
+    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Vishnu");
 }
 
 #[test]
