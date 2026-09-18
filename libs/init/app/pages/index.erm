@@ -1,4 +1,4 @@
-<Center as="main" screen p="xl" bg="canvas">
+<Center as="main" screen p="xl" bg="body">
     <Card maxW="md" p="2xl">
         <Stack gap="md" align="center" style="text-align: center;">
             <Badge status="info">Eronom ⚡ v0.9</Badge>

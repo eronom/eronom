@@ -141,7 +141,7 @@ fn test_index_page_compilation() {
     assert!(res.contains("Get started by editing"));
     assert!(res.contains("app/pages/index.erm"));
     assert!(res.contains("Documentation"));
-    assert!(res.contains("class=\"eds-box eds-p-xl eds-bg-canvas eds-center eds-w-full eds-min-h-screen\""));
+    assert!(res.contains("class=\"eds-box eds-p-xl eds-bg-body eds-center eds-w-full eds-min-h-screen\""));
     assert!(res.contains("class=\"eds-card eds-p-2xl eds-max-w-md\""));
 }
 

@@ -4,7 +4,7 @@ let LBRACE = "\{"
 let RBRACE = "\}"
 
 let allowed_spacings = ["none", "xs", "sm", "md", "lg", "xl", "2xl", "3xl"]
-let allowed_colors = ["canvas", "card", "muted", "overlay", "primary", "danger", "success", "transparent"]
+let allowed_colors = ["body", "canvas", "card", "muted", "overlay", "primary", "danger", "success", "transparent"]
 let allowed_text_colors = ["primary", "secondary", "muted", "on-primary", "danger", "success"]
 let allowed_borders = ["subtle", "strong", "focus", "none"]
 let allowed_radii = ["none", "sm", "md", "lg", "xl", "full"]
@@ -29,7 +29,7 @@ export const isPrimitive = (tagName) => {
   return allowed_primitives.includes(tagName)
 }
 export const getSurfaceColor = (k) => {
-  if (k == "canvas") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(240, 10%, 4%)" } }
+  if (k == "body" or k == "canvas") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(240, 10%, 4%)" } }
   if (k == "card") { return { light: "hsl(0, 0%, 98%)", dark: "hsl(240, 8%, 8%)" } }
   if (k == "muted") { return { light: "hsl(240, 5%, 96%)", dark: "hsl(240, 6%, 12%)" } }
   if (k == "overlay") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(240, 8%, 10%)" } }
