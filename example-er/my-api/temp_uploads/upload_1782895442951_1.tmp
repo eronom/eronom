@@ -49,7 +49,7 @@ Designed for building light and blazing-fast web services, Eronom supports dynam
 
 ### 1. Variables and Print
 ```rust
-let name : string = "Vishnu"
+let name : string = "Eronom"
 const age = 7
 
 print("Hello {name}! You are {age} years old.")

@@ -315,7 +315,7 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         static MIR_COUNT: AtomicUsize = AtomicUsize::new(0);
         let id = MIR_COUNT.fetch_add(1, Ordering::SeqCst);
         let name_str = func.name.as_deref().unwrap_or("anon");
-        let path = format!("/home/vishnus/Downloads/eronom/temp_compiled_{}_{}.mir", id, name_str);
+        let path = format!("/home/Eronoms/Downloads/eronom/temp_compiled_{}_{}.mir", id, name_str);
         let _ = std::fs::write(&path, &mir);
     }
     let c_mir = CString::new(mir).unwrap();

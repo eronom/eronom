@@ -32,7 +32,7 @@ let p: Player = {
         y: 20,
     },
     nameAno : "hey name",
-    name: "vishnu",
+    name: "Eronom",
     age: 25,
 }
 

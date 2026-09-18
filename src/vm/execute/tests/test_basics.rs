@@ -102,8 +102,8 @@ fn test_object() {
 
 #[test]
 fn test_struct() {
-    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\nlet val = p.name").unwrap();
-    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Vishnu");
+    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Eronom\",\n  age: 25,\n}\nlet val = p.name").unwrap();
+    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Eronom");
 }
 
 #[test]
@@ -122,29 +122,29 @@ fn test_struct_type_safety() {
 
 #[test]
 fn test_struct_mutation() {
-    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\np.age = 26\nlet val = p.age").unwrap();
+    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n}\nlet p : Player = {\n  name: \"Eronom\",\n  age: 25,\n}\np.age = 26\nlet val = p.age").unwrap();
     assert_eq!(vm.get_global("val").unwrap().as_number(), 26.0);
 }
 
 #[test]
 fn test_struct_methods() {
-    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n  fn printPlayer() {\n    return this.name\n  }\n}\nlet p : Player = {\n  name: \"Vishnu\",\n  age: 25,\n}\nlet val = p.printPlayer()").unwrap();
-    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Vishnu");
+    let vm = run_code("struct Player {\n  name: string,\n  age: int,\n  fn printPlayer() {\n    return this.name\n  }\n}\nlet p : Player = {\n  name: \"Eronom\",\n  age: 25,\n}\nlet val = p.printPlayer()").unwrap();
+    assert_eq!(vm.get_global("val").unwrap().as_str().unwrap(), "Eronom");
 }
 
 #[test]
 fn test_struct_nested_typecheck() {
-    let code = "struct Position {\n  x: int,\n  y: int,\n}\nstruct Player {\n  pos: Position,\n  name: string,\n}\nlet position : Position = {\n  x: 10,\n  y: 20,\n}\nlet p : Player = {\n  pos: position,\n  name: \"Vishnu\",\n}\nlet val = p.pos.x";
+    let code = "struct Position {\n  x: int,\n  y: int,\n}\nstruct Player {\n  pos: Position,\n  name: string,\n}\nlet position : Position = {\n  x: 10,\n  y: 20,\n}\nlet p : Player = {\n  pos: position,\n  name: \"Eronom\",\n}\nlet val = p.pos.x";
     let vm = run_code(code).unwrap();
     assert_eq!(vm.get_global("val").unwrap().as_number(), 10.0);
 }
 
 #[test]
 fn test_struct_composition() {
-    let code = "struct Position {\n  x: int,\n  y: int,\n  fn printPos() {\n    return this.x\n  }\n}\nstruct Parent {\n  fn getVal() {\n    return 100\n  }\n}\nstruct Player embed Position, Parent {\n  name: string,\n  fn printPlayer() {\n    return this.name\n  }\n  fn getVal() {\n    return super.getVal() + 5\n  }\n}\nlet p : Player = {\n  x: 10,\n  y: 20,\n  name: \"Vishnu\",\n}\nlet val_x = p.printPos()\nlet val_name = p.printPlayer()\nlet val_super = p.getVal()";
+    let code = "struct Position {\n  x: int,\n  y: int,\n  fn printPos() {\n    return this.x\n  }\n}\nstruct Parent {\n  fn getVal() {\n    return 100\n  }\n}\nstruct Player embed Position, Parent {\n  name: string,\n  fn printPlayer() {\n    return this.name\n  }\n  fn getVal() {\n    return super.getVal() + 5\n  }\n}\nlet p : Player = {\n  x: 10,\n  y: 20,\n  name: \"Eronom\",\n}\nlet val_x = p.printPos()\nlet val_name = p.printPlayer()\nlet val_super = p.getVal()";
     let vm = run_code(code).unwrap();
     assert_eq!(vm.get_global("val_x").unwrap().as_number(), 10.0);
-    assert_eq!(vm.get_global("val_name").unwrap().as_str().unwrap(), "Vishnu");
+    assert_eq!(vm.get_global("val_name").unwrap().as_str().unwrap(), "Eronom");
     assert_eq!(vm.get_global("val_super").unwrap().as_number(), 105.0);
 }
 
@@ -174,11 +174,11 @@ fn test_struct_new_constructor_syntax() {
         const d = Dog()
         let val_d_name = d.name
 
-        user1 = Dog("Vishnu")
+        user1 = Dog("Eronom")
         let val_u1_name = user1.name
         let val_u1_age = user1.age
 
-        const user2 = Dog({ name: "vishnu" })
+        const user2 = Dog({ name: "Eronom" })
         let val_u2_name = user2.name
 
         let user3 : Dog = []
@@ -193,9 +193,9 @@ fn test_struct_new_constructor_syntax() {
     "#;
     let vm = run_code(code).unwrap();
     assert!(vm.get_global("val_d_name").unwrap().is_null());
-    assert_eq!(vm.get_global("val_u1_name").unwrap().as_str().unwrap(), "Vishnu");
+    assert_eq!(vm.get_global("val_u1_name").unwrap().as_str().unwrap(), "Eronom");
     assert!(vm.get_global("val_u1_age").unwrap().is_null());
-    assert_eq!(vm.get_global("val_u2_name").unwrap().as_str().unwrap(), "vishnu");
+    assert_eq!(vm.get_global("val_u2_name").unwrap().as_str().unwrap(), "Eronom");
     assert!(vm.get_global("val_u3_name").unwrap().is_null());
     assert!(vm.get_global("val_u4_name").unwrap().is_null());
     assert_eq!(vm.get_global("val_u5_name0").unwrap().as_str().unwrap(), "A");

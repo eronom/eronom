@@ -21,7 +21,11 @@ let allowed_as_elements = [
   "div", "section", "nav", "main", "header", "footer", "article", "aside", "ul", "li",
   "p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "code", "a", "button", "form"
 ]
+let allowed_primitives = ["Box", "Text", "Stack", "Cluster", "Card", "Button", "Badge"]
 
+export const isPrimitive = (tagName) => {
+  return allowed_primitives.includes(tagName)
+}
 export const getSurfaceColor = (k) => {
   if (k == "canvas") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(240, 10%, 4%)" } }
   if (k == "card") { return { light: "hsl(0, 0%, 98%)", dark: "hsl(240, 8%, 8%)" } }

@@ -441,8 +441,8 @@ for i in 1..50000 {
     // --- Bun benchmark ---
     let bun_cmd = if std::process::Command::new("bun").arg("-v").output().is_ok() {
         "bun"
-    } else if std::path::Path::new("/home/vishnus/.bun/bin/bun").exists() {
-        "/home/vishnus/.bun/bin/bun"
+    } else if std::path::Path::new("/home/Eronoms/.bun/bin/bun").exists() {
+        "/home/Eronoms/.bun/bin/bun"
     } else {
         "bun"
     };

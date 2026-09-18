@@ -97,24 +97,7 @@ pub fn scope_html(html: &str, scope_id: &str) -> anyhow::Result<String> {
     Ok(result)
 }
 
-pub static GLOBAL_DESIGN_SYSTEM_CSS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
-
-pub fn set_global_design_system_css(css: String) {
-    if let Ok(mut lock) = GLOBAL_DESIGN_SYSTEM_CSS.lock() {
-        *lock = css;
-    }
-}
-
-pub fn get_global_design_system_css() -> anyhow::Result<String> {
-    if let Ok(lock) = GLOBAL_DESIGN_SYSTEM_CSS.lock() {
-        Ok(lock.clone())
-    } else {
-        anyhow::bail!("Failed to lock GLOBAL_DESIGN_SYSTEM_CSS")
-    }
-}
-
-pub fn parse_design_system_config(base_path: &std::path::Path) -> crate::compiler::design_system::DesignSystemConfig {
-    let mut config = crate::compiler::design_system::DesignSystemConfig::default();
+pub fn is_eds_enabled(base_path: &std::path::Path) -> bool {
     let toml_path = base_path.join("eronom.toml");
     let toml_content_opt = if toml_path.exists() {
         std::fs::read_to_string(&toml_path).ok()
@@ -124,91 +107,13 @@ pub fn parse_design_system_config(base_path: &std::path::Path) -> crate::compile
 
     if let Some(content) = toml_content_opt {
         if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-            if let Some(ds) = toml_val.get("design_system") {
+            if let Some(ds) = toml_val.get("eds").or_else(|| toml_val.get("design_system")) {
                 if let Some(enabled) = ds.get("enabled").and_then(|v| v.as_bool()) {
-                    config.enabled = enabled;
-                }
-                // Custom surface colors
-                if let Some(colors) = ds.get("colors").and_then(|v| v.as_table()) {
-                    for (k, v) in colors {
-                        if let Some(tbl) = v.as_table() {
-                            let light = tbl.get("light").and_then(|x| x.as_str()).unwrap_or("transparent");
-                            let dark = tbl.get("dark").and_then(|x| x.as_str()).unwrap_or(light);
-                            config.colors.insert(
-                                k.clone(),
-                                crate::compiler::design_system::ColorToken {
-                                    light: light.to_string(),
-                                    dark: dark.to_string(),
-                                },
-                            );
-                            config.allowed_colors.insert(k.clone());
-                        } else if let Some(s) = v.as_str() {
-                            config.colors.insert(
-                                k.clone(),
-                                crate::compiler::design_system::ColorToken {
-                                    light: s.to_string(),
-                                    dark: s.to_string(),
-                                },
-                            );
-                            config.allowed_colors.insert(k.clone());
-                        }
-                    }
-                }
-                // Custom text colors
-                if let Some(text_colors) = ds.get("text").and_then(|v| v.as_table()) {
-                    for (k, v) in text_colors {
-                        if let Some(tbl) = v.as_table() {
-                            let light = tbl.get("light").and_then(|x| x.as_str()).unwrap_or("currentColor");
-                            let dark = tbl.get("dark").and_then(|x| x.as_str()).unwrap_or(light);
-                            config.text_colors.insert(
-                                k.clone(),
-                                crate::compiler::design_system::ColorToken {
-                                    light: light.to_string(),
-                                    dark: dark.to_string(),
-                                },
-                            );
-                            config.allowed_text_colors.insert(k.clone());
-                        } else if let Some(s) = v.as_str() {
-                            config.text_colors.insert(
-                                k.clone(),
-                                crate::compiler::design_system::ColorToken {
-                                    light: s.to_string(),
-                                    dark: s.to_string(),
-                                },
-                            );
-                            config.allowed_text_colors.insert(k.clone());
-                        }
-                    }
-                }
-                // Custom borders
-                if let Some(borders) = ds.get("borders").and_then(|v| v.as_table()) {
-                    for (k, v) in borders {
-                        if let Some(tbl) = v.as_table() {
-                            let light = tbl.get("light").and_then(|x| x.as_str()).unwrap_or("transparent");
-                            let dark = tbl.get("dark").and_then(|x| x.as_str()).unwrap_or(light);
-                            config.borders.insert(
-                                k.clone(),
-                                crate::compiler::design_system::ColorToken {
-                                    light: light.to_string(),
-                                    dark: dark.to_string(),
-                                },
-                            );
-                            config.allowed_borders.insert(k.clone());
-                        } else if let Some(s) = v.as_str() {
-                            config.borders.insert(
-                                k.clone(),
-                                crate::compiler::design_system::ColorToken {
-                                    light: s.to_string(),
-                                    dark: s.to_string(),
-                                },
-                            );
-                            config.allowed_borders.insert(k.clone());
-                        }
-                    }
+                    return enabled;
                 }
             }
         }
     }
 
-    config
+    true
 }

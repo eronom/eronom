@@ -249,9 +249,8 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     res_html = evaluate_braces_in_html(&res_html, &mut ev, &result.state_vars);
 
     // Inject Eronom Design System styles if enabled
-    let eds_cfg = crate::compiler::css::parse_design_system_config(std::path::Path::new(base_dir));
-    if eds_cfg.enabled {
-        let eds_css = eds_cfg.generate_root_css();
+    if crate::compiler::css::is_eds_enabled(std::path::Path::new(base_dir)) {
+        let eds_css = crate::compiler::eds::generate_root_css(Some(std::path::Path::new(base_dir)));
         if !result.styles.iter().any(|s| s.contains("Eronom Design System (EDS)")) {
             result.styles.insert(0, eds_css);
         }

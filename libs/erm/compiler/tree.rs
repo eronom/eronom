@@ -201,7 +201,7 @@ pub fn process_component_tree(
         }
     }
 
-    let eds_cfg = crate::compiler::css::parse_design_system_config(std::path::Path::new(&base_dir));
+    let eds_enabled = crate::compiler::css::is_eds_enabled(std::path::Path::new(&base_dir));
     let mut eds_closing_stack: Vec<String> = Vec::new();
 
     let mut html_buf = String::new();
@@ -293,7 +293,7 @@ pub fn process_component_tree(
                         i += tag_end + 1;
                         continue;
                     }
-                    if matches!(closing_tag_name, "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge") && !component_imports.contains_key(closing_tag_name) {
+                    if eds_enabled && crate::compiler::eds::is_primitive(closing_tag_name) && !component_imports.contains_key(closing_tag_name) {
                         if let Some(target_html_tag) = eds_closing_stack.pop() {
                             html_buf.push_str(&format!("</{}>", target_html_tag));
                             i += tag_end + 1;
@@ -312,16 +312,13 @@ pub fn process_component_tree(
                     let line_num = content[..i].chars().filter(|&c| c == '\n').count() + 1;
 
                     // EDS compile-time primitives
-                    let is_eds_primitive = matches!(
-                        tag_name.as_str(),
-                        "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge"
-                    );
+                    let is_eds_primitive = eds_enabled && crate::compiler::eds::is_primitive(tag_name.as_str());
 
                     if is_eds_primitive && !component_imports.contains_key(tag_name.as_str()) {
                         let is_self_closing = tag_content.ends_with('/') || parts.last().map_or(false, |p| p.ends_with('/'));
-                        eds_cfg.validate_tag(tag_name, &raw_attrs, file_path, line_num)?;
+                        crate::compiler::eds::validate_tag(tag_name, &raw_attrs, file_path, line_num)?;
 
-                        if let Some((open_tag_str, target_tag)) = eds_cfg.transform_primitive(tag_name, &raw_attrs) {
+                        if let Some((open_tag_str, target_tag)) = crate::compiler::eds::transform_primitive(tag_name, &raw_attrs) {
                             if is_self_closing {
                                 if matches!(target_tag.as_str(), "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr") {
                                     html_buf.push_str(&open_tag_str);
@@ -478,8 +475,8 @@ pub fn process_component_tree(
     scripts.append(&mut bindings);
     scripts.append(&mut events);
 
-    if eds_cfg.enabled {
-        let eds_css = eds_cfg.generate_root_css();
+    if eds_enabled {
+        let eds_css = crate::compiler::eds::generate_root_css(Some(std::path::Path::new(&base_dir)));
         if !styles.iter().any(|s| s.contains("Eronom Design System (EDS)")) {
             styles.insert(0, eds_css);
         }

@@ -1,6 +1,6 @@
 let num = 5;
 
-names  = "vishnu"
+names  = "Eronom"
 
 function test(){
     print(num)

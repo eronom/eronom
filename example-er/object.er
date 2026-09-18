@@ -7,7 +7,7 @@ let obj = {
 print(obj.key[0])
 
 let user = {
-  name: "Vishnu",
+  name: "Eronom",
   age: 25
 }
 

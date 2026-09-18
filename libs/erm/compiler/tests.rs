@@ -359,10 +359,9 @@ fn test_eds_invalid_token_rejection() {
 
 #[test]
 fn test_eds_bare_div_allowed() {
-    let config = DesignSystemConfig::default();
     let mut attrs = std::collections::HashMap::new();
     attrs.insert("class".to_string(), "\"p-4\"".to_string());
-    let res = config.validate_tag("div", &attrs, "test.erm", 10);
+    let res = crate::compiler::eds::validate_tag("div", &attrs, "test.erm", 10);
     assert!(res.is_ok());
 }
 
