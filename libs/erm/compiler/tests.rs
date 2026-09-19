@@ -410,5 +410,32 @@ fn test_eds_center_and_layout_enhancements() {
     assert!(res.contains(".eds-max-w-md { max-width: 38rem; width: 100%; }"));
 }
 
+#[test]
+fn test_eds_mantine_typography_props() {
+    let content = r#"
+    <Stack gap="md" align="center" ta="center">
+        <Badge status="info" tt="uppercase">Eronom ⚡ v0.9</Badge>
+        <Text as="h1" fz="title-lg" fw="bold" c="primary">Title</Text>
+        <Text fz="lg" fw={700} c="dimmed" tt="uppercase" td="underline">Mantine Style 1</Text>
+        <Text fz={18} fw="semibold" c="blue" ta="center">Mantine Style 2</Text>
+        <Button variant="primary" size="md" tt="uppercase" td="none" fw="bold">Click Me</Button>
+    </Stack>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    println!("EDS MANTINE TYPOGRAPHY RES:\n{}", res);
 
+    assert!(res.contains("class=\"eds-box eds-col eds-gap-md eds-align-center eds-text-center\""));
+    assert!(res.contains("class=\"eds-badge eds-badge-info eds-tt-uppercase\""));
+    assert!(res.contains("class=\"eds-text eds-fz-3xl eds-color-primary eds-weight-bold\""));
+    assert!(res.contains("class=\"eds-text eds-fz-lg eds-color-dimmed eds-weight-bold eds-tt-uppercase eds-td-underline\""));
+    assert!(res.contains("class=\"eds-text eds-fz-lg eds-color-blue eds-weight-semibold eds-text-center\""));
+    assert!(res.contains("class=\"eds-btn eds-btn-primary eds-btn-md eds-tt-uppercase eds-td-none eds-weight-bold\""));
 
+    assert!(res.contains(".eds-fz-lg { font-size: 1.125rem; line-height: 1.75rem; }"));
+    assert!(res.contains(".eds-color-dimmed { color: var(--eds-text-dimmed); }"));
+    assert!(res.contains(".eds-color-blue { color: var(--eds-text-blue); }"));
+    assert!(res.contains(".eds-tt-uppercase { text-transform: uppercase; }"));
+    assert!(res.contains(".eds-td-underline { text-decoration: underline; }"));
+    assert!(res.contains(".eds-text-center { text-align: center; }"));
+}

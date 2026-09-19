@@ -5,7 +5,9 @@ let RBRACE = "\}"
 
 let allowed_spacings = ["none", "xs", "sm", "md", "lg", "xl", "2xl", "3xl"]
 let allowed_colors = ["body", "canvas", "card", "muted", "overlay", "primary", "danger", "success", "transparent"]
-let allowed_text_colors = ["primary", "secondary", "muted", "on-primary", "danger", "success"]
+let allowed_text_colors = [
+  "primary", "secondary", "muted", "dimmed", "on-primary", "danger", "success", "warning", "yellow", "blue", "red", "green", "inherit"
+]
 let allowed_borders = ["subtle", "strong", "focus", "none"]
 let allowed_radii = ["none", "sm", "md", "lg", "xl", "full"]
 let allowed_shadows = ["none", "sm", "md", "lg"]
@@ -13,10 +15,22 @@ let allowed_shadows = ["none", "sm", "md", "lg"]
 let allowed_text_variants = [
   "display", "title-lg", "title-md", "heading", "body", "body-sm", "caption", "mono"
 ]
-let allowed_weights = ["normal", "medium", "semibold", "bold"]
+let allowed_font_sizes = [
+  "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl",
+  "12", "14", "16", "18", "20", "24", "30", "36",
+  "12px", "14px", "16px", "18px", "20px", "24px", "30px", "36px",
+  "display", "title-lg", "title-md", "heading", "body", "body-sm", "caption", "mono"
+]
+let allowed_weights = [
+  "light", "normal", "medium", "semibold", "bold", "bolder", "black",
+  "100", "200", "300", "400", "500", "600", "700", "800", "900"
+]
 let allowed_aligns = ["start", "center", "end", "stretch", "baseline"]
 let allowed_justifies = ["start", "center", "end", "between", "around"]
 let allowed_directions = ["row", "col"]
+let allowed_text_aligns = ["left", "center", "right", "justify"]
+let allowed_text_transforms = ["uppercase", "lowercase", "capitalize", "none"]
+let allowed_text_decorations = ["underline", "line-through", "none"]
 let allowed_as_elements = [
   "div", "section", "nav", "main", "header", "footer", "article", "aside", "ul", "li",
   "p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "code", "a", "button", "form"
@@ -43,10 +57,40 @@ export const getSurfaceColor = (k) => {
 export const getTextColor = (k) => {
   if (k == "primary") { return { light: "hsl(240, 10%, 4%)", dark: "hsl(0, 0%, 98%)" } }
   if (k == "secondary") { return { light: "hsl(240, 5%, 45%)", dark: "hsl(240, 5%, 65%)" } }
-  if (k == "muted") { return { light: "hsl(240, 4%, 60%)", dark: "hsl(240, 4%, 45%)" } }
+  if (k == "muted" or k == "dimmed") { return { light: "hsl(240, 4%, 60%)", dark: "hsl(240, 4%, 45%)" } }
   if (k == "on-primary") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(0, 0%, 100%)" } }
-  if (k == "danger") { return { light: "hsl(0, 84%, 60%)", dark: "hsl(0, 72%, 51%)" } }
-  if (k == "success") { return { light: "hsl(142, 71%, 45%)", dark: "hsl(142, 70%, 40%)" } }
+  if (k == "danger" or k == "red") { return { light: "hsl(0, 84%, 60%)", dark: "hsl(0, 72%, 51%)" } }
+  if (k == "success" or k == "green") { return { light: "hsl(142, 71%, 45%)", dark: "hsl(142, 70%, 40%)" } }
+  if (k == "blue") { return { light: "hsl(221, 83%, 53%)", dark: "hsl(217, 91%, 60%)" } }
+  if (k == "warning" or k == "yellow") { return { light: "hsl(38, 92%, 50%)", dark: "hsl(48, 96%, 53%)" } }
+  if (k == "inherit") { return { light: "inherit", dark: "inherit" } }
+  return null
+}
+
+export const normalizeWeight = (w) => {
+  if (w == null) { return null }
+  let s = "" + w
+  if (s == "light" or s == "300" or s == "200" or s == "100") { return "light" }
+  if (s == "normal" or s == "400") { return "normal" }
+  if (s == "medium" or s == "500") { return "medium" }
+  if (s == "semibold" or s == "600") { return "semibold" }
+  if (s == "bold" or s == "700") { return "bold" }
+  if (s == "bolder" or s == "black" or s == "800" or s == "900") { return "black" }
+  return null
+}
+
+export const normalizeFontSize = (z) => {
+  if (z == null) { return null }
+  let s = "" + z
+  if (s == "xs" or s == "12" or s == "12px" or s == "0.75rem" or s == "caption") { return "xs" }
+  if (s == "sm" or s == "14" or s == "14px" or s == "0.875rem" or s == "body-sm") { return "sm" }
+  if (s == "md" or s == "16" or s == "16px" or s == "1rem" or s == "body") { return "md" }
+  if (s == "lg" or s == "18" or s == "18px" or s == "1.125rem") { return "lg" }
+  if (s == "xl" or s == "20" or s == "20px" or s == "1.25rem" or s == "heading") { return "xl" }
+  if (s == "2xl" or s == "24" or s == "24px" or s == "1.5rem" or s == "title-md") { return "2xl" }
+  if (s == "3xl" or s == "30" or s == "30px" or s == "1.875rem" or s == "title-lg") { return "3xl" }
+  if (s == "4xl" or s == "36" or s == "36px" or s == "2.25rem" or s == "display") { return "4xl" }
+  if (s == "mono") { return "mono" }
   return null
 }
 
@@ -102,7 +146,10 @@ export const getMaxWidthValue = (k) => {
 
 let cleanAttrVal = (val) => {
   if (val == null) { return "" }
-  let s = val.trim()
+  let s = ("" + val).trim()
+  if (s.startsWith("\{") and s.endsWith("\}") and s.length >= 2) {
+    s = s.substring(1, s.length - 1).trim()
+  }
   if (s.startsWith("\"") and s.endsWith("\"") and s.length >= 2) {
     s = s.substring(1, s.length - 1).trim()
   } else if (s.startsWith("'") and s.endsWith("'") and s.length >= 2) {
@@ -146,7 +193,11 @@ export const generateRootCss = (projectDir) => {
   // Text variables
   for k in allowed_text_colors {
     let token = getTextColor(k)
-    out = out + "  --eds-text-" + k + ": light-dark(" + token.light + ", " + token.dark + ");\n"
+    if (k == "inherit") {
+      out = out + "  --eds-text-" + k + ": inherit;\n"
+    } else {
+      out = out + "  --eds-text-" + k + ": light-dark(" + token.light + ", " + token.dark + ");\n"
+    }
   }
 
   // Border variables
@@ -284,18 +335,39 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-variant-caption " + LBRACE + " font-size: 0.75rem; line-height: 1rem; font-weight: 500; " + RBRACE + "\n"
   out = out + ".eds-variant-mono " + LBRACE + " font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.875rem; " + RBRACE + "\n"
 
+  out = out + ".eds-fz-xs " + LBRACE + " font-size: 0.75rem; line-height: 1rem; " + RBRACE + "\n"
+  out = out + ".eds-fz-sm " + LBRACE + " font-size: 0.875rem; line-height: 1.25rem; " + RBRACE + "\n"
+  out = out + ".eds-fz-md " + LBRACE + " font-size: 1rem; line-height: 1.5rem; " + RBRACE + "\n"
+  out = out + ".eds-fz-lg " + LBRACE + " font-size: 1.125rem; line-height: 1.75rem; " + RBRACE + "\n"
+  out = out + ".eds-fz-xl " + LBRACE + " font-size: 1.25rem; line-height: 1.75rem; " + RBRACE + "\n"
+  out = out + ".eds-fz-2xl " + LBRACE + " font-size: 1.5rem; line-height: 2rem; " + RBRACE + "\n"
+  out = out + ".eds-fz-3xl " + LBRACE + " font-size: 1.875rem; line-height: 2.25rem; " + RBRACE + "\n"
+  out = out + ".eds-fz-4xl " + LBRACE + " font-size: 2.25rem; line-height: 2.5rem; " + RBRACE + "\n"
+
   for k in allowed_text_colors {
     out = out + ".eds-color-" + k + " " + LBRACE + " color: var(--eds-text-" + k + "); " + RBRACE + "\n"
   }
 
+  out = out + ".eds-weight-light " + LBRACE + " font-weight: 300; " + RBRACE + "\n"
   out = out + ".eds-weight-normal " + LBRACE + " font-weight: 400; " + RBRACE + "\n"
   out = out + ".eds-weight-medium " + LBRACE + " font-weight: 500; " + RBRACE + "\n"
   out = out + ".eds-weight-semibold " + LBRACE + " font-weight: 600; " + RBRACE + "\n"
   out = out + ".eds-weight-bold " + LBRACE + " font-weight: 700; " + RBRACE + "\n"
+  out = out + ".eds-weight-black " + LBRACE + " font-weight: 900; " + RBRACE + "\n"
 
   out = out + ".eds-text-left " + LBRACE + " text-align: left; " + RBRACE + "\n"
   out = out + ".eds-text-center " + LBRACE + " text-align: center; " + RBRACE + "\n"
   out = out + ".eds-text-right " + LBRACE + " text-align: right; " + RBRACE + "\n"
+  out = out + ".eds-text-justify " + LBRACE + " text-align: justify; " + RBRACE + "\n"
+
+  out = out + ".eds-tt-uppercase " + LBRACE + " text-transform: uppercase; " + RBRACE + "\n"
+  out = out + ".eds-tt-lowercase " + LBRACE + " text-transform: lowercase; " + RBRACE + "\n"
+  out = out + ".eds-tt-capitalize " + LBRACE + " text-transform: capitalize; " + RBRACE + "\n"
+  out = out + ".eds-tt-none " + LBRACE + " text-transform: none; " + RBRACE + "\n"
+
+  out = out + ".eds-td-underline " + LBRACE + " text-decoration: underline; " + RBRACE + "\n"
+  out = out + ".eds-td-line-through " + LBRACE + " text-decoration: line-through; " + RBRACE + "\n"
+  out = out + ".eds-td-none " + LBRACE + " text-decoration: none; " + RBRACE + "\n"
   out = out + ".eds-truncate " + LBRACE + " overflow: hidden; text-overflow: ellipsis; white-space: nowrap; " + RBRACE + "\n"
 
   return out
@@ -348,6 +420,30 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_min_heights.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid minH token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_min_heights)
         }
+      } else if (key == "ta") {
+        if (!allowed_text_aligns.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-align token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_text_aligns)
+        }
+      } else if (key == "c") {
+        if (!allowed_text_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_text_colors)
+        }
+      } else if (key == "fw") {
+        if (normalizeWeight(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_weights)
+        }
+      } else if (key == "fz") {
+        if (normalizeFontSize(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
+        }
+      } else if (key == "tt") {
+        if (!allowed_text_transforms.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
+        }
+      } else if (key == "td") {
+        if (!allowed_text_decorations.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
+        }
       } else if (key == "screen" or key == "center") {
         // Boolean or flag props
       } else if (key == "as") {
@@ -387,6 +483,30 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_max_widths.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid maxW token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_max_widths)
         }
+      } else if (key == "ta") {
+        if (!allowed_text_aligns.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-align token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_text_aligns)
+        }
+      } else if (key == "c") {
+        if (!allowed_text_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_text_colors)
+        }
+      } else if (key == "fw") {
+        if (normalizeWeight(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_weights)
+        }
+      } else if (key == "fz") {
+        if (normalizeFontSize(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
+        }
+      } else if (key == "tt") {
+        if (!allowed_text_transforms.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
+        }
+      } else if (key == "td") {
+        if (!allowed_text_decorations.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
+        }
       } else if (key == "as") {
         if (!allowed_as_elements.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
@@ -400,17 +520,80 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_text_variants.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid typography variant '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_variants)
         }
-      } else if (key == "color") {
+      } else if (key == "color" or key == "c") {
         if (!allowed_text_colors.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_colors)
         }
-      } else if (key == "weight") {
-        if (!allowed_weights.includes(val)) {
+      } else if (key == "weight" or key == "fw") {
+        if (normalizeWeight(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_weights)
         }
+      } else if (key == "align" or key == "ta") {
+        if (!allowed_text_aligns.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-align token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_aligns)
+        }
+      } else if (key == "fz") {
+        if (normalizeFontSize(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
+        }
+      } else if (key == "tt") {
+        if (!allowed_text_transforms.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
+        }
+      } else if (key == "td") {
+        if (!allowed_text_decorations.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
+        }
+      } else if (key == "truncate") {
+        // Boolean prop
       } else if (key == "as") {
         if (!allowed_as_elements.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
+        }
+      }
+    }
+  } else if (tagName == "Button") {
+    for key in keys {
+      let val = cleanAttrVal(attrs[key])
+      if (key == "variant") {
+        let allowed_btn_variants = ["primary", "secondary", "subtle", "danger"]
+        if (!allowed_btn_variants.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid button variant '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_btn_variants)
+        }
+      } else if (key == "size") {
+        let allowed_btn_sizes = ["sm", "md", "lg"]
+        if (!allowed_btn_sizes.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid button size '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_btn_sizes)
+        }
+      } else if (key == "as") {
+        if (!allowed_as_elements.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
+        }
+      } else if (key == "tt") {
+        if (!allowed_text_transforms.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
+        }
+      } else if (key == "td") {
+        if (!allowed_text_decorations.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
+        }
+      } else if (key == "fw") {
+        if (normalizeWeight(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_weights)
+        }
+      }
+    }
+  } else if (tagName == "Badge") {
+    for key in keys {
+      let val = cleanAttrVal(attrs[key])
+      if (key == "status") {
+        let allowed_statuses = ["default", "success", "warning", "danger", "info"]
+        if (!allowed_statuses.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid badge status '" + val + "' on <Badge>.\nAllowed values: " + formatAllowedList(allowed_statuses)
+        }
+      } else if (key == "tt") {
+        if (!allowed_text_transforms.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <Badge>.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
         }
       }
     }
@@ -469,6 +652,19 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("minH")) { classes.push("eds-min-h-" + cleanAttrVal(attrs["minH"])) }
     if (attrs.hasOwnProperty("maxW")) { classes.push("eds-max-w-" + cleanAttrVal(attrs["maxW"])) }
 
+    if (attrs.hasOwnProperty("ta")) { classes.push("eds-text-" + cleanAttrVal(attrs["ta"])) }
+    if (attrs.hasOwnProperty("c")) { classes.push("eds-color-" + cleanAttrVal(attrs["c"])) }
+    if (attrs.hasOwnProperty("fw")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
+    }
+    if (attrs.hasOwnProperty("fz")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    }
+    if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
+    if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
+
     if (attrs.hasOwnProperty("center")) {
       classes.push("eds-center")
     }
@@ -483,7 +679,8 @@ export const transformPrimitive = (tagName, attrs) => {
           k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
           k == "bg" or k == "border" or k == "borderTop" or k == "borderBottom" or k == "borderLeft" or k == "borderRight" or
           k == "radius" or k == "shadow" or k == "width" or k == "height" or
-          k == "center" or k == "screen" or k == "minH" or k == "maxW") {
+          k == "center" or k == "screen" or k == "minH" or k == "maxW" or
+          k == "ta" or k == "c" or k == "fw" or k == "fz" or k == "tt" or k == "td") {
         // Skip handled layout attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -534,17 +731,47 @@ export const transformPrimitive = (tagName, attrs) => {
   if (tagName == "Text") {
     let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "p"
     let classes = ["eds-text"]
-    let variant = attrs.hasOwnProperty("variant") ? cleanAttrVal(attrs["variant"]) : "body"
-    classes.push("eds-variant-" + variant)
+    let variant = attrs.hasOwnProperty("variant") ? cleanAttrVal(attrs["variant"]) : null
 
-    if (attrs.hasOwnProperty("color")) { classes.push("eds-color-" + cleanAttrVal(attrs["color"])) }
-    if (attrs.hasOwnProperty("weight")) { classes.push("eds-weight-" + cleanAttrVal(attrs["weight"])) }
-    if (attrs.hasOwnProperty("align")) { classes.push("eds-text-" + cleanAttrVal(attrs["align"])) }
+    if (variant != null) {
+      classes.push("eds-variant-" + variant)
+    } else if (!attrs.hasOwnProperty("fz")) {
+      classes.push("eds-variant-body")
+    }
+
+    if (attrs.hasOwnProperty("fz")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    }
+
+    if (attrs.hasOwnProperty("c")) {
+      classes.push("eds-color-" + cleanAttrVal(attrs["c"]))
+    } else if (attrs.hasOwnProperty("color")) {
+      classes.push("eds-color-" + cleanAttrVal(attrs["color"]))
+    }
+
+    if (attrs.hasOwnProperty("fw")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
+    } else if (attrs.hasOwnProperty("weight")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["weight"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
+    }
+
+    if (attrs.hasOwnProperty("ta")) {
+      classes.push("eds-text-" + cleanAttrVal(attrs["ta"]))
+    } else if (attrs.hasOwnProperty("align")) {
+      classes.push("eds-text-" + cleanAttrVal(attrs["align"]))
+    }
+
+    if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
+    if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
     if (attrs.hasOwnProperty("truncate")) { classes.push("eds-truncate") }
 
     let passthrough = ""
     for k in keys {
-      if (k == "as" or k == "variant" or k == "color" or k == "weight" or k == "align" or k == "truncate") {
+      if (k == "as" or k == "variant" or k == "color" or k == "c" or k == "weight" or k == "fw" or
+          k == "align" or k == "ta" or k == "fz" or k == "tt" or k == "td" or k == "truncate") {
         // Skip handled text attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -579,10 +806,24 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("radius")) { classes.push("eds-radius-" + cleanAttrVal(attrs["radius"])) }
     if (attrs.hasOwnProperty("shadow")) { classes.push("eds-shadow-" + cleanAttrVal(attrs["shadow"])) }
 
+    if (attrs.hasOwnProperty("ta")) { classes.push("eds-text-" + cleanAttrVal(attrs["ta"])) }
+    if (attrs.hasOwnProperty("c")) { classes.push("eds-color-" + cleanAttrVal(attrs["c"])) }
+    if (attrs.hasOwnProperty("fw")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
+    }
+    if (attrs.hasOwnProperty("fz")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    }
+    if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
+    if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
+
     let passthrough = ""
     for k in keys {
       if (k == "as" or k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
-          k == "gap" or k == "align" or k == "maxW" or k == "bg" or k == "border" or k == "radius" or k == "shadow") {
+          k == "gap" or k == "align" or k == "maxW" or k == "bg" or k == "border" or k == "radius" or k == "shadow" or
+          k == "ta" or k == "c" or k == "fw" or k == "fz" or k == "tt" or k == "td") {
         // Skip handled attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -604,10 +845,16 @@ export const transformPrimitive = (tagName, attrs) => {
     let size = attrs.hasOwnProperty("size") ? cleanAttrVal(attrs["size"]) : "md"
 
     let classes = ["eds-btn", "eds-btn-" + variant, "eds-btn-" + size]
+    if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
+    if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
+    if (attrs.hasOwnProperty("fw")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
+    }
     let passthrough = ""
 
     for k in keys {
-      if (k == "as" or k == "variant" or k == "size") {
+      if (k == "as" or k == "variant" or k == "size" or k == "tt" or k == "td" or k == "fw") {
         // Skip handled attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -626,11 +873,12 @@ export const transformPrimitive = (tagName, attrs) => {
   if (tagName == "Badge") {
     let status = attrs.hasOwnProperty("status") ? cleanAttrVal(attrs["status"]) : "default"
     let classes = ["eds-badge", "eds-badge-" + status]
+    if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
     let passthrough = ""
 
     for k in keys {
-      if (k == "status") {
-        // Skip status
+      if (k == "status" or k == "tt") {
+        // Skip status and tt
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
         if (userClass != "") {
