@@ -33,15 +33,16 @@ let allowed_text_transforms = ["uppercase", "lowercase", "capitalize", "none"]
 let allowed_text_decorations = ["underline", "line-through", "none"]
 let allowed_as_elements = [
   "div", "section", "nav", "main", "header", "footer", "article", "aside", "ul", "li",
-  "p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "code", "a", "button", "form"
+  "p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "code", "pre", "a", "button", "form"
 ]
-let allowed_primitives = ["Box", "Text", "Stack", "Cluster", "Card", "Button", "Badge", "Center"]
+let allowed_primitives = ["Box", "Text", "Stack", "Cluster", "Card", "Button", "Badge", "Center", "Group", "Title", "Code"]
 let allowed_max_widths = ["xs", "sm", "md", "lg", "xl", "2xl", "3xl", "full"]
 let allowed_min_heights = ["screen", "full", "auto"]
 
 export const isPrimitive = (tagName) => {
   return allowed_primitives.includes(tagName)
 }
+
 export const getSurfaceColor = (k) => {
   if (k == "body" or k == "canvas") { return { light: "hsl(0, 0%, 100%)", dark: "hsl(240, 10%, 4%)" } }
   if (k == "card") { return { light: "hsl(0, 0%, 98%)", dark: "hsl(240, 8%, 8%)" } }
@@ -91,6 +92,30 @@ export const normalizeFontSize = (z) => {
   if (s == "3xl" or s == "30" or s == "30px" or s == "1.875rem" or s == "title-lg") { return "3xl" }
   if (s == "4xl" or s == "36" or s == "36px" or s == "2.25rem" or s == "display") { return "4xl" }
   if (s == "mono") { return "mono" }
+  return null
+}
+
+export const normalizeSpacing = (v) => {
+  if (v == null) { return null }
+  let s = ("" + v).trim()
+  if (s == "none" or s == "0" or s == "0px" or s == "0rem") { return "none" }
+  if (s == "xs" or s == "4" or s == "4px" or s == "0.25rem") { return "xs" }
+  if (s == "sm" or s == "8" or s == "8px" or s == "0.5rem") { return "sm" }
+  if (s == "md" or s == "12" or s == "12px" or s == "0.75rem") { return "md" }
+  if (s == "lg" or s == "16" or s == "16px" or s == "1rem") { return "lg" }
+  if (s == "xl" or s == "24" or s == "24px" or s == "1.5rem") { return "xl" }
+  if (s == "2xl" or s == "32" or s == "32px" or s == "2rem") { return "2xl" }
+  if (s == "3xl" or s == "48" or s == "48px" or s == "3rem") { return "3xl" }
+  if (s == "auto") { return "auto" }
+  return null
+}
+
+export const normalizeMaxWidth = (w) => {
+  if (w == null) { return null }
+  let s = ("" + w).trim()
+  if (s == "xs" or s == "sm" or s == "md" or s == "lg" or s == "xl" or s == "2xl" or s == "3xl" or s == "full") {
+    return s
+  }
   return null
 }
 
@@ -144,6 +169,81 @@ export const getMaxWidthValue = (k) => {
   return "none"
 }
 
+export const isNumeric = (val) => {
+  if (val == null) { return false }
+  let s = ("" + val).trim()
+  if (s == "") { return false }
+  let digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "."]
+  let hasDigit = false
+  let i = 0
+  let len = s.length
+  while (i < len) {
+    let ch = s.charAt(i)
+    if (i == 0 and (ch == "-" or ch == "+")) {
+      // allow leading sign
+    } else if (digits.includes(ch)) {
+      if (ch != ".") { hasDigit = true }
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  return hasDigit
+}
+
+export const isCustomSpacing = (v) => {
+  if (v == null) { return false }
+  let s = ("" + v).trim()
+  if (s == "") { return false }
+  if (s.endsWith("px") or s.endsWith("rem") or s.endsWith("em") or s.endsWith("%") or
+      s.endsWith("vh") or s.endsWith("vw") or s.endsWith("dvh") or s.endsWith("svh") or
+      s.endsWith("pt") or s.endsWith("ch")) {
+    return true
+  }
+  if (s.startsWith("calc(") or s.startsWith("clamp(") or s.startsWith("var(") or
+      s.startsWith("min(") or s.startsWith("max(")) {
+    return true
+  }
+  return isNumeric(s)
+}
+
+export const formatCustomSpacing = (v) => {
+  if (v == null) { return "" }
+  let s = ("" + v).trim()
+  if (isNumeric(s)) {
+    return s + "px"
+  }
+  return s
+}
+
+let applyPaddingX = (attrs, classes, inlineStyles) => {
+  if (attrs.hasOwnProperty("px")) {
+    let raw = cleanAttrVal(attrs["px"])
+    if (isCustomSpacing(raw)) {
+      let v = formatCustomSpacing(raw)
+      inlineStyles.push("padding-left: " + v)
+      inlineStyles.push("padding-right: " + v)
+    } else {
+      let sp = normalizeSpacing(raw)
+      if (sp != null) { classes.push("eds-px-" + sp) }
+    }
+  }
+}
+
+let applyPaddingY = (attrs, classes, inlineStyles) => {
+  if (attrs.hasOwnProperty("py")) {
+    let raw = cleanAttrVal(attrs["py"])
+    if (isCustomSpacing(raw)) {
+      let v = formatCustomSpacing(raw)
+      inlineStyles.push("padding-top: " + v)
+      inlineStyles.push("padding-bottom: " + v)
+    } else {
+      let sp = normalizeSpacing(raw)
+      if (sp != null) { classes.push("eds-py-" + sp) }
+    }
+  }
+}
+
 let cleanAttrVal = (val) => {
   if (val == null) { return "" }
   let s = ("" + val).trim()
@@ -181,7 +281,7 @@ let formatPassthroughAttr = (k, v) => {
 
 export const generateRootCss = (projectDir) => {
   let out = ""
-  out = out + "/* === Eronom Design System (EDS): LLM-Safe Tokens & Styles === */\n"
+  out = out + "/* === Eronom Design System (EDS): LLM-Safe Tokens & Mantine Style Props === */\n"
   out = out + ":root " + LBRACE + "\n  color-scheme: light dark;\n"
 
   // Surface / Background variables
@@ -229,6 +329,15 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-row " + LBRACE + " display: flex; flex-direction: row; " + RBRACE + "\n"
   out = out + ".eds-col " + LBRACE + " display: flex; flex-direction: column; " + RBRACE + "\n"
   out = out + ".eds-wrap " + LBRACE + " flex-wrap: wrap; " + RBRACE + "\n"
+  out = out + ".eds-nowrap " + LBRACE + " flex-wrap: nowrap; " + RBRACE + "\n"
+  out = out + ".eds-flex-1 " + LBRACE + " flex: 1; " + RBRACE + "\n"
+  out = out + ".eds-grow " + LBRACE + " flex-grow: 1; " + RBRACE + "\n"
+
+  // Position helpers
+  out = out + ".eds-pos-relative " + LBRACE + " position: relative; " + RBRACE + "\n"
+  out = out + ".eds-pos-absolute " + LBRACE + " position: absolute; " + RBRACE + "\n"
+  out = out + ".eds-pos-fixed " + LBRACE + " position: fixed; " + RBRACE + "\n"
+  out = out + ".eds-pos-sticky " + LBRACE + " position: sticky; " + RBRACE + "\n"
 
   // Align & Justify
   out = out + ".eds-align-start " + LBRACE + " align-items: flex-start; " + RBRACE + "\n"
@@ -265,6 +374,13 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-badge-danger " + LBRACE + " background-color: rgba(239, 68, 68, 0.15); color: var(--eds-text-danger); " + RBRACE + "\n"
   out = out + ".eds-badge-info " + LBRACE + " background-color: rgba(59, 130, 246, 0.15); color: var(--eds-bg-primary); " + RBRACE + "\n"
 
+  // Title primitive default style
+  out = out + ".eds-title " + LBRACE + " margin: 0; font-family: inherit; font-weight: 700; " + RBRACE + "\n"
+
+  // Code primitive styles (matching Mantine Code)
+  out = out + ".eds-code " + LBRACE + " font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); font-size: 0.85em; line-height: 1.4; padding: 0.15rem 0.4rem; border-radius: var(--eds-radius-sm); background-color: var(--eds-bg-muted); color: var(--eds-text-primary); box-sizing: border-box; " + RBRACE + "\n"
+  out = out + ".eds-code-block " + LBRACE + " display: block; padding: var(--eds-space-sm); overflow-x: auto; white-space: pre; " + RBRACE + "\n"
+
   // Widths & Heights
   out = out + ".eds-w-full " + LBRACE + " width: 100%; " + RBRACE + "\n"
   out = out + ".eds-w-screen " + LBRACE + " width: 100vw; " + RBRACE + "\n"
@@ -279,9 +395,10 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-min-h-full " + LBRACE + " min-height: 100%; " + RBRACE + "\n"
   out = out + ".eds-min-h-auto " + LBRACE + " min-height: auto; " + RBRACE + "\n"
 
-  // Max-widths
+  // Max-widths (supports both .eds-max-w-<k> and .eds-maw-<k>)
   for k in allowed_max_widths {
     out = out + ".eds-max-w-" + k + " " + LBRACE + " max-width: " + getMaxWidthValue(k) + "; width: 100%; " + RBRACE + "\n"
+    out = out + ".eds-maw-" + k + " " + LBRACE + " max-width: " + getMaxWidthValue(k) + "; width: 100%; " + RBRACE + "\n"
   }
 
   // Gaps
@@ -299,6 +416,24 @@ export const generateRootCss = (projectDir) => {
     out = out + ".eds-pl-" + k + " " + LBRACE + " padding-left: var(--eds-space-" + k + "); " + RBRACE + "\n"
     out = out + ".eds-pr-" + k + " " + LBRACE + " padding-right: var(--eds-space-" + k + "); " + RBRACE + "\n"
   }
+
+  // Margins (Mantine style props)
+  for k in allowed_spacings {
+    out = out + ".eds-m-" + k + " " + LBRACE + " margin: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-mx-" + k + " " + LBRACE + " margin-left: var(--eds-space-" + k + "); margin-right: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-my-" + k + " " + LBRACE + " margin-top: var(--eds-space-" + k + "); margin-bottom: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-mt-" + k + " " + LBRACE + " margin-top: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-mb-" + k + " " + LBRACE + " margin-bottom: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-ml-" + k + " " + LBRACE + " margin-left: var(--eds-space-" + k + "); " + RBRACE + "\n"
+    out = out + ".eds-mr-" + k + " " + LBRACE + " margin-right: var(--eds-space-" + k + "); " + RBRACE + "\n"
+  }
+  out = out + ".eds-m-auto " + LBRACE + " margin: auto; " + RBRACE + "\n"
+  out = out + ".eds-mx-auto " + LBRACE + " margin-left: auto; margin-right: auto; " + RBRACE + "\n"
+  out = out + ".eds-my-auto " + LBRACE + " margin-top: auto; margin-bottom: auto; " + RBRACE + "\n"
+  out = out + ".eds-mt-auto " + LBRACE + " margin-top: auto; " + RBRACE + "\n"
+  out = out + ".eds-mb-auto " + LBRACE + " margin-bottom: auto; " + RBRACE + "\n"
+  out = out + ".eds-ml-auto " + LBRACE + " margin-left: auto; " + RBRACE + "\n"
+  out = out + ".eds-mr-auto " + LBRACE + " margin-right: auto; " + RBRACE + "\n"
 
   // Backgrounds
   for k in allowed_colors {
@@ -377,22 +512,27 @@ export const validateTag = (tagName, attrs, file, line) => {
   if (attrs == null) { return null }
   let keys = attrs.keys()
 
-  if (tagName == "Box" or tagName == "Stack" or tagName == "Cluster" or tagName == "Center") {
+  if (tagName == "Box" or tagName == "Stack" or tagName == "Cluster" or tagName == "Center" or tagName == "Group") {
     for key in keys {
       let val = cleanAttrVal(attrs[key])
-      if (key == "p" or key == "px" or key == "py" or key == "pt" or key == "pb" or key == "pl" or key == "pr" or key == "gap") {
-        if (!allowed_spacings.includes(val)) {
+      if (key == "px" or key == "py") {
+        if (normalizeSpacing(val) == null and !isCustomSpacing(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token or value '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_spacings) + " or custom CSS values (e.g. 24px, 1.5rem, 20)"
+        }
+      } else if (key == "p" or key == "pt" or key == "pb" or key == "pl" or key == "pr" or
+          key == "gap" or key == "m" or key == "mx" or key == "my" or key == "mt" or key == "mb" or key == "ml" or key == "mr") {
+        if (normalizeSpacing(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_spacings)
         }
       } else if (key == "bg") {
         if (!allowed_colors.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid background color token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_colors)
         }
-      } else if (key == "border" or key == "borderTop" or key == "borderBottom" or key == "borderLeft" or key == "borderRight") {
+      } else if (key == "border" or key == "bd" or key == "borderTop" or key == "borderBottom" or key == "borderLeft" or key == "borderRight") {
         if (!allowed_borders.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid border token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_borders)
         }
-      } else if (key == "radius") {
+      } else if (key == "radius" or key == "bdrs") {
         if (!allowed_radii.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid radius token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_radii)
         }
@@ -401,7 +541,7 @@ export const validateTag = (tagName, attrs, file, line) => {
           return "[EDS Error] " + file + ":" + line + ": Invalid shadow token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_shadows)
         }
       } else if (key == "align") {
-        if (!allowed_aligns.includes(val)) {
+        if (!allowed_aligns.includes(val) and !allowed_text_aligns.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid align token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_aligns)
         }
       } else if (key == "justify") {
@@ -412,27 +552,37 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_directions.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid direction token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_directions)
         }
-      } else if (key == "maxW") {
-        if (!allowed_max_widths.includes(val)) {
-          return "[EDS Error] " + file + ":" + line + ": Invalid maxW token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_max_widths)
+      } else if (key == "maxW" or key == "maw") {
+        if (normalizeMaxWidth(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid maxW/maw token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_max_widths)
         }
-      } else if (key == "minH") {
+      } else if (key == "minH" or key == "mih") {
         if (!allowed_min_heights.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid minH token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_min_heights)
+        }
+      } else if (key == "width" or key == "w") {
+        let allowed_widths = ["full", "screen", "auto", "fit"]
+        if (!allowed_widths.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid width token '" + val + "' on <" + tagName + ">."
+        }
+      } else if (key == "height" or key == "h") {
+        let allowed_heights = ["full", "screen", "auto", "fit"]
+        if (!allowed_heights.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid height token '" + val + "' on <" + tagName + ">."
         }
       } else if (key == "ta") {
         if (!allowed_text_aligns.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-align token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_text_aligns)
         }
-      } else if (key == "c") {
+      } else if (key == "c" or key == "color") {
         if (!allowed_text_colors.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_text_colors)
         }
-      } else if (key == "fw") {
+      } else if (key == "fw" or key == "weight") {
         if (normalizeWeight(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_weights)
         }
-      } else if (key == "fz") {
+      } else if (key == "fz" or key == "size") {
         if (normalizeFontSize(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
         }
@@ -444,7 +594,22 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_text_decorations.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <" + tagName + ">.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
         }
-      } else if (key == "screen" or key == "center") {
+      } else if (key == "wrap") {
+        let allowed_wraps = ["wrap", "nowrap", "wrap-reverse"]
+        if (!allowed_wraps.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid wrap token '" + val + "' on <" + tagName + ">."
+        }
+      } else if (key == "flex") {
+        let allowed_flex = ["1", "auto", "none", "initial"]
+        if (!allowed_flex.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid flex token '" + val + "' on <" + tagName + ">."
+        }
+      } else if (key == "pos") {
+        let allowed_pos = ["relative", "absolute", "fixed", "sticky"]
+        if (!allowed_pos.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid pos token '" + val + "' on <" + tagName + ">."
+        }
+      } else if (key == "screen" or key == "center" or key == "grow" or key == "truncate") {
         // Boolean or flag props
       } else if (key == "as") {
         if (!allowed_as_elements.includes(val)) {
@@ -455,19 +620,24 @@ export const validateTag = (tagName, attrs, file, line) => {
   } else if (tagName == "Card") {
     for key in keys {
       let val = cleanAttrVal(attrs[key])
-      if (key == "p" or key == "px" or key == "py" or key == "pt" or key == "pb" or key == "pl" or key == "pr" or key == "gap") {
-        if (!allowed_spacings.includes(val)) {
+      if (key == "px" or key == "py") {
+        if (normalizeSpacing(val) == null and !isCustomSpacing(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token or value '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_spacings) + " or custom CSS values (e.g. 24px, 1.5rem, 20)"
+        }
+      } else if (key == "p" or key == "pt" or key == "pb" or key == "pl" or key == "pr" or
+          key == "gap" or key == "m" or key == "mx" or key == "my" or key == "mt" or key == "mb" or key == "ml" or key == "mr") {
+        if (normalizeSpacing(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_spacings)
         }
       } else if (key == "bg") {
         if (!allowed_colors.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid background color token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_colors)
         }
-      } else if (key == "border") {
+      } else if (key == "border" or key == "bd") {
         if (!allowed_borders.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid border token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_borders)
         }
-      } else if (key == "radius") {
+      } else if (key == "radius" or key == "bdrs") {
         if (!allowed_radii.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid radius token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_radii)
         }
@@ -476,26 +646,26 @@ export const validateTag = (tagName, attrs, file, line) => {
           return "[EDS Error] " + file + ":" + line + ": Invalid shadow token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_shadows)
         }
       } else if (key == "align") {
-        if (!allowed_aligns.includes(val)) {
+        if (!allowed_aligns.includes(val) and !allowed_text_aligns.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid align token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_aligns)
         }
-      } else if (key == "maxW") {
-        if (!allowed_max_widths.includes(val)) {
-          return "[EDS Error] " + file + ":" + line + ": Invalid maxW token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_max_widths)
+      } else if (key == "maxW" or key == "maw") {
+        if (normalizeMaxWidth(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid maxW/maw token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_max_widths)
         }
       } else if (key == "ta") {
         if (!allowed_text_aligns.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-align token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_text_aligns)
         }
-      } else if (key == "c") {
+      } else if (key == "c" or key == "color") {
         if (!allowed_text_colors.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_text_colors)
         }
-      } else if (key == "fw") {
+      } else if (key == "fw" or key == "weight") {
         if (normalizeWeight(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_weights)
         }
-      } else if (key == "fz") {
+      } else if (key == "fz" or key == "size") {
         if (normalizeFontSize(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
         }
@@ -507,6 +677,8 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_text_decorations.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
         }
+      } else if (key == "flex") {
+        // Flex values
       } else if (key == "as") {
         if (!allowed_as_elements.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Card>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
@@ -532,7 +704,7 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_text_aligns.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-align token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_aligns)
         }
-      } else if (key == "fz") {
+      } else if (key == "fz" or key == "size") {
         if (normalizeFontSize(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
         }
@@ -544,6 +716,14 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_text_decorations.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
         }
+      } else if (key == "m" or key == "mx" or key == "my" or key == "mt" or key == "mb" or key == "ml" or key == "mr") {
+        if (normalizeSpacing(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_spacings)
+        }
+      } else if (key == "maxW" or key == "maw") {
+        if (normalizeMaxWidth(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid maxW/maw token '" + val + "' on <Text>.\nAllowed values: " + formatAllowedList(allowed_max_widths)
+        }
       } else if (key == "truncate") {
         // Boolean prop
       } else if (key == "as") {
@@ -552,11 +732,80 @@ export const validateTag = (tagName, attrs, file, line) => {
         }
       }
     }
+  } else if (tagName == "Title") {
+    for key in keys {
+      let val = cleanAttrVal(attrs[key])
+      if (key == "order") {
+        let allowed_orders = ["1", "2", "3", "4", "5", "6"]
+        if (!allowed_orders.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid title order '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_orders)
+        }
+      } else if (key == "c" or key == "color") {
+        if (!allowed_text_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_text_colors)
+        }
+      } else if (key == "fw" or key == "weight") {
+        if (normalizeWeight(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_weights)
+        }
+      } else if (key == "fz" or key == "size") {
+        if (normalizeFontSize(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
+        }
+      } else if (key == "ta" or key == "align") {
+        if (!allowed_text_aligns.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-align token '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_text_aligns)
+        }
+      } else if (key == "tt") {
+        if (!allowed_text_transforms.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
+        }
+      } else if (key == "td") {
+        if (!allowed_text_decorations.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text-decoration token '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_text_decorations)
+        }
+      } else if (key == "m" or key == "mx" or key == "my" or key == "mt" or key == "mb" or key == "ml" or key == "mr") {
+        if (normalizeSpacing(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_spacings)
+        }
+      } else if (key == "as") {
+        if (!allowed_as_elements.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Title>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
+        }
+      }
+    }
+  } else if (tagName == "Code") {
+    for key in keys {
+      let val = cleanAttrVal(attrs[key])
+      if (key == "c" or key == "color") {
+        if (!allowed_text_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <Code>.\nAllowed values: " + formatAllowedList(allowed_text_colors)
+        }
+      } else if (key == "bg") {
+        if (!allowed_colors.includes(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid background color token '" + val + "' on <Code>.\nAllowed values: " + formatAllowedList(allowed_colors)
+        }
+      } else if (key == "fz") {
+        if (normalizeFontSize(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid font size token '" + val + "' on <Code>.\nAllowed values: " + formatAllowedList(allowed_font_sizes)
+        }
+      } else if (key == "px" or key == "py") {
+        if (normalizeSpacing(val) == null and !isCustomSpacing(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token or value '" + val + "' on <Code>.\nAllowed values: " + formatAllowedList(allowed_spacings) + " or custom CSS values (e.g. 24px, 1.5rem, 20)"
+        }
+      } else if (key == "p" or key == "m" or key == "mx" or key == "my" or key == "mt" or key == "mb" or key == "ml" or key == "mr") {
+        if (normalizeSpacing(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <Code>.\nAllowed values: " + formatAllowedList(allowed_spacings)
+        }
+      } else if (key == "block") {
+        // Boolean flag
+      }
+    }
   } else if (tagName == "Button") {
     for key in keys {
       let val = cleanAttrVal(attrs[key])
       if (key == "variant") {
-        let allowed_btn_variants = ["primary", "secondary", "subtle", "danger"]
+        let allowed_btn_variants = ["primary", "secondary", "subtle", "danger", "default"]
         if (!allowed_btn_variants.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid button variant '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_btn_variants)
         }
@@ -581,6 +830,15 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (normalizeWeight(val) == null) {
           return "[EDS Error] " + file + ":" + line + ": Invalid font weight token '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_weights)
         }
+      } else if (key == "px" or key == "py") {
+        if (normalizeSpacing(val) == null and !isCustomSpacing(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token or value '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_spacings) + " or custom CSS values (e.g. 24px, 1.5rem, 20)"
+        }
+      } else if (key == "m" or key == "mx" or key == "my" or key == "mt" or key == "mb" or key == "ml" or key == "mr" or
+                 key == "p" or key == "pt" or key == "pb" or key == "pl" or key == "pr") {
+        if (normalizeSpacing(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_spacings)
+        }
       }
     }
   } else if (tagName == "Badge") {
@@ -594,6 +852,15 @@ export const validateTag = (tagName, attrs, file, line) => {
       } else if (key == "tt") {
         if (!allowed_text_transforms.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <Badge>.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
+        }
+      } else if (key == "px" or key == "py") {
+        if (normalizeSpacing(val) == null and !isCustomSpacing(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token or value '" + val + "' on <Badge>.\nAllowed values: " + formatAllowedList(allowed_spacings) + " or custom CSS values (e.g. 24px, 1.5rem, 20)"
+        }
+      } else if (key == "m" or key == "mx" or key == "my" or key == "mt" or key == "mb" or
+                 key == "p") {
+        if (normalizeSpacing(val) == null) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid spacing token '" + val + "' on <Badge>.\nAllowed values: " + formatAllowedList(allowed_spacings)
         }
       }
     }
@@ -609,6 +876,7 @@ export const transformPrimitive = (tagName, attrs) => {
   if (tagName == "Box") {
     let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "div"
     let classes = ["eds-box"]
+    let inlineStyles = []
 
     if (attrs.hasOwnProperty("direction")) {
       let dir = cleanAttrVal(attrs["direction"])
@@ -620,7 +888,8 @@ export const transformPrimitive = (tagName, attrs) => {
     }
 
     if (attrs.hasOwnProperty("gap")) {
-      classes.push("eds-gap-" + cleanAttrVal(attrs["gap"]))
+      let sp = normalizeSpacing(cleanAttrVal(attrs["gap"]))
+      if (sp != null) { classes.push("eds-gap-" + sp) }
     }
     if (attrs.hasOwnProperty("align")) {
       classes.push("eds-align-" + cleanAttrVal(attrs["align"]))
@@ -629,39 +898,71 @@ export const transformPrimitive = (tagName, attrs) => {
       classes.push("eds-justify-" + cleanAttrVal(attrs["justify"]))
     }
 
-    if (attrs.hasOwnProperty("p")) { classes.push("eds-p-" + cleanAttrVal(attrs["p"])) }
-    if (attrs.hasOwnProperty("px")) { classes.push("eds-px-" + cleanAttrVal(attrs["px"])) }
-    if (attrs.hasOwnProperty("py")) { classes.push("eds-py-" + cleanAttrVal(attrs["py"])) }
-    if (attrs.hasOwnProperty("pt")) { classes.push("eds-pt-" + cleanAttrVal(attrs["pt"])) }
-    if (attrs.hasOwnProperty("pb")) { classes.push("eds-pb-" + cleanAttrVal(attrs["pb"])) }
-    if (attrs.hasOwnProperty("pl")) { classes.push("eds-pl-" + cleanAttrVal(attrs["pl"])) }
-    if (attrs.hasOwnProperty("pr")) { classes.push("eds-pr-" + cleanAttrVal(attrs["pr"])) }
+    // Paddings
+    if (attrs.hasOwnProperty("p")) { let sp = normalizeSpacing(cleanAttrVal(attrs["p"])); if (sp != null) { classes.push("eds-p-" + sp) } }
+    applyPaddingX(attrs, classes, inlineStyles)
+    applyPaddingY(attrs, classes, inlineStyles)
+    if (attrs.hasOwnProperty("pt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pt"])); if (sp != null) { classes.push("eds-pt-" + sp) } }
+    if (attrs.hasOwnProperty("pb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pb"])); if (sp != null) { classes.push("eds-pb-" + sp) } }
+    if (attrs.hasOwnProperty("pl")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pl"])); if (sp != null) { classes.push("eds-pl-" + sp) } }
+    if (attrs.hasOwnProperty("pr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pr"])); if (sp != null) { classes.push("eds-pr-" + sp) } }
+
+    // Margins (Mantine style props)
+    if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
+    if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
+    if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
+    if (attrs.hasOwnProperty("mt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mt"])); if (sp != null) { classes.push("eds-mt-" + sp) } }
+    if (attrs.hasOwnProperty("mb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mb"])); if (sp != null) { classes.push("eds-mb-" + sp) } }
+    if (attrs.hasOwnProperty("ml")) { let sp = normalizeSpacing(cleanAttrVal(attrs["ml"])); if (sp != null) { classes.push("eds-ml-" + sp) } }
+    if (attrs.hasOwnProperty("mr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mr"])); if (sp != null) { classes.push("eds-mr-" + sp) } }
 
     if (attrs.hasOwnProperty("bg")) { classes.push("eds-bg-" + cleanAttrVal(attrs["bg"])) }
     if (attrs.hasOwnProperty("border")) { classes.push("eds-border-" + cleanAttrVal(attrs["border"])) }
+    else if (attrs.hasOwnProperty("bd")) { classes.push("eds-border-" + cleanAttrVal(attrs["bd"])) }
     if (attrs.hasOwnProperty("borderTop")) { classes.push("eds-border-t-" + cleanAttrVal(attrs["borderTop"])) }
     if (attrs.hasOwnProperty("borderBottom")) { classes.push("eds-border-b-" + cleanAttrVal(attrs["borderBottom"])) }
     if (attrs.hasOwnProperty("borderLeft")) { classes.push("eds-border-l-" + cleanAttrVal(attrs["borderLeft"])) }
     if (attrs.hasOwnProperty("borderRight")) { classes.push("eds-border-r-" + cleanAttrVal(attrs["borderRight"])) }
 
     if (attrs.hasOwnProperty("radius")) { classes.push("eds-radius-" + cleanAttrVal(attrs["radius"])) }
+    else if (attrs.hasOwnProperty("bdrs")) { classes.push("eds-radius-" + cleanAttrVal(attrs["bdrs"])) }
     if (attrs.hasOwnProperty("shadow")) { classes.push("eds-shadow-" + cleanAttrVal(attrs["shadow"])) }
 
     if (attrs.hasOwnProperty("width")) { classes.push("eds-w-" + cleanAttrVal(attrs["width"])) }
+    else if (attrs.hasOwnProperty("w")) { classes.push("eds-w-" + cleanAttrVal(attrs["w"])) }
     if (attrs.hasOwnProperty("height")) { classes.push("eds-h-" + cleanAttrVal(attrs["height"])) }
+    else if (attrs.hasOwnProperty("h")) { classes.push("eds-h-" + cleanAttrVal(attrs["h"])) }
     if (attrs.hasOwnProperty("minH")) { classes.push("eds-min-h-" + cleanAttrVal(attrs["minH"])) }
-    if (attrs.hasOwnProperty("maxW")) { classes.push("eds-max-w-" + cleanAttrVal(attrs["maxW"])) }
+    else if (attrs.hasOwnProperty("mih")) { classes.push("eds-min-h-" + cleanAttrVal(attrs["mih"])) }
+
+    if (attrs.hasOwnProperty("maxW")) {
+      let mw = normalizeMaxWidth(cleanAttrVal(attrs["maxW"]))
+      if (mw != null) { classes.push("eds-max-w-" + mw) }
+    } else if (attrs.hasOwnProperty("maw")) {
+      let mw = normalizeMaxWidth(cleanAttrVal(attrs["maw"]))
+      if (mw != null) { classes.push("eds-max-w-" + mw) }
+    }
 
     if (attrs.hasOwnProperty("ta")) { classes.push("eds-text-" + cleanAttrVal(attrs["ta"])) }
     if (attrs.hasOwnProperty("c")) { classes.push("eds-color-" + cleanAttrVal(attrs["c"])) }
+    else if (attrs.hasOwnProperty("color")) { classes.push("eds-color-" + cleanAttrVal(attrs["color"])) }
+
     if (attrs.hasOwnProperty("fw")) {
       let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
       if (nw != null) { classes.push("eds-weight-" + nw) }
+    } else if (attrs.hasOwnProperty("weight")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["weight"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
     }
+
     if (attrs.hasOwnProperty("fz")) {
       let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
       if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    } else if (attrs.hasOwnProperty("size")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["size"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
     }
+
     if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
     if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
 
@@ -673,15 +974,24 @@ export const transformPrimitive = (tagName, attrs) => {
       classes.push("eds-min-h-screen")
     }
 
+    if (attrs.hasOwnProperty("flex")) {
+      let fl = cleanAttrVal(attrs["flex"])
+      if (fl == "1") { classes.push("eds-flex-1") }
+    }
+    if (attrs.hasOwnProperty("grow")) { classes.push("eds-grow") }
+    if (attrs.hasOwnProperty("pos")) { classes.push("eds-pos-" + cleanAttrVal(attrs["pos"])) }
+
     let passthrough = ""
     for k in keys {
-      if (k == "as" or k == "direction" or k == "gap" or k == "align" or k == "justify" or
+      if (k == "as" or k == "direction" or k == "gap" or k == "align" or k == "justify" or k == "wrap" or k == "grow" or
           k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
-          k == "bg" or k == "border" or k == "borderTop" or k == "borderBottom" or k == "borderLeft" or k == "borderRight" or
-          k == "radius" or k == "shadow" or k == "width" or k == "height" or
-          k == "center" or k == "screen" or k == "minH" or k == "maxW" or
-          k == "ta" or k == "c" or k == "fw" or k == "fz" or k == "tt" or k == "td") {
-        // Skip handled layout attributes
+          k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or k == "ml" or k == "mr" or
+          k == "bg" or k == "border" or k == "bd" or k == "borderTop" or k == "borderBottom" or k == "borderLeft" or k == "borderRight" or
+          k == "radius" or k == "bdrs" or k == "shadow" or k == "width" or k == "w" or k == "height" or k == "h" or
+          k == "center" or k == "screen" or k == "minH" or k == "mih" or k == "maxW" or k == "maw" or
+          k == "ta" or k == "c" or k == "color" or k == "fw" or k == "weight" or k == "fz" or k == "size" or k == "tt" or k == "td" or
+          k == "flex" or k == "pos" or k == "truncate" or k == "style") {
+        // Skip handled layout and style attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
         if (userClass != "") {
@@ -692,7 +1002,26 @@ export const transformPrimitive = (tagName, attrs) => {
       }
     }
 
-    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    let styleStr = ""
+    let allStyles = []
+    for s in inlineStyles {
+      allStyles.push(s)
+    }
+    if (attrs.hasOwnProperty("style")) {
+      let userStyle = cleanAttrVal(attrs["style"])
+      if (userStyle != "") {
+        let trimmedUserStyle = userStyle.trim()
+        if (trimmedUserStyle.endsWith(";")) {
+          trimmedUserStyle = trimmedUserStyle.substring(0, trimmedUserStyle.length - 1).trim()
+        }
+        allStyles.push(trimmedUserStyle)
+      }
+    }
+    if (allStyles.length > 0) {
+      styleStr = " style=\"" + allStyles.join("; ") + ";\""
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + styleStr + passthrough + ">"
     return [openTag, htmlTag]
   }
 
@@ -714,18 +1043,183 @@ export const transformPrimitive = (tagName, attrs) => {
     return transformPrimitive("Box", boxAttrs)
   }
 
-  if (tagName == "Cluster") {
+  if (tagName == "Group" or tagName == "Cluster") {
     let boxAttrs = {}
     for k in keys {
       boxAttrs[k] = attrs[k]
     }
     boxAttrs["direction"] = "\"row\""
+    if (tagName == "Group" and !boxAttrs.hasOwnProperty("align")) {
+      boxAttrs["align"] = "\"center\""
+    }
     let res = transformPrimitive("Box", boxAttrs)
     if (res != null) {
-      let openWithWrap = res[0].replace("class=\"eds-box eds-row", "class=\"eds-box eds-row eds-wrap")
+      let isNoWrap = attrs.hasOwnProperty("wrap") and cleanAttrVal(attrs["wrap"]) == "nowrap"
+      let wrapClass = isNoWrap ? "eds-nowrap" : "eds-wrap"
+      let openWithWrap = res[0].replace("class=\"eds-box eds-row", "class=\"eds-box eds-row " + wrapClass)
       return [openWithWrap, res[1]]
     }
     return null
+  }
+
+  if (tagName == "Title") {
+    let order = attrs.hasOwnProperty("order") ? cleanAttrVal(attrs["order"]) : "1"
+    let htmlTag = "h1"
+    let defaultFz = "3xl"
+    if (order == "1") { htmlTag = "h1"; defaultFz = "3xl" }
+    else if (order == "2") { htmlTag = "h2"; defaultFz = "2xl" }
+    else if (order == "3") { htmlTag = "h3"; defaultFz = "xl" }
+    else if (order == "4") { htmlTag = "h4"; defaultFz = "lg" }
+    else if (order == "5") { htmlTag = "h5"; defaultFz = "md" }
+    else if (order == "6") { htmlTag = "h6"; defaultFz = "sm" }
+
+    if (attrs.hasOwnProperty("as")) {
+      htmlTag = cleanAttrVal(attrs["as"])
+    }
+
+    let classes = ["eds-title"]
+
+    if (attrs.hasOwnProperty("fz")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    } else if (attrs.hasOwnProperty("size")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["size"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    } else {
+      classes.push("eds-fz-" + defaultFz)
+    }
+
+    if (attrs.hasOwnProperty("fw")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
+    } else if (attrs.hasOwnProperty("weight")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["weight"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
+    } else {
+      classes.push("eds-weight-bold")
+    }
+
+    if (attrs.hasOwnProperty("c")) {
+      classes.push("eds-color-" + cleanAttrVal(attrs["c"]))
+    } else if (attrs.hasOwnProperty("color")) {
+      classes.push("eds-color-" + cleanAttrVal(attrs["color"]))
+    }
+
+    if (attrs.hasOwnProperty("ta")) {
+      classes.push("eds-text-" + cleanAttrVal(attrs["ta"]))
+    } else if (attrs.hasOwnProperty("align")) {
+      classes.push("eds-text-" + cleanAttrVal(attrs["align"]))
+    }
+
+    if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
+    if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
+
+    // Margins (Mantine style props)
+    if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
+    if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
+    if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
+    if (attrs.hasOwnProperty("mt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mt"])); if (sp != null) { classes.push("eds-mt-" + sp) } }
+    if (attrs.hasOwnProperty("mb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mb"])); if (sp != null) { classes.push("eds-mb-" + sp) } }
+    if (attrs.hasOwnProperty("ml")) { let sp = normalizeSpacing(cleanAttrVal(attrs["ml"])); if (sp != null) { classes.push("eds-ml-" + sp) } }
+    if (attrs.hasOwnProperty("mr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mr"])); if (sp != null) { classes.push("eds-mr-" + sp) } }
+
+    let passthrough = ""
+    for k in keys {
+      if (k == "as" or k == "order" or k == "size" or k == "fz" or k == "fw" or k == "weight" or k == "c" or k == "color" or
+          k == "ta" or k == "align" or k == "tt" or k == "td" or
+          k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or k == "ml" or k == "mr") {
+        // Skip handled attributes
+      } else if (k == "class") {
+        let userClass = cleanAttrVal(attrs["class"])
+        if (userClass != "") {
+          classes.push(userClass)
+        }
+      } else {
+        passthrough = passthrough + formatPassthroughAttr(k, attrs[k])
+      }
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    return [openTag, htmlTag]
+  }
+
+  if (tagName == "Code") {
+    let isBlock = attrs.hasOwnProperty("block")
+    let htmlTag = isBlock ? "pre" : "code"
+    let classes = ["eds-code"]
+    let inlineStyles = []
+    if (isBlock) {
+      classes.push("eds-code-block")
+    }
+
+    if (attrs.hasOwnProperty("c")) {
+      classes.push("eds-color-" + cleanAttrVal(attrs["c"]))
+    } else if (attrs.hasOwnProperty("color")) {
+      classes.push("eds-color-" + cleanAttrVal(attrs["color"]))
+    }
+
+    if (attrs.hasOwnProperty("bg")) {
+      classes.push("eds-bg-" + cleanAttrVal(attrs["bg"]))
+    }
+
+    if (attrs.hasOwnProperty("fz")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    } else if (attrs.hasOwnProperty("size")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["size"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    }
+
+    // Margins & Paddings
+    if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
+    if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
+    if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
+    if (attrs.hasOwnProperty("mt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mt"])); if (sp != null) { classes.push("eds-mt-" + sp) } }
+    if (attrs.hasOwnProperty("mb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mb"])); if (sp != null) { classes.push("eds-mb-" + sp) } }
+    if (attrs.hasOwnProperty("ml")) { let sp = normalizeSpacing(cleanAttrVal(attrs["ml"])); if (sp != null) { classes.push("eds-ml-" + sp) } }
+    if (attrs.hasOwnProperty("mr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mr"])); if (sp != null) { classes.push("eds-mr-" + sp) } }
+
+    if (attrs.hasOwnProperty("p")) { let sp = normalizeSpacing(cleanAttrVal(attrs["p"])); if (sp != null) { classes.push("eds-p-" + sp) } }
+    applyPaddingX(attrs, classes, inlineStyles)
+    applyPaddingY(attrs, classes, inlineStyles)
+
+    let passthrough = ""
+    for k in keys {
+      if (k == "block" or k == "c" or k == "color" or k == "bg" or k == "fz" or k == "size" or
+          k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or k == "ml" or k == "mr" or
+          k == "p" or k == "px" or k == "py" or k == "style") {
+        // Skip handled attributes
+      } else if (k == "class") {
+        let userClass = cleanAttrVal(attrs["class"])
+        if (userClass != "") {
+          classes.push(userClass)
+        }
+      } else {
+        passthrough = passthrough + formatPassthroughAttr(k, attrs[k])
+      }
+    }
+
+    let styleStr = ""
+    let allStyles = []
+    for s in inlineStyles {
+      allStyles.push(s)
+    }
+    if (attrs.hasOwnProperty("style")) {
+      let userStyle = cleanAttrVal(attrs["style"])
+      if (userStyle != "") {
+        let trimmedUserStyle = userStyle.trim()
+        if (trimmedUserStyle.endsWith(";")) {
+          trimmedUserStyle = trimmedUserStyle.substring(0, trimmedUserStyle.length - 1).trim()
+        }
+        allStyles.push(trimmedUserStyle)
+      }
+    }
+    if (allStyles.length > 0) {
+      styleStr = " style=\"" + allStyles.join("; ") + ";\""
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + styleStr + passthrough + ">"
+    return [openTag, htmlTag]
   }
 
   if (tagName == "Text") {
@@ -735,12 +1229,15 @@ export const transformPrimitive = (tagName, attrs) => {
 
     if (variant != null) {
       classes.push("eds-variant-" + variant)
-    } else if (!attrs.hasOwnProperty("fz")) {
+    } else if (!attrs.hasOwnProperty("fz") and !attrs.hasOwnProperty("size")) {
       classes.push("eds-variant-body")
     }
 
     if (attrs.hasOwnProperty("fz")) {
       let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    } else if (attrs.hasOwnProperty("size")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["size"]))
       if (nfz != null) { classes.push("eds-fz-" + nfz) }
     }
 
@@ -768,10 +1265,29 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
     if (attrs.hasOwnProperty("truncate")) { classes.push("eds-truncate") }
 
+    // Margins (Mantine style props)
+    if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
+    if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
+    if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
+    if (attrs.hasOwnProperty("mt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mt"])); if (sp != null) { classes.push("eds-mt-" + sp) } }
+    if (attrs.hasOwnProperty("mb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mb"])); if (sp != null) { classes.push("eds-mb-" + sp) } }
+    if (attrs.hasOwnProperty("ml")) { let sp = normalizeSpacing(cleanAttrVal(attrs["ml"])); if (sp != null) { classes.push("eds-ml-" + sp) } }
+    if (attrs.hasOwnProperty("mr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mr"])); if (sp != null) { classes.push("eds-mr-" + sp) } }
+
+    if (attrs.hasOwnProperty("maxW")) {
+      let mw = normalizeMaxWidth(cleanAttrVal(attrs["maxW"]))
+      if (mw != null) { classes.push("eds-max-w-" + mw) }
+    } else if (attrs.hasOwnProperty("maw")) {
+      let mw = normalizeMaxWidth(cleanAttrVal(attrs["maw"]))
+      if (mw != null) { classes.push("eds-max-w-" + mw) }
+    }
+
     let passthrough = ""
     for k in keys {
       if (k == "as" or k == "variant" or k == "color" or k == "c" or k == "weight" or k == "fw" or
-          k == "align" or k == "ta" or k == "fz" or k == "tt" or k == "td" or k == "truncate") {
+          k == "align" or k == "ta" or k == "fz" or k == "size" or k == "tt" or k == "td" or k == "truncate" or
+          k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or k == "ml" or k == "mr" or
+          k == "maxW" or k == "maw") {
         // Skip handled text attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -790,40 +1306,82 @@ export const transformPrimitive = (tagName, attrs) => {
   if (tagName == "Card") {
     let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "div"
     let classes = ["eds-card"]
+    let inlineStyles = []
 
-    if (attrs.hasOwnProperty("p")) { classes.push("eds-p-" + cleanAttrVal(attrs["p"])) }
-    if (attrs.hasOwnProperty("px")) { classes.push("eds-px-" + cleanAttrVal(attrs["px"])) }
-    if (attrs.hasOwnProperty("py")) { classes.push("eds-py-" + cleanAttrVal(attrs["py"])) }
-    if (attrs.hasOwnProperty("pt")) { classes.push("eds-pt-" + cleanAttrVal(attrs["pt"])) }
-    if (attrs.hasOwnProperty("pb")) { classes.push("eds-pb-" + cleanAttrVal(attrs["pb"])) }
-    if (attrs.hasOwnProperty("pl")) { classes.push("eds-pl-" + cleanAttrVal(attrs["pl"])) }
-    if (attrs.hasOwnProperty("pr")) { classes.push("eds-pr-" + cleanAttrVal(attrs["pr"])) }
-    if (attrs.hasOwnProperty("gap")) { classes.push("eds-gap-" + cleanAttrVal(attrs["gap"])) }
+    if (attrs.hasOwnProperty("p")) { let sp = normalizeSpacing(cleanAttrVal(attrs["p"])); if (sp != null) { classes.push("eds-p-" + sp) } }
+    applyPaddingX(attrs, classes, inlineStyles)
+    applyPaddingY(attrs, classes, inlineStyles)
+    if (attrs.hasOwnProperty("pt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pt"])); if (sp != null) { classes.push("eds-pt-" + sp) } }
+    if (attrs.hasOwnProperty("pb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pb"])); if (sp != null) { classes.push("eds-pb-" + sp) } }
+    if (attrs.hasOwnProperty("pl")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pl"])); if (sp != null) { classes.push("eds-pl-" + sp) } }
+    if (attrs.hasOwnProperty("pr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pr"])); if (sp != null) { classes.push("eds-pr-" + sp) } }
+
+    // Margins (Mantine style props)
+    if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
+    if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
+    if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
+    if (attrs.hasOwnProperty("mt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mt"])); if (sp != null) { classes.push("eds-mt-" + sp) } }
+    if (attrs.hasOwnProperty("mb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mb"])); if (sp != null) { classes.push("eds-mb-" + sp) } }
+    if (attrs.hasOwnProperty("ml")) { let sp = normalizeSpacing(cleanAttrVal(attrs["ml"])); if (sp != null) { classes.push("eds-ml-" + sp) } }
+    if (attrs.hasOwnProperty("mr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mr"])); if (sp != null) { classes.push("eds-mr-" + sp) } }
+
+    if (attrs.hasOwnProperty("gap")) {
+      let sp = normalizeSpacing(cleanAttrVal(attrs["gap"]))
+      if (sp != null) { classes.push("eds-gap-" + sp) }
+    }
     if (attrs.hasOwnProperty("align")) { classes.push("eds-align-" + cleanAttrVal(attrs["align"])) }
-    if (attrs.hasOwnProperty("maxW")) { classes.push("eds-max-w-" + cleanAttrVal(attrs["maxW"])) }
+
+    if (attrs.hasOwnProperty("maxW")) {
+      let mw = normalizeMaxWidth(cleanAttrVal(attrs["maxW"]))
+      if (mw != null) { classes.push("eds-max-w-" + mw) }
+    } else if (attrs.hasOwnProperty("maw")) {
+      let mw = normalizeMaxWidth(cleanAttrVal(attrs["maw"]))
+      if (mw != null) { classes.push("eds-max-w-" + mw) }
+    }
+
     if (attrs.hasOwnProperty("bg")) { classes.push("eds-bg-" + cleanAttrVal(attrs["bg"])) }
     if (attrs.hasOwnProperty("border")) { classes.push("eds-border-" + cleanAttrVal(attrs["border"])) }
+    else if (attrs.hasOwnProperty("bd")) { classes.push("eds-border-" + cleanAttrVal(attrs["bd"])) }
     if (attrs.hasOwnProperty("radius")) { classes.push("eds-radius-" + cleanAttrVal(attrs["radius"])) }
+    else if (attrs.hasOwnProperty("bdrs")) { classes.push("eds-radius-" + cleanAttrVal(attrs["bdrs"])) }
     if (attrs.hasOwnProperty("shadow")) { classes.push("eds-shadow-" + cleanAttrVal(attrs["shadow"])) }
 
     if (attrs.hasOwnProperty("ta")) { classes.push("eds-text-" + cleanAttrVal(attrs["ta"])) }
     if (attrs.hasOwnProperty("c")) { classes.push("eds-color-" + cleanAttrVal(attrs["c"])) }
+    else if (attrs.hasOwnProperty("color")) { classes.push("eds-color-" + cleanAttrVal(attrs["color"])) }
+
     if (attrs.hasOwnProperty("fw")) {
       let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
       if (nw != null) { classes.push("eds-weight-" + nw) }
+    } else if (attrs.hasOwnProperty("weight")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["weight"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
     }
+
     if (attrs.hasOwnProperty("fz")) {
       let nfz = normalizeFontSize(cleanAttrVal(attrs["fz"]))
       if (nfz != null) { classes.push("eds-fz-" + nfz) }
+    } else if (attrs.hasOwnProperty("size")) {
+      let nfz = normalizeFontSize(cleanAttrVal(attrs["size"]))
+      if (nfz != null) { classes.push("eds-fz-" + nfz) }
     }
+
     if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
     if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
+
+    if (attrs.hasOwnProperty("flex")) {
+      let fl = cleanAttrVal(attrs["flex"])
+      if (fl == "1") { classes.push("eds-flex-1") }
+    }
 
     let passthrough = ""
     for k in keys {
       if (k == "as" or k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
-          k == "gap" or k == "align" or k == "maxW" or k == "bg" or k == "border" or k == "radius" or k == "shadow" or
-          k == "ta" or k == "c" or k == "fw" or k == "fz" or k == "tt" or k == "td") {
+          k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or k == "ml" or k == "mr" or
+          k == "gap" or k == "align" or k == "maxW" or k == "maw" or k == "bg" or k == "border" or k == "bd" or
+          k == "radius" or k == "bdrs" or k == "shadow" or
+          k == "ta" or k == "c" or k == "color" or k == "fw" or k == "weight" or k == "fz" or k == "size" or k == "tt" or k == "td" or
+          k == "flex" or k == "style") {
         // Skip handled attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -835,26 +1393,72 @@ export const transformPrimitive = (tagName, attrs) => {
       }
     }
 
-    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    let styleStr = ""
+    let allStyles = []
+    for s in inlineStyles {
+      allStyles.push(s)
+    }
+    if (attrs.hasOwnProperty("style")) {
+      let userStyle = cleanAttrVal(attrs["style"])
+      if (userStyle != "") {
+        let trimmedUserStyle = userStyle.trim()
+        if (trimmedUserStyle.endsWith(";")) {
+          trimmedUserStyle = trimmedUserStyle.substring(0, trimmedUserStyle.length - 1).trim()
+        }
+        allStyles.push(trimmedUserStyle)
+      }
+    }
+    if (allStyles.length > 0) {
+      styleStr = " style=\"" + allStyles.join("; ") + ";\""
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + styleStr + passthrough + ">"
     return [openTag, htmlTag]
   }
 
   if (tagName == "Button") {
     let htmlTag = attrs.hasOwnProperty("as") ? cleanAttrVal(attrs["as"]) : "button"
     let variant = attrs.hasOwnProperty("variant") ? cleanAttrVal(attrs["variant"]) : "primary"
+    if (variant == "default") { variant = "secondary" }
     let size = attrs.hasOwnProperty("size") ? cleanAttrVal(attrs["size"]) : "md"
 
     let classes = ["eds-btn", "eds-btn-" + variant, "eds-btn-" + size]
+    let inlineStyles = []
     if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
     if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
     if (attrs.hasOwnProperty("fw")) {
       let nw = normalizeWeight(cleanAttrVal(attrs["fw"]))
       if (nw != null) { classes.push("eds-weight-" + nw) }
+    } else if (attrs.hasOwnProperty("weight")) {
+      let nw = normalizeWeight(cleanAttrVal(attrs["weight"]))
+      if (nw != null) { classes.push("eds-weight-" + nw) }
     }
+
+    // Paddings (Mantine style props)
+    if (attrs.hasOwnProperty("p")) { let sp = normalizeSpacing(cleanAttrVal(attrs["p"])); if (sp != null) { classes.push("eds-p-" + sp) } }
+    applyPaddingX(attrs, classes, inlineStyles)
+    applyPaddingY(attrs, classes, inlineStyles)
+    if (attrs.hasOwnProperty("pt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pt"])); if (sp != null) { classes.push("eds-pt-" + sp) } }
+    if (attrs.hasOwnProperty("pb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pb"])); if (sp != null) { classes.push("eds-pb-" + sp) } }
+    if (attrs.hasOwnProperty("pl")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pl"])); if (sp != null) { classes.push("eds-pl-" + sp) } }
+    if (attrs.hasOwnProperty("pr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pr"])); if (sp != null) { classes.push("eds-pr-" + sp) } }
+
+    // Margins (Mantine style props)
+    if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
+    if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
+    if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
+    if (attrs.hasOwnProperty("mt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mt"])); if (sp != null) { classes.push("eds-mt-" + sp) } }
+    if (attrs.hasOwnProperty("mb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mb"])); if (sp != null) { classes.push("eds-mb-" + sp) } }
+    if (attrs.hasOwnProperty("ml")) { let sp = normalizeSpacing(cleanAttrVal(attrs["ml"])); if (sp != null) { classes.push("eds-ml-" + sp) } }
+    if (attrs.hasOwnProperty("mr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mr"])); if (sp != null) { classes.push("eds-mr-" + sp) } }
+
     let passthrough = ""
 
     for k in keys {
-      if (k == "as" or k == "variant" or k == "size" or k == "tt" or k == "td" or k == "fw") {
+      if (k == "as" or k == "variant" or k == "size" or k == "tt" or k == "td" or k == "fw" or k == "weight" or
+          k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or k == "ml" or k == "mr" or
+          k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
+          k == "style") {
         // Skip handled attributes
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
@@ -866,19 +1470,55 @@ export const transformPrimitive = (tagName, attrs) => {
       }
     }
 
-    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    let styleStr = ""
+    let allStyles = []
+    for s in inlineStyles {
+      allStyles.push(s)
+    }
+    if (attrs.hasOwnProperty("style")) {
+      let userStyle = cleanAttrVal(attrs["style"])
+      if (userStyle != "") {
+        let trimmedUserStyle = userStyle.trim()
+        if (trimmedUserStyle.endsWith(";")) {
+          trimmedUserStyle = trimmedUserStyle.substring(0, trimmedUserStyle.length - 1).trim()
+        }
+        allStyles.push(trimmedUserStyle)
+      }
+    }
+    if (allStyles.length > 0) {
+      styleStr = " style=\"" + allStyles.join("; ") + ";\""
+    }
+
+    let openTag = "<" + htmlTag + " class=\"" + classes.join(" ") + "\"" + styleStr + passthrough + ">"
     return [openTag, htmlTag]
   }
 
   if (tagName == "Badge") {
     let status = attrs.hasOwnProperty("status") ? cleanAttrVal(attrs["status"]) : "default"
     let classes = ["eds-badge", "eds-badge-" + status]
+    let inlineStyles = []
     if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
+
+    // Paddings (Mantine style props)
+    if (attrs.hasOwnProperty("p")) { let sp = normalizeSpacing(cleanAttrVal(attrs["p"])); if (sp != null) { classes.push("eds-p-" + sp) } }
+    applyPaddingX(attrs, classes, inlineStyles)
+    applyPaddingY(attrs, classes, inlineStyles)
+
+    // Margins (Mantine style props)
+    if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
+    if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
+    if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
+    if (attrs.hasOwnProperty("mt")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mt"])); if (sp != null) { classes.push("eds-mt-" + sp) } }
+    if (attrs.hasOwnProperty("mb")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mb"])); if (sp != null) { classes.push("eds-mb-" + sp) } }
+
     let passthrough = ""
 
     for k in keys {
-      if (k == "status" or k == "tt") {
-        // Skip status and tt
+      if (k == "status" or k == "tt" or
+          k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or
+          k == "p" or k == "px" or k == "py" or
+          k == "style") {
+        // Skip status and handled style props
       } else if (k == "class") {
         let userClass = cleanAttrVal(attrs["class"])
         if (userClass != "") {
@@ -889,7 +1529,26 @@ export const transformPrimitive = (tagName, attrs) => {
       }
     }
 
-    let openTag = "<span class=\"" + classes.join(" ") + "\"" + passthrough + ">"
+    let styleStr = ""
+    let allStyles = []
+    for s in inlineStyles {
+      allStyles.push(s)
+    }
+    if (attrs.hasOwnProperty("style")) {
+      let userStyle = cleanAttrVal(attrs["style"])
+      if (userStyle != "") {
+        let trimmedUserStyle = userStyle.trim()
+        if (trimmedUserStyle.endsWith(";")) {
+          trimmedUserStyle = trimmedUserStyle.substring(0, trimmedUserStyle.length - 1).trim()
+        }
+        allStyles.push(trimmedUserStyle)
+      }
+    }
+    if (allStyles.length > 0) {
+      styleStr = " style=\"" + allStyles.join("; ") + ";\""
+    }
+
+    let openTag = "<span class=\"" + classes.join(" ") + "\"" + styleStr + passthrough + ">"
     return [openTag, "span"]
   }
 

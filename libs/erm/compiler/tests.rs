@@ -439,3 +439,90 @@ fn test_eds_mantine_typography_props() {
     assert!(res.contains(".eds-td-underline { text-decoration: underline; }"));
     assert!(res.contains(".eds-text-center { text-align: center; }"));
 }
+
+#[test]
+fn test_eds_mantine_style_props_and_primitives() {
+    let content = r#"
+    <Center as="main" screen p="xl" bg="canvas">
+        <Card maw="md" p="2xl">
+            <Stack gap="md" align="center" ta="center">
+                <Badge status="info">Eronom ⚡ v0.9</Badge>
+                <Title order="1" fz="3xl" fw="bold" c="primary">
+                    Get started by editing<br />
+                    <Code>app/pages/index.erm</Code>
+                </Title>
+                <Text c="secondary">
+                    Save and see changes instantly.
+                </Text>
+                <Group gap="md" align="center" mt="md">
+                    <Button as="a" href="https://github.com/eronom/eronom" variant="primary" size="md" px="xl" py="sm">
+                        Documentation &rarr;
+                    </Button>
+                    <Button as="a" href="https://github.com/eronom/eronom" variant="secondary" size="md" px="xl" py="sm">
+                        Explore Templates
+                    </Button>
+                </Group>
+            </Stack>
+        </Card>
+    </Center>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    println!("EDS MANTINE RES:\n{}", res);
+
+    // Primitives compile to clean semantic HTML without style=
+    assert!(res.contains("class=\"eds-box eds-p-xl eds-bg-canvas eds-center eds-w-full eds-min-h-screen\""));
+    assert!(res.contains("class=\"eds-card eds-p-2xl eds-max-w-md\""));
+    assert!(res.contains("class=\"eds-box eds-col eds-gap-md eds-align-center eds-text-center\""));
+    assert!(res.contains("class=\"eds-badge eds-badge-info\""));
+    assert!(res.contains("class=\"eds-title eds-fz-3xl eds-weight-bold eds-color-primary\""));
+    assert!(res.contains("class=\"eds-code\">app/pages/index.erm</code>"));
+    assert!(res.contains("class=\"eds-box eds-row eds-wrap eds-gap-md eds-align-center eds-mt-md\""));
+    assert!(res.contains("class=\"eds-btn eds-btn-primary eds-btn-md eds-px-xl eds-py-sm\""));
+    assert!(res.contains("class=\"eds-btn eds-btn-secondary eds-btn-md eds-px-xl eds-py-sm\""));
+    assert!(res.contains("<h1"));
+    assert!(res.contains("<code"));
+
+    // Generated CSS
+    assert!(res.contains(".eds-mt-md { margin-top: var(--eds-space-md); }"));
+    assert!(res.contains(".eds-code {"));
+    assert!(res.contains(".eds-title {"));
+    assert!(res.contains(".eds-max-w-md { max-width: 38rem; width: 100%; }"));
+    assert!(res.contains(".eds-maw-md { max-width: 38rem; width: 100%; }"));
+
+    // Zero style= attributes
+    assert!(!res.contains("style="));
+}
+
+#[test]
+fn test_eds_custom_spacing_props() {
+    let content = r#"
+    <Box px="30px" py="15px">
+        <Button variant="primary" size="md" px="24px" py="10px">Pixel Values</Button>
+        <Button variant="secondary" size="md" px="1.5rem" py="0.6rem">Rem Values</Button>
+        <Button variant="subtle" size="md" px="20" py="12">Numeric Values</Button>
+        <Button variant="primary" size="md" px="xl" py="8px">Mixed Token And Custom</Button>
+        <Badge status="info" px="12px" py="4px">Custom Badge</Badge>
+    </Box>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    println!("EDS CUSTOM SPACING RES:\n{}", res);
+
+    assert!(res.contains("style=\"padding-left: 30px; padding-right: 30px; padding-top: 15px; padding-bottom: 15px;\""));
+    assert!(res.contains("style=\"padding-left: 24px; padding-right: 24px; padding-top: 10px; padding-bottom: 10px;\""));
+    assert!(res.contains("style=\"padding-left: 1.5rem; padding-right: 1.5rem; padding-top: 0.6rem; padding-bottom: 0.6rem;\""));
+    assert!(res.contains("style=\"padding-left: 20px; padding-right: 20px; padding-top: 12px; padding-bottom: 12px;\""));
+    assert!(res.contains("class=\"eds-btn eds-btn-primary eds-btn-md eds-px-xl\" style=\"padding-top: 8px; padding-bottom: 8px;\""));
+    assert!(res.contains("class=\"eds-badge eds-badge-info\" style=\"padding-left: 12px; padding-right: 12px; padding-top: 4px; padding-bottom: 4px;\">Custom Badge</span>"));
+
+    // Validation rejection of invalid value
+    let invalid_content = r#"
+    <Button px="not-a-spacing-val">Invalid</Button>
+    "#;
+    let err = process_erm_component(".", invalid_content, false, &params);
+    assert!(err.is_err());
+    let err_msg = err.err().unwrap().to_string();
+    assert!(err_msg.contains("Invalid spacing token or value 'not-a-spacing-val' on <Button>"));
+}
+

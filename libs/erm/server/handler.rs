@@ -135,8 +135,6 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
         (raw_target, None)
     };
 
-    println!("Request: {} {}", method, raw_target);
-
     if target.starts_with("/__erm_src/") {
         let rel_file = &target["/__erm_src/".len()..];
         let file_path = base_path.join(rel_file);

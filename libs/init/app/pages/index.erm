@@ -1,22 +1,22 @@
 <Center as="main" screen p="xl" bg="body">
-    <Card maxW="md" p="2xl">
+    <Card maw="md" p="2xl">
         <Stack gap="md" align="center" ta="center">
             <Badge status="info">Eronom ⚡ v0.9</Badge>
-            <Text as="h1" variant="title-lg" fw="bold" c="primary">
+            <Title order="1" fz="3xl" fw="bold" c="primary">
                 Get started by editing<br />
-                <code style="border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.85em; background-color: var(--eds-bg-muted); color: var(--eds-text-primary); font-family: var(--font-mono);">app/pages/index.erm</code>
-            </Text>
+                <Code>app/pages/index.erm</Code>
+            </Title>
             <Text variant="body" c="secondary">
                 Save and see changes instantly. Powered by the Eronom Design System (EDS) with compiler-enforced intent tokens and native dual-theme support.
             </Text>
-            <Cluster gap="md" align="center" style="margin-top: 0.75rem;">
-                <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="primary" size="md">
+            <Group gap="md" align="center" mt="md">
+                <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="primary" size="md" px="24px" py="10px">
                     Documentation &rarr;
                 </Button>
-                <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="secondary" size="md">
+                <Button as="a" href="https://github.com/eronom/eronom" target="_blank" rel="noopener noreferrer" variant="secondary" size="md" px="24px" py="10px">
                     Explore Templates
                 </Button>
-            </Cluster>
+            </Group>
         </Stack>
     </Card>
 </Center>

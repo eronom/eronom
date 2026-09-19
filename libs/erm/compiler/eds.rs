@@ -165,13 +165,13 @@ pub fn is_primitive(tag_name: &str) -> bool {
         }
         Ok(matches!(
             tag_name,
-            "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge"
+            "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge" | "Center" | "Group" | "Title" | "Code"
         ))
     })
     .unwrap_or_else(|_| {
         matches!(
             tag_name,
-            "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge"
+            "Box" | "Text" | "Stack" | "Cluster" | "Card" | "Button" | "Badge" | "Center" | "Group" | "Title" | "Code"
         )
     })
 }
