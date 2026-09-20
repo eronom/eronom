@@ -3,9 +3,11 @@ pub mod lexer;
 pub mod ast;
 pub mod parser;
 pub mod typecheck;
+pub mod transpile;
 
 pub use token::{Token, TokenType};
 pub use lexer::{Lexer, lex};
 pub use ast::{Expr, LiteralValue, Stmt, SourceLocation, TypeNode, PrimitiveType, PropertySignature};
 pub use parser::{Parser, parse_and_resolve_imports};
 pub use typecheck::{check_program, TypeChecker, TypeError};
+pub use transpile::transpile_to_js;
