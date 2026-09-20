@@ -61,5 +61,127 @@
       "}"
     ],
     "description": "For loop block with index in Eronom Markup"
+  },
+  "EDS Box": {
+    "prefix": "eds-box",
+    "body": [
+      "<Box p=\"${1:md}\" bg=\"${2:card}\">",
+      "\t$0",
+      "</Box>"
+    ],
+    "description": "EDS Box layout primitive"
+  },
+  "EDS Stack": {
+    "prefix": "eds-stack",
+    "body": [
+      "<Stack gap=\"${1:md}\">",
+      "\t$0",
+      "</Stack>"
+    ],
+    "description": "EDS Stack (vertical column flex layout)"
+  },
+  "EDS Cluster": {
+    "prefix": "eds-cluster",
+    "body": [
+      "<Cluster gap=\"${1:md}\" align=\"${2:center}\">",
+      "\t$0",
+      "</Cluster>"
+    ],
+    "description": "EDS Cluster (horizontal row flex layout with wrap)"
+  },
+  "EDS Group": {
+    "prefix": "eds-group",
+    "body": [
+      "<Group gap=\"${1:md}\" align=\"center\">",
+      "\t$0",
+      "</Group>"
+    ],
+    "description": "EDS Group (horizontal action/toolbar container)"
+  },
+  "EDS Center": {
+    "prefix": "eds-center",
+    "body": [
+      "<Center screen p=\"${1:xl}\" bg=\"${2:canvas}\">",
+      "\t$0",
+      "</Center>"
+    ],
+    "description": "EDS Center container (flex center horizontally & vertically)"
+  },
+  "EDS Card": {
+    "prefix": "eds-card",
+    "body": [
+      "<Card p=\"${1:2xl}\" maw=\"${2:md}\">",
+      "\t$0",
+      "</Card>"
+    ],
+    "description": "EDS Card surface container"
+  },
+  "EDS Button": {
+    "prefix": "eds-button",
+    "body": [
+      "<Button variant=\"${1|primary,secondary,subtle,danger|}\" size=\"${2|md,sm,lg|}\">",
+      "\t$0",
+      "</Button>"
+    ],
+    "description": "EDS Button primitive"
+  },
+  "EDS Badge": {
+    "prefix": "eds-badge",
+    "body": [
+      "<Badge status=\"${1|info,success,warning,danger,default|}\">$0</Badge>"
+    ],
+    "description": "EDS Badge status chip"
+  },
+  "EDS Title": {
+    "prefix": "eds-title",
+    "body": [
+      "<Title order=\"${1|1,2,3,4,5,6|}\" fz=\"${2:3xl}\" fw=\"${3:bold}\" c=\"${4:primary}\">",
+      "\t$0",
+      "</Title>"
+    ],
+    "description": "EDS Title heading primitive"
+  },
+  "EDS Text": {
+    "prefix": "eds-text",
+    "body": [
+      "<Text variant=\"${1|body,title-lg,title-md,heading,body-sm,caption,display,mono|}\" c=\"${2:primary}\">",
+      "\t$0",
+      "</Text>"
+    ],
+    "description": "EDS Text typography primitive"
+  },
+  "EDS Code": {
+    "prefix": "eds-code",
+    "body": [
+      "<Code>$0</Code>"
+    ],
+    "description": "EDS Code monospace primitive"
+  },
+  "EDS Hero Page": {
+    "prefix": "eds-hero",
+    "body": [
+      "<Center as=\"main\" screen p=\"xl\" bg=\"canvas\">",
+      "\t<Card maw=\"md\" p=\"2xl\">",
+      "\t\t<Stack gap=\"md\" align=\"center\" ta=\"center\">",
+      "\t\t\t<Badge status=\"info\">${1:Badge Text}</Badge>",
+      "\t\t\t<Title order=\"1\" fz=\"3xl\" fw=\"bold\" c=\"primary\">",
+      "\t\t\t\t${2:Hero Title}",
+      "\t\t\t</Title>",
+      "\t\t\t<Text variant=\"body\" c=\"secondary\">",
+      "\t\t\t\t${3:Hero description text goes here.}",
+      "\t\t\t</Text>",
+      "\t\t\t<Group gap=\"md\" align=\"center\" mt=\"md\">",
+      "\t\t\t\t<Button variant=\"primary\" size=\"md\">",
+      "\t\t\t\t\t${4:Get Started}",
+      "\t\t\t\t</Button>",
+      "\t\t\t\t<Button variant=\"secondary\" size=\"md\">",
+      "\t\t\t\t\t${5:Learn More}",
+      "\t\t\t\t</Button>",
+      "\t\t\t</Group>",
+      "\t\t</Stack>",
+      "\t</Card>",
+      "</Center>"
+    ],
+    "description": "EDS Full Hero Landing Card Template"
   }
 }

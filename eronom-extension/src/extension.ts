@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { ErmCompletionItemProvider } from './completionProvider';
+import { ErmHoverProvider } from './hoverProvider';
+import { activateTagClosing } from './tagClosing';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Eronom support extension is active.');
@@ -121,6 +124,24 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     context.subscriptions.push(initDisposable);
+
+    // Register ERM & EDS Auto-Suggestion Provider
+    const ermCompletionProvider = vscode.languages.registerCompletionItemProvider(
+        'eronom-markup',
+        new ErmCompletionItemProvider(),
+        '<', ' ', '"', "'", ':', '-', '/'
+    );
+    context.subscriptions.push(ermCompletionProvider);
+
+    // Register ERM & EDS Hover Documentation Provider
+    const ermHoverProvider = vscode.languages.registerHoverProvider(
+        'eronom-markup',
+        new ErmHoverProvider()
+    );
+    context.subscriptions.push(ermHoverProvider);
+
+    // Activate automatic tag closing for '>' and '</'
+    activateTagClosing(context);
 }
 
 export function deactivate() {}

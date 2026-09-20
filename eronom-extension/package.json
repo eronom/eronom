@@ -23,6 +23,10 @@
     "Snippets"
   ],
   "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:eronom",
+    "onLanguage:eronom-markup"
+  ],
   "contributes": {
     "languages": [
       {
@@ -33,8 +37,8 @@
       },
       {
         "id": "eronom-markup",
-        "aliases": ["Eronom Markup", "erm"],
-        "extensions": [".erm"],
+        "aliases": ["Eronom Markup", "erm", "eds", "Eronom Design System"],
+        "extensions": [".erm", ".eds"],
         "configuration": "./erm-language-configuration.json"
       }
     ],
