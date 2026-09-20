@@ -1,4 +1,4 @@
-use super::utils::{get_re_attr_brace, replace_word};
+use super::utils::get_re_attr_brace;
 
 pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<String>, states: &[String]) -> String {
     let mut out = String::new();
@@ -34,16 +34,8 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                     }
                     if depth == 0 {
                         let raw_expr = &html[i + 1..j - 1];
-                        let expr = match crate::frontend::transpile_expr_reactivity(raw_expr, states) {
-                            Some(ast_expr) => ast_expr,
-                            None => {
-                                let mut fallback = raw_expr.to_string();
-                                for sig in states {
-                                    fallback = replace_word(&fallback, sig, ".value");
-                                }
-                                fallback
-                            }
-                        };
+                        let expr = crate::frontend::transpile_expr_reactivity(raw_expr, states)
+                            .unwrap_or_else(|| raw_expr.to_string());
                         let id = format!("erm-bind-{}", j);
                         out.push_str(&format!("<span id=\"{}\"></span>", id));
                         bindings.push(format!("bindText(\"{}\", () => ({}));", id, expr));
@@ -98,16 +90,8 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                         }
                         if depth == 0 {
                             let raw_expr = &html[k + 2..j - 1];
-                            let expr = match crate::frontend::transpile_expr_reactivity(raw_expr, states) {
-                                Some(ast_expr) => ast_expr,
-                                None => {
-                                    let mut fallback = raw_expr.to_string();
-                                    for sig in states {
-                                        fallback = replace_word(&fallback, sig, ".value");
-                                    }
-                                    fallback
-                                }
-                            };
+                            let expr = crate::frontend::transpile_expr_reactivity(raw_expr, states)
+                                .unwrap_or_else(|| raw_expr.to_string());
                             let event_type = attr_name[2..].to_lowercase();
                             
                             // Check for existing ID attribute to avoid duplicate IDs

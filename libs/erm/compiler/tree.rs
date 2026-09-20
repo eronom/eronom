@@ -83,7 +83,7 @@ pub fn process_component_tree(
         }
     }
 
-    // 2. Scan and extract all state variable names (so replace_word knows what to convert to .value)
+    // 2. Scan and extract all state variable names (so AST transformer knows what to convert to .value)
     let mut local_state_vars = Vec::new();
     let mut temp_search2 = 0;
     while let Some(start_idx) = content[temp_search2..].find("<script") {
@@ -458,17 +458,8 @@ pub fn process_component_tree(
             };
             transformed = inject_state_name(&transformed, sig, &scoped_name);
         }
-        let ast_transformed = crate::frontend::transform_script_reactivity(&transformed, &state_vars);
-        transformed = match ast_transformed {
-            Some(js) => js,
-            None => {
-                let mut fallback = transformed;
-                for sig in &state_vars {
-                    fallback = replace_word(&fallback, sig, ".value");
-                }
-                fallback
-            }
-        };
+        transformed = crate::frontend::transform_script_reactivity(&transformed, &state_vars)
+            .unwrap_or(transformed);
         transformed = transformed.replace("import.meta.hot", "window.hmr");
         *s = transformed;
     }

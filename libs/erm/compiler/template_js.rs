@@ -1,4 +1,4 @@
-use super::utils::{find_matching_close_brace, replace_word};
+use super::utils::find_matching_close_brace;
 use super::reactivity::get_event_attribute_name;
 
 pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
@@ -15,16 +15,8 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
             if let Some(close_idx) = find_matching_close_brace(&body[i + 1..]) {
                 let brace_end = i + 1 + close_idx;
                 let raw_expr = &body[i + 1..brace_end];
-                let sub_expr = match crate::frontend::transpile_expr_reactivity(raw_expr, state_vars) {
-                    Some(ast_expr) => ast_expr,
-                    None => {
-                        let mut fallback = raw_expr.to_string();
-                        for sig in state_vars {
-                            fallback = replace_word(&fallback, sig, ".value");
-                        }
-                        fallback
-                    }
-                };
+                let sub_expr = crate::frontend::transpile_expr_reactivity(raw_expr, state_vars)
+                    .unwrap_or_else(|| raw_expr.to_string());
                 
                 let prefix = &body[..i];
                 if let Some(event_type) = get_event_attribute_name(prefix) {
