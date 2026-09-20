@@ -559,10 +559,17 @@ pub fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &
         if c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
             if let Some(close_idx) = find_matching_close_brace(&html[i + 1..]) {
                 let brace_end = i + 1 + close_idx;
-                let mut sub_expr = html[i + 1..brace_end].to_string();
-                for sig in state_vars {
-                    sub_expr = replace_word(&sub_expr, sig, ".value");
-                }
+                let raw_expr = &html[i + 1..brace_end];
+                let sub_expr = match crate::frontend::transpile_expr_reactivity(raw_expr, state_vars) {
+                    Some(ast_expr) => ast_expr,
+                    None => {
+                        let mut fallback = raw_expr.to_string();
+                        for sig in state_vars {
+                            fallback = replace_word(&fallback, sig, ".value");
+                        }
+                        fallback
+                    }
+                };
                 
                 let prefix = &html[..i];
                 if let Some(_event_type) = super::reactivity::get_event_attribute_name(prefix) {

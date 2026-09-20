@@ -264,10 +264,16 @@ pub fn process_for_block_at(
         collection_expr_raw
     };
 
-    let mut collection_expr = collection_expr_raw.to_string();
-    for sig in state_vars {
-        collection_expr = replace_word(&collection_expr, sig, ".value");
-    }
+    let collection_expr = match crate::frontend::transpile_expr_reactivity(collection_expr_raw, state_vars) {
+        Some(ast_expr) => ast_expr,
+        None => {
+            let mut fallback = collection_expr_raw.to_string();
+            for sig in state_vars {
+                fallback = replace_word(&fallback, sig, ".value");
+            }
+            fallback
+        }
+    };
     let (item_name, index_name) = if let Some(comma_idx) = vars_part.find(',') {
         (vars_part[0..comma_idx].trim(), vars_part[comma_idx + 1..].trim())
     } else {
@@ -354,10 +360,17 @@ pub fn process_if_block_at(
     let mut ssr_html_res = String::new();
     let mut ssr_found = false;
 
-    for (mut cond_expr, body) in branches {
-        for sig in state_vars {
-            cond_expr = replace_word(&cond_expr, sig, ".value");
-        }
+    for (cond_expr_raw, body) in branches {
+        let cond_expr = match crate::frontend::transpile_expr_reactivity(&cond_expr_raw, state_vars) {
+            Some(ast_expr) => ast_expr,
+            None => {
+                let mut fallback = cond_expr_raw;
+                for sig in state_vars {
+                    fallback = replace_word(&fallback, sig, ".value");
+                }
+                fallback
+            }
+        };
         let scoped_body = scope_html(&body, scope_id)?;
         let compiled_body = compile_template_to_js(&scoped_body, state_vars);
         if !ssr_found {

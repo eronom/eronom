@@ -1,4 +1,4 @@
-use crate::frontend::ast::{Expr, LiteralValue, Stmt};
+use crate::frontend::ast::{Expr, LiteralValue, Stmt, SwitchCase};
 use crate::frontend::token::TokenType;
 
 pub fn transpile_to_js(stmts: &[Stmt]) -> String {
@@ -382,6 +382,281 @@ pub fn emit_expr(expr: &Expr) -> String {
     }
 }
 
+pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &[String]) -> Expr {
+    match expr {
+        Expr::Literal(_) => expr.clone(),
+        Expr::Variable(name, loc) => {
+            if state_vars.contains(name) && !shadowed.contains(name) {
+                Expr::Get(Box::new(Expr::Variable(name.clone(), loc.clone())), "value".to_string())
+            } else {
+                expr.clone()
+            }
+        }
+        Expr::Assign(name, val, loc) => {
+            let new_val = transform_expr_reactivity(val, state_vars, shadowed);
+            if state_vars.contains(name) && !shadowed.contains(name) {
+                Expr::Set(
+                    Box::new(Expr::Variable(name.clone(), loc.clone())),
+                    "value".to_string(),
+                    Box::new(new_val),
+                )
+            } else {
+                Expr::Assign(name.clone(), Box::new(new_val), loc.clone())
+            }
+        }
+        Expr::Binary(left, op, right) => {
+            Expr::Binary(
+                Box::new(transform_expr_reactivity(left, state_vars, shadowed)),
+                op.clone(),
+                Box::new(transform_expr_reactivity(right, state_vars, shadowed)),
+            )
+        }
+        Expr::Logical(left, op, right) => {
+            Expr::Logical(
+                Box::new(transform_expr_reactivity(left, state_vars, shadowed)),
+                op.clone(),
+                Box::new(transform_expr_reactivity(right, state_vars, shadowed)),
+            )
+        }
+        Expr::Unary(op, operand) => {
+            Expr::Unary(
+                op.clone(),
+                Box::new(transform_expr_reactivity(operand, state_vars, shadowed)),
+            )
+        }
+        Expr::Prefix(op, operand) => {
+            Expr::Prefix(
+                op.clone(),
+                Box::new(transform_expr_reactivity(operand, state_vars, shadowed)),
+            )
+        }
+        Expr::Postfix(op, operand) => {
+            Expr::Postfix(
+                op.clone(),
+                Box::new(transform_expr_reactivity(operand, state_vars, shadowed)),
+            )
+        }
+        Expr::Ternary(cond, then_b, else_b) => {
+            Expr::Ternary(
+                Box::new(transform_expr_reactivity(cond, state_vars, shadowed)),
+                Box::new(transform_expr_reactivity(then_b, state_vars, shadowed)),
+                Box::new(transform_expr_reactivity(else_b, state_vars, shadowed)),
+            )
+        }
+        Expr::Call(callee, args) => {
+            Expr::Call(
+                Box::new(transform_expr_reactivity(callee, state_vars, shadowed)),
+                args.iter().map(|a| transform_expr_reactivity(a, state_vars, shadowed)).collect(),
+            )
+        }
+        Expr::Get(obj, prop) => {
+            if prop == "value" {
+                if let Expr::Variable(name, _) = &**obj {
+                    if state_vars.contains(name) {
+                        return expr.clone();
+                    }
+                }
+            }
+            Expr::Get(
+                Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
+                prop.clone(),
+            )
+        }
+        Expr::Set(obj, prop, val) => {
+            Expr::Set(
+                Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
+                prop.clone(),
+                Box::new(transform_expr_reactivity(val, state_vars, shadowed)),
+            )
+        }
+        Expr::Array(items) => {
+            Expr::Array(items.iter().map(|it| transform_expr_reactivity(it, state_vars, shadowed)).collect())
+        }
+        Expr::Object(pairs) => {
+            Expr::Object(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), transform_expr_reactivity(v, state_vars, shadowed)))
+                    .collect(),
+            )
+        }
+        Expr::Function(params, ret_type, body) => {
+            let mut new_shadowed = shadowed.to_vec();
+            for p in params {
+                new_shadowed.push(p.name.clone());
+            }
+            let new_body = transform_stmt_reactivity(body, state_vars, &new_shadowed);
+            Expr::Function(params.clone(), ret_type.clone(), Box::new(new_body))
+        }
+        Expr::GetIndex(obj, idx) => {
+            Expr::GetIndex(
+                Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
+                Box::new(transform_expr_reactivity(idx, state_vars, shadowed)),
+            )
+        }
+        Expr::SetIndex(obj, idx, val) => {
+            Expr::SetIndex(
+                Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
+                Box::new(transform_expr_reactivity(idx, state_vars, shadowed)),
+                Box::new(transform_expr_reactivity(val, state_vars, shadowed)),
+            )
+        }
+        Expr::StructInst(name, pairs, loc) => {
+            Expr::StructInst(
+                name.clone(),
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), transform_expr_reactivity(v, state_vars, shadowed)))
+                    .collect(),
+                loc.clone(),
+            )
+        }
+        Expr::TypeCast(inner, ty, loc) => {
+            Expr::TypeCast(
+                Box::new(transform_expr_reactivity(inner, state_vars, shadowed)),
+                ty.clone(),
+                loc.clone(),
+            )
+        }
+        Expr::Spawn(inner) => {
+            Expr::Spawn(Box::new(transform_expr_reactivity(inner, state_vars, shadowed)))
+        }
+    }
+}
+
+pub fn transform_stmt_reactivity(stmt: &Stmt, state_vars: &[String], shadowed: &[String]) -> Stmt {
+    match stmt {
+        Stmt::Expr(e) => Stmt::Expr(transform_expr_reactivity(e, state_vars, shadowed)),
+        Stmt::Print(e) => Stmt::Print(transform_expr_reactivity(e, state_vars, shadowed)),
+        Stmt::Block(stmts) => {
+            let mut current_shadowed = shadowed.to_vec();
+            let mut new_stmts = Vec::new();
+            for s in stmts {
+                new_stmts.push(transform_stmt_reactivity(s, state_vars, &current_shadowed));
+                if let Stmt::VarDecl(name, _, _, _, _) = s {
+                    current_shadowed.push(name.clone());
+                }
+            }
+            Stmt::Block(new_stmts)
+        }
+        Stmt::VarDecl(name, ty, is_const, expr, loc) => {
+            let new_expr = transform_expr_reactivity(expr, state_vars, shadowed);
+            Stmt::VarDecl(name.clone(), ty.clone(), *is_const, new_expr, loc.clone())
+        }
+        Stmt::If(cond, then_b, else_b) => {
+            Stmt::If(
+                transform_expr_reactivity(cond, state_vars, shadowed),
+                Box::new(transform_stmt_reactivity(then_b, state_vars, shadowed)),
+                else_b
+                    .as_ref()
+                    .map(|b| Box::new(transform_stmt_reactivity(b, state_vars, shadowed))),
+            )
+        }
+        Stmt::While(cond, body) => {
+            Stmt::While(
+                transform_expr_reactivity(cond, state_vars, shadowed),
+                Box::new(transform_stmt_reactivity(body, state_vars, shadowed)),
+            )
+        }
+        Stmt::For(var_name, start, end, body) => {
+            let mut new_shadowed = shadowed.to_vec();
+            new_shadowed.push(var_name.clone());
+            Stmt::For(
+                var_name.clone(),
+                transform_expr_reactivity(start, state_vars, shadowed),
+                transform_expr_reactivity(end, state_vars, shadowed),
+                Box::new(transform_stmt_reactivity(body, state_vars, &new_shadowed)),
+            )
+        }
+        Stmt::ForIn(var_name, iter, body) => {
+            let mut new_shadowed = shadowed.to_vec();
+            new_shadowed.push(var_name.clone());
+            Stmt::ForIn(
+                var_name.clone(),
+                transform_expr_reactivity(iter, state_vars, shadowed),
+                Box::new(transform_stmt_reactivity(body, state_vars, &new_shadowed)),
+            )
+        }
+        Stmt::Return(expr_opt, loc) => {
+            Stmt::Return(
+                expr_opt
+                    .as_ref()
+                    .map(|e| transform_expr_reactivity(e, state_vars, shadowed)),
+                loc.clone(),
+            )
+        }
+        Stmt::Throw(e) => Stmt::Throw(transform_expr_reactivity(e, state_vars, shadowed)),
+        Stmt::Try(try_b, catch_clause, fin_b) => {
+            let new_catch = catch_clause.as_ref().map(|(param, b)| {
+                let mut new_shadowed = shadowed.to_vec();
+                new_shadowed.push(param.clone());
+                (
+                    param.clone(),
+                    Box::new(transform_stmt_reactivity(b, state_vars, &new_shadowed)),
+                )
+            });
+            Stmt::Try(
+                Box::new(transform_stmt_reactivity(try_b, state_vars, shadowed)),
+                new_catch,
+                fin_b
+                    .as_ref()
+                    .map(|b| Box::new(transform_stmt_reactivity(b, state_vars, shadowed))),
+            )
+        }
+        Stmt::Switch(target, cases, default_body) => {
+            let new_target = transform_expr_reactivity(target, state_vars, shadowed);
+            let new_cases = cases
+                .iter()
+                .map(|c| SwitchCase {
+                    values: c
+                        .values
+                        .iter()
+                        .map(|v| transform_expr_reactivity(v, state_vars, shadowed))
+                        .collect(),
+                    body: Box::new(transform_stmt_reactivity(&c.body, state_vars, shadowed)),
+                })
+                .collect();
+            let new_default = default_body
+                .as_ref()
+                .map(|b| Box::new(transform_stmt_reactivity(b, state_vars, shadowed)));
+            Stmt::Switch(new_target, new_cases, new_default)
+        }
+        Stmt::Export(s) => {
+            Stmt::Export(Box::new(transform_stmt_reactivity(s, state_vars, shadowed)))
+        }
+        Stmt::Concurrent(s) => {
+            Stmt::Concurrent(Box::new(transform_stmt_reactivity(s, state_vars, shadowed)))
+        }
+        other => other.clone(),
+    }
+}
+
+pub fn transpile_expr_reactivity(expr_str: &str, state_vars: &[String]) -> Option<String> {
+    let trimmed = expr_str.trim().trim_end_matches(';').trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let tokens = crate::frontend::lexer::lex(trimmed);
+    let mut parser = crate::frontend::parser::Parser::new(tokens);
+    let expr = parser.expression().ok()?;
+    if parser.peek().ty != TokenType::Eof {
+        return None;
+    }
+    let transformed = transform_expr_reactivity(&expr, state_vars, &[]);
+    Some(emit_expr(&transformed))
+}
+
+pub fn transform_script_reactivity(script_str: &str, state_vars: &[String]) -> Option<String> {
+    let tokens = crate::frontend::lexer::lex(script_str);
+    let mut parser = crate::frontend::parser::Parser::new(tokens);
+    let stmts = parser.parse().ok()?;
+    let transformed: Vec<Stmt> = stmts
+        .iter()
+        .map(|s| transform_stmt_reactivity(s, state_vars, &[]))
+        .collect();
+    Some(transpile_to_js(&transformed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,5 +743,41 @@ mod tests {
         "#;
         let js = parse_and_transpile(src);
         assert!(js.contains("export function multiply(x, y) {"));
+    }
+
+    #[test]
+    fn test_ast_reactivity_expr_basic() {
+        let state_vars = vec!["count".to_string()];
+        let res = transpile_expr_reactivity("count + 1", &state_vars).unwrap();
+        assert_eq!(res, "(count.value + 1)");
+    }
+
+    #[test]
+    fn test_ast_reactivity_string_literal_preservation() {
+        let state_vars = vec!["count".to_string()];
+        let res = transpile_expr_reactivity("\"The count is: \" + count", &state_vars).unwrap();
+        assert_eq!(res, "(\"The count is: \" + count.value)");
+    }
+
+    #[test]
+    fn test_ast_reactivity_object_key_preservation() {
+        let state_vars = vec!["count".to_string()];
+        let res = transpile_expr_reactivity("{ count: 10, other: count }", &state_vars).unwrap();
+        assert_eq!(res, "{ count: 10, other: count.value }");
+    }
+
+    #[test]
+    fn test_ast_reactivity_arrow_function_shadowing() {
+        let state_vars = vec!["count".to_string()];
+        let res = transpile_expr_reactivity("(count) => count + 1", &state_vars).unwrap();
+        assert!(res.contains("(count) => {"));
+        assert!(res.contains("return (count + 1);"));
+    }
+
+    #[test]
+    fn test_ast_reactivity_no_double_value() {
+        let state_vars = vec!["count".to_string()];
+        let res = transpile_expr_reactivity("count.value + 1", &state_vars).unwrap();
+        assert_eq!(res, "(count.value + 1)");
     }
 }

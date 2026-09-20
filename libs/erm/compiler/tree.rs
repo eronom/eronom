@@ -458,9 +458,17 @@ pub fn process_component_tree(
             };
             transformed = inject_state_name(&transformed, sig, &scoped_name);
         }
-        for sig in &state_vars {
-            transformed = replace_word(&transformed, sig, ".value");
-        }
+        let ast_transformed = crate::frontend::transform_script_reactivity(&transformed, &state_vars);
+        transformed = match ast_transformed {
+            Some(js) => js,
+            None => {
+                let mut fallback = transformed;
+                for sig in &state_vars {
+                    fallback = replace_word(&fallback, sig, ".value");
+                }
+                fallback
+            }
+        };
         transformed = transformed.replace("import.meta.hot", "window.hmr");
         *s = transformed;
     }
