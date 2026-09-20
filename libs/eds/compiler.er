@@ -244,6 +244,105 @@ let applyPaddingY = (attrs, classes, inlineStyles) => {
   }
 }
 
+let hexDigits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "A", "B", "C", "D", "E", "F"]
+
+export const isHexColor = (v) => {
+  if (v == null) { return false }
+  let s = ("" + v).trim()
+  if (!s.startsWith("#")) { return false }
+  let len = s.length
+  if (len != 4 and len != 5 and len != 7 and len != 9) { return false }
+  let i = 1
+  while (i < len) {
+    if (!hexDigits.includes(s.charAt(i))) {
+      return false
+    }
+    i = i + 1
+  }
+  return true
+}
+
+export const isCssColorFunction = (v) => {
+  if (v == null) { return false }
+  let s = ("" + v).trim().toLowerCase()
+  if (s.startsWith("rgb(") or s.startsWith("rgba(") or
+      s.startsWith("hsl(") or s.startsWith("hsla(") or
+      s.startsWith("var(")) {
+    return s.endsWith(")")
+  }
+  return false
+}
+
+export const getNamedPaletteColor = (name) => {
+  if (name == null) { return null }
+  let s = ("" + name).trim().toLowerCase()
+  let dotIdx = s.indexOf(".")
+  let base = (dotIdx != -1) ? s.substring(0, dotIdx) : s
+
+  if (base == "violet") { return "#7950f2" }
+  if (base == "indigo") { return "#4c6ef5" }
+  if (base == "blue") { return "#228be6" }
+  if (base == "cyan") { return "#15aabf" }
+  if (base == "teal") { return "#12b886" }
+  if (base == "green") { return "#40c057" }
+  if (base == "yellow") { return "#fab005" }
+  if (base == "orange") { return "#fd7e14" }
+  if (base == "red") { return "#fa5252" }
+  if (base == "pink") { return "#e64980" }
+  if (base == "grape") { return "#be4bdb" }
+  if (base == "gray") { return "#868e96" }
+  if (base == "dark") { return "#25262b" }
+  return null
+}
+
+export const getEdsTokenColor = (name) => {
+  if (name == null) { return null }
+  let s = ("" + name).trim().toLowerCase()
+  if (s == "primary") { return "var(--eds-bg-primary)" }
+  if (s == "secondary") { return "var(--eds-bg-muted)" }
+  if (s == "danger") { return "var(--eds-bg-danger)" }
+  if (s == "success") { return "hsl(142, 71%, 45%)" }
+  if (s == "warning") { return "#fab005" }
+  if (s == "info") { return "hsl(217, 91%, 60%)" }
+  return null
+}
+
+let css_named_colors = [
+  "white", "black", "purple", "lime", "navy", "maroon", "aqua", "fuchsia",
+  "silver", "olive", "coral", "tomato", "crimson", "gold", "magenta",
+  "salmon", "plum", "brown", "azure", "chocolate", "transparent"
+]
+
+export const resolveButtonColor = (c) => {
+  if (c == null) { return null }
+  let s = ("" + c).trim()
+  if (s == "") { return null }
+  let paletteColor = getNamedPaletteColor(s)
+  if (paletteColor != null) { return paletteColor }
+  let token = getEdsTokenColor(s)
+  if (token != null) { return token }
+  if (isHexColor(s) or isCssColorFunction(s)) { return s }
+  let lower = s.toLowerCase()
+  if (css_named_colors.includes(lower)) { return lower }
+  return null
+}
+
+export const isValidButtonColor = (c) => {
+  return resolveButtonColor(c) != null
+}
+
+export const isLightColor = (colorStr, rawName) => {
+  let r = ("" + rawName).trim().toLowerCase()
+  if (r == "yellow" or r.startsWith("yellow.") or r == "gold" or r == "white") {
+    return true
+  }
+  let c = ("" + colorStr).trim().toLowerCase()
+  if (c == "#fab005" or c == "#ffd43b" or c == "#ffe066" or c == "gold" or c == "white" or c == "#fff" or c == "#ffffff") {
+    return true
+  }
+  return false
+}
+
 let cleanAttrVal = (val) => {
   if (val == null) { return "" }
   let s = ("" + val).trim()
@@ -281,7 +380,7 @@ let formatPassthroughAttr = (k, v) => {
 
 export const generateRootCss = (projectDir) => {
   let out = ""
-  out = out + "/* === Eronom Design System (EDS): LLM-Safe Tokens & Mantine Style Props === */\n"
+  out = out + "/* === Eronom Design System (EDS): LLM-Safe Tokens & Utility Style Props === */\n"
   out = out + ":root " + LBRACE + "\n  color-scheme: light dark;\n"
 
   // Surface / Background variables
@@ -377,7 +476,7 @@ export const generateRootCss = (projectDir) => {
   // Title primitive default style
   out = out + ".eds-title " + LBRACE + " margin: 0; font-family: inherit; font-weight: 700; " + RBRACE + "\n"
 
-  // Code primitive styles (matching Mantine Code)
+  // Code primitive styles
   out = out + ".eds-code " + LBRACE + " font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); font-size: 0.85em; line-height: 1.4; padding: 0.15rem 0.4rem; border-radius: var(--eds-radius-sm); background-color: var(--eds-bg-muted); color: var(--eds-text-primary); box-sizing: border-box; " + RBRACE + "\n"
   out = out + ".eds-code-block " + LBRACE + " display: block; padding: var(--eds-space-sm); overflow-x: auto; white-space: pre; " + RBRACE + "\n"
 
@@ -417,7 +516,7 @@ export const generateRootCss = (projectDir) => {
     out = out + ".eds-pr-" + k + " " + LBRACE + " padding-right: var(--eds-space-" + k + "); " + RBRACE + "\n"
   }
 
-  // Margins (Mantine style props)
+  // Margins
   for k in allowed_spacings {
     out = out + ".eds-m-" + k + " " + LBRACE + " margin: var(--eds-space-" + k + "); " + RBRACE + "\n"
     out = out + ".eds-mx-" + k + " " + LBRACE + " margin-left: var(--eds-space-" + k + "); margin-right: var(--eds-space-" + k + "); " + RBRACE + "\n"
@@ -818,6 +917,14 @@ export const validateTag = (tagName, attrs, file, line) => {
         if (!allowed_as_elements.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid 'as' element '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_as_elements)
         }
+      } else if (key == "color") {
+        if (!isValidButtonColor(val)) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid color token or CSS color '" + val + "' on <Button>.\nAllowed values: Palette colors (violet, indigo, blue, cyan, teal, green, yellow, orange, red, pink, grape, gray, dark), EDS tokens (primary, secondary, danger, success, warning, info), or valid CSS color codes (e.g. #7c3aed, rgb(...), hsl(...))"
+        }
+      } else if (key == "c") {
+        if (getTextColor(val) == null and !isHexColor(val) and !isCssColorFunction(val) and !css_named_colors.includes(val.toLowerCase())) {
+          return "[EDS Error] " + file + ":" + line + ": Invalid text color token '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_text_colors) + " or custom color codes"
+        }
       } else if (key == "tt") {
         if (!allowed_text_transforms.includes(val)) {
           return "[EDS Error] " + file + ":" + line + ": Invalid text-transform token '" + val + "' on <Button>.\nAllowed values: " + formatAllowedList(allowed_text_transforms)
@@ -907,7 +1014,7 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("pl")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pl"])); if (sp != null) { classes.push("eds-pl-" + sp) } }
     if (attrs.hasOwnProperty("pr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pr"])); if (sp != null) { classes.push("eds-pr-" + sp) } }
 
-    // Margins (Mantine style props)
+    // Margins
     if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
     if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
     if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
@@ -1114,7 +1221,7 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
     if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
 
-    // Margins (Mantine style props)
+    // Margins
     if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
     if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
     if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
@@ -1265,7 +1372,7 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("td")) { classes.push("eds-td-" + cleanAttrVal(attrs["td"])) }
     if (attrs.hasOwnProperty("truncate")) { classes.push("eds-truncate") }
 
-    // Margins (Mantine style props)
+    // Margins
     if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
     if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
     if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
@@ -1316,7 +1423,7 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("pl")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pl"])); if (sp != null) { classes.push("eds-pl-" + sp) } }
     if (attrs.hasOwnProperty("pr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pr"])); if (sp != null) { classes.push("eds-pr-" + sp) } }
 
-    // Margins (Mantine style props)
+    // Margins
     if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
     if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
     if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
@@ -1434,7 +1541,42 @@ export const transformPrimitive = (tagName, attrs) => {
       if (nw != null) { classes.push("eds-weight-" + nw) }
     }
 
-    // Paddings (Mantine style props)
+    let customTextColor = null
+    if (attrs.hasOwnProperty("c")) {
+      let rawC = cleanAttrVal(attrs["c"])
+      let tc = getTextColor(rawC)
+      if (tc != null) {
+        customTextColor = tc.light
+      } else {
+        customTextColor = rawC
+      }
+    }
+
+    // Color handling
+    if (attrs.hasOwnProperty("color")) {
+      let rawColor = cleanAttrVal(attrs["color"])
+      let resolvedColor = resolveButtonColor(rawColor)
+      if (resolvedColor != null) {
+        if (variant == "subtle") {
+          let txt = customTextColor != null ? customTextColor : resolvedColor
+          inlineStyles.push("color: " + txt)
+        } else if (variant == "secondary") {
+          inlineStyles.push("border-color: " + resolvedColor)
+          let txt = customTextColor != null ? customTextColor : resolvedColor
+          inlineStyles.push("color: " + txt)
+        } else {
+          // Default filled / primary variant
+          inlineStyles.push("background-color: " + resolvedColor)
+          inlineStyles.push("border-color: " + resolvedColor)
+          let txt = customTextColor != null ? customTextColor : (isLightColor(resolvedColor, rawColor) ? "#1a1a1a" : "#ffffff")
+          inlineStyles.push("color: " + txt)
+        }
+      }
+    } else if (customTextColor != null) {
+      inlineStyles.push("color: " + customTextColor)
+    }
+
+    // Paddings
     if (attrs.hasOwnProperty("p")) { let sp = normalizeSpacing(cleanAttrVal(attrs["p"])); if (sp != null) { classes.push("eds-p-" + sp) } }
     applyPaddingX(attrs, classes, inlineStyles)
     applyPaddingY(attrs, classes, inlineStyles)
@@ -1443,7 +1585,7 @@ export const transformPrimitive = (tagName, attrs) => {
     if (attrs.hasOwnProperty("pl")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pl"])); if (sp != null) { classes.push("eds-pl-" + sp) } }
     if (attrs.hasOwnProperty("pr")) { let sp = normalizeSpacing(cleanAttrVal(attrs["pr"])); if (sp != null) { classes.push("eds-pr-" + sp) } }
 
-    // Margins (Mantine style props)
+    // Margins
     if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
     if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
     if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }
@@ -1455,7 +1597,7 @@ export const transformPrimitive = (tagName, attrs) => {
     let passthrough = ""
 
     for k in keys {
-      if (k == "as" or k == "variant" or k == "size" or k == "tt" or k == "td" or k == "fw" or k == "weight" or
+      if (k == "as" or k == "variant" or k == "color" or k == "c" or k == "size" or k == "tt" or k == "td" or k == "fw" or k == "weight" or
           k == "m" or k == "mx" or k == "my" or k == "mt" or k == "mb" or k == "ml" or k == "mr" or
           k == "p" or k == "px" or k == "py" or k == "pt" or k == "pb" or k == "pl" or k == "pr" or
           k == "style") {
@@ -1499,12 +1641,12 @@ export const transformPrimitive = (tagName, attrs) => {
     let inlineStyles = []
     if (attrs.hasOwnProperty("tt")) { classes.push("eds-tt-" + cleanAttrVal(attrs["tt"])) }
 
-    // Paddings (Mantine style props)
+    // Paddings
     if (attrs.hasOwnProperty("p")) { let sp = normalizeSpacing(cleanAttrVal(attrs["p"])); if (sp != null) { classes.push("eds-p-" + sp) } }
     applyPaddingX(attrs, classes, inlineStyles)
     applyPaddingY(attrs, classes, inlineStyles)
 
-    // Margins (Mantine style props)
+    // Margins
     if (attrs.hasOwnProperty("m")) { let sp = normalizeSpacing(cleanAttrVal(attrs["m"])); if (sp != null) { classes.push("eds-m-" + sp) } }
     if (attrs.hasOwnProperty("mx")) { let sp = normalizeSpacing(cleanAttrVal(attrs["mx"])); if (sp != null) { classes.push("eds-mx-" + sp) } }
     if (attrs.hasOwnProperty("my")) { let sp = normalizeSpacing(cleanAttrVal(attrs["my"])); if (sp != null) { classes.push("eds-my-" + sp) } }

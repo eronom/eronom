@@ -411,19 +411,19 @@ fn test_eds_center_and_layout_enhancements() {
 }
 
 #[test]
-fn test_eds_mantine_typography_props() {
+fn test_eds_typography_props() {
     let content = r#"
     <Stack gap="md" align="center" ta="center">
         <Badge status="info" tt="uppercase">Eronom ⚡ v0.9</Badge>
         <Text as="h1" fz="title-lg" fw="bold" c="primary">Title</Text>
-        <Text fz="lg" fw={700} c="dimmed" tt="uppercase" td="underline">Mantine Style 1</Text>
-        <Text fz={18} fw="semibold" c="blue" ta="center">Mantine Style 2</Text>
+        <Text fz="lg" fw={700} c="dimmed" tt="uppercase" td="underline">Typography Style 1</Text>
+        <Text fz={18} fw="semibold" c="blue" ta="center">Typography Style 2</Text>
         <Button variant="primary" size="md" tt="uppercase" td="none" fw="bold">Click Me</Button>
     </Stack>
     "#;
     let params = std::collections::HashMap::new();
     let res = process_erm_component(".", content, false, &params).unwrap();
-    println!("EDS MANTINE TYPOGRAPHY RES:\n{}", res);
+    println!("EDS TYPOGRAPHY RES:\n{}", res);
 
     assert!(res.contains("class=\"eds-box eds-col eds-gap-md eds-align-center eds-text-center\""));
     assert!(res.contains("class=\"eds-badge eds-badge-info eds-tt-uppercase\""));
@@ -441,7 +441,7 @@ fn test_eds_mantine_typography_props() {
 }
 
 #[test]
-fn test_eds_mantine_style_props_and_primitives() {
+fn test_eds_style_props_and_primitives() {
     let content = r#"
     <Center as="main" screen p="xl" bg="canvas">
         <Card maw="md" p="2xl">
@@ -468,7 +468,7 @@ fn test_eds_mantine_style_props_and_primitives() {
     "#;
     let params = std::collections::HashMap::new();
     let res = process_erm_component(".", content, false, &params).unwrap();
-    println!("EDS MANTINE RES:\n{}", res);
+    println!("EDS STYLE PROPS RES:\n{}", res);
 
     // Primitives compile to clean semantic HTML without style=
     assert!(res.contains("class=\"eds-box eds-p-xl eds-bg-canvas eds-center eds-w-full eds-min-h-screen\""));
@@ -525,4 +525,56 @@ fn test_eds_custom_spacing_props() {
     let err_msg = err.err().unwrap().to_string();
     assert!(err_msg.contains("Invalid spacing token or value 'not-a-spacing-val' on <Button>"));
 }
+
+#[test]
+fn test_eds_button_color_prop() {
+    let content = r##"
+    <Box>
+        <Button color="violet" size="md">Violet Button</Button>
+        <Button color="#7c3aed" size="md">Hex Button</Button>
+        <Button as="a" href="https://github.com/eronom/eronom" color="teal" size="md">Teal Anchor</Button>
+        <Button color="orange" variant="subtle">Subtle Orange</Button>
+        <Button color="yellow">Yellow Button</Button>
+        <Button color="violet" c="black">Violet Custom Text</Button>
+    </Box>
+    "##;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+
+    // 1. Palette color: violet -> #7950f2, white text
+    assert!(res.contains("background-color: #7950f2"));
+    assert!(res.contains("border-color: #7950f2"));
+    assert!(res.contains("color: #ffffff;"));
+
+    // 2. Custom hex color: #7c3aed
+    assert!(res.contains("background-color: #7c3aed"));
+    assert!(res.contains("border-color: #7c3aed"));
+
+    // 3. Polymorphic 'as="a"' renders <a> tag with teal -> #12b886
+    assert!(res.contains("<a "));
+    assert!(res.contains("background-color: #12b886"));
+    assert!(res.contains("Teal Anchor</a>"));
+
+    // 4. Subtle variant sets text color only
+    assert!(res.contains("eds-btn-subtle"));
+    assert!(res.contains("color: #fd7e14;"));
+
+    // 5. Yellow button has dark text contrast (#1a1a1a)
+    assert!(res.contains("background-color: #fab005"));
+    assert!(res.contains("color: #1a1a1a;"));
+
+    // 6. Explicit c="black" text color override
+    assert!(res.contains("color: black;"));
+
+    // 7. Validation rejection of invalid color
+    let invalid_content = r#"
+    <Button color="not-a-valid-color-xyz">Invalid Color</Button>
+    "#;
+    let err = process_erm_component(".", invalid_content, false, &params);
+    assert!(err.is_err());
+    let err_msg = err.err().unwrap().to_string();
+    assert!(err_msg.contains("Invalid color token or CSS color"));
+    assert!(err_msg.contains("not-a-valid-color-xyz"));
+}
+
 
