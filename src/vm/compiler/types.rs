@@ -93,6 +93,7 @@ pub fn is_type_compatible(
     actual: &str,
     structs: &HashMap<String, FlattenedStructInfo>,
     interfaces: &HashMap<String, InterfaceInfo>,
+    type_aliases: &HashMap<String, crate::frontend::TypeNode>,
 ) -> bool {
     let exp_lower = expected.to_lowercase();
     let act_lower = actual.to_lowercase();
@@ -101,8 +102,35 @@ pub fn is_type_compatible(
         return true;
     }
 
+    if exp_lower == "any" || act_lower == "any" {
+        return true;
+    }
+
+    if let Some(aliased) = type_aliases.get(expected) {
+        let aliased_str = aliased.to_string();
+        return is_type_compatible(&aliased_str, actual, structs, interfaces, type_aliases);
+    }
+
     if act_lower == "null" {
         return true;
+    }
+
+    // Nullable type T?
+    if expected.ends_with('?') {
+        if act_lower == "null" {
+            return true;
+        }
+        let inner = expected[..expected.len() - 1].trim();
+        if is_type_compatible(inner, actual, structs, interfaces, type_aliases) {
+            return true;
+        }
+    }
+
+    // Union type A | B
+    if expected.contains('|') {
+        if expected.split('|').any(|part| is_type_compatible(part.trim(), actual, structs, interfaces, type_aliases)) {
+            return true;
+        }
     }
 
     // Number types
@@ -127,17 +155,17 @@ pub fn is_type_compatible(
     }
 
     // Function types
-    if (exp_lower == "function" || exp_lower == "fn") && (act_lower == "function" || act_lower == "fn" || act_lower.starts_with("function:")) {
+    if (exp_lower == "function" || exp_lower == "fn" || exp_lower.contains("=>")) && (act_lower == "function" || act_lower == "fn" || act_lower.starts_with("function:") || act_lower.contains("=>")) {
         return true;
     }
 
     // Array types
-    if exp_lower == "array" && act_lower == "array" {
+    if (expected.ends_with("[]") || exp_lower == "array" || exp_lower.starts_with("array<")) && (actual.ends_with("[]") || act_lower == "array" || act_lower.starts_with("array<")) {
         return true;
     }
 
     // Object types
-    if exp_lower == "object" && act_lower == "object" {
+    if (expected.starts_with('{') || exp_lower == "object") && (actual.starts_with('{') || act_lower == "object") {
         return true;
     }
 
@@ -155,7 +183,7 @@ pub fn is_type_compatible(
             let struct_fields: HashMap<String, String> = struct_info.fields.iter().cloned().collect();
             for (f_name, f_ty) in &iface.fields {
                 if let Some(sf_ty) = struct_fields.get(f_name) {
-                    if !is_type_compatible(f_ty, sf_ty, structs, interfaces) {
+                    if !is_type_compatible(f_ty, sf_ty, structs, interfaces, type_aliases) {
                         return false;
                     }
                 } else {
@@ -184,13 +212,27 @@ pub fn check_type(
     expected_type: &str,
     structs: &HashMap<String, FlattenedStructInfo>,
     interfaces: &HashMap<String, InterfaceInfo>,
+    type_aliases: &HashMap<String, crate::frontend::TypeNode>,
     locals: &[Local],
     global_types: &HashMap<String, String>,
     loc: &SourceLocation,
 ) -> Result<(), String> {
+    if expected_type == "any" {
+        return Ok(());
+    }
+    if let Some(aliased) = type_aliases.get(expected_type) {
+        let aliased_str = aliased.to_string();
+        return check_type(expr, &aliased_str, structs, interfaces, type_aliases, locals, global_types, loc);
+    }
+    if expected_type.starts_with('{') && matches!(expr, Expr::Object(_)) {
+        return Ok(());
+    }
+    if (expected_type.ends_with("[]") || expected_type.to_lowercase() == "array") && matches!(expr, Expr::Array(_)) {
+        return Ok(());
+    }
     // 1. If it's a struct instantiation or object literal checked against struct
     if let Expr::StructInst(struct_name, pairs, s_loc) = expr {
-        if struct_name != expected_type && !is_type_compatible(expected_type, struct_name, structs, interfaces) {
+        if struct_name != expected_type && !is_type_compatible(expected_type, struct_name, structs, interfaces, type_aliases) {
             if interfaces.contains_key(expected_type) {
                 return Err(format!(
                     "error: Struct \"{}\" does not implement interface \"{}\"\n    at {}:{}:{}",
@@ -209,7 +251,7 @@ pub fn check_type(
             }
             for (field_name, field_type) in &s_info.fields {
                 if let Some(field_val_expr) = object_fields.remove(field_name) {
-                    check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, s_loc)?;
+                    check_type(field_val_expr, field_type, structs, interfaces, type_aliases, locals, global_types, s_loc)?;
                 } else {
                     return Err(format!(
                         "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
@@ -238,7 +280,7 @@ pub fn check_type(
                 }
                 for (field_name, field_type) in &struct_info.fields {
                     if let Some(field_val_expr) = object_fields.remove(field_name) {
-                        check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
+                        check_type(field_val_expr, field_type, structs, interfaces, type_aliases, locals, global_types, loc)?;
                     } else {
                         return Err(format!(
                             "error: Missing field \"{}\" of type \"{}\" in struct \"{}\"\n    at {}:{}:{}",
@@ -278,7 +320,7 @@ pub fn check_type(
             }
             for (field_name, field_type) in &interface_info.fields {
                 if let Some(field_val_expr) = object_fields.remove(field_name) {
-                    check_type(field_val_expr, field_type, structs, interfaces, locals, global_types, loc)?;
+                    check_type(field_val_expr, field_type, structs, interfaces, type_aliases, locals, global_types, loc)?;
                 } else {
                     return Err(format!(
                         "error: Missing field \"{}\" of type \"{}\" required by interface \"{}\"\n    at {}:{}:{}",
@@ -292,7 +334,7 @@ pub fn check_type(
 
     // 4. Inferred expression type check
     if let Some(actual_type) = get_expr_type(expr, locals, global_types, structs, interfaces) {
-        if is_type_compatible(expected_type, &actual_type, structs, interfaces) {
+        if is_type_compatible(expected_type, &actual_type, structs, interfaces, type_aliases) {
             return Ok(());
         } else {
             if interfaces.contains_key(expected_type) && structs.contains_key(&actual_type) {
@@ -323,7 +365,7 @@ pub fn check_type(
             LiteralValue::Boolean(b) => ("boolean", b.to_string()),
             LiteralValue::Null => ("null", "null".to_string()),
         };
-        if !is_type_compatible(expected_type, actual_name, structs, interfaces) {
+        if !is_type_compatible(expected_type, actual_name, structs, interfaces, type_aliases) {
             return Err(format!(
                 "error: Expected type \"{}\" but got {}\n    at {}:{}:{}",
                 expected_type, got_str, loc.file_path, loc.line, loc.col

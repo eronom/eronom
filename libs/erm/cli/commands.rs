@@ -111,6 +111,11 @@ pub enum Commands {
         /// Test file or directory to run (e.g. test_runner.er, tests/)
         file: Option<PathBuf>,
     },
+    /// Type-check an Eronom script or project without running it (like tsc --noEmit)
+    Check {
+        /// File to type-check (e.g. main.er)
+        file: PathBuf,
+    },
 }
 
 pub fn parse_dir_and_port(

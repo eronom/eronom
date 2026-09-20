@@ -40,6 +40,29 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            eronom::cli::Commands::Check { file } => {
+                let path_buf = file.clone();
+                match eronom::frontend::parse_and_resolve_imports(&path_buf) {
+                    Ok(stmts) => {
+                        match eronom::frontend::check_program(&stmts) {
+                            Ok(()) => {
+                                println!("✓ Type check passed: {}", file.display());
+                            }
+                            Err(errs) => {
+                                eprintln!("✗ Type check failed with {} error(s):", errs.len());
+                                for err in errs {
+                                    eprintln!("  {}", err);
+                                }
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Parse/Import error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
             _ => {
                 if let Err(e) = eronom::cli::run_command(cmd) {
                     eprintln!("Error: {}", e);

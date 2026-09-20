@@ -31,6 +31,7 @@ impl Compiler {
                                 compiler.const_globals = self.const_globals.clone();
                                 compiler.structs = self.structs.clone();
                                 compiler.interfaces = self.interfaces.clone();
+                                compiler.type_aliases = self.type_aliases.clone();
                                 compiler.global_types = self.global_types.clone();
                                 compiler.current_struct = Some(parent_name);
                                 compiler.function.arity = method_params.len();

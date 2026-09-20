@@ -23,7 +23,7 @@ impl Parser {
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
             let return_type = if self.match_token(&[TokenType::Colon]) {
-                Some(self.consume_ident("Expected return type name after ':'.")?)
+                Some(self.parse_type()?)
             } else {
                 None
             };
@@ -146,7 +146,7 @@ impl Parser {
 
             if self.match_token(&[TokenType::RightParen]) {
                 if self.match_token(&[TokenType::Colon]) {
-                    if let Ok(rt) = self.consume_ident("Expected return type") {
+                    if let Ok(rt) = self.parse_type() {
                         return_type = Some(rt);
                     }
                 }
@@ -169,7 +169,7 @@ impl Parser {
                 }
                 if valid_params && self.match_token(&[TokenType::RightParen]) {
                     if self.match_token(&[TokenType::Colon]) {
-                        if let Ok(rt) = self.consume_ident("Expected return type") {
+                        if let Ok(rt) = self.parse_type() {
                             return_type = Some(rt);
                         }
                     }
@@ -205,7 +205,7 @@ impl Parser {
             self.consume(TokenType::RightParen, "Expected ')' after expression.")?;
 
             let return_type = if self.match_token(&[TokenType::Colon]) {
-                Some(self.consume_ident("Expected return type")?)
+                Some(self.parse_type()?)
             } else {
                 None
             };

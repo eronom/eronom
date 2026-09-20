@@ -3,6 +3,7 @@ mod statement;
 mod expression;
 mod primary;
 mod resolver;
+mod type_parser;
 
 use super::token::{Token, TokenType};
 use super::ast::Stmt;
