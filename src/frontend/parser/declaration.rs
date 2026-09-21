@@ -6,7 +6,7 @@ impl Parser {
     pub(crate) fn parse_fn_param(&mut self) -> Result<FnParam, String> {
         let name = self.consume_ident("Expected parameter name.")?;
         let ty = if self.match_token(&[TokenType::Colon]) {
-            Some(self.consume_ident("Expected type name after ':'.")?)
+            Some(self.parse_type()?)
         } else {
             None
         };
@@ -161,15 +161,72 @@ impl Parser {
                 col: name_tok.col,
             };
             Ok(Stmt::Interface(name, fields, methods, loc))
+        } else if self.match_token(&[TokenType::Type]) {
+            let name_tok = self.peek().clone();
+            let name = self.consume_ident("Expected type alias name.")?;
+            let mut type_params = Vec::new();
+            if self.match_token(&[TokenType::Less]) {
+                if !self.check(&TokenType::Greater) {
+                    loop {
+                        type_params.push(self.consume_ident("Expected type parameter name.")?);
+                        if !self.match_token(&[TokenType::Comma]) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(TokenType::Greater, "Expected '>' after type parameters.")?;
+            }
+            self.consume(TokenType::Equal, "Expected '=' in type alias.")?;
+            let type_node = self.parse_type()?;
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::TypeAlias(name, type_params, type_node, loc))
+        } else if self.match_token(&[TokenType::Enum]) {
+            let name_tok = self.peek().clone();
+            let name = self.consume_ident("Expected enum name.")?;
+            self.consume(TokenType::LeftBrace, "Expected '{' before enum variants.")?;
+            let mut variants = Vec::new();
+            if !self.check(&TokenType::RightBrace) {
+                loop {
+                    let v_name = self.consume_ident("Expected enum variant name.")?;
+                    let v_val = if self.match_token(&[TokenType::Equal]) {
+                        if let TokenType::Number(n) = self.peek().ty {
+                            self.advance();
+                            Some(LiteralValue::Number(n))
+                        } else if let TokenType::String(ref s) = self.peek().ty.clone() {
+                            self.advance();
+                            Some(LiteralValue::String(s.clone()))
+                        } else {
+                            return Err(format!("Error at line {}: Enum variant value must be a number or string literal.", self.peek().line));
+                        }
+                    } else {
+                        None
+                    };
+                    variants.push((v_name, v_val));
+                    if !self.match_token(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+            }
+            self.consume(TokenType::RightBrace, "Expected '}' after enum variants.")?;
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: name_tok.line,
+                col: name_tok.col,
+            };
+            Ok(Stmt::Enum(name, variants, loc))
         } else if self.match_token(&[TokenType::Let, TokenType::Const]) {
             let is_const = self.previous().ty == TokenType::Const;
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected variable name.")?;
 
-            // Skip optional type annotation like `: string`
+            // Optional type annotation
             let mut type_annotation = None;
             if self.match_token(&[TokenType::Colon]) {
-                type_annotation = Some(self.consume_ident("Expected type name after ':'.")?);
+                type_annotation = Some(self.parse_type()?);
             }
 
             let mut initializer = Expr::Literal(LiteralValue::Null);
@@ -200,7 +257,7 @@ impl Parser {
             }
             self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
             let return_type = if self.match_token(&[TokenType::Colon]) {
-                Some(self.consume_ident("Expected return type name after ':'.")?)
+                Some(self.parse_type()?)
             } else {
                 None
             };

@@ -93,6 +93,12 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
         Commands::Test { file: _ } => {
             // Handled via the main binary entrypoint
         }
+        Commands::Check { file: _ } => {
+            // Handled via the main binary entrypoint
+        }
+        Commands::Transpile { .. } => {
+            // Handled via the main binary entrypoint
+        }
     }
     Ok(())
 }

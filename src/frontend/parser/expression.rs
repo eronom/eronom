@@ -1,6 +1,6 @@
 use super::Parser;
 use crate::frontend::token::TokenType;
-use crate::frontend::ast::Expr;
+use crate::frontend::ast::{Expr, SourceLocation};
 
 impl Parser {
     pub(crate) fn expression(&mut self) -> Result<Expr, String> {
@@ -140,7 +140,7 @@ impl Parser {
     }
 
     pub(crate) fn comparison(&mut self) -> Result<Expr, String> {
-        let mut expr = self.shift()?;
+        let mut expr = self.type_cast()?;
         while self.match_token(&[
             TokenType::Greater,
             TokenType::GreaterEqual,
@@ -148,8 +148,22 @@ impl Parser {
             TokenType::LessEqual,
         ]) {
             let operator = self.previous().ty.clone();
-            let right = self.shift()?;
+            let right = self.type_cast()?;
             expr = Expr::Binary(Box::new(expr), operator, Box::new(right));
+        }
+        Ok(expr)
+    }
+
+    pub(crate) fn type_cast(&mut self) -> Result<Expr, String> {
+        let mut expr = self.shift()?;
+        while self.match_token(&[TokenType::As]) {
+            let loc = SourceLocation {
+                file_path: self.file_path.clone(),
+                line: self.previous().line,
+                col: self.previous().col,
+            };
+            let ty = self.parse_type()?;
+            expr = Expr::TypeCast(Box::new(expr), ty, loc);
         }
         Ok(expr)
     }

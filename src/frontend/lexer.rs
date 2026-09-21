@@ -325,6 +325,10 @@ impl<'a> Lexer<'a> {
                     "default" => TokenType::Default,
                     "match" => TokenType::Match,
                     "typeof" => TokenType::Typeof,
+                    "type" => TokenType::Type,
+                    "as" => TokenType::As,
+                    "is" => TokenType::Is,
+                    "enum" => TokenType::Enum,
                     "_" => TokenType::Underscore,
                     _ => TokenType::Identifier(ident),
                 }

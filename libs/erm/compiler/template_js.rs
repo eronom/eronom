@@ -1,4 +1,4 @@
-use super::utils::{find_matching_close_brace, replace_word};
+use super::utils::find_matching_close_brace;
 use super::reactivity::get_event_attribute_name;
 
 pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
@@ -11,13 +11,12 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
             js_expr.push('\\');
             js_expr.push(c);
             i += c.len_utf8();
-        } else if c == '{' && !body[i..].starts_with("{#") && !body[i..].starts_with("{/") && !body[i..].starts_with("{:") {
+        } else if c == '{' {
             if let Some(close_idx) = find_matching_close_brace(&body[i + 1..]) {
                 let brace_end = i + 1 + close_idx;
-                let mut sub_expr = body[i + 1..brace_end].to_string();
-                for sig in state_vars {
-                    sub_expr = replace_word(&sub_expr, sig, ".value");
-                }
+                let raw_expr = &body[i + 1..brace_end];
+                let sub_expr = crate::frontend::transpile_expr_reactivity(raw_expr, state_vars)
+                    .unwrap_or_else(|| raw_expr.to_string());
                 
                 let prefix = &body[..i];
                 if let Some(event_type) = get_event_attribute_name(prefix) {

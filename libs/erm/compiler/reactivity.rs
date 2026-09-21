@@ -1,18 +1,11 @@
-use super::utils::{get_re_attr_brace, replace_word};
+use super::utils::get_re_attr_brace;
 
 pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<String>, states: &[String]) -> String {
     let mut out = String::new();
     let mut i = 0;
     let mut in_tag = false;
-    let mut block_depth = 0;
-
     while i < html.len() {
         let c = html[i..].chars().next().unwrap();
-
-        if c == '{' && i + 1 < html.len() {
-            if html[i..].starts_with("{#for ") { block_depth += 1; }
-            else if html[i..].starts_with("{/for}") { if block_depth > 0 { block_depth -= 1; } }
-        }
 
         if !in_tag {
             if c == '<' {
@@ -21,28 +14,24 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                 i += 1;
                 continue;
             }
-            if block_depth == 0 && c == '{' && i + 1 < html.len() {
-                let next_c = html[i + 1..].chars().next().unwrap();
-                if !matches!(next_c, '#' | '/' | ':') {
-                    let mut depth = 1;
-                    let mut j = i + 1;
-                    while j < html.len() && depth > 0 {
-                        let cur_c = html[j..].chars().next().unwrap();
-                        if cur_c == '{' { depth += 1; }
-                        else if cur_c == '}' { depth -= 1; }
-                        j += cur_c.len_utf8();
-                    }
-                    if depth == 0 {
-                        let mut expr = html[i + 1..j - 1].to_string();
-                        for sig in states {
-                            expr = replace_word(&expr, sig, ".value");
-                        }
-                        let id = format!("erm-bind-{}", j);
-                        out.push_str(&format!("<span id=\"{}\"></span>", id));
-                        bindings.push(format!("bindText(\"{}\", () => ({}));", id, expr));
-                        i = j;
-                        continue;
-                    }
+            if c == '{' && i + 1 < html.len() {
+                let mut depth = 1;
+                let mut j = i + 1;
+                while j < html.len() && depth > 0 {
+                    let cur_c = html[j..].chars().next().unwrap();
+                    if cur_c == '{' { depth += 1; }
+                    else if cur_c == '}' { depth -= 1; }
+                    j += cur_c.len_utf8();
+                }
+                if depth == 0 {
+                    let raw_expr = &html[i + 1..j - 1];
+                    let expr = crate::frontend::transpile_expr_reactivity(raw_expr, states)
+                        .unwrap_or_else(|| raw_expr.to_string());
+                    let id = format!("erm-bind-{}", j);
+                    out.push_str(&format!("<span id=\"{}\"></span>", id));
+                    bindings.push(format!("bindText(\"{}\", () => ({}));", id, expr));
+                    i = j;
+                    continue;
                 }
             }
         } else {
@@ -90,10 +79,9 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                             j += cur_c.len_utf8();
                         }
                         if depth == 0 {
-                            let mut expr = html[k + 2..j - 1].to_string();
-                            for sig in states {
-                                expr = replace_word(&expr, sig, ".value");
-                            }
+                            let raw_expr = &html[k + 2..j - 1];
+                            let expr = crate::frontend::transpile_expr_reactivity(raw_expr, states)
+                                .unwrap_or_else(|| raw_expr.to_string());
                             let event_type = attr_name[2..].to_lowercase();
                             
                             // Check for existing ID attribute to avoid duplicate IDs

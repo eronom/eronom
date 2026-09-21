@@ -111,6 +111,24 @@ pub enum Commands {
         /// Test file or directory to run (e.g. test_runner.er, tests/)
         file: Option<PathBuf>,
     },
+    /// Type-check an Eronom script or project without running it (like tsc --noEmit)
+    Check {
+        /// File to type-check (e.g. main.er)
+        file: PathBuf,
+    },
+    /// Transpile an Eronom (.er) script to JavaScript (.js)
+    Transpile {
+        /// Input .er file to transpile
+        file: PathBuf,
+
+        /// Output .js file path (defaults to same filename with .js extension)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+
+        /// Type check before transpiling
+        #[arg(long, default_value_t = true)]
+        check: bool,
+    },
 }
 
 pub fn parse_dir_and_port(

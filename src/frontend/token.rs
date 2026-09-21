@@ -76,6 +76,10 @@ pub enum TokenType {
     Default,
     Match,
     Typeof,
+    Type,
+    As,
+    Is,
+    Enum,
     Underscore,
     Eof,
 }

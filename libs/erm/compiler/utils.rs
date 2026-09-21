@@ -276,87 +276,6 @@ pub fn scope_component_ids(html: &mut String, scripts: &mut Vec<String>) {
     }
 }
 
-pub fn replace_word(input: &str, word: &str, suffix: &str) -> String {
-    let mut result = String::new();
-    let chars: Vec<char> = input.chars().collect();
-    let word_chars: Vec<char> = word.chars().collect();
-    let suffix_chars: Vec<char> = suffix.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        if i + word_chars.len() <= chars.len() && chars[i..i + word_chars.len()] == word_chars[..] {
-            let prev_char = if i > 0 { Some(chars[i - 1]) } else { None };
-            let next_char = if i + word_chars.len() < chars.len() {
-                Some(chars[i + word_chars.len()])
-            } else {
-                None
-            };
-
-            let is_boundary_start = match prev_char {
-                Some(c) => !c.is_alphanumeric() && c != '_' && c != '$' && c != '.',
-                None => true,
-            };
-            let is_boundary_end = match next_char {
-                Some(c) => !c.is_alphanumeric() && c != '_' && c != '$',
-                None => true,
-            };
-
-            let already_suffixed = if !suffix_chars.is_empty() && i + word_chars.len() + suffix_chars.len() <= chars.len() {
-                chars[i + word_chars.len()..i + word_chars.len() + suffix_chars.len()] == suffix_chars[..]
-            } else {
-                false
-            };
-
-            let is_object_key = if next_char.is_some() {
-                let mut k = i + word_chars.len();
-                while k < chars.len() && chars[k].is_whitespace() {
-                    k += 1;
-                }
-                k < chars.len() && chars[k] == ':'
-            } else {
-                false
-            };
-
-            let is_declaration = if is_boundary_start {
-                let mut p = i;
-                while p > 0 && chars[p - 1].is_whitespace() {
-                    p -= 1;
-                }
-                let mut decl = false;
-                if p >= 3 && chars[p-3..p] == ['l', 'e', 't'] {
-                    let before_let = if p >= 4 { Some(chars[p - 4]) } else { None };
-                    if before_let.map_or(true, |c| !c.is_alphanumeric() && c != '_') {
-                        decl = true;
-                    }
-                } else if p >= 5 && chars[p-5..p] == ['c', 'o', 'n', 's', 't'] {
-                    let before_const = if p >= 6 { Some(chars[p - 6]) } else { None };
-                    if before_const.map_or(true, |c| !c.is_alphanumeric() && c != '_') {
-                        decl = true;
-                    }
-                } else if p >= 3 && chars[p-3..p] == ['v', 'a', 'r'] {
-                    let before_var = if p >= 4 { Some(chars[p - 4]) } else { None };
-                    if before_var.map_or(true, |c| !c.is_alphanumeric() && c != '_') {
-                        decl = true;
-                    }
-                }
-                decl
-            } else {
-                false
-            };
-
-            if is_boundary_start && is_boundary_end && !is_object_key && !is_declaration && !already_suffixed {
-                result.push_str(word);
-                result.push_str(suffix);
-                i += word_chars.len();
-                continue;
-            }
-        }
-        result.push(chars[i]);
-        i += 1;
-    }
-    result
-}
-
 pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
     let mut result = String::new();
     let mut i = 0;
@@ -556,13 +475,12 @@ pub fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &
     let mut i = 0;
     while i < html.len() {
         let c = html[i..].chars().next().unwrap();
-        if c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
+        if c == '{' {
             if let Some(close_idx) = find_matching_close_brace(&html[i + 1..]) {
                 let brace_end = i + 1 + close_idx;
-                let mut sub_expr = html[i + 1..brace_end].to_string();
-                for sig in state_vars {
-                    sub_expr = replace_word(&sub_expr, sig, ".value");
-                }
+                let raw_expr = &html[i + 1..brace_end];
+                let sub_expr = crate::frontend::transpile_expr_reactivity(raw_expr, state_vars)
+                    .unwrap_or_else(|| raw_expr.to_string());
                 
                 let prefix = &html[..i];
                 if let Some(_event_type) = super::reactivity::get_event_attribute_name(prefix) {

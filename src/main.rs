@@ -40,6 +40,61 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            eronom::cli::Commands::Check { file } => {
+                let path_buf = file.clone();
+                match eronom::frontend::parse_and_resolve_imports(&path_buf) {
+                    Ok(stmts) => {
+                        match eronom::frontend::check_program(&stmts) {
+                            Ok(()) => {
+                                println!("✓ Type check passed: {}", file.display());
+                            }
+                            Err(errs) => {
+                                eprintln!("✗ Type check failed with {} error(s):", errs.len());
+                                for err in errs {
+                                    eprintln!("  {}", err);
+                                }
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Parse/Import error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            eronom::cli::Commands::Transpile { file, out, check } => {
+                let path_buf = file.clone();
+                match eronom::frontend::parse_and_resolve_imports(&path_buf) {
+                    Ok(stmts) => {
+                        if check {
+                            if let Err(errs) = eronom::frontend::check_program(&stmts) {
+                                eprintln!("✗ Type check failed with {} error(s):", errs.len());
+                                for err in &errs {
+                                    eprintln!("  {}", err);
+                                }
+                                eprintln!("Tip: run with --check=false to transpile despite type errors.");
+                                std::process::exit(1);
+                            }
+                        }
+                        let js_code = eronom::frontend::transpile_to_js(&stmts);
+                        let out_path = out.unwrap_or_else(|| {
+                            let mut p = file.clone();
+                            p.set_extension("js");
+                            p
+                        });
+                        if let Err(e) = std::fs::write(&out_path, &js_code) {
+                            eprintln!("Error writing output file {}: {}", out_path.display(), e);
+                            std::process::exit(1);
+                        }
+                        println!("✓ Transpiled {} -> {}", file.display(), out_path.display());
+                    }
+                    Err(e) => {
+                        eprintln!("Parse error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
             _ => {
                 if let Err(e) = eronom::cli::run_command(cmd) {
                     eprintln!("Error: {}", e);

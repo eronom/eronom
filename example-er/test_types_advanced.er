@@ -1,0 +1,40 @@
+// 1. Primitive and array types
+let count: int = 10;
+let list: int[] = [1, 2, 3];
+let greeting: string = "Hello Typed Eronom!";
+
+// 2. Union types
+let id: string | int = "user_100";
+id = 200;
+
+// 3. Nullable types
+let nickname: string? = null;
+nickname = "Vishuuuun";
+
+// 4. Type aliases
+type User = { id: int, name: string };
+let u: User = { id: 1, name: "Alice" };
+
+// 5. Enums
+enum Status {
+    Pending,
+    Active,
+    Completed
+}
+let currentStatus = Status.Active;
+
+// 6. Type assertion
+let anyVal = 42;
+let intVal: int = anyVal as int;
+
+// 7. Typed function
+fn add(a: int, b: int): int {
+    return a + b;
+}
+let sum: int = add(count, 5);
+
+print("Static type tests passed!");
+print("sum: " + sum);
+print("user: " + u.name);
+print("status: " + currentStatus);
+print("nickname: " + nickname);

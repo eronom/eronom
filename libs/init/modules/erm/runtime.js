@@ -25,16 +25,6 @@ const clearHmrState = () => {
   }
 };
 
-export function b64utf8(str) {
-  if (!str) return '';
-  const binary = atob(str);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new TextDecoder().decode(bytes);
-}
-
 export function escapeHtml(val) {
   if (val === null || val === undefined) return '';
   return String(val)
@@ -48,7 +38,6 @@ export function escapeHtml(val) {
 // --- Reactive Graph Core ---
 const equalFn = (a, b) => a === b;
 const STALE = 1;
-const PENDING = 2;
 
 let Listener = null;
 let Owner = null;

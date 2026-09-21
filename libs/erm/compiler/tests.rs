@@ -577,4 +577,29 @@ fn test_eds_button_color_prop() {
     assert!(err_msg.contains("not-a-valid-color-xyz"));
 }
 
+#[test]
+fn test_ast_reactivity_in_erm_components() {
+    let content = r#"
+    <script>
+        let count = useState(0);
+    </script>
+    <div>
+        <h1>{"Total count: " + count}</h1>
+        <button onclick={() => update({ count: 10 })}>Update</button>
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    // 1. Literal string inside expression must NOT have .value inserted
+    assert!(res.contains("\"Total count: \""));
+    assert!(!res.contains("Total count.value"));
+
+    // 2. Object key 'count' in event handler must NOT have .value inserted
+    assert!(res.contains("count: 10"));
+    assert!(!res.contains("count.value: 10"));
+
+    // 3. State variable reference gets .value
+    assert!(res.contains("count.value"));
+}
+
 

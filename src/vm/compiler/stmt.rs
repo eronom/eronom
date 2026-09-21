@@ -1,6 +1,6 @@
 use super::{Compiler, Local};
 use super::types::check_type;
-use crate::frontend::{Expr, Stmt};
+use crate::frontend::{Expr, LiteralValue, Stmt};
 use crate::vm::bytecode::OpCode;
 use crate::vm::value::Value;
 
@@ -46,7 +46,8 @@ impl Compiler {
             }
             Stmt::VarDecl(name, type_annotation, is_const, expr, loc) => {
                 let mut expr = expr.clone();
-                if let Some(t_name) = type_annotation {
+                let t_name_str = type_annotation.as_ref().map(|t| t.to_string());
+                if let Some(ref t_name) = t_name_str {
                     if self.structs.contains_key(t_name) {
                         match &expr {
                             Expr::Array(items) => {
@@ -70,7 +71,7 @@ impl Compiler {
                             _ => {}
                         }
                     }
-                    check_type(&expr, t_name, &self.structs, &self.interfaces, &self.locals, &self.global_types, loc)?;
+                    check_type(&expr, t_name, &self.structs, &self.interfaces, &self.type_aliases, &self.locals, &self.global_types, loc)?;
                 }
                 if self.scope_depth > 0 {
                     let local_reg = self.locals.len();
@@ -80,7 +81,7 @@ impl Compiler {
                         depth: self.scope_depth,
                         is_const: *is_const,
                         loc: loc.clone(),
-                        ty: type_annotation.clone(),
+                        ty: t_name_str.clone(),
                     });
                 } else {
                     let temp_reg = self.next_reg;
@@ -95,7 +96,7 @@ impl Compiler {
                         0,
                         name_idx as u32,
                     );
-                    if let Some(t_name) = type_annotation {
+                    if let Some(ref t_name) = t_name_str {
                         self.global_types.insert(name.clone(), t_name.clone());
                     }
                     if *is_const {
@@ -165,7 +166,7 @@ impl Compiler {
                 let reg = self.next_reg;
                 if let Some(e) = expr {
                     if let Some(ref ret_ty) = self.current_return_type {
-                        check_type(e, ret_ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, loc)?;
+                        check_type(e, ret_ty, &self.structs, &self.interfaces, &self.type_aliases, &self.locals, &self.global_types, loc)?;
                     }
                     self.compile_expr(e, reg)?;
                 } else {
@@ -188,6 +189,33 @@ impl Compiler {
                 self.compile_struct_decl(name, composed, fields, methods)?;
             }
             Stmt::Interface(_, _, _, _) => {}
+            Stmt::TypeAlias(name, _, ty, _) => {
+                self.type_aliases.insert(name.clone(), ty.clone());
+            }
+            Stmt::Enum(name, variants, loc) => {
+                let mut pairs = Vec::new();
+                let mut next_auto_val: f64 = 0.0;
+                for (v_name, v_val) in variants {
+                    let val_expr = match v_val {
+                        Some(LiteralValue::Number(n)) => {
+                            next_auto_val = n + 1.0;
+                            Expr::Literal(LiteralValue::Number(*n))
+                        }
+                        Some(LiteralValue::String(s)) => {
+                            Expr::Literal(LiteralValue::String(s.clone()))
+                        }
+                        Some(other) => Expr::Literal(other.clone()),
+                        None => {
+                            let n = next_auto_val;
+                            next_auto_val += 1.0;
+                            Expr::Literal(LiteralValue::Number(n))
+                        }
+                    };
+                    pairs.push((v_name.clone(), val_expr));
+                }
+                let obj_expr = Expr::Object(pairs);
+                self.compile_stmt(&Stmt::VarDecl(name.clone(), None, true, obj_expr, loc.clone()))?;
+            }
             Stmt::Concurrent(body) => {
                 self.begin_scope();
                 let handles_reg = self.locals.len();

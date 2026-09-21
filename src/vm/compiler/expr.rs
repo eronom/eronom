@@ -84,7 +84,7 @@ impl Compiler {
                         return Err(self.format_const_assign_error(name, assign_loc, &self.locals[idx].loc));
                     }
                     if let Some(ref ty) = self.locals[idx].ty.clone() {
-                        check_type(val, ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, assign_loc)?;
+                        check_type(val, ty, &self.structs, &self.interfaces, &self.type_aliases, &self.locals, &self.global_types, assign_loc)?;
                     }
                     self.compile_expr(val, dest)?;
                     if dest != idx {
@@ -102,7 +102,7 @@ impl Compiler {
                         return Err(self.format_const_assign_error(name, assign_loc, decl_loc));
                     }
                     if let Some(ref ty) = ty_opt.clone() {
-                        check_type(val, ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, assign_loc)?;
+                        check_type(val, ty, &self.structs, &self.interfaces, &self.type_aliases, &self.locals, &self.global_types, assign_loc)?;
                     }
                     let temp = std::cmp::max(self.next_reg, dest);
                     self.compile_expr(val, temp)?;
@@ -127,7 +127,7 @@ impl Compiler {
                         return Err(self.format_const_assign_error(name, assign_loc, &decl_loc));
                     }
                     if let Some(ty) = self.global_types.get(name).cloned() {
-                        check_type(val, &ty, &self.structs, &self.interfaces, &self.locals, &self.global_types, assign_loc)?;
+                        check_type(val, &ty, &self.structs, &self.interfaces, &self.type_aliases, &self.locals, &self.global_types, assign_loc)?;
                     }
                     self.compile_expr(val, dest)?;
                     let idx = self
@@ -355,9 +355,10 @@ impl Compiler {
                 compiler.const_globals = self.const_globals.clone();
                 compiler.structs = self.structs.clone();
                 compiler.interfaces = self.interfaces.clone();
+                compiler.type_aliases = self.type_aliases.clone();
                 compiler.global_types = self.global_types.clone();
                 compiler.current_struct = self.current_struct.clone();
-                compiler.current_return_type = return_type.clone();
+                compiler.current_return_type = return_type.as_ref().map(|t| t.to_string());
                 compiler.function.arity = params.len();
                 compiler.function.is_async = false;
                 compiler.next_reg = params.len();
@@ -368,7 +369,7 @@ impl Compiler {
                         depth: compiler.scope_depth,
                         is_const: false,
                         loc: crate::frontend::SourceLocation::default(),
-                        ty: param.ty.clone(),
+                        ty: param.ty.as_ref().map(|t| t.to_string()),
                     });
                 }
                 compiler.compile_stmt(body)?;
@@ -471,6 +472,9 @@ impl Compiler {
                         2,
                     );
                 }
+            }
+            Expr::TypeCast(inner, _, _) => {
+                self.compile_expr(inner, dest)?;
             }
         }
         Ok(())
