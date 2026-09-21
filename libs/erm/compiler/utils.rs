@@ -475,7 +475,7 @@ pub fn evaluate_braces_in_html(html: &str, ev: &mut eval::ErmEval, state_vars: &
     let mut i = 0;
     while i < html.len() {
         let c = html[i..].chars().next().unwrap();
-        if c == '{' && !html[i..].starts_with("{#") && !html[i..].starts_with("{/") && !html[i..].starts_with("{:") {
+        if c == '{' {
             if let Some(close_idx) = find_matching_close_brace(&html[i + 1..]) {
                 let brace_end = i + 1 + close_idx;
                 let raw_expr = &html[i + 1..brace_end];

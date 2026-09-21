@@ -11,7 +11,7 @@ pub fn compile_template_to_js(body: &str, state_vars: &[String]) -> String {
             js_expr.push('\\');
             js_expr.push(c);
             i += c.len_utf8();
-        } else if c == '{' && !body[i..].starts_with("{#") && !body[i..].starts_with("{/") && !body[i..].starts_with("{:") {
+        } else if c == '{' {
             if let Some(close_idx) = find_matching_close_brace(&body[i + 1..]) {
                 let brace_end = i + 1 + close_idx;
                 let raw_expr = &body[i + 1..brace_end];
