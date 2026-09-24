@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CString};
 use std::fs;
-use crate::compiler;
+use crate::bridge;
 use super::types::*;
 use super::ffi::*;
 use super::router::resolve_path;
@@ -270,7 +270,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
         if file_path.extension().map_or(false, |ext| ext == "erm") {
             let render_result = {
                 let content = fs::read_to_string(&file_path)?;
-                compiler::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params)
+                bridge::process_erm_component(file_path.to_str().unwrap(), &content, is_prod, &params)
             };
 
             match render_result {

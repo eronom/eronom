@@ -10,7 +10,7 @@ pub static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 pub struct GcGuard;
 impl Drop for GcGuard {
     fn drop(&mut self) {
-        crate::compiler::eds::reset_eds_engine();
+        crate::bridge::reset_erm_engine();
         crate::vm::gc::gc_free_all();
     }
 }

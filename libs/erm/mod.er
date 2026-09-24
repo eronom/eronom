@@ -1,0 +1,26 @@
+// libs/erm/mod.er - Unified ERM entry point in native Eronom script
+
+import {
+  processErmComponent,
+  renderPage,
+  processComponentTree,
+  parseReactivity,
+  scopeCss,
+  scopeHtml,
+  createEval
+} from "./compiler.er"
+
+import {
+  matchPath,
+  createRouter
+} from "./router.er"
+
+export const compile = processErmComponent
+export const render = renderPage
+export const processTree = processComponentTree
+export const reactivity = parseReactivity
+export const css = scopeCss
+export const html = scopeHtml
+export const evaluator = createEval
+export const matchRoute = matchPath
+export const router = createRouter

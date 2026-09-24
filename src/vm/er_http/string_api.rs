@@ -75,16 +75,30 @@ pub fn native_string_substring(args: Vec<Value>) -> Value {
         None => return Value::null(),
     };
     let start = args[1].as_number() as usize;
+    if s.is_ascii() {
+        let end = if args.len() >= 3 {
+            args[2].as_number() as usize
+        } else {
+            s.len()
+        };
+        if start > s.len() || end > s.len() || start > end {
+            return Value::null();
+        }
+        let sub = &s[start..end];
+        let ptr = get_or_create_string(sub);
+        return Value::string(ptr);
+    }
+    let chars: Vec<char> = s.chars().collect();
     let end = if args.len() >= 3 {
         args[2].as_number() as usize
     } else {
-        s.len()
+        chars.len()
     };
-    if start > s.len() || end > s.len() || start > end {
+    if start > chars.len() || end > chars.len() || start > end {
         return Value::null();
     }
-    let sub = &s[start..end];
-    let ptr = get_or_create_string(sub);
+    let sub: String = chars[start..end].iter().collect();
+    let ptr = get_or_create_string(&sub);
     Value::string(ptr)
 }
 
@@ -130,7 +144,7 @@ pub fn native_string_length(args: Vec<Value>) -> Value {
         Some(val) => val,
         None => return Value::number(0.0),
     };
-    Value::number(s.len() as f64)
+    Value::number(s.chars().count() as f64)
 }
 
 pub fn native_string_char_at(args: Vec<Value>) -> Value {
@@ -164,8 +178,17 @@ pub fn native_string_index_of(args: Vec<Value>) -> Value {
         Some(val) => val,
         None => return Value::number(-1.0),
     };
+    if s.is_ascii() && search.is_ascii() {
+        return match s.find(search) {
+            Some(idx) => Value::number(idx as f64),
+            None => Value::number(-1.0),
+        };
+    }
     match s.find(search) {
-        Some(idx) => Value::number(idx as f64),
+        Some(byte_pos) => {
+            let char_pos = s[..byte_pos].chars().count();
+            Value::number(char_pos as f64)
+        }
         None => Value::number(-1.0),
     }
 }

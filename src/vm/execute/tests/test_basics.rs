@@ -350,3 +350,41 @@ fn test_gc_atomic_flag() {
 
     gc_free_all();
 }
+
+#[test]
+fn test_utf8_string_methods() {
+    let src = r#"
+        let s = "Eronom ⚡ v0.9</span>"
+        let idx = s.indexOf("<")
+        let sub = s.substring(idx)
+        let ch = s.charAt(idx)
+        let len = s.length
+        let last = s.lastIndexOf("n")
+        let has = s.includes("⚡")
+        let sw = s.startsWith("Eronom ⚡")
+        let ew = s.endsWith("</span>")
+        let sl = s.slice(idx, idx + 4)
+        let result = [idx, sub, ch, len, last, has, sw, ew, sl]
+    "#;
+    let vm = run_code(src).unwrap();
+    let res = vm.globals.get("result").copied().unwrap();
+    assert!(res.is_array());
+    let ptr = res.as_gc_ptr();
+    unsafe {
+        if let GcData::Array(arr) = &(*ptr).data {
+            assert_eq!(arr[0].as_number(), 13.0, "indexOf('<') must be char index 13, not byte index 15");
+            assert_eq!(arr[1].as_str().unwrap(), "</span>");
+            assert_eq!(arr[2].as_str().unwrap(), "<");
+            assert_eq!(arr[3].as_number(), 20.0);
+            assert_eq!(arr[4].as_number(), 18.0);
+            assert_eq!(arr[5].as_boolean(), true);
+            assert_eq!(arr[6].as_boolean(), true);
+            assert_eq!(arr[7].as_boolean(), true);
+            assert_eq!(arr[8].as_str().unwrap(), "</sp");
+        } else {
+            panic!("Expected array");
+        }
+    }
+    gc_free_all();
+}
+

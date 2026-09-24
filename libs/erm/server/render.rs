@@ -1,7 +1,7 @@
 use std::ffi::{c_char, c_void, CString};
 use std::fs;
 use std::path::Path;
-use crate::compiler;
+use crate::bridge;
 use crate::vm::value::Value;
 use super::types::*;
 
@@ -127,7 +127,7 @@ pub fn native_render(args: Vec<Value>) -> Value {
         match fs::read_to_string(&path) {
             Ok(content) => {
                 let parent = path.parent().unwrap().to_string_lossy();
-                match compiler::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
+                match bridge::process_erm_component(path.to_str().unwrap_or(&parent), &content, is_prod, &params_map) {
                     Ok(html) => {
                         let ptr = crate::vm::gc::get_or_create_string(&html);
                         Value::string(ptr)
