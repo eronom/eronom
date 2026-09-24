@@ -324,6 +324,34 @@ pub fn collect_std_library_files() -> HashMap<String, Vec<u8>> {
         files.insert("modules/erm/hmr.js".to_string(), include_bytes!("../../libs/init/modules/erm/hmr.js").to_vec());
     }
 
+    // Built-in ERM native scripts
+    let compiler_bytes = include_bytes!("../../libs/erm/compiler.er").to_vec();
+    let router_bytes = include_bytes!("../../libs/erm/router.er").to_vec();
+    let http_bytes = include_bytes!("../../libs/erm/http.er").to_vec();
+    let server_bytes = include_bytes!("../../libs/erm/server.er").to_vec();
+    let mod_bytes = include_bytes!("../../libs/erm/mod.er").to_vec();
+
+    if !files.contains_key("libs/erm/compiler.er") {
+        files.insert("libs/erm/compiler.er".to_string(), compiler_bytes.clone());
+        files.insert("erm/compiler.er".to_string(), compiler_bytes);
+    }
+    if !files.contains_key("libs/erm/router.er") {
+        files.insert("libs/erm/router.er".to_string(), router_bytes.clone());
+        files.insert("erm/router.er".to_string(), router_bytes);
+    }
+    if !files.contains_key("libs/erm/http.er") {
+        files.insert("libs/erm/http.er".to_string(), http_bytes.clone());
+        files.insert("erm/http.er".to_string(), http_bytes);
+    }
+    if !files.contains_key("libs/erm/server.er") {
+        files.insert("libs/erm/server.er".to_string(), server_bytes.clone());
+        files.insert("erm/server.er".to_string(), server_bytes);
+    }
+    if !files.contains_key("libs/erm/mod.er") {
+        files.insert("libs/erm/mod.er".to_string(), mod_bytes.clone());
+        files.insert("erm/mod.er".to_string(), mod_bytes);
+    }
+
     files
 }
 

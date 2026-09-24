@@ -15,6 +15,13 @@ import {
   createRouter
 } from "./router.er"
 
+import {
+  createErmServer,
+  startServer,
+  resolvePagePath,
+  getMimeType
+} from "./http.er"
+
 export const compile = processErmComponent
 export const render = renderPage
 export const processTree = processComponentTree
@@ -23,4 +30,13 @@ export const css = scopeCss
 export const html = scopeHtml
 export const evaluator = createEval
 export const matchRoute = matchPath
-export const router = createRouter
+export const createRouter = createRouter
+export const createServer = createErmServer
+export const server = createErmServer
+export const start = startServer
+export const http = {
+  createServer: createErmServer,
+  startServer: startServer,
+  resolvePagePath: resolvePagePath,
+  getMimeType: getMimeType
+}

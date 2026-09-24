@@ -1,0 +1,325 @@
+// libs/erm/http.er - ERM HTTP Framework (Native Eronom Script Implementation)
+// Pure Eronom script implementation of ERM web framework server. No Rust here!
+
+import { router, status } from "std/http"
+import { readFile, readBinary, exists, stat, readDir } from "std/fs"
+import { join, resolve, extname, basename, dirname } from "std/path"
+import { env } from "std/env"
+import { processErmComponent, renderPage } from "./compiler.er"
+import { matchPath } from "./router.er"
+
+export const getMimeType = (filePath) => {
+  let ext = extname(filePath).toLowerCase()
+  if (ext == ".html" or ext == ".htm") { return "text/html; charset=utf-8" }
+  if (ext == ".css") { return "text/css; charset=utf-8" }
+  if (ext == ".js" or ext == ".mjs") { return "application/javascript; charset=utf-8" }
+  if (ext == ".json") { return "application/json; charset=utf-8" }
+  if (ext == ".png") { return "image/png" }
+  if (ext == ".jpg" or ext == ".jpeg") { return "image/jpeg" }
+  if (ext == ".gif") { return "image/gif" }
+  if (ext == ".svg") { return "image/svg+xml" }
+  if (ext == ".ico") { return "image/x-icon" }
+  if (ext == ".txt") { return "text/plain; charset=utf-8" }
+  if (ext == ".wasm") { return "application/wasm" }
+  if (ext == ".map") { return "application/json" }
+  return "application/octet-stream"
+}
+
+export const isStaticExtension = (filePath) => {
+  let ext = extname(filePath).toLowerCase()
+  if (ext == ".css" or ext == ".js" or ext == ".json" or ext == ".png") { return true }
+  if (ext == ".jpg" or ext == ".jpeg" or ext == ".gif" or ext == ".svg") { return true }
+  if (ext == ".ico" or ext == ".txt" or ext == ".wasm" or ext == ".map") { return true }
+  return false
+}
+
+export const resolvePagePath = (pagesDir, target) => {
+  let cleanTarget = target
+  let qPos = cleanTarget.indexOf("?")
+  if (qPos >= 0) {
+    cleanTarget = cleanTarget.substring(0, qPos)
+  }
+  if (cleanTarget.startsWith("/")) {
+    cleanTarget = cleanTarget.substring(1)
+  }
+  if (cleanTarget.endsWith("/") and cleanTarget.length > 1) {
+    cleanTarget = cleanTarget.substring(0, cleanTarget.length - 1)
+  }
+
+  let params = {}
+  if (cleanTarget == "" or cleanTarget == "/") {
+    let idxErm = join(pagesDir, "index.erm")
+    if (exists(idxErm)) { return { path: idxErm, params: params } }
+    let idxHtml = join(pagesDir, "index.html")
+    if (exists(idxHtml)) { return { path: idxHtml, params: params } }
+    let pageErm = join(pagesDir, "page.erm")
+    if (exists(pageErm)) { return { path: pageErm, params: params } }
+    let pageHtml = join(pagesDir, "page.html")
+    if (exists(pageHtml)) { return { path: pageHtml, params: params } }
+    return null
+  }
+
+  let parts = cleanTarget.split("/")
+  let currentPath = pagesDir
+
+  for i in 0..parts.length {
+    let part = parts[i]
+    if (part == "") { continue }
+
+    let exact = join(currentPath, part)
+    if (exists(exact) and i < parts.length - 1) {
+      currentPath = exact
+      continue
+    }
+
+    let asErm = join(currentPath, part + ".erm")
+    if (exists(asErm) and i == parts.length - 1) {
+      return { path: asErm, params: params }
+    }
+
+    let asHtml = join(currentPath, part + ".html")
+    if (exists(asHtml) and i == parts.length - 1) {
+      return { path: asHtml, params: params }
+    }
+
+    let asDir = join(currentPath, part)
+    if (exists(asDir)) {
+      currentPath = asDir
+      continue
+    }
+
+    // Dynamic routes scanning [param]
+    let entries = readDir(currentPath)
+    let found = false
+    if (entries != null) {
+      for entry in entries {
+        let name = entry.name != null ? entry.name : entry
+        if (name.startsWith("[")) {
+          if (name.endsWith(".erm") and i == parts.length - 1) {
+            let paramName = name.substring(1, name.length - 5)
+            params[paramName] = part
+            return { path: join(currentPath, name), params: params }
+          }
+          if (name.endsWith(".html") and i == parts.length - 1) {
+            let paramName = name.substring(1, name.length - 6)
+            params[paramName] = part
+            return { path: join(currentPath, name), params: params }
+          }
+          if (name.endsWith("]")) {
+            let paramName = name.substring(1, name.length - 1)
+            params[paramName] = part
+            currentPath = join(currentPath, name)
+            found = true
+            break
+          }
+        }
+      }
+    }
+
+    if (!found) {
+      return null
+    }
+  }
+
+  let idxErm = join(currentPath, "index.erm")
+  if (exists(idxErm)) { return { path: idxErm, params: params } }
+  let idxHtml = join(currentPath, "index.html")
+  if (exists(idxHtml)) { return { path: idxHtml, params: params } }
+  let pageErm = join(currentPath, "page.erm")
+  if (exists(pageErm)) { return { path: pageErm, params: params } }
+  let pageHtml = join(currentPath, "page.html")
+  if (exists(pageHtml)) { return { path: pageHtml, params: params } }
+
+  return null
+}
+
+export const createErmServer = (options) => {
+  if (options == null) { options = {} }
+  let baseDir = options.dir != null ? options.dir : "."
+  let isProd = options.isProd == true
+  let port = options.port != null ? options.port : 3000
+
+  let appDir = exists(join(baseDir, "app")) ? join(baseDir, "app") : baseDir
+  let pagesDir = exists(join(appDir, "pages")) ? join(appDir, "pages") : join(baseDir, "pages")
+  let publicDir = join(baseDir, "public")
+
+  let app = router()
+
+  // 1. Dev source inspection endpoint
+  app.get("/__erm_src/*", (c) => {
+    let relFile = c.req.params["*"]
+    if (relFile != null) {
+      let filePath = join(baseDir, relFile)
+      if (exists(filePath)) {
+        c.header("Content-Type", "text/plain; charset=utf-8")
+        return c.send(readFile(filePath))
+      }
+    }
+    c.status(404)
+    return c.send("Not Found")
+  })
+
+  // 2. ERM Client Modules endpoints
+  app.get("/modules/erm/hmr.js", (c) => {
+    let hmrPath = join(baseDir, "modules/erm/hmr.js")
+    if (!exists(hmrPath)) { hmrPath = join(baseDir, "core/hmr.js") }
+    if (!exists(hmrPath)) { hmrPath = "libs/init/modules/erm/hmr.js" }
+    if (exists(hmrPath)) {
+      c.header("Content-Type", "application/javascript; charset=utf-8")
+      return c.send(readFile(hmrPath))
+    }
+    c.status(404)
+    return c.send("HMR client not found")
+  })
+
+  app.get("/modules/erm/runtime.js", (c) => {
+    let runtimePath = join(baseDir, "modules/erm/runtime.js")
+    if (!exists(runtimePath)) { runtimePath = join(baseDir, "core/runtime.js") }
+    if (!exists(runtimePath)) { runtimePath = "libs/init/modules/erm/runtime.js" }
+    if (exists(runtimePath)) {
+      c.header("Content-Type", "application/javascript; charset=utf-8")
+      return c.send(readFile(runtimePath))
+    }
+    c.status(404)
+    return c.send("Runtime client not found")
+  })
+
+  // 3. WebSocket HMR endpoints
+  app.ws("/__hmr", {
+    open: (ws) => {
+      ws.send('{"type":"connected"}')
+    },
+    message: (ws, msg) => {
+      if (msg.includes("ping")) {
+        ws.send('{"type":"pong"}')
+      }
+    },
+    close: (ws, code, reason) => {}
+  })
+
+  // 4. Wildcard Request Dispatcher
+  app.all("/*", (c) => {
+    let rawPath = c.req.path != null ? c.req.path : "/"
+    let cleanPath = rawPath
+    let qPos = cleanPath.indexOf("?")
+    if (qPos >= 0) {
+      cleanPath = cleanPath.substring(0, qPos)
+    }
+
+    // A. Check static asset files (e.g. /favicon.ico, /style.css, /public/...)
+    let relStatic = cleanPath.startsWith("/") ? cleanPath.substring(1) : cleanPath
+    if (relStatic != "" and isStaticExtension(relStatic)) {
+      let inPublic = join(publicDir, relStatic)
+      if (exists(inPublic)) {
+        c.header("Content-Type", getMimeType(inPublic))
+        return c.send(readFile(inPublic))
+      }
+      let inApp = join(appDir, relStatic)
+      if (exists(inApp)) {
+        c.header("Content-Type", getMimeType(inApp))
+        return c.send(readFile(inApp))
+      }
+      let inBase = join(baseDir, relStatic)
+      if (exists(inBase)) {
+        c.header("Content-Type", getMimeType(inBase))
+        return c.send(readFile(inBase))
+      }
+    }
+
+    // Special check for favicon.ico
+    if (cleanPath == "/favicon.ico") {
+      let logoApp = join(appDir, "eronom_logo.png")
+      let logoPages = join(pagesDir, "eronom_logo.png")
+      let logoBase = join(baseDir, "eronom_logo.png")
+      if (exists(logoApp)) {
+        c.header("Content-Type", "image/png")
+        return c.send(readFile(logoApp))
+      }
+      if (exists(logoPages)) {
+        c.header("Content-Type", "image/png")
+        return c.send(readFile(logoPages))
+      }
+      if (exists(logoBase)) {
+        c.header("Content-Type", "image/png")
+        return c.send(readFile(logoBase))
+      }
+    }
+
+    // B. Resolve Page route
+    let resolved = resolvePagePath(pagesDir, cleanPath)
+    if (resolved != null) {
+      let targetFile = resolved.path
+      let params = resolved.params
+      if (c.req.params != null) {
+        let reqParamKeys = c.req.params.keys()
+        for k in reqParamKeys {
+          if (k != "*") {
+            params[k] = c.req.params[k]
+          }
+        }
+      }
+
+      if (targetFile.endsWith(".erm")) {
+        let content = readFile(targetFile)
+        let html = processErmComponent(targetFile, content, isProd, params)
+
+        if (!isProd) {
+          let relPath = targetFile
+          if (baseDir != "." and relPath.startsWith(baseDir)) {
+            relPath = relPath.substring(baseDir.length)
+            if (relPath.startsWith("/")) { relPath = relPath.substring(1) }
+          }
+          let filenameScript = "<script>window.__erm_filename = \"" + relPath + "\";</script>\n"
+          let headIdx = html.indexOf("<head>")
+          if (headIdx >= 0) {
+            html = html.substring(0, headIdx + 6) + filenameScript + html.substring(headIdx + 6)
+          } else {
+            html = filenameScript + html
+          }
+        }
+
+        c.header("Content-Type", "text/html; charset=utf-8")
+        return c.html(html)
+      }
+
+      if (targetFile.endsWith(".html")) {
+        let content = readFile(targetFile)
+        let paramEntries = []
+        let pKeys = params.keys()
+        for k in pKeys {
+          let v = params[k]
+          paramEntries.push("\"" + k + "\": \"" + v + "\"")
+        }
+        let LBRACE = "{"
+        let RBRACE = "}"
+        let paramsJs = "window.__erm_params = " + LBRACE + paramEntries.join(", ") + RBRACE + ";"
+        let html = content.replace("window.__erm_params = " + LBRACE + RBRACE + ";", paramsJs)
+        c.header("Content-Type", "text/html; charset=utf-8")
+        return c.html(html)
+      }
+    }
+
+    // C. 404 Fallback
+    c.status(404)
+    c.header("Content-Type", "text/plain; charset=utf-8")
+    return c.send("Not Found")
+  })
+
+  return {
+    app: app,
+    listen: (p, cb) => {
+      app.listen(p, cb)
+    }
+  }
+}
+
+export const startServer = (options) => {
+  if (options == null) { options = {} }
+  let port = options.port != null ? options.port : 3000
+  let server = createErmServer(options)
+  server.listen(port, () => {
+    let mode = options.isProd ? "Production" : "Dev"
+    print(mode + " server running at http://localhost:" + port)
+  })
+  return server
+}

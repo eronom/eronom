@@ -54,7 +54,7 @@ impl VM {
             use_jit,
             jit_threshold,
             alloc_count_local: 0,
-            use_evented_io: true,
+            use_evented_io: false,
             structs: FnvHashMap::default(),
             auto_shapes: FnvHashMap::default(),
             last_matched_keys: Vec::new(),

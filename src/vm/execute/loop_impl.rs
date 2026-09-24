@@ -297,6 +297,15 @@ impl VM {
                             |p| get_raw_func(p),
                         )? {
                             CallOpOutcome::ContinueLoop => {
+                                frame_ptr = {
+                                    let len = self.frames.len();
+                                    self.frames.as_mut_ptr().add(len - 1)
+                                };
+                                frame = &mut *frame_ptr;
+                                func = get_raw_func(frame.function);
+                                code_ptr = func.chunk.code.as_ptr();
+                                constants_ptr = func.chunk.constants.as_ptr();
+                                slots_offset = frame.slots_offset;
                                 reload_stack!();
                                 continue;
                             }

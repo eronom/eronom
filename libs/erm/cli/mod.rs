@@ -4,14 +4,47 @@ pub mod init;
 pub mod build;
 pub mod standalone;
 
-use std::path::Path;
-use crate::server::start_server;
+use std::path::{Path, PathBuf};
 use clap::Parser;
 
 pub use commands::{Cli, Commands, BuildMode};
 pub use init::init_project;
 pub use build::build_project;
 pub use standalone::build_standalone;
+
+pub fn find_erm_server_path() -> Option<PathBuf> {
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut current = Some(cwd.as_path());
+        while let Some(dir) = current {
+            let p1 = dir.join("libs").join("erm").join("server.er");
+            if p1.is_file() {
+                return Some(p1);
+            }
+            let p2 = dir.join("erm").join("server.er");
+            if p2.is_file() {
+                return Some(p2);
+            }
+            current = dir.parent();
+        }
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut current = Some(exe_dir);
+            while let Some(dir) = current {
+                let p1 = dir.join("libs").join("erm").join("server.er");
+                if p1.is_file() {
+                    return Some(p1);
+                }
+                let p2 = dir.join("erm").join("server.er");
+                if p2.is_file() {
+                    return Some(p2);
+                }
+                current = dir.parent();
+            }
+        }
+    }
+    Some(PathBuf::from("erm/server.er"))
+}
 
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::try_parse_from(args)?;
@@ -79,7 +112,18 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
                 dir = "app/build".to_string();
             }
             let resolved_port = commands::resolve_port(&dir, port_val, false)?;
-            start_server(&dir, true, resolved_port)?;
+            unsafe {
+                std::env::set_var("PORT", resolved_port.to_string());
+                std::env::set_var("ERONOM_DIR", &dir);
+                std::env::set_var("ERONOM_MODE", "prod");
+            }
+            let server_er = Path::new(&dir).join("server.er");
+            if server_er.exists() {
+                crate::runner::run_file(server_er.to_str().unwrap())?;
+            } else {
+                let server_script = find_erm_server_path().unwrap_or_else(|| PathBuf::from("libs/erm/server.er"));
+                crate::runner::run_file(server_script.to_str().unwrap())?;
+            }
         }
         Commands::Dev {
             dir_or_port,
@@ -88,7 +132,13 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
         } => {
             let (dir, port_val) = commands::parse_dir_and_port(dir_or_port, port_pos, port, ".")?;
             let resolved_port = commands::resolve_port(&dir, port_val, false)?;
-            start_server(&dir, false, resolved_port)?;
+            unsafe {
+                std::env::set_var("PORT", resolved_port.to_string());
+                std::env::set_var("ERONOM_DIR", &dir);
+                std::env::set_var("ERONOM_MODE", "dev");
+            }
+            let server_script = find_erm_server_path().unwrap_or_else(|| PathBuf::from("libs/erm/server.er"));
+            crate::runner::run_file(server_script.to_str().unwrap())?;
         }
         Commands::Test { file: _ } => {
             // Handled via the main binary entrypoint

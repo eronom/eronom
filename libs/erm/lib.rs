@@ -2,7 +2,6 @@
 
 pub mod bridge;
 pub use bridge as compiler;
-pub mod server;
 pub mod cli;
 
 #[path = "../../src/vm/mod.rs"]
@@ -11,6 +10,8 @@ pub mod vm;
 pub mod frontend;
 #[path = "../../src/jit/mod.rs"]
 pub mod jit;
+#[path = "../../src/runner/mod.rs"]
+pub mod runner;
 
 use std::io::{self, Write};
 

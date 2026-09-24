@@ -1756,6 +1756,7 @@ export const processComponentTree = (filePath, content, visited, slotHtml, param
               let candidates = [
                 pathJoin(baseDir, tagName + ".erm"),
                 pathJoin(baseDir, "components/" + tagName + ".erm"),
+                pathJoin(pathDirname(baseDir), "components/" + tagName + ".erm"),
                 pathJoin("app/components", tagName + ".erm"),
                 pathJoin("components", tagName + ".erm")
               ]
