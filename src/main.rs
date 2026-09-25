@@ -2,12 +2,10 @@ pub use eronom::vm as backend;
 pub use eronom::frontend;
 pub use eronom::jit;
 
-mod runner;
-
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use runner::{run_file, run_test_command};
+use eronom::runner::{run_file, run_test_command};
 
 fn main() {
     // 1. Check if the currently executing binary is a self-contained embedded executable

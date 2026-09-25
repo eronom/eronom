@@ -378,7 +378,12 @@ let formatPassthroughAttr = (k, v) => {
   return " " + k + "=\"" + inner + "\""
 }
 
+let _cachedRootCss = null
+
 export const generateRootCss = (projectDir) => {
+  if (_cachedRootCss != null) {
+    return _cachedRootCss
+  }
   let out = ""
   out = out + "/* === Eronom Design System (EDS): LLM-Safe Tokens & Utility Style Props === */\n"
   out = out + ":root " + LBRACE + "\n  color-scheme: light dark;\n"
@@ -604,6 +609,7 @@ export const generateRootCss = (projectDir) => {
   out = out + ".eds-td-none " + LBRACE + " text-decoration: none; " + RBRACE + "\n"
   out = out + ".eds-truncate " + LBRACE + " overflow: hidden; text-overflow: ellipsis; white-space: nowrap; " + RBRACE + "\n"
 
+  _cachedRootCss = out
   return out
 }
 

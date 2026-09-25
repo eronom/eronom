@@ -1,0 +1,40 @@
+import { getMimeType, isStaticExtension, resolvePagePath, createErmServer } from "erm/http"
+import { http, createRouter, compile, render } from "erm"
+
+print("--- Testing ERM HTTP Module ---")
+
+// 1. MIME types
+print("MIME html: " + getMimeType("index.html"))
+print("MIME css: " + getMimeType("style.css"))
+print("MIME js: " + getMimeType("bundle.js"))
+print("MIME json: " + getMimeType("data.json"))
+print("MIME png: " + getMimeType("logo.png"))
+
+if (getMimeType("index.html") != "text/html; charset=utf-8") {
+  print("FAIL: getMimeType html")
+} else {
+  print("PASS: getMimeType html")
+}
+
+if (isStaticExtension("test.css") != true or isStaticExtension("test.erm") != false) {
+  print("FAIL: isStaticExtension")
+} else {
+  print("PASS: isStaticExtension")
+}
+
+// 2. ERM Mod exports
+if (http == null or http.createServer == null) {
+  print("FAIL: http in erm/mod")
+} else {
+  print("PASS: http in erm/mod")
+}
+
+// 3. createErmServer instance
+let server = createErmServer({ dir: "." })
+if (server == null or server.app == null or server.listen == null) {
+  print("FAIL: createErmServer structure")
+} else {
+  print("PASS: createErmServer structure")
+}
+
+print("ERM HTTP tests completed successfully!")

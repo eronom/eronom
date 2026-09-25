@@ -1,7 +1,44 @@
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::time::{Duration, SystemTime};
 use crate::vm::value::Value;
 use crate::vm::gc::GcData;
+
+pub fn is_port_in_use(port: u16) -> bool {
+    if port == 0 {
+        return false;
+    }
+    let v4 = SocketAddr::from(([127, 0, 0, 1], port));
+    if TcpStream::connect_timeout(&v4, Duration::from_millis(50)).is_ok() {
+        return true;
+    }
+    let v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port));
+    if TcpStream::connect_timeout(&v6, Duration::from_millis(50)).is_ok() {
+        return true;
+    }
+    if TcpListener::bind(("0.0.0.0", port)).is_err() {
+        return true;
+    }
+    if TcpListener::bind(("127.0.0.1", port)).is_err() {
+        return true;
+    }
+    false
+}
+
+pub fn find_available_port(start_port: u16) -> u16 {
+    if start_port == 0 {
+        return 0;
+    }
+    let mut port = start_port;
+    while is_port_in_use(port) {
+        if let Some(next) = port.checked_add(1) {
+            port = next;
+        } else {
+            break;
+        }
+    }
+    port
+}
 
 pub fn percent_decode(input: &str) -> String {
     let mut bytes = Vec::with_capacity(input.len());
@@ -291,5 +328,25 @@ pub fn value_to_json(val: Value) -> serde_json::Value {
         }
     } else {
         serde_json::Value::Null
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn test_find_available_port_increments_when_busy() {
+        let initial_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = initial_listener.local_addr().unwrap().port();
+
+        assert!(is_port_in_use(port));
+
+        let next_port = find_available_port(port);
+        assert!(next_port > port);
+        assert!(!is_port_in_use(next_port));
+
+        drop(initial_listener);
     }
 }

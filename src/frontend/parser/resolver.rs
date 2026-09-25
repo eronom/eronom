@@ -70,6 +70,46 @@ fn find_std_dir(start_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+fn find_erm_dir(start_dir: &Path) -> Option<PathBuf> {
+    // 1. Search upwards from the compiling file's directory
+    let mut current = Some(start_dir);
+    while let Some(dir) = current {
+        let p1 = dir.join("libs").join("erm");
+        if p1.is_dir() { return Some(p1); }
+        let p2 = dir.join("erm");
+        if p2.is_dir() { return Some(p2); }
+        current = dir.parent();
+    }
+
+    // 2. Search upwards from current working directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut current = Some(cwd.as_path());
+        while let Some(dir) = current {
+            let p1 = dir.join("libs").join("erm");
+            if p1.is_dir() { return Some(p1); }
+            let p2 = dir.join("erm");
+            if p2.is_dir() { return Some(p2); }
+            current = dir.parent();
+        }
+    }
+
+    // 3. Search relative to executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut current = Some(exe_dir);
+            while let Some(dir) = current {
+                let p1 = dir.join("libs").join("erm");
+                if p1.is_dir() { return Some(p1); }
+                let p2 = dir.join("erm");
+                if p2.is_dir() { return Some(p2); }
+                current = dir.parent();
+            }
+        }
+    }
+
+    None
+}
+
 fn resolve_imports_recursive(
     path: &Path,
     visited: &mut HashSet<PathBuf>,
@@ -96,7 +136,7 @@ fn resolve_imports_recursive(
 
     let tokens = crate::frontend::lexer::lex(&content);
     let mut parser = Parser::new(tokens).with_file_path(canonical.to_string_lossy().to_string());
-    let stmts = parser.parse()?;
+    let stmts = parser.parse().map_err(|e| format!("In {:?}: {}", canonical, e))?;
 
     // Populate visited_exports for this file with its direct exports
     let direct_exports = get_exported_names(&stmts);
@@ -109,10 +149,23 @@ fn resolve_imports_recursive(
         match stmt {
             Stmt::Import(names, import_path) => {
                 let is_std_import = import_path.starts_with("std/") || import_path == "std" || import_path.starts_with("std\\");
+                let is_erm_import = import_path.starts_with("erm/") || import_path == "erm" || import_path.starts_with("erm\\");
                 let mut resolved_path = if is_std_import {
                     if let Some(std_root) = find_std_dir(parent_dir) {
                         let std_parent = std_root.parent().unwrap_or(&std_root);
                         std_parent.join(&import_path)
+                    } else {
+                        parent_dir.join(&import_path)
+                    }
+                } else if is_erm_import {
+                    if let Some(erm_root) = find_erm_dir(parent_dir) {
+                        if import_path == "erm" {
+                            erm_root.join("mod.er")
+                        } else {
+                            let sub = &import_path["erm/".len()..];
+                            let file_name = if sub.ends_with(".er") { sub.to_string() } else { format!("{}.er", sub) };
+                            erm_root.join(file_name)
+                        }
                     } else {
                         parent_dir.join(&import_path)
                     }
@@ -144,7 +197,8 @@ fn resolve_imports_recursive(
                     crate::vm::embedded::has_vfs_file(&import_path) ||
                     (import_path.ends_with(".js") && crate::vm::embedded::has_vfs_file(&import_path.replace(".js", ".er"))) ||
                     (!import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path))) ||
-                    (is_std_import && !import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path)))
+                    (is_std_import && !import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path))) ||
+                    (is_erm_import && !import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path)))
                 );
 
                 if !resolved_path.exists() && !is_in_vfs {

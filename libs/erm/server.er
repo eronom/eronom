@@ -1,0 +1,22 @@
+// libs/erm/server.er - ERM CLI Server Entrypoint
+// Pure Eronom script server entry point for dev and start commands.
+
+import { createErmServer } from "./http.er"
+import { env } from "std/env"
+
+let dir = env.get("ERONOM_DIR", ".")
+let portStr = env.get("PORT", "3000")
+let port = parseInt(portStr)
+if (port == 0) { port = 3000 }
+let isProd = env.get("ERONOM_MODE", "dev") == "prod"
+
+let s = createErmServer({
+  dir: dir,
+  port: port,
+  isProd: isProd
+})
+
+s.listen(port, () => {
+  let modeName = isProd ? "Production" : "Dev"
+  print(modeName + " server running at http://localhost:" + port)
+})

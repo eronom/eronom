@@ -1,0 +1,121 @@
+// libs/erm/router.er - ERM Route Matching & Dispatcher
+// Port of libs/erm/router.rs into native Eronom script
+
+export const matchPath = (pattern, path) => {
+  if (pattern == "/" and path == "/") {
+    return {}
+  }
+  if (pattern == "*" or pattern == "/*") {
+    let tail = path.startsWith("/") ? path.substring(1) : path
+    let res = {}
+    res["*"] = tail
+    return res
+  }
+
+  let rawPatParts = pattern.split("/")
+  let rawPathParts = path.split("/")
+  let patParts = []
+  for p in rawPatParts {
+    if (p != "") { patParts.push(p) }
+  }
+  let pathParts = []
+  for p in rawPathParts {
+    if (p != "") { pathParts.push(p) }
+  }
+
+  let params = {}
+  for i in 0..patParts.length {
+    let patPart = patParts[i]
+    if (patPart == "*" or patPart.startsWith("*")) {
+      if (i == patParts.length - 1) {
+        let tailParts = []
+        for j in i..pathParts.length {
+          tailParts.push(pathParts[j])
+        }
+        let tail = tailParts.join("/")
+        let key = patPart == "*" ? "*" : patPart.substring(1)
+        params[key] = tail
+        return params
+      }
+    }
+
+    if (i >= pathParts.length) {
+      return null
+    }
+
+    let curPathPart = pathParts[i]
+    if (patPart.startsWith(":")) {
+      let paramName = patPart.substring(1)
+      params[paramName] = curPathPart
+    } else if (patPart != curPathPart) {
+      return null
+    }
+  }
+
+  if (patParts.length == pathParts.length) {
+    return params
+  }
+  return null
+}
+
+export const createRouter = (prefix) => {
+  if (prefix == null) { prefix = "" }
+  let routes = []
+
+  let addRoute = (method, path, handler) => {
+    let fullPath = prefix
+    if (!path.startsWith("/")) {
+      fullPath = fullPath + "/"
+    }
+    fullPath = fullPath + path
+    if (fullPath.length > 1 and fullPath.endsWith("/")) {
+      fullPath = fullPath.substring(0, fullPath.length - 1)
+    }
+    routes.push({
+      method: method,
+      path: fullPath,
+      handler: handler
+    })
+  }
+
+  let dispatch = (req, res) => {
+    let method = req.method
+    let path = req.path
+    if (path == null and req.url != null) {
+      let qPos = req.url.indexOf("?")
+      path = qPos >= 0 ? req.url.substring(0, qPos) : req.url
+    }
+    if (path == null) { path = "/" }
+
+    for r in routes {
+      if (r.method == "ALL" or r.method == method) {
+        let params = matchPath(r.path, path)
+        if (params != null) {
+          req.params = params
+          return r.handler(req, res)
+        }
+      }
+    }
+    if (res != null and res.status != null) {
+      res.status(404)
+      if (res.send != null) {
+        res.send("Not Found")
+      }
+    }
+    return null
+  }
+
+  return {
+    routes: routes,
+    handle: (m, p, h) => addRoute(m, p, h),
+    get: (p, h) => addRoute("GET", p, h),
+    post: (p, h) => addRoute("POST", p, h),
+    put: (p, h) => addRoute("PUT", p, h),
+    delete: (p, h) => addRoute("DELETE", p, h),
+    patch: (p, h) => addRoute("PATCH", p, h),
+    head: (p, h) => addRoute("HEAD", p, h),
+    options: (p, h) => addRoute("OPTIONS", p, h),
+    all: (p, h) => addRoute("ALL", p, h),
+    dispatch: dispatch
+  }
+}

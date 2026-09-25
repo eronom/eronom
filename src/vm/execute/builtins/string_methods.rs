@@ -29,6 +29,24 @@ pub fn get_string_builtin_method_id(name: &str) -> Option<BuiltinMethodId> {
     }
 }
 
+#[inline]
+fn char_to_byte_index(s: &str, char_idx: usize) -> usize {
+    if s.is_ascii() {
+        char_idx.min(s.len())
+    } else {
+        s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
+    }
+}
+
+#[inline]
+fn byte_to_char_index(s: &str, byte_idx: usize) -> usize {
+    if s.is_ascii() {
+        byte_idx.min(s.len())
+    } else {
+        s[..byte_idx.min(s.len())].chars().count()
+    }
+}
+
 pub fn execute_string_method(
     receiver: Value,
     method: BuiltinMethodId,
@@ -102,6 +120,20 @@ pub fn execute_string_method(
         }
         StringSlice => {
             let s = receiver.as_str().unwrap_or("");
+            if s.is_ascii() {
+                let len = s.len() as isize;
+                let start = args.get(0).map(|v| if v.is_number() { v.as_number() as isize } else { 0 }).unwrap_or(0);
+                let end = args.get(1).map(|v| if v.is_number() { v.as_number() as isize } else { len }).unwrap_or(len);
+                let start_idx = if start < 0 { (len + start).max(0) as usize } else { (start as usize).min(s.len()) };
+                let end_idx = if end < 0 { (len + end).max(0) as usize } else { (end as usize).min(s.len()) };
+                if start_idx >= end_idx {
+                    let ptr = gc_alloc_string("");
+                    return Ok(Value::string(ptr));
+                } else {
+                    let ptr = gc_alloc_string(&s[start_idx..end_idx]);
+                    return Ok(Value::string(ptr));
+                }
+            }
             let chars: Vec<char> = s.chars().collect();
             let len = chars.len() as isize;
             let start = args.get(0).map(|v| if v.is_number() { v.as_number() as isize } else { 0 }).unwrap_or(0);
@@ -119,6 +151,18 @@ pub fn execute_string_method(
         }
         StringSubstring => {
             let s = receiver.as_str().unwrap_or("");
+            if s.is_ascii() {
+                let len = s.len() as isize;
+                let mut start = args.get(0).map(|v| if v.is_number() { v.as_number() as isize } else { 0 }).unwrap_or(0).max(0) as usize;
+                let mut end = args.get(1).map(|v| if v.is_number() { v.as_number() as isize } else { len }).unwrap_or(len).max(0) as usize;
+                start = start.min(s.len());
+                end = end.min(s.len());
+                if start > end {
+                    std::mem::swap(&mut start, &mut end);
+                }
+                let ptr = gc_alloc_string(&s[start..end]);
+                return Ok(Value::string(ptr));
+            }
             let chars: Vec<char> = s.chars().collect();
             let len = chars.len() as isize;
             let mut start = args.get(0).map(|v| if v.is_number() { v.as_number() as isize } else { 0 }).unwrap_or(0).max(0) as usize;
@@ -135,51 +179,132 @@ pub fn execute_string_method(
         StringIndexOf => {
             let s = receiver.as_str().unwrap_or("");
             let search = args.get(0).and_then(|v| v.as_str()).unwrap_or("");
-            let from_idx = args.get(1).map(|v| if v.is_number() { (v.as_number() as usize).min(s.len()) } else { 0 }).unwrap_or(0);
-            if from_idx <= s.len() {
-                if let Some(pos) = s[from_idx..].find(search) {
-                    return Ok(Value::number((from_idx + pos) as f64));
+            let from_char = args.get(1).map(|v| if v.is_number() { (v.as_number() as isize).max(0) as usize } else { 0 }).unwrap_or(0);
+
+            if s.is_ascii() && search.is_ascii() {
+                if from_char > s.len() {
+                    if search.is_empty() && from_char == s.len() {
+                        return Ok(Value::number(from_char as f64));
+                    }
+                    return Ok(Value::number(-1.0));
                 }
+                if search.is_empty() {
+                    return Ok(Value::number(from_char as f64));
+                }
+                if let Some(pos) = s[from_char..].find(search) {
+                    return Ok(Value::number((from_char + pos) as f64));
+                }
+                return Ok(Value::number(-1.0));
+            }
+
+            let char_len = s.chars().count();
+            if from_char >= char_len {
+                if search.is_empty() && from_char == char_len {
+                    return Ok(Value::number(from_char as f64));
+                }
+                return Ok(Value::number(-1.0));
+            }
+            if search.is_empty() {
+                return Ok(Value::number(from_char as f64));
+            }
+
+            let from_byte = char_to_byte_index(s, from_char);
+            if let Some(rel_byte) = s[from_byte..].find(search) {
+                let match_byte = from_byte + rel_byte;
+                let match_char = from_char + s[from_byte..match_byte].chars().count();
+                return Ok(Value::number(match_char as f64));
             }
             Ok(Value::number(-1.0))
         }
         StringLastIndexOf => {
             let s = receiver.as_str().unwrap_or("");
             let search = args.get(0).and_then(|v| v.as_str()).unwrap_or("");
-            let from_idx = args.get(1).map(|v| if v.is_number() { (v.as_number() as usize).min(s.len()) } else { s.len() }).unwrap_or(s.len());
-            let slice = if from_idx < s.len() { &s[..=from_idx] } else { s };
-            if let Some(pos) = slice.rfind(search) {
-                Ok(Value::number(pos as f64))
-            } else {
-                Ok(Value::number(-1.0))
+
+            if s.is_ascii() && search.is_ascii() {
+                let len = s.len();
+                let from_char = args.get(1).map(|v| if v.is_number() { (v.as_number() as isize).max(0) as usize } else { len }).unwrap_or(len);
+                let max_char = from_char.min(len);
+                if search.is_empty() {
+                    return Ok(Value::number(max_char as f64));
+                }
+                let end_byte = (max_char + search.len()).min(len);
+                if let Some(pos) = s[..end_byte].rfind(search) {
+                    if pos <= max_char {
+                        return Ok(Value::number(pos as f64));
+                    }
+                }
+                return Ok(Value::number(-1.0));
             }
+
+            let char_len = s.chars().count();
+            let from_char = args.get(1).map(|v| if v.is_number() { (v.as_number() as isize).max(0) as usize } else { char_len }).unwrap_or(char_len);
+            let max_char = from_char.min(char_len);
+            if search.is_empty() {
+                return Ok(Value::number(max_char as f64));
+            }
+
+            let search_chars = search.chars().count();
+            let end_char = (max_char + search_chars).min(char_len);
+            let end_byte = char_to_byte_index(s, end_char);
+            if let Some(match_byte) = s[..end_byte].rfind(search) {
+                let match_char = byte_to_char_index(s, match_byte);
+                if match_char <= max_char {
+                    return Ok(Value::number(match_char as f64));
+                }
+            }
+            Ok(Value::number(-1.0))
         }
         StringIncludes => {
             let s = receiver.as_str().unwrap_or("");
             let search = args.get(0).and_then(|v| v.as_str()).unwrap_or("");
-            let from_idx = args.get(1).map(|v| if v.is_number() { (v.as_number() as usize).min(s.len()) } else { 0 }).unwrap_or(0);
-            if from_idx <= s.len() {
-                Ok(Value::boolean(s[from_idx..].contains(search)))
-            } else {
-                Ok(Value::boolean(false))
+            let from_char = args.get(1).map(|v| if v.is_number() { (v.as_number() as isize).max(0) as usize } else { 0 }).unwrap_or(0);
+
+            if s.is_ascii() && search.is_ascii() {
+                if from_char > s.len() {
+                    return Ok(Value::boolean(search.is_empty() && from_char == s.len()));
+                }
+                return Ok(Value::boolean(s[from_char..].contains(search)));
             }
+
+            let char_len = s.chars().count();
+            if from_char >= char_len {
+                return Ok(Value::boolean(search.is_empty() && from_char == char_len));
+            }
+            let from_byte = char_to_byte_index(s, from_char);
+            Ok(Value::boolean(s[from_byte..].contains(search)))
         }
         StringStartsWith => {
             let s = receiver.as_str().unwrap_or("");
             let prefix = args.get(0).and_then(|v| v.as_str()).unwrap_or("");
-            let from_idx = args.get(1).map(|v| if v.is_number() { (v.as_number() as usize).min(s.len()) } else { 0 }).unwrap_or(0);
-            if from_idx <= s.len() {
-                Ok(Value::boolean(s[from_idx..].starts_with(prefix)))
-            } else {
-                Ok(Value::boolean(false))
+            let from_char = args.get(1).map(|v| if v.is_number() { (v.as_number() as isize).max(0) as usize } else { 0 }).unwrap_or(0);
+
+            if s.is_ascii() && prefix.is_ascii() {
+                if from_char > s.len() {
+                    return Ok(Value::boolean(prefix.is_empty() && from_char == s.len()));
+                }
+                return Ok(Value::boolean(s[from_char..].starts_with(prefix)));
             }
+
+            let char_len = s.chars().count();
+            if from_char >= char_len {
+                return Ok(Value::boolean(prefix.is_empty() && from_char == char_len));
+            }
+            let from_byte = char_to_byte_index(s, from_char);
+            Ok(Value::boolean(s[from_byte..].starts_with(prefix)))
         }
         StringEndsWith => {
             let s = receiver.as_str().unwrap_or("");
             let suffix = args.get(0).and_then(|v| v.as_str()).unwrap_or("");
-            let end_idx = args.get(1).map(|v| if v.is_number() { (v.as_number() as usize).min(s.len()) } else { s.len() }).unwrap_or(s.len());
-            let slice = if end_idx <= s.len() { &s[..end_idx] } else { s };
-            Ok(Value::boolean(slice.ends_with(suffix)))
+
+            if s.is_ascii() && suffix.is_ascii() {
+                let end_char = args.get(1).map(|v| if v.is_number() { (v.as_number() as isize).max(0) as usize } else { s.len() }).unwrap_or(s.len()).min(s.len());
+                return Ok(Value::boolean(s[..end_char].ends_with(suffix)));
+            }
+
+            let char_len = s.chars().count();
+            let end_char = args.get(1).map(|v| if v.is_number() { (v.as_number() as isize).max(0) as usize } else { char_len }).unwrap_or(char_len).min(char_len);
+            let end_byte = char_to_byte_index(s, end_char);
+            Ok(Value::boolean(s[..end_byte].ends_with(suffix)))
         }
         StringReplace => {
             let s = receiver.as_str().unwrap_or("");

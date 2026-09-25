@@ -1,0 +1,2123 @@
+// libs/erm/compiler.er - Eronom Reactive Modules (ERM) Native Implementation
+// Native implementation of the ERM template engine and reactive component framework in Eronom (.er)
+
+import { isPrimitive, validateTag, transformPrimitive, generateRootCss, isNumeric } from "../eds/compiler.er"
+
+let LBRACE = "\{"
+let RBRACE = "\}"
+
+// ============================================================================
+// 1. File System & Path Helpers
+// ============================================================================
+
+export const pathJoin = (a, b) => {
+  if (a == "" or a == ".") { return b }
+  if (b == "") { return a }
+  let cleanA = ("" + a).replaceAll("\\", "/")
+  let cleanB = ("" + b).replaceAll("\\", "/")
+  if (cleanA.endsWith("/")) {
+    cleanA = cleanA.substring(0, cleanA.length - 1)
+  }
+  if (cleanB.startsWith("/")) {
+    cleanB = cleanB.substring(1)
+  }
+  return cleanA + "/" + cleanB
+}
+
+export const pathDirname = (p) => {
+  let clean = ("" + p).replaceAll("\\", "/")
+  let lastSlash = clean.lastIndexOf("/")
+  if (lastSlash >= 0) {
+    if (lastSlash == 0) { return "/" }
+    return clean.substring(0, lastSlash)
+  }
+  return "."
+}
+
+export const readFile = (p) => {
+  let res = Eronom_nativeFileText(p)
+  if (res != null) { return res }
+  return ""
+}
+
+export const fileExists = (p) => {
+  return Eronom_nativeFileExists(p)
+}
+
+export const isEdsEnabledForPath = (baseDir) => {
+  let tomlPath = pathJoin(baseDir, "eronom.toml")
+  if (fileExists(tomlPath)) {
+    let tomlContent = readFile(tomlPath)
+    if (tomlContent.includes("enabled = false")) {
+      return false
+    }
+  }
+  return true
+}
+
+// ============================================================================
+// 2. Character & String Utilities
+// ============================================================================
+
+export const isWhitespace = (ch) => {
+  return ch == " " or ch == "\t" or ch == "\n" or ch == "\r"
+}
+
+export const isAlpha = (ch) => {
+  if (ch.length != 1) { return false }
+  let code = ch.charCodeAt(0)
+  return (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or ch == "_" or ch == "$"
+}
+
+export const isAlphaNumeric = (ch) => {
+  if (ch.length != 1) { return false }
+  let code = ch.charCodeAt(0)
+  return (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or (code >= 48 and code <= 57) or ch == "_" or ch == "$"
+}
+
+export const isUpperAlpha = (ch) => {
+  if (ch.length != 1) { return false }
+  let code = ch.charCodeAt(0)
+  return code >= 65 and code <= 90
+}
+
+export const isDigit = (ch) => {
+  if (ch.length != 1) { return false }
+  let code = ch.charCodeAt(0)
+  return code >= 48 and code <= 57
+}
+
+export const cleanAttrVal = (val) => {
+  if (val == null) { return "" }
+  let s = ("" + val).trim()
+  if (s.length >= 2) {
+    if ((s.startsWith("\"") and s.endsWith("\"")) or (s.startsWith("'") and s.endsWith("'"))) {
+      return s.substring(1, s.length - 1)
+    }
+  }
+  return s
+}
+
+export const fnv1a = (str) => {
+  let h = 2166136261
+  let i = 0
+  while (i < str.length) {
+    h = h ^ str.charCodeAt(i)
+    h = (h * 16777619) % 4294967296
+    i = i + 1
+  }
+  if (h < 0) {
+    h = h + 4294967296
+  }
+  let hexChars = "0123456789abcdef"
+  let hex = ""
+  let temp = h
+  while (temp > 0) {
+    let rem = temp % 16
+    hex = hexChars.charAt(rem) + hex
+    temp = (temp - rem) / 16
+  }
+  if (hex == "") { hex = "0" }
+  return hex
+}
+
+export const findMatchingCloseBrace = (s, startIdx) => {
+  let depth = 1
+  let i = startIdx
+  while (i < s.length) {
+    let c = s.charAt(i)
+    if (c == LBRACE) {
+      depth = depth + 1
+      i = i + 1
+    } else if (c == RBRACE) {
+      depth = depth - 1
+      if (depth == 0) {
+        return i
+      }
+      i = i + 1
+    } else {
+      i = i + 1
+    }
+  }
+  return null
+}
+
+export const findTagEnd = (content, startPos) => {
+  let braceDepth = 0
+  let inQuotes = false
+  let inSquotes = false
+  let i = startPos
+  while (i < content.length) {
+    let c = content.charAt(i)
+    if (c == "\"" and !inSquotes) {
+      inQuotes = !inQuotes
+    } else if (c == "'" and !inQuotes) {
+      inSquotes = !inSquotes
+    } else if (!inQuotes and !inSquotes) {
+      if (c == LBRACE) {
+        braceDepth = braceDepth + 1
+      } else if (c == RBRACE) {
+        if (braceDepth > 0) { braceDepth = braceDepth - 1 }
+      } else if (c == ">" and braceDepth == 0) {
+        return i
+      }
+    }
+    i = i + 1
+  }
+  return null
+}
+
+export const parseRawAttributes = (tagContent) => {
+  let attrs = {}
+  let len = tagContent.length
+  let i = 0
+
+  // Skip the tag name (first word)
+  while (i < len and !isWhitespace(tagContent.charAt(i)) and tagContent.charAt(i) != "/" and tagContent.charAt(i) != ">") {
+    i++
+  }
+
+  while (i < len) {
+    while (i < len and isWhitespace(tagContent.charAt(i))) {
+      i++
+    }
+    if (i >= len or tagContent.charAt(i) == "/" or tagContent.charAt(i) == ">") {
+      break
+    }
+
+    let nameStart = i
+    while (i < len and !isWhitespace(tagContent.charAt(i)) and tagContent.charAt(i) != "=" and tagContent.charAt(i) != "/" and tagContent.charAt(i) != ">") {
+      i++
+    }
+    let name = tagContent.substring(nameStart, i).trim()
+    if (name == "" or name == "/") {
+      continue
+    }
+
+    while (i < len and isWhitespace(tagContent.charAt(i))) {
+      i++
+    }
+
+    if (i < len and tagContent.charAt(i) == "=") {
+      i++ // skip '='
+      while (i < len and isWhitespace(tagContent.charAt(i))) {
+        i++
+      }
+      if (i >= len) {
+        attrs[name] = ""
+        break
+      }
+
+      let c = tagContent.charAt(i)
+      if (c == "\"") {
+        i++
+        let valStart = i
+        while (i < len and tagContent.charAt(i) != "\"") {
+          if (tagContent.charAt(i) == "\\" and i + 1 < len) {
+            i += 2
+          } else {
+            i++
+          }
+        }
+        let val = tagContent.substring(valStart, i)
+        if (i < len and tagContent.charAt(i) == "\"") {
+          i++
+        }
+        attrs[name] = val
+      } else if (c == "'") {
+        i++
+        let valStart = i
+        while (i < len and tagContent.charAt(i) != "'") {
+          if (tagContent.charAt(i) == "\\" and i + 1 < len) {
+            i += 2
+          } else {
+            i++
+          }
+        }
+        let val = tagContent.substring(valStart, i)
+        if (i < len and tagContent.charAt(i) == "'") {
+          i = i + 1
+        }
+        attrs[name] = val
+      } else if (c == LBRACE) {
+        let valStart = i
+        let depth = 1
+        i = i + 1
+        while (i < len and depth > 0) {
+          let curC = tagContent.charAt(i)
+          if (curC == LBRACE) {
+            depth = depth + 1
+          } else if (curC == RBRACE) {
+            depth = depth - 1
+          } else if (curC == "\"") {
+            i = i + 1
+            while (i < len and tagContent.charAt(i) != "\"") {
+              if (tagContent.charAt(i) == "\\" and i + 1 < len) { i = i + 2 } else { i = i + 1 }
+            }
+          } else if (curC == "'") {
+            i = i + 1
+            while (i < len and tagContent.charAt(i) != "'") {
+              if (tagContent.charAt(i) == "\\" and i + 1 < len) { i = i + 2 } else { i = i + 1 }
+            }
+          }
+          if (i < len) { i = i + 1 }
+        }
+        let val = tagContent.substring(valStart, i)
+        attrs[name] = val
+      } else {
+        let valStart = i
+        while (i < len and !isWhitespace(tagContent.charAt(i)) and tagContent.charAt(i) != "/" and tagContent.charAt(i) != ">") {
+          i = i + 1
+        }
+        attrs[name] = tagContent.substring(valStart, i)
+      }
+    } else {
+      attrs[name] = ""
+    }
+  }
+
+  return attrs
+}
+
+export const parseTagAttributes = (tagContent) => {
+  let raw = parseRawAttributes(tagContent)
+  let attrs = {}
+  let keys = raw.keys()
+  for k in keys {
+    let v = raw[k]
+    if (v.startsWith(LBRACE) and v.endsWith(RBRACE)) {
+      attrs[k] = "() => (" + v.substring(1, v.length - 1).trim() + ")"
+    } else if (v.startsWith("\"") and v.endsWith("\"")) {
+      attrs[k] = "() => \"" + v.substring(1, v.length - 1) + "\""
+    } else if (v.startsWith("'") and v.endsWith("'")) {
+      attrs[k] = "() => '" + v.substring(1, v.length - 1) + "'"
+    } else if (v == "") {
+      attrs[k] = "() => true"
+    } else {
+      attrs[k] = "() => (" + v + ")"
+    }
+  }
+  return attrs
+}
+
+export const extractAttribute = (tagContent, attrName) => {
+  let raw = parseRawAttributes(tagContent)
+  if (raw.hasOwnProperty(attrName)) {
+    let v = raw[attrName].trim()
+    if (v.startsWith(LBRACE) and v.endsWith(RBRACE)) {
+      return v.substring(1, v.length - 1).trim()
+    }
+    if ((v.startsWith("\"") and v.endsWith("\"")) or (v.startsWith("'") and v.endsWith("'"))) {
+      return v.substring(1, v.length - 1)
+    }
+    return v
+  }
+  return null
+}
+
+export const getEventAttributeName = (prefix) => {
+  let trimmed = prefix.trimEnd()
+  if (trimmed.endsWith("=")) {
+    let namePart = trimmed.substring(0, trimmed.length - 1).trimEnd()
+    let words = namePart.split(" ")
+    let lastWord = words[words.length - 1]
+    let words2 = lastWord.split("<")
+    lastWord = words2[words2.length - 1]
+    let words3 = lastWord.split(">")
+    lastWord = words3[words3.length - 1]
+    if (lastWord.startsWith("on") and lastWord.length > 2) {
+      return lastWord.substring(2).toLowerCase()
+    }
+  }
+  return null
+}
+
+export const scopeComponentIds = (html, scripts) => {
+  // Replace id="..." in html with id="__erm_anchor_id_prefix__..."
+  let result = html
+  let idx = 0
+  let ids = []
+  while (idx < result.length) {
+    let idPos = result.indexOf("id=\"", idx)
+    if (idPos >= 0) {
+      let valStart = idPos + 4
+      let valEnd = result.indexOf("\"", valStart)
+      if (valEnd >= 0) {
+        let idVal = result.substring(valStart, valEnd)
+        if (!ids.includes(idVal)) {
+          ids.push(idVal)
+        }
+        idx = valEnd + 1
+      } else {
+        break
+      }
+    } else {
+      break
+    }
+  }
+
+  for id in ids {
+    result = result.replaceAll("id=\"" + id + "\"", "id=\"__erm_anchor_id_prefix__" + id + "\"")
+    result = result.replaceAll("id='" + id + "'", "id='__erm_anchor_id_prefix__" + id + "'")
+    let sIdx = 0
+    while (sIdx < scripts.length) {
+      scripts[sIdx] = scripts[sIdx].replaceAll("\"" + id + "\"", "anchorId + \"" + id + "\"")
+      scripts[sIdx] = scripts[sIdx].replaceAll("'" + id + "'", "anchorId + '" + id + "'")
+      sIdx = sIdx + 1
+    }
+  }
+
+  return result
+}
+
+export const findStateVariables = (scriptContent, initFn, stateVars) => {
+  let sIdx = 0
+  while (sIdx < scriptContent.length) {
+    let vIdx = scriptContent.indexOf(initFn, sIdx)
+    if (vIdx >= 0) {
+      let beforeUse = scriptContent.substring(0, vIdx).trimEnd()
+      let eqPos = beforeUse.lastIndexOf("=")
+      if (eqPos >= 0) {
+        let beforeEq = beforeUse.substring(0, eqPos).trimEnd()
+        let words = beforeEq.split(" ")
+        let varName = words[words.length - 1].trim()
+        if (varName != "" and !stateVars.includes(varName)) {
+          stateVars.push(varName)
+        }
+      }
+      sIdx = vIdx + initFn.length
+    } else {
+      break
+    }
+  }
+}
+
+export const transformUseEffect = (script) => {
+  let out = ""
+  let i = 0
+  while (i < script.length) {
+    let uePos = script.indexOf("useEffect(", i)
+    if (uePos >= 0) {
+      out = out + script.substring(i, uePos + 10)
+      i = uePos + 10
+      let depth = 1
+      let startParen = i
+      let commaPos = -1
+      let inStr = null
+      while (i < script.length and depth > 0) {
+        let c = script.charAt(i)
+        if (inStr != null) {
+          if (c == inStr and (i == 0 or script.charAt(i - 1) != "\\")) {
+            inStr = null
+          }
+        } else if (c == "\"" or c == "'" or c == "`") {
+          inStr = c
+        } else if (c == "(" or c == LBRACE or c == "[") {
+          depth = depth + 1
+        } else if (c == ")" or c == RBRACE or c == "]") {
+          depth = depth - 1
+        } else if (c == "," and depth == 1) {
+          commaPos = i
+        }
+        i = i + 1
+      }
+      if (commaPos >= 0) {
+        let firstArg = script.substring(startParen, commaPos).trim()
+        let secondArg = script.substring(commaPos + 1, i - 1).trim()
+        if (secondArg.startsWith("[") and secondArg.endsWith("]")) {
+          out = out + firstArg + ", () => " + secondArg + ")"
+        } else {
+          out = out + firstArg + ", " + secondArg + ")"
+        }
+      } else {
+        out = out + script.substring(startParen, i)
+      }
+    } else {
+      out = out + script.substring(i)
+      break
+    }
+  }
+  return out
+}
+
+export const injectStateName = (input, name, scopedName) => {
+  let patterns = [
+    "let " + name + " = useState(",
+    "const " + name + " = useState(",
+    "var " + name + " = useState("
+  ]
+  let result = input
+  for pat in patterns {
+    let idx = 0
+    while (idx < result.length) {
+      let pos = result.indexOf(pat, idx)
+      if (pos >= 0) {
+        let callStart = pos + pat.length
+        let depth = 1
+        let j = callStart
+        while (j < result.length and depth > 0) {
+          let curC = result.charAt(j)
+          if (curC == "(") { depth++ }
+          else if (curC == ")") { depth-- }
+          j++
+        }
+        if (depth == 0) {
+          let initExpr = result.substring(callStart, j - 1).trim()
+          if (!initExpr.includes(",")) {
+            let replacement = pat + initExpr + ", \"" + scopedName + "\")"
+            result = result.substring(0, pos) + replacement + result.substring(j)
+            idx = pos + replacement.length
+          } else {
+            idx = j
+          }
+        } else {
+          break
+        }
+      } else {
+        break
+      }
+    }
+  }
+  return result
+}
+
+// ============================================================================
+// 3. Reactivity & Script AST Transpilation Helpers
+// ============================================================================
+
+export const transpileExpr = (expr, stateVars) => {
+  let res = expr
+  for v in stateVars {
+    let idx = 0
+    while (idx < res.length) {
+      let pos = res.indexOf(v, idx)
+      if (pos >= 0) {
+        let beforeOk = (pos == 0) or !isAlphaNumeric(res.charAt(pos - 1))
+        let afterPos = pos + v.length
+        let afterOk = (afterPos >= res.length) or !isAlphaNumeric(res.charAt(afterPos))
+        let alreadyValue = res.substring(afterPos).startsWith(".value")
+        if (beforeOk and afterOk and !alreadyValue) {
+          res = res.substring(0, afterPos) + ".value" + res.substring(afterPos)
+          idx = afterPos + 6
+        } else {
+          idx = afterPos
+        }
+      } else {
+        break
+      }
+    }
+  }
+  return res
+}
+
+export const transformScript = (script, stateVars) => {
+  return transpileExpr(script, stateVars)
+}
+
+// ============================================================================
+// 4. Function-Based Template Preprocessor (transform.rs)
+// ============================================================================
+
+export const isFunctionTemplate = (content) => {
+  if (content.includes("<script") or content.includes("<SCRIPT")) {
+    return false
+  }
+  let keywords = ["export default fn ", "export default function ", "export fn ", "export function ", "function ", "fn "]
+  for kw in keywords {
+    if (content.includes(kw)) {
+      return true
+    }
+  }
+  return false
+}
+
+export const injectLineAttr = (markup, lineNum) => {
+  if (markup.startsWith("<")) {
+    let secondChar = markup.charAt(1)
+    if (isAlpha(secondChar)) {
+      let insertPos = 1
+      let idx = 1
+      while (idx < markup.length) {
+        let ch = markup.charAt(idx)
+        if (ch == " " or ch == ">" or ch == "/") {
+          insertPos = idx
+          break
+        }
+        idx = idx + 1
+      }
+      return markup.substring(0, insertPos) + " data-erm-line=\"" + lineNum + "\"" + markup.substring(insertPos)
+    }
+  }
+  return markup
+}
+
+export const preprocessFunctionTemplate = (content) => {
+  let fnKeywords = ["export default fn ", "export default function ", "export fn ", "export function ", "function ", "fn "]
+  let kwFound = null
+  let kwIdx = -1
+
+  for kw in fnKeywords {
+    let pos = content.indexOf(kw)
+    if (pos >= 0) {
+      kwFound = kw
+      kwIdx = pos
+      break
+    }
+  }
+
+  if (kwIdx < 0) {
+    return content
+  }
+
+  let fnStart = kwIdx + kwFound.length
+  let parenOpen = content.indexOf("(", fnStart)
+  let parenClose = content.indexOf(")", parenOpen)
+  let braceOpen = content.indexOf(LBRACE, parenClose)
+  if (parenOpen < 0 or parenClose < 0 or braceOpen < 0) {
+    return content
+  }
+
+  let paramsStr = content.substring(parenOpen + 1, parenClose).trim()
+
+  // Find matching closing brace of function body
+  let depth = 1
+  let i = braceOpen + 1
+  let inStr = null
+  let bodyEnd = -1
+  while (i < content.length and depth > 0) {
+    let c = content.charAt(i)
+    if (inStr != null) {
+      if (c == inStr and (i == 0 or content.charAt(i - 1) != "\\")) {
+        inStr = null
+      }
+    } else if (c == "\"" or c == "'" or c == "`") {
+      inStr = c
+    } else if (c == LBRACE) {
+      depth = depth + 1
+    } else if (c == RBRACE) {
+      depth = depth - 1
+      if (depth == 0) {
+        bodyEnd = i
+        break
+      }
+    }
+    i = i + 1
+  }
+
+  if (bodyEnd < 0) {
+    return content
+  }
+
+  let fnBody = content.substring(braceOpen + 1, bodyEnd)
+  let lines = fnBody.split("\n")
+  let scriptLines = []
+  let markupLines = []
+  let scriptMode = true
+
+  for idx in 0..lines.length {
+    let line = lines[idx]
+    let trimmed = line.trim()
+    let currentLineNum = idx + 1
+
+    if (trimmed == "") {
+      if (scriptMode) {
+        scriptLines.push(line)
+      } else {
+        markupLines.push([line, currentLineNum])
+      }
+      continue
+    }
+
+    if (scriptMode) {
+      let startsWithMarkup = trimmed.startsWith("<") or
+        trimmed.startsWith("if ") or
+        trimmed.startsWith("for ") or
+        trimmed.startsWith("return")
+      if (startsWithMarkup) {
+        scriptMode = false
+      }
+    }
+
+    if (scriptMode) {
+      scriptLines.push(line)
+    } else {
+      markupLines.push([line, currentLineNum])
+    }
+  }
+
+  let cleanedMarkup = []
+  for item in markupLines {
+    let line = item[0]
+    let ln = item[1]
+    let cleaned = line.trim()
+    if (cleaned.startsWith("return")) {
+      cleaned = cleaned.substring(6).trim()
+      if (cleaned.startsWith("(")) {
+        cleaned = cleaned.substring(1).trim()
+      }
+    }
+    if (cleaned == "(" or cleaned == ")" or cleaned == ");" or cleaned == RBRACE or cleaned == RBRACE + ";") {
+      continue
+    }
+    if (cleaned.endsWith(";")) {
+      cleaned = cleaned.substring(0, cleaned.length - 1).trim()
+    }
+    if (cleaned != "") {
+      if (cleaned != "<>" and cleaned != "</>") {
+        cleanedMarkup.push(injectLineAttr(cleaned, ln))
+      }
+    }
+  }
+
+  let out = ""
+  // Include top-level code before the export function (e.g. imports)
+  let beforeFn = content.substring(0, kwIdx).trim()
+  if (beforeFn != "") {
+    out = out + beforeFn + "\n"
+  }
+
+  out = out + "<script>\n"
+  if (paramsStr != "") {
+    out = out + "let " + paramsStr + " = useParams();\n"
+  }
+  for sl in scriptLines {
+    out = out + sl + "\n"
+  }
+  out = out + "</script>\n"
+
+  for ml in cleanedMarkup {
+    out = out + ml + "\n"
+  }
+
+  // Include code after the function body (e.g. <style> blocks)
+  let afterFn = content.substring(bodyEnd + 1).trim()
+  if (afterFn != "") {
+    out = out + "\n" + afterFn + "\n"
+  }
+
+  return out
+}
+
+// ============================================================================
+// 5. CSS & HTML Scoping (css.rs)
+// ============================================================================
+
+export const scopeCss = (css, scopeId) => {
+  let result = ""
+  let i = 0
+  while (i < css.length) {
+    let braceIdx = css.indexOf(LBRACE, i)
+    if (braceIdx < 0) { break }
+    let selector = css.substring(i, braceIdx)
+    let blockEnd = css.indexOf(RBRACE, braceIdx)
+    if (blockEnd < 0) { break }
+    let block = css.substring(braceIdx, blockEnd + 1)
+
+    let parts = selector.split(",")
+    let scopedParts = []
+    for s in parts {
+      let trimmed = s.trim()
+      if (trimmed != "") {
+        if (trimmed.includes("%") or trimmed == "to" or trimmed == "from" or
+            trimmed.startsWith("body") or trimmed.startsWith("html") or
+            trimmed.startsWith(":root") or trimmed.startsWith("@")) {
+          scopedParts.push(trimmed)
+        } else {
+          let colonIdx = trimmed.indexOf(":")
+          if (colonIdx >= 0) {
+            let main = trimmed.substring(0, colonIdx)
+            let rest = trimmed.substring(colonIdx)
+            scopedParts.push(main + "[" + scopeId + "]" + rest)
+          } else {
+            scopedParts.push(trimmed + "[" + scopeId + "]")
+          }
+        }
+      }
+    }
+
+    result = result + scopedParts.join(", ") + " " + block
+    i = blockEnd + 1
+  }
+
+  if (i < css.length) {
+    result = result + css.substring(i)
+  }
+  return result
+}
+
+export const scopeHtml = (html, scopeId) => {
+  let result = ""
+  let i = 0
+  while (i < html.length) {
+    let tagStart = html.indexOf("<", i)
+    if (tagStart < 0) {
+      result = result + html.substring(i)
+      break
+    }
+    result = result + html.substring(i, tagStart)
+
+    let tagEnd = html.indexOf(">", tagStart)
+    if (tagEnd < 0) {
+      result = result + html.substring(tagStart)
+      break
+    }
+
+    let tagContent = html.substring(tagStart + 1, tagEnd)
+    if (tagContent != "" and !tagContent.startsWith("/")) {
+      let parts = tagContent.split(" ")
+      let tagName = parts[0].trim()
+
+      let isComponent = (tagName.length > 0) and isUpperAlpha(tagName.charAt(0))
+      let isGlobal = (tagName == "html" or tagName == "head" or tagName == "body" or
+                      tagName == "!DOCTYPE" or tagName == "script" or tagName == "style")
+
+      if (!isComponent and !isGlobal) {
+        result = result + "<" + tagName + " " + scopeId + tagContent.substring(tagName.length) + ">"
+      } else {
+        result = result + "<" + tagContent + ">"
+      }
+    } else {
+      result = result + "<" + tagContent + ">"
+    }
+    i = tagEnd + 1
+  }
+  return result
+}
+
+// ============================================================================
+// 6. SSR Evaluator & Expression Parsing (eval.rs)
+// ============================================================================
+
+export const createEval = () => {
+  let vars = {}
+  let evalExpr = null
+  let evalBool = null
+
+  let setVar = (k, v) => {
+    vars[k] = v
+  }
+
+  let getVar = (k) => {
+    if (vars.hasOwnProperty(k)) {
+      return vars[k]
+    }
+    return null
+  }
+
+  let parseScriptVars = (script) => {
+    let lines = script.split("\n")
+    for line in lines {
+      let trimmed = line.trim()
+      let kw = null
+      if (trimmed.startsWith("let ")) { kw = "let " }
+      else if (trimmed.startsWith("const ")) { kw = "const " }
+      else if (trimmed.startsWith("var ")) { kw = "var " }
+
+      if (kw != null) {
+        let rest = trimmed.substring(kw.length).trim()
+        let eqIdx = rest.indexOf("=")
+        if (eqIdx >= 0) {
+          let name = rest.substring(0, eqIdx).trim()
+          let exprStr = rest.substring(eqIdx + 1).trim()
+          if (exprStr.endsWith(";")) {
+            exprStr = exprStr.substring(0, exprStr.length - 1).trim()
+          }
+
+          if (exprStr.startsWith("useState(") and exprStr.endsWith(")")) {
+            let inner = exprStr.substring(9, exprStr.length - 1).trim()
+            if (inner.includes(",")) {
+              let parts = inner.split(",")
+              inner = parts[0].trim()
+            }
+            exprStr = inner
+          }
+
+          let val = evalExpr(exprStr)
+          setVar(name, val)
+        }
+      }
+    }
+  }
+
+  evalExpr = (expr) => {
+    let s = expr.trim()
+    if (s == "") { return null }
+
+    // Strip outer parentheses
+    while (s.startsWith("(") and s.endsWith(")")) {
+      let inner = s.substring(1, s.length - 1).trim()
+      if (findMatchingCloseBrace(inner, 0) == null) {
+        s = inner
+      } else {
+        break
+      }
+    }
+
+    // Literals
+    if (s == "null") { return null }
+    if (s == "true") { return true }
+    if (s == "false") { return false }
+    if (s.startsWith("\"") and s.endsWith("\"")) { return s.substring(1, s.length - 1) }
+    if (s.startsWith("'") and s.endsWith("'")) { return s.substring(1, s.length - 1) }
+
+    // Number literal
+    let isNum = true
+    let dotSeen = false
+    let cIdx = 0
+    while (cIdx < s.length) {
+      let ch = s.charAt(cIdx)
+      if (isDigit(ch)) {
+        // ok
+      } else if (ch == "." and !dotSeen) {
+        dotSeen = true
+      } else if (ch == "-" and cIdx == 0) {
+        // ok
+      } else {
+        isNum = false
+        break
+      }
+      cIdx = cIdx + 1
+    }
+    if (isNum and s != "" and s != "-") {
+      let numVal = 0
+      if (dotSeen) {
+        let parts = s.split(".")
+        let whole = 0
+        let j = 0
+        while (j < parts[0].length) {
+          if (parts[0].charAt(j) != "-") {
+            whole = whole * 10 + (parts[0].charCodeAt(j) - 48)
+          }
+          j = j + 1
+        }
+        let frac = 0
+        let base = 1
+        let j2 = 0
+        while (j2 < parts[1].length) {
+          frac = frac * 10 + (parts[1].charCodeAt(j2) - 48)
+          base = base * 10
+          j2 = j2 + 1
+        }
+        numVal = whole + (frac / base)
+        if (s.startsWith("-")) { numVal = -numVal }
+      } else {
+        let j = 0
+        while (j < s.length) {
+          if (s.charAt(j) != "-") {
+            numVal = numVal * 10 + (s.charCodeAt(j) - 48)
+          }
+          j = j + 1
+        }
+        if (s.startsWith("-")) { numVal = -numVal }
+      }
+      return numVal
+    }
+
+    // Array literal: [1, 2, 3]
+    if (s.startsWith("[") and s.endsWith("]")) {
+      let inner = s.substring(1, s.length - 1).trim()
+      if (inner == "") { return [] }
+      let items = []
+      let parts = inner.split(",")
+      for p in parts {
+        items.push(evalExpr(p.trim()))
+      }
+      return items
+    }
+
+    // Object literal: { a: 1, b: 2 }
+    if (s.startsWith(LBRACE) and s.endsWith(RBRACE)) {
+      let inner = s.substring(1, s.length - 1).trim()
+      let obj = {}
+      if (inner == "") { return obj }
+      let parts = inner.split(",")
+      for p in parts {
+        let colonPos = p.indexOf(":")
+        if (colonPos >= 0) {
+          let k = p.substring(0, colonPos).trim().replaceAll("\"", "").replaceAll("'", "")
+          let v = p.substring(colonPos + 1).trim()
+          obj[k] = evalExpr(v)
+        }
+      }
+      return obj
+    }
+
+    // Ternary operator: cond ? a : b
+    let qPos = s.indexOf("?")
+    if (qPos >= 0) {
+      let condStr = s.substring(0, qPos).trim()
+      let rest = s.substring(qPos + 1)
+      let colonPos = rest.lastIndexOf(":")
+      if (colonPos >= 0) {
+        let trueStr = rest.substring(0, colonPos).trim()
+        let falseStr = rest.substring(colonPos + 1).trim()
+        let condVal = evalBool(condStr)
+        if (condVal) {
+          return evalExpr(trueStr)
+        } else {
+          return evalExpr(falseStr)
+        }
+      }
+    }
+
+    // Binary comparisons: >, <, >=, <=, ==, !=
+    let ops = ["==", "!=", ">=", "<=", ">", "<"]
+    for op in ops {
+      let opIdx = s.indexOf(op)
+      if (opIdx > 0) {
+        let leftStr = s.substring(0, opIdx).trim()
+        let rightStr = s.substring(opIdx + op.length).trim()
+        let leftVal = evalExpr(leftStr)
+        let rightVal = evalExpr(rightStr)
+        if (op == "==") { return leftVal == rightVal }
+        if (op == "!=") { return leftVal != rightVal }
+        if (op == ">") {
+          if (leftVal != null and rightVal != null and isNumeric(leftVal) and isNumeric(rightVal)) {
+            return (0 + leftVal) > (0 + rightVal)
+          }
+          return false
+        }
+        if (op == "<") {
+          if (leftVal != null and rightVal != null and isNumeric(leftVal) and isNumeric(rightVal)) {
+            return (0 + leftVal) < (0 + rightVal)
+          }
+          return false
+        }
+        if (op == ">=") {
+          if (leftVal != null and rightVal != null and isNumeric(leftVal) and isNumeric(rightVal)) {
+            return (0 + leftVal) >= (0 + rightVal)
+          }
+          return false
+        }
+        if (op == "<=") {
+          if (leftVal != null and rightVal != null and isNumeric(leftVal) and isNumeric(rightVal)) {
+            return (0 + leftVal) <= (0 + rightVal)
+          }
+          return false
+        }
+      }
+    }
+
+    // String concatenation / addition
+    let plusIdx = s.indexOf("+")
+    if (plusIdx > 0) {
+      let leftStr = s.substring(0, plusIdx).trim()
+      let rightStr = s.substring(plusIdx + 1).trim()
+      let leftVal = evalExpr(leftStr)
+      let rightVal = evalExpr(rightStr)
+      return ("" + leftVal) + ("" + rightVal)
+    }
+
+    // Property access: obj.prop
+    let dotIdx = s.indexOf(".")
+    if (dotIdx > 0 and !s.includes(" ")) {
+      let objName = s.substring(0, dotIdx).trim()
+      let propName = s.substring(dotIdx + 1).trim()
+      let objVal = getVar(objName)
+      if (objVal != null and typeof objVal == "object") {
+        if (objVal.hasOwnProperty(propName)) {
+          return objVal[propName]
+        }
+      }
+      return null
+    }
+
+    // Variable lookup
+    if (vars.hasOwnProperty(s)) {
+      return vars[s]
+    }
+
+    return s
+  }
+
+  evalBool = (expr) => {
+    let v = evalExpr(expr)
+    if (v == null or v == false or v == 0 or v == "") {
+      return false
+    }
+    return true
+  }
+
+  return {
+    vars: vars,
+    set: setVar,
+    get: getVar,
+    parseScriptVars: parseScriptVars,
+    eval: evalExpr,
+    evalBool: evalBool
+  }
+}
+
+export const evaluateBracesInHtml = (html, ev, stateVars) => {
+  let out = ""
+  let i = 0
+  while (i < html.length) {
+    let c = html.charAt(i)
+    if (c == LBRACE) {
+      let closeIdx = findMatchingCloseBrace(html, i + 1)
+      if (closeIdx != null) {
+        let rawExpr = html.substring(i + 1, closeIdx).trim()
+        let prefix = html.substring(0, i)
+        let eventType = getEventAttributeName(prefix)
+        if (eventType != null) {
+          // Event handler: leave as is or transform
+          out = out + LBRACE + rawExpr + RBRACE
+        } else {
+          let val = ev.eval(rawExpr)
+          if (val != null) {
+            out = out + ("" + val)
+          }
+        }
+        i = closeIdx + 1
+        continue
+      }
+    }
+    out = out + c
+    i++
+  }
+  return out
+}
+
+// ============================================================================
+// 7. Reactivity & Template JS Compiler (reactivity.rs & template_js.rs)
+// ============================================================================
+
+export const parseReactivity = (html, bindings, events, stateVars) => {
+  if (bindings == null) { bindings = [] }
+  if (events == null) { events = [] }
+  if (stateVars == null) { stateVars = [] }
+  let out = ""
+  let i = 0
+  let inTag = false
+
+  while (i < html.length) {
+    let c = html.charAt(i)
+
+    if (!inTag) {
+      if (c == "<") {
+        inTag = true
+        out = out + c
+        i = i + 1
+        continue
+      }
+      if (c == LBRACE and i + 1 < html.length) {
+        let closeIdx = findMatchingCloseBrace(html, i + 1)
+        if (closeIdx != null) {
+          let rawExpr = html.substring(i + 1, closeIdx).trim()
+          let expr = transpileExpr(rawExpr, stateVars)
+          let id = "erm-bind-" + closeIdx
+          out = out + "<span id=\"" + id + "\"></span>"
+          bindings.push("bindText(\"" + id + "\", () => (" + expr + "));")
+          i = closeIdx + 1
+          continue
+        }
+      }
+    } else {
+      if (c == ">") {
+        inTag = false
+        out = out + c
+        i = i + 1
+        continue
+      }
+
+      // Attribute braces: attr={expr}
+      if (i > 0 and isWhitespace(html.charAt(i - 1))) {
+        let eqBrace = "=" + LBRACE
+        let eqPos = html.indexOf(eqBrace, i)
+        if (eqPos == i + 2 or eqPos == i + 3 or eqPos == i + 4 or eqPos == i + 5 or eqPos == i + 6 or eqPos == i + 7) {
+          let attrName = html.substring(i, eqPos).trim()
+          if (!attrName.startsWith("on")) {
+            let startExpr = eqPos + 2
+            let closeIdx = findMatchingCloseBrace(html, startExpr)
+            if (closeIdx != null) {
+              let expr = html.substring(startExpr, closeIdx).trim()
+              out = out + attrName + "=\"" + LBRACE + expr + RBRACE + "\" "
+              i = closeIdx + 1
+              continue
+            }
+          }
+        }
+
+        // Event handler: onEvent={expr}
+        if (html.substring(i).startsWith("on")) {
+          let k = i + 2
+          while (k < html.length and isAlpha(html.charAt(k))) { k = k + 1 }
+          if (k < html.length and html.charAt(k) == "=" and k + 1 < html.length and html.charAt(k + 1) == LBRACE) {
+            let attrName = html.substring(i, k)
+            let startExpr = k + 2
+            let closeIdx = findMatchingCloseBrace(html, startExpr)
+            if (closeIdx != null) {
+              let rawExpr = html.substring(startExpr, closeIdx).trim()
+              let expr = transpileExpr(rawExpr, stateVars)
+              let eventType = attrName.substring(2).toLowerCase()
+
+              let id = "erm-evt-" + closeIdx
+              out = out + "id=\"" + id + "\" "
+
+              events.push("bindEvent(\"" + id + "\", \"" + eventType + "\", (event) => " + LBRACE + " (" + expr + ")(event); " + RBRACE + ");")
+              i = closeIdx + 1
+              continue
+            }
+          }
+        }
+      }
+    }
+
+    out = out + c
+    i++
+  }
+
+  return out
+}
+
+export const compileTemplateToJs = (body, stateVars) => {
+  let jsExpr = "`"
+  let i = 0
+  while (i < body.length) {
+    let c = body.charAt(i)
+    if (c == "`" or c == "$" or c == "\\") {
+      jsExpr = jsExpr + "\\" + c
+      i = i + 1
+    } else if (c == LBRACE) {
+      let closeIdx = findMatchingCloseBrace(body, i + 1)
+      if (closeIdx != null) {
+        let rawExpr = body.substring(i + 1, closeIdx).trim()
+        let subExpr = transpileExpr(rawExpr, stateVars)
+        let prefix = body.substring(0, i)
+        let eventType = getEventAttributeName(prefix)
+        if (eventType != null) {
+          let trimmedJs = jsExpr.trimEnd()
+          if (trimmedJs.endsWith("=")) {
+            trimmedJs = trimmedJs.substring(0, trimmedJs.length - 1).trimEnd()
+            let words = trimmedJs.split(" ")
+            let lastWord = words[words.length - 1]
+            if (trimmedJs.endsWith(lastWord)) {
+              jsExpr = trimmedJs.substring(0, trimmedJs.length - lastWord.length)
+            } else {
+              jsExpr = trimmedJs
+            }
+          }
+          jsExpr = jsExpr + "$" + LBRACE + "registerEvent('" + eventType + "', (event) => " + LBRACE + " (" + subExpr + ")(event); " + RBRACE + ")" + RBRACE
+        } else {
+          jsExpr = jsExpr + "$" + LBRACE + "escapeHtml(" + subExpr + ")" + RBRACE
+        }
+        i = closeIdx + 1
+      } else {
+        jsExpr = jsExpr + c
+        i = i + 1
+      }
+    } else {
+      jsExpr = jsExpr + c
+      i = i + 1
+    }
+  }
+  jsExpr = jsExpr + "`"
+  return jsExpr
+}
+
+// ============================================================================
+// 8. Template Blocks (if/else and for loops) (blocks.rs)
+// ============================================================================
+
+export const findLastIfBlock = (content) => {
+  let pos = -1
+  let idx = 0
+  while (idx < content.length) {
+    let p = content.indexOf("if ", idx)
+    if (p < 0) {
+      p = content.indexOf("if(", idx)
+    }
+    if (p >= 0) {
+      let beforeOk = (p == 0) or isWhitespace(content.charAt(p - 1)) or content.charAt(p - 1) == RBRACE or content.charAt(p - 1) == ";"
+      if (beforeOk) {
+        pos = p
+      }
+      idx = p + 2
+    } else {
+      break
+    }
+  }
+
+  if (pos >= 0) {
+    let braceOpen = content.indexOf(LBRACE, pos)
+    if (braceOpen >= 0) {
+      let cond = content.substring(pos + 2, braceOpen).trim()
+      return [pos, cond, braceOpen + 1]
+    }
+  }
+  return null
+}
+
+export const findLastForBlock = (content) => {
+  let pos = -1
+  let idx = 0
+  while (idx < content.length) {
+    let p = content.indexOf("for ", idx)
+    if (p >= 0) {
+      let beforeOk = (p == 0) or isWhitespace(content.charAt(p - 1)) or content.charAt(p - 1) == RBRACE or content.charAt(p - 1) == ";"
+      if (beforeOk) {
+        pos = p
+      }
+      idx = p + 3
+    } else {
+      break
+    }
+  }
+
+  if (pos >= 0) {
+    let braceOpen = content.indexOf(LBRACE, pos)
+    if (braceOpen >= 0) {
+      let header = content.substring(pos + 3, braceOpen).trim()
+      return [pos, header, braceOpen + 1]
+    }
+  }
+  return null
+}
+
+export const processIfBlockAt = (ifIdx, contentRef, ifCounterRef, blockLogic, stateVars, ev, initialCond, bodyStart, scopeId) => {
+  let content = contentRef[0]
+  let branches = []
+
+  // First branch
+  let currentCond = initialCond
+  let scanPos = bodyStart
+  let depth = 1
+  let branchBodyStart = scanPos
+
+  while (scanPos < content.length and depth > 0) {
+    let c = content.charAt(scanPos)
+    if (c == LBRACE) { depth = depth + 1 }
+    else if (c == RBRACE) { depth = depth - 1 }
+    scanPos = scanPos + 1
+  }
+  let firstBody = content.substring(branchBodyStart, scanPos - 1)
+  branches.push([currentCond, firstBody])
+
+  let totalEnd = scanPos
+
+  // Check for else if / else
+  while (totalEnd < content.length) {
+    let checkPos = totalEnd
+    while (checkPos < content.length and isWhitespace(content.charAt(checkPos))) {
+      checkPos = checkPos + 1
+    }
+
+    if (content.substring(checkPos).startsWith("else if")) {
+      let braceIdx = content.indexOf(LBRACE, checkPos + 7)
+      if (braceIdx >= 0) {
+        let elseIfCond = content.substring(checkPos + 7, braceIdx).trim()
+        let bStart = braceIdx + 1
+        let d = 1
+        let sPos = bStart
+        while (sPos < content.length and d > 0) {
+          let ch = content.charAt(sPos)
+          if (ch == LBRACE) { d = d + 1 }
+          else if (ch == RBRACE) { d = d - 1 }
+          sPos = sPos + 1
+        }
+        let bBody = content.substring(bStart, sPos - 1)
+        branches.push([elseIfCond, bBody])
+        totalEnd = sPos
+        continue
+      }
+    } else if (content.substring(checkPos).startsWith("else")) {
+      let braceIdx = content.indexOf(LBRACE, checkPos + 4)
+      if (braceIdx >= 0) {
+        let bStart = braceIdx + 1
+        let d = 1
+        let sPos = bStart
+        while (sPos < content.length and d > 0) {
+          let ch = content.charAt(sPos)
+          if (ch == LBRACE) { d = d + 1 }
+          else if (ch == RBRACE) { d = d - 1 }
+          sPos = sPos + 1
+        }
+        let bBody = content.substring(bStart, sPos - 1)
+        branches.push(["true", bBody])
+        totalEnd = sPos
+        break
+      }
+    }
+    break
+  }
+
+  let ifId = "erm-if-" + ifCounterRef[0]
+  ifCounterRef[0] = ifCounterRef[0] + 1
+
+  // Determine active SSR branch
+  let activeBody = ""
+  for br in branches {
+    let cond = br[0]
+    let body = br[1]
+    if (ev.evalBool(cond)) {
+      activeBody = body
+      break
+    }
+  }
+
+  // Scoped SSR HTML
+  let ssrHtml = scopeHtml(activeBody, scopeId)
+  let replacement = "<span id=\"" + ifId + "\" style=\"display:contents;\">" + ssrHtml + "</span>"
+
+  // Client-side renderIf code
+  let branchJs = []
+  for br in branches {
+    let cond = br[0]
+    let body = br[1]
+    let transpiledCond = transpileExpr(cond, stateVars)
+    let bodyTemplate = compileTemplateToJs(body, stateVars)
+    branchJs.push(LBRACE + " cond: () => (" + transpiledCond + "), fn: () => " + bodyTemplate + " " + RBRACE)
+  }
+
+  blockLogic.push("renderIf(\"" + ifId + "\", [\n  " + branchJs.join(",\n  ") + "\n]);")
+
+  contentRef[0] = content.substring(0, ifIdx) + replacement + content.substring(totalEnd)
+}
+
+export const processForBlockAt = (forIdx, contentRef, forCounterRef, blockLogic, stateVars, ev, header, bodyStart, scopeId) => {
+  let content = contentRef[0]
+  let depth = 1
+  let scanPos = bodyStart
+  while (scanPos < content.length and depth > 0) {
+    let c = content.charAt(scanPos)
+    if (c == LBRACE) { depth = depth + 1 }
+    else if (c == RBRACE) { depth = depth - 1 }
+    scanPos = scanPos + 1
+  }
+  let forBody = content.substring(bodyStart, scanPos - 1)
+  let totalEnd = scanPos
+
+  let inIdx = header.indexOf(" in ")
+  let varPart = header
+  let iterablePart = ""
+  if (inIdx >= 0) {
+    varPart = header.substring(0, inIdx).trim()
+    iterablePart = header.substring(inIdx + 4).trim()
+  }
+
+  let itemVar = varPart
+  let indexVar = "index"
+  if (varPart.includes(",")) {
+    let parts = varPart.split(",")
+    itemVar = parts[0].trim()
+    indexVar = parts[1].trim()
+  }
+
+  let forId = "erm-for-" + forCounterRef[0]
+  forCounterRef[0] = forCounterRef[0] + 1
+
+  // Pre-render SSR for loop
+  let listVal = ev.eval(iterablePart)
+  let ssrHtml = ""
+  if (listVal != null and typeof listVal == "object" and listVal.hasOwnProperty("length")) {
+    for lIdx in 0..listVal.length {
+      let itemVal = listVal[lIdx]
+      let subEv = createEval()
+      // Copy parent vars
+      let parentKeys = ev.vars.keys()
+      for pk in parentKeys {
+        subEv.set(pk, ev.vars[pk])
+      }
+      subEv.set(itemVar, itemVal)
+      subEv.set(indexVar, lIdx)
+
+      let renderedItem = evaluateBracesInHtml(forBody, subEv, stateVars)
+      ssrHtml = ssrHtml + scopeHtml(renderedItem, scopeId)
+    }
+  }
+
+  let replacement = "<span id=\"" + forId + "\" style=\"display:contents;\">" + ssrHtml + "</span>"
+
+  let transpiledIterable = transpileExpr(iterablePart, stateVars)
+  if (transpiledIterable.endsWith(".value.value")) {
+    transpiledIterable = transpiledIterable.substring(0, transpiledIterable.length - 6)
+  }
+
+  let bodyTemplate = compileTemplateToJs(forBody, stateVars)
+  blockLogic.push("renderFor(\"" + forId + "\", () => (" + transpiledIterable + "), (" + itemVar + ", " + indexVar + ") => " + bodyTemplate + ");")
+
+  contentRef[0] = content.substring(0, forIdx) + replacement + content.substring(totalEnd)
+}
+
+// ============================================================================
+// 9. Component Tree Processing (tree.rs & components.rs)
+// ============================================================================
+
+export const processComponentTree = (filePath, content, visited, slotHtml, params, ifCounterRef, forCounterRef, stateVarSources) => {
+  let preprocessed = content
+  if (isFunctionTemplate(content)) {
+    preprocessed = preprocessFunctionTemplate(content)
+  }
+
+  let baseDir = pathDirname(filePath)
+  let fileId = filePath.replaceAll("\\", "/").replaceAll("/", "_").replaceAll(".", "_").replaceAll("-", "_")
+
+  // Initialize ErmEval
+  let ev = createEval()
+  let paramsKeys = params.keys()
+  let paramsMap = {}
+  for pk in paramsKeys {
+    paramsMap[pk] = params[pk]
+  }
+  ev.set("__erm_params", paramsMap)
+
+  // Scan scripts for script vars
+  let tempSearch = 0
+  while (tempSearch < preprocessed.length) {
+    let startIdx = preprocessed.indexOf("<script", tempSearch)
+    if (startIdx >= 0) {
+      let endIdx = preprocessed.indexOf("</script>", startIdx)
+      if (endIdx >= 0) {
+        let scriptTag = preprocessed.substring(startIdx, endIdx + 9)
+        let cStart = scriptTag.indexOf(">") + 1
+        let sContent = scriptTag.substring(cStart, scriptTag.length - 9)
+        let sForEval = sContent.replaceAll("useParams()", "__erm_params")
+        ev.parseScriptVars(sForEval)
+        tempSearch = endIdx + 9
+      } else {
+        break
+      }
+    } else {
+      break
+    }
+  }
+
+  // Scan local state variables
+  let localStateVars = []
+  let tempSearch2 = 0
+  while (tempSearch2 < preprocessed.length) {
+    let startIdx = preprocessed.indexOf("<script", tempSearch2)
+    if (startIdx >= 0) {
+      let endIdx = preprocessed.indexOf("</script>", startIdx)
+      if (endIdx >= 0) {
+        let scriptTag = preprocessed.substring(startIdx, endIdx + 9)
+        let cStart = scriptTag.indexOf(">") + 1
+        let sContent = scriptTag.substring(cStart, scriptTag.length - 9)
+        findStateVariables(sContent, "useState(", localStateVars)
+        for v in localStateVars {
+          stateVarSources[v] = filePath
+        }
+        tempSearch2 = endIdx + 9
+      } else {
+        break
+      }
+    } else {
+      break
+    }
+  }
+
+  let scopeId = "data-e-" + fnv1a(preprocessed)
+
+  // Compile inside-out blocks (if and for)
+  let compiledContentRef = [preprocessed]
+  let blockLogic = []
+
+  let maxLoops = 200
+  while (maxLoops > 0) {
+    maxLoops--
+    let lastIf = findLastIfBlock(compiledContentRef[0])
+    let lastFor = findLastForBlock(compiledContentRef[0])
+
+    if (lastIf != null and lastFor != null) {
+      if (lastIf[0] > lastFor[0]) {
+        processIfBlockAt(lastIf[0], compiledContentRef, ifCounterRef, blockLogic, localStateVars, ev, lastIf[1], lastIf[2], scopeId)
+      } else {
+        processForBlockAt(lastFor[0], compiledContentRef, forCounterRef, blockLogic, localStateVars, ev, lastFor[1], lastFor[2], scopeId)
+      }
+    } else if (lastIf != null) {
+      processIfBlockAt(lastIf[0], compiledContentRef, ifCounterRef, blockLogic, localStateVars, ev, lastIf[1], lastIf[2], scopeId)
+    } else if (lastFor != null) {
+      processForBlockAt(lastFor[0], compiledContentRef, forCounterRef, blockLogic, localStateVars, ev, lastFor[1], lastFor[2], scopeId)
+    } else {
+      break
+    }
+  }
+
+  let workingContent = compiledContentRef[0]
+  let scripts = []
+  let styles = []
+  let stateVars = []
+  for v in localStateVars {
+    stateVars.push(v)
+  }
+
+  let componentImports = {}
+  let edsEnabled = isEdsEnabledForPath(baseDir)
+  let edsClosingStack = []
+
+  // Scan imports
+  let sSearch = 0
+  while (sSearch < workingContent.length) {
+    let startIdx = workingContent.indexOf("<script", sSearch)
+    if (startIdx >= 0) {
+      let endIdx = workingContent.indexOf("</script>", startIdx)
+      if (endIdx >= 0) {
+        let scriptTag = workingContent.substring(startIdx, endIdx + 9)
+        let cStart = scriptTag.indexOf(">") + 1
+        let sContent = scriptTag.substring(cStart, scriptTag.length - 9)
+        let lines = sContent.split("\n")
+        for line in lines {
+          let trimmed = line.trim()
+          if (trimmed.startsWith("import ")) {
+            let fromPos = trimmed.indexOf(" from ")
+            if (fromPos >= 0) {
+              let compName = trimmed.substring(7, fromPos).trim()
+              let pathPart = cleanAttrVal(trimmed.substring(fromPos + 6).replaceAll(";", "").trim())
+              if (compName.startsWith(LBRACE) and compName.endsWith(RBRACE)) {
+                let inner = compName.substring(1, compName.length - 1)
+                let names = inner.split(",")
+                for n in names {
+                  let nameTrimmed = n.trim()
+                  if (nameTrimmed != "" and isUpperAlpha(nameTrimmed.charAt(0))) {
+                    componentImports[nameTrimmed] = pathPart
+                  }
+                }
+              } else if (compName != "" and isUpperAlpha(compName.charAt(0))) {
+                componentImports[compName] = pathPart
+              }
+            }
+          }
+        }
+        sSearch = endIdx + 9
+      } else {
+        break
+      }
+    } else {
+      break
+    }
+  }
+
+  // Parse HTML elements, scripts, and styles
+  let htmlBuf = ""
+  let i = 0
+  while (i < workingContent.length) {
+    if (workingContent.substring(i).startsWith("<script")) {
+      let end = workingContent.indexOf("</script>", i)
+      if (end < 0) {
+        htmlBuf = htmlBuf + workingContent.substring(i)
+        break
+      }
+      let scriptTag = workingContent.substring(i, end + 9)
+      let cStart = scriptTag.indexOf(">") + 1
+      let sContent = scriptTag.substring(cStart, scriptTag.length - 9).trim()
+      findStateVariables(sContent, "useState(", stateVars)
+
+      let cleanedScript = ""
+      let lines = sContent.split("\n")
+      for line in lines {
+        let trimmed = line.trim()
+        if (trimmed.startsWith("import ")) {
+          continue
+        }
+        if (trimmed.startsWith("export ")) {
+          cleanedScript = cleanedScript + trimmed.substring(7) + "\n"
+        } else {
+          cleanedScript = cleanedScript + line + "\n"
+        }
+      }
+      scripts.push(cleanedScript.trim())
+      i = end + 9
+    } else if (workingContent.substring(i).startsWith("<style")) {
+      let end = workingContent.indexOf("</style>", i)
+      if (end < 0) {
+        htmlBuf = htmlBuf + workingContent.substring(i)
+        break
+      }
+      let styleTag = workingContent.substring(i, end + 8)
+      let cStart = styleTag.indexOf(">") + 1
+      let sContent = styleTag.substring(cStart, styleTag.length - 8).trim()
+      styles.push(scopeCss(sContent, scopeId))
+      i = end + 8
+    } else if (workingContent.charAt(i) == "<") {
+      let tagEnd = findTagEnd(workingContent, i)
+      if (tagEnd == null) {
+        htmlBuf = htmlBuf + workingContent.substring(i)
+        break
+      }
+      let tagContent = workingContent.substring(i + 1, tagEnd).trim()
+      if (tagContent != "") {
+        if (tagContent.startsWith("/")) {
+          let closingTagName = tagContent.substring(1).trim()
+          if (closingTagName == "") {
+            // Fragment </>
+            i = tagEnd + 1
+            continue
+          }
+          if (closingTagName == "Link") {
+            htmlBuf = htmlBuf + "</a>"
+            i = tagEnd + 1
+            continue
+          } else if (closingTagName == "ContextProvider" or closingTagName.endsWith(".Provider")) {
+            htmlBuf = htmlBuf + "</span>"
+            i = tagEnd + 1
+            continue
+          }
+          if (edsEnabled and isPrimitive(closingTagName) and !componentImports.hasOwnProperty(closingTagName)) {
+            if (edsClosingStack.length > 0) {
+              let targetTag = edsClosingStack.pop()
+              htmlBuf = htmlBuf + "</" + targetTag + ">"
+              i = tagEnd + 1
+              continue
+            }
+          }
+        } else {
+          let parts = tagContent.split(" ")
+          let rawTagName = parts[0].trim()
+          if (rawTagName.endsWith("/")) {
+            rawTagName = rawTagName.substring(0, rawTagName.length - 1)
+          }
+          let tagName = rawTagName
+          let rawAttrs = parseRawAttributes(tagContent)
+          let isSelfClosing = tagContent.endsWith("/") or parts[parts.length - 1].endsWith("/")
+
+          // EDS compile-time primitives
+          if (edsEnabled and isPrimitive(tagName) and !componentImports.hasOwnProperty(tagName)) {
+            let lineNum = 1
+            let errStr = validateTag(tagName, rawAttrs, filePath, lineNum)
+            if (errStr != null and errStr != "") {
+              throw errStr
+            }
+
+            let transformed = transformPrimitive(tagName, rawAttrs)
+            if (transformed != null) {
+              let openTagStr = transformed[0]
+              let targetTag = transformed[1]
+              let voidTags = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]
+              if (isSelfClosing) {
+                if (voidTags.includes(targetTag)) {
+                  htmlBuf = htmlBuf + openTagStr
+                } else {
+                  htmlBuf = htmlBuf + openTagStr + "</" + targetTag + ">"
+                }
+              } else {
+                edsClosingStack.push(targetTag)
+                htmlBuf = htmlBuf + openTagStr
+              }
+              i = tagEnd + 1
+              continue
+            }
+          }
+
+          if (tagName == "Link") {
+            let toVal = extractAttribute(tagContent, "to")
+            let passAttrs = ""
+            let rawKeys = rawAttrs.keys()
+            for rk in rawKeys {
+              if (rk != "to") {
+                let v = rawAttrs[rk]
+                passAttrs = passAttrs + " " + rk + "=\"" + cleanAttrVal(v) + "\""
+              }
+            }
+            htmlBuf = htmlBuf + "<a href=\"" + (toVal != null ? toVal : "") + "\"" + passAttrs + ">"
+            i = tagEnd + 1
+            continue
+          }
+
+          if (tagName == "ContextProvider" or tagName.endsWith(".Provider")) {
+            let contextVar = tagName.endsWith(".Provider") ? tagName.substring(0, tagName.length - 9) : extractAttribute(tagContent, "context")
+            let valueExpr = extractAttribute(tagContent, "value")
+            if (valueExpr == null) { valueExpr = "null" }
+            let provId = "erm-prov-" + i
+            htmlBuf = htmlBuf + "<span id=\"" + provId + "\" style=\"display:contents;\">"
+            scripts.push("bindProvider(\"" + provId + "\", " + contextVar + ", () => (" + valueExpr + "));")
+            i = tagEnd + 1
+            continue
+          }
+
+          if (tagName == "Loading" or tagName == "Suspense") {
+            let fallbackExpr = extractAttribute(tagContent, "fallback")
+            let closeTag = "</" + tagName + ">"
+            let closePos = workingContent.indexOf(closeTag, tagEnd)
+            if (closePos >= 0) {
+              let actualContent = workingContent.substring(tagEnd + 1, closePos)
+              let suspenseId = "erm-suspense-container-" + i
+              htmlBuf = htmlBuf + "<div id=\"" + suspenseId + "\">"
+              if (fallbackExpr != null) {
+                htmlBuf = htmlBuf + fallbackExpr
+              }
+              htmlBuf = htmlBuf + actualContent + "</div>"
+              i = closePos + closeTag.length
+              continue
+            }
+          }
+
+          // Custom Uppercase Component
+          if (tagName.length > 0 and isUpperAlpha(tagName.charAt(0))) {
+            let compPath = null
+            if (componentImports.hasOwnProperty(tagName)) {
+              compPath = pathJoin(baseDir, componentImports[tagName])
+              if (!compPath.endsWith(".erm")) {
+                if (!fileExists(compPath) and fileExists(compPath + ".erm")) {
+                  compPath = compPath + ".erm"
+                }
+              }
+            }
+            if (compPath == null or !fileExists(compPath)) {
+              let candidates = [
+                pathJoin(baseDir, tagName + ".erm"),
+                pathJoin(baseDir, "components/" + tagName + ".erm"),
+                pathJoin(pathDirname(baseDir), "components/" + tagName + ".erm"),
+                pathJoin("app/components", tagName + ".erm"),
+                pathJoin("components", tagName + ".erm")
+              ]
+              for cPath in candidates {
+                if (fileExists(cPath)) {
+                  compPath = cPath
+                  break
+                }
+              }
+            }
+
+            if (compPath != null and fileExists(compPath)) {
+              let compContent = readFile(compPath)
+              let subRes = processComponentTree(compPath, compContent, visited, null, params, ifCounterRef, forCounterRef, stateVarSources)
+              for s in subRes.scripts {
+                if (!scripts.includes(s)) { scripts.push(s) }
+              }
+              for s in subRes.styles {
+                if (!styles.includes(s)) { styles.push(s) }
+              }
+              for v in subRes.stateVars {
+                if (!stateVars.includes(v)) { stateVars.push(v) }
+              }
+              htmlBuf = htmlBuf + subRes.html
+              i = tagEnd + 1
+              continue
+            }
+          }
+
+          if (tagName == "slot") {
+            if (slotHtml != null) {
+              htmlBuf = htmlBuf + slotHtml
+            }
+            i = tagEnd + 1
+            continue
+          }
+        }
+      } else {
+        // Fragment <>
+        i = tagEnd + 1
+        continue
+      }
+      htmlBuf = htmlBuf + "<"
+      i++
+    } else {
+      htmlBuf = htmlBuf + workingContent.charAt(i)
+      i++
+    }
+  }
+
+  // Transform scripts
+  for sIdx in 0..scripts.length {
+    let s = scripts[sIdx]
+    let transformed = transformUseEffect(s)
+    for sig in stateVars {
+      transformed = injectStateName(transformed, sig, fileId + "__" + sig)
+    }
+    transformed = transformScript(transformed, stateVars)
+    transformed = transformed.replaceAll("import.meta.hot", "window.hmr")
+    scripts[sIdx] = transformed
+  }
+
+  for bl in blockLogic {
+    scripts.push(bl)
+  }
+
+  let bindings = []
+  let events = []
+  let reactiveHtml = parseReactivity(htmlBuf, bindings, events, stateVars)
+  let scopedHtml = scopeHtml(reactiveHtml, scopeId)
+
+  for b in bindings { scripts.push(b) }
+  for e in events { scripts.push(e) }
+
+  if (edsEnabled) {
+    let edsCss = generateRootCss(baseDir)
+    let alreadyHas = false
+    for st in styles {
+      if (st.includes("Eronom Design System (EDS)")) { alreadyHas = true }
+    }
+    if (!alreadyHas) {
+      let newStyles = [edsCss]
+      for st in styles { newStyles.push(st) }
+      styles = newStyles
+    }
+  }
+
+  return {
+    html: scopedHtml,
+    scripts: scripts,
+    styles: styles,
+    stateVars: stateVars
+  }
+}
+
+// ============================================================================
+// 10. Page & Layout Orchestration (page.rs)
+// ============================================================================
+
+export const processErmComponent = (filePath, content, isProd, params) => {
+  let preprocessed = content
+  if (isFunctionTemplate(content)) {
+    preprocessed = preprocessFunctionTemplate(content)
+  }
+
+  let baseDir = pathDirname(filePath)
+  let visited = {}
+  let stateVarSources = {}
+
+  // Search for layout.erm
+  let layoutPath = null
+  let candidates = [
+    pathJoin(baseDir, "layouts/layout.erm"),
+    pathJoin(baseDir, "layout.erm"),
+    pathJoin(pathDirname(baseDir), "layouts/layout.erm"),
+    pathJoin(pathDirname(baseDir), "layout.erm"),
+    "app/layouts/layout.erm",
+    "layouts/layout.erm"
+  ]
+  for lp in candidates {
+    if (fileExists(lp)) {
+      layoutPath = lp
+      break
+    }
+  }
+
+  // Search for loading.erm
+  let loadingPath = null
+  let loadingCandidates = [
+    pathJoin(baseDir, "layouts/loading.erm"),
+    pathJoin(baseDir, "loading.erm"),
+    pathJoin(pathDirname(baseDir), "layouts/loading.erm"),
+    pathJoin(pathDirname(baseDir), "loading.erm"),
+    "app/layouts/loading.erm"
+  ]
+  for lp in loadingCandidates {
+    if (fileExists(lp)) {
+      loadingPath = lp
+      break
+    }
+  }
+
+  let ifCounter = [0]
+  let forCounter = [0]
+
+  let loadingRes = null
+  if (loadingPath != null) {
+    let loadingContent = readFile(loadingPath)
+    loadingRes = processComponentTree(loadingPath, loadingContent, visited, null, params, ifCounter, forCounter, stateVarSources)
+  }
+
+  let result = null
+  if (layoutPath != null and !preprocessed.includes("<!DOCTYPE html>") and !preprocessed.includes("<html")) {
+    let layoutContent = readFile(layoutPath)
+    if (preprocessed.trim() != layoutContent.trim()) {
+      let pageRes = processComponentTree(filePath, preprocessed, visited, null, params, ifCounter, forCounter, stateVarSources)
+      let wrappedHtml = pageRes.html
+      if (loadingRes != null) {
+        wrappedHtml = "<div id=\"erm-loading-container\" class=\"erm-loading-container\" style=\"display: contents;\">\n  <div id=\"erm-loading-fallback\" class=\"erm-loading-fallback\" style=\"display: block;\">\n    " + loadingRes.html + "\n  </div>\n  <div id=\"erm-loading-content\" class=\"erm-loading-content\" style=\"display: none;\">\n    " + pageRes.html + "\n  </div>\n</div>"
+      }
+      let layoutRes = processComponentTree(layoutPath, layoutContent, visited, wrappedHtml, params, ifCounter, forCounter, stateVarSources)
+      for s in pageRes.scripts {
+        if (!layoutRes.scripts.includes(s)) { layoutRes.scripts.push(s) }
+      }
+      for s in pageRes.styles {
+        if (!layoutRes.styles.includes(s)) { layoutRes.styles.push(s) }
+      }
+      for v in pageRes.stateVars {
+        if (!layoutRes.stateVars.includes(v)) { layoutRes.stateVars.push(v) }
+      }
+      result = layoutRes
+    } else {
+      result = processComponentTree(filePath, preprocessed, visited, null, params, ifCounter, forCounter, stateVarSources)
+    }
+  } else {
+    let pageRes = processComponentTree(filePath, preprocessed, visited, null, params, ifCounter, forCounter, stateVarSources)
+    if (loadingRes != null) {
+      let wrappedHtml = "<div id=\"erm-loading-container\" class=\"erm-loading-container\" style=\"display: contents;\">\n  <div id=\"erm-loading-fallback\" class=\"erm-loading-fallback\" style=\"display: block;\">\n    " + loadingRes.html + "\n  </div>\n  <div id=\"erm-loading-content\" class=\"erm-loading-content\" style=\"display: none;\">\n    " + pageRes.html + "\n  </div>\n</div>"
+      pageRes.html = wrappedHtml
+    }
+    result = pageRes
+  }
+
+  if (loadingRes != null) {
+    for s in loadingRes.scripts {
+      if (!result.scripts.includes(s)) { result.scripts.push(s) }
+    }
+    for s in loadingRes.styles {
+      if (!result.styles.includes(s)) { result.styles.push(s) }
+    }
+    for v in loadingRes.stateVars {
+      if (!result.stateVars.includes(v)) { result.stateVars.push(v) }
+    }
+  }
+
+  // SSR Evaluator
+  let ev = createEval()
+  let paramsKeys = params.keys()
+  let pMap = {}
+  for pk in paramsKeys {
+    pMap[pk] = params[pk]
+  }
+  ev.set("__erm_params", pMap)
+
+  let scriptAll = result.scripts.join("\n")
+  let scriptForEval = scriptAll.replaceAll("useParams()", "__erm_params")
+  ev.parseScriptVars(scriptForEval)
+
+  let resHtml = result.html
+
+  // Server-side binding pre-population
+  for s in result.scripts {
+    if (s.startsWith("bindText(\"")) {
+      let idEnd = s.indexOf("\"", 10)
+      if (idEnd >= 0) {
+        let id = s.substring(10, idEnd)
+        let getStart = s.indexOf("() => (")
+        if (getStart >= 0) {
+          let getEnd = s.lastIndexOf(")")
+          if (getEnd > getStart + 7) {
+            let expr = s.substring(getStart + 7, getEnd)
+            let val = ev.eval(expr)
+            if (val != null) {
+              let valStr = "" + val
+              let idPat = "id=\"" + id + "\""
+              let pos = resHtml.indexOf(idPat)
+              if (pos >= 0) {
+                let closeTag = resHtml.indexOf(">", pos)
+                if (closeTag >= 0) {
+                  let insertPos = closeTag + 1
+                  resHtml = resHtml.substring(0, insertPos) + valStr + resHtml.substring(insertPos)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  resHtml = evaluateBracesInHtml(resHtml, ev, result.stateVars)
+
+  // Injects EDS styles if enabled
+  if (isEdsEnabledForPath(baseDir)) {
+    let edsCss = generateRootCss(baseDir)
+    let alreadyHas = false
+    for st in result.styles {
+      if (st.includes("Eronom Design System (EDS)")) { alreadyHas = true }
+    }
+    if (!alreadyHas) {
+      let newStyles = [edsCss]
+      for st in result.styles { newStyles.push(st) }
+      result.styles = newStyles
+    }
+  }
+
+  let styleAssets = ""
+  if (result.styles.length > 0) {
+    styleAssets = "\n<style id=\"__erm_scoped_styles\">\n" + result.styles.join("\n") + "\n</style>\n"
+  }
+
+  let paramsJs = "window.__erm_params = " + LBRACE
+  for pk in paramsKeys {
+    let pv = params[pk]
+    paramsJs = paramsJs + pk + ": \"" + pv + "\","
+  }
+  paramsJs = paramsJs + RBRACE + ";"
+
+  let scriptsToInject = []
+  for s in result.scripts {
+    scriptsToInject.push(s)
+  }
+  let newScripts = [paramsJs]
+  for sc in scriptsToInject { newScripts.push(sc) }
+  scriptsToInject = newScripts
+
+  let combinedScripts = scriptsToInject.join("\n")
+  let declarations = "let anchorId = \"\";\n"
+  for v in result.stateVars {
+    if (!combinedScripts.includes("let " + v + " =") and !combinedScripts.includes("const " + v + " =") and !combinedScripts.includes("var " + v + " =")) {
+      let fallbackVal = "null"
+      if (v == "activeTheme") { fallbackVal = "'light'" }
+      else if (v == "count" or v == "timer") { fallbackVal = "0" }
+      else if (v == "todos") { fallbackVal = "[]" }
+      else if (v == "showExtraContent") { fallbackVal = "true" }
+      else if (v == "submitted") { fallbackVal = "false" }
+
+      let scopedName = v
+      if (stateVarSources.hasOwnProperty(v)) {
+        let src = stateVarSources[v].replaceAll("\\", "/").replaceAll("/", "_").replaceAll(".", "_").replaceAll("-", "_")
+        scopedName = src + "__" + v
+      }
+      declarations = declarations + "let " + v + " = useState(" + fallbackVal + ", \"" + scopedName + "\");\n"
+    }
+  }
+  if (declarations != "") {
+    let newScripts = [declarations]
+    for sc in scriptsToInject { newScripts.push(sc) }
+    scriptsToInject = newScripts
+  }
+
+  let scriptAssets = ""
+  if (scriptsToInject.length > 0 or result.stateVars.length > 0) {
+    let importList = "  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n" +
+      "  onMount, onCleanup, batch, untrack,\n" +
+      "  useState, useEffect, useParams, effect,\n" +
+      "  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n" +
+      "  Show, For, setCurrentPageDispose\n"
+    scriptAssets = "<script type=\"module\" class=\"__erm_script\">\n" +
+      "import " + LBRACE + "\n" + importList + RBRACE + " from '/modules/erm/runtime.js';\n" +
+      "createRoot((dispose) => " + LBRACE + "\n" +
+      "  setCurrentPageDispose(dispose);\n" +
+      scriptsToInject.join("\n") + "\n" +
+      RBRACE + ");\n" +
+      "</script>\n"
+  }
+
+  let output = resHtml.replaceAll("__erm_anchor_id_prefix__", "")
+
+  if (!output.includes("<html")) {
+    let finalRes = "<!DOCTYPE html><html><head>"
+    if (!isProd) {
+      finalRes = finalRes + "<script type=\"module\" src=\"/modules/erm/hmr.js\"></script>\n"
+    }
+    finalRes = finalRes + styleAssets + "</head><body>\n" + output + "\n" + scriptAssets + "</body></html>"
+    return finalRes
+  }
+
+  if (!isProd) {
+    let hmrScript = "<script type=\"module\" src=\"/modules/erm/hmr.js\"></script>"
+    let headPos = output.indexOf("<head>")
+    if (headPos >= 0) {
+      output = output.substring(0, headPos + 6) + hmrScript + output.substring(headPos + 6)
+    } else {
+      output = hmrScript + output
+    }
+  }
+
+  let headClose = output.indexOf("</head>")
+  if (headClose >= 0) {
+    output = output.substring(0, headClose) + styleAssets + output.substring(headClose)
+  } else {
+    output = styleAssets + output
+  }
+
+  let bodyClose = output.indexOf("</body>")
+  if (bodyClose >= 0) {
+    output = output.substring(0, bodyClose) + scriptAssets + output.substring(bodyClose)
+  } else {
+    output = output + scriptAssets
+  }
+
+  return output
+}
+
+export const renderPage = (filePath, params, isProd) => {
+  if (params == null) { params = {} }
+  if (isProd == null) { isProd = false }
+  if (!fileExists(filePath)) {
+    return null
+  }
+  let content = readFile(filePath)
+  return processErmComponent(filePath, content, isProd, params)
+}

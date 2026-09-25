@@ -230,7 +230,7 @@ impl VM {
                         };
                         let count = raw_func.invocation_count.get() + 1;
                         raw_func.invocation_count.set(count);
-                        if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() && raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold) {
+                        if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() && raw_func.chunk.code.len() <= self.max_jit_code_len && raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold) {
                             crate::jit::compile_function(self, raw_fn_ptr);
                         }
                         ip = ip.sub(instruction.operand as usize);
@@ -297,6 +297,15 @@ impl VM {
                             |p| get_raw_func(p),
                         )? {
                             CallOpOutcome::ContinueLoop => {
+                                frame_ptr = {
+                                    let len = self.frames.len();
+                                    self.frames.as_mut_ptr().add(len - 1)
+                                };
+                                frame = &mut *frame_ptr;
+                                func = get_raw_func(frame.function);
+                                code_ptr = func.chunk.code.as_ptr();
+                                constants_ptr = func.chunk.constants.as_ptr();
+                                slots_offset = frame.slots_offset;
                                 reload_stack!();
                                 continue;
                             }

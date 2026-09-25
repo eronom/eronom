@@ -1,6 +1,6 @@
-use eronom::vm as backend;
-use eronom::frontend;
-use eronom::jit;
+use crate::vm as backend;
+use crate::frontend;
+use crate::jit;
 use backend::{Compiler, VM, Value};
 use super::natives::*;
 use super::http_detect::{find_listen_port, has_http_import};
@@ -58,15 +58,6 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         backend::er_http::LISTEN_PORT.with(|p| p.set(Some(final_port)));
     }
 
-    let compiler = Compiler::new();
-    let function = match compiler.compile(&stmts) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
     let mut vm = VM::new();
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("router", Value::native_function(backend::er_http::native_route));
@@ -85,12 +76,30 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("getIoMode", Value::native_function(backend::er_http::native_get_io_mode));
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
+    vm.register_global("parseInt", Value::native_function(|args| {
+        if args.is_empty() { return Value::number(0.0); }
+        if args[0].is_number() { return args[0]; }
+        if let Some(s) = args[0].as_str() {
+            Value::number(s.trim().parse::<f64>().unwrap_or(0.0))
+        } else {
+            Value::number(0.0)
+        }
+    }));
     backend::er_http::register_eronom_file_api(&mut vm).unwrap();
     backend::std_fs::register_fs_natives(&mut vm);
     backend::std_path::register_path_natives(&mut vm);
     backend::std_crypto::register_crypto_natives(&mut vm);
     backend::std_json::register_json_natives(&mut vm);
     backend::std_system::register_system_natives(&mut vm);
+
+    let compiler = Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
     backend::er_http::set_target_script_path(path);
     let main_path = std::path::Path::new(path);
     let mut config_loaded = false;

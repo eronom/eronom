@@ -205,7 +205,7 @@ impl<'a> Lexer<'a> {
                     if nc == quote {
                         break;
                     }
-                    if nc == '{' {
+                    if quote == '"' && nc == '{' {
                         tokens.push(Token {
                             ty: TokenType::String(string.clone()),
                             line: self.line,

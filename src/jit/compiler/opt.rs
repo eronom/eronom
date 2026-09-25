@@ -5,6 +5,54 @@ pub fn compute_liveness_with_dead(
     num_regs: usize,
     is_dead: &[bool],
 ) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
+    let (successors, predecessors) = build_cfg_edges(&func.chunk.code);
+    compute_liveness_with_cfg(func, num_regs, is_dead, &successors, &predecessors)
+}
+
+pub fn build_cfg_edges(code: &[crate::vm::bytecode::Instruction]) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
+    let n = code.len();
+    let mut successors = vec![Vec::new(); n];
+    let mut predecessors = vec![Vec::new(); n];
+
+    for pc in 0..n {
+        let inst = &code[pc];
+        let mut succs = Vec::with_capacity(2);
+        match inst.op {
+            OpCode::Return | OpCode::Throw => {}
+            OpCode::Jump => {
+                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                succs.push(target);
+            }
+            OpCode::Loop => {
+                let target = (pc as i32 + 1 - inst.operand as i32) as usize;
+                succs.push(target);
+            }
+            OpCode::JumpIfFalse => {
+                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
+                succs.push(target);
+                succs.push(pc + 1);
+            }
+            _ => {
+                succs.push(pc + 1);
+            }
+        }
+        for &succ in &succs {
+            if succ < n {
+                predecessors[succ].push(pc);
+            }
+        }
+        successors[pc] = succs;
+    }
+    (successors, predecessors)
+}
+
+pub fn compute_liveness_with_cfg(
+    func: &Function,
+    num_regs: usize,
+    is_dead: &[bool],
+    successors: &[Vec<usize>],
+    predecessors: &[Vec<usize>],
+) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let code = &func.chunk.code;
     let n = code.len();
     let mut live_in = vec![vec![false; num_regs]; n];
@@ -133,30 +181,8 @@ pub fn compute_liveness_with_dead(
     while let Some(pc) = worklist.pop() {
         in_worklist[pc] = false;
 
-        let mut successors = Vec::new();
-        let inst = &code[pc];
-        match inst.op {
-            OpCode::Return | OpCode::Throw => {}
-            OpCode::Jump => {
-                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
-                successors.push(target);
-            }
-            OpCode::Loop => {
-                let target = (pc as i32 + 1 - inst.operand as i32) as usize;
-                successors.push(target);
-            }
-            OpCode::JumpIfFalse => {
-                let target = (pc as i32 + 1 + inst.operand as i32) as usize;
-                successors.push(target);
-                successors.push(pc + 1);
-            }
-            _ => {
-                successors.push(pc + 1);
-            }
-        }
-
         let mut new_live_out = vec![false; num_regs];
-        for succ in successors {
+        for &succ in &successors[pc] {
             if succ < n {
                 for r in 0..num_regs {
                     if live_in[succ][r] {
@@ -177,37 +203,8 @@ pub fn compute_liveness_with_dead(
         }
 
         if changed {
-            for pred in 0..n {
-                let p_inst = &code[pred];
-                let mut is_pred = false;
-                match p_inst.op {
-                    OpCode::Return | OpCode::Throw => {}
-                    OpCode::Jump => {
-                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
-                        if target == pc {
-                            is_pred = true;
-                        }
-                    }
-                    OpCode::Loop => {
-                        let target = (pred as i32 + 1 - p_inst.operand as i32) as usize;
-                        if target == pc {
-                            is_pred = true;
-                        }
-                    }
-                    OpCode::JumpIfFalse => {
-                        let target = (pred as i32 + 1 + p_inst.operand as i32) as usize;
-                        if target == pc || pred + 1 == pc {
-                            is_pred = true;
-                        }
-                    }
-                    _ => {
-                        if pred + 1 == pc {
-                            is_pred = true;
-                        }
-                    }
-                }
-
-                if is_pred && !in_worklist[pred] {
+            for &pred in &predecessors[pc] {
+                if !in_worklist[pred] {
                     worklist.push(pred);
                     in_worklist[pred] = true;
                 }
@@ -346,17 +343,19 @@ pub fn eliminate_dead_instructions(
     is_resume_target: &[bool],
 ) -> (Vec<bool>, Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let n = func.chunk.code.len();
+    let (successors, predecessors) = build_cfg_edges(&func.chunk.code);
     let has_closures = func.chunk.code.iter().any(|inst| inst.op == OpCode::Closure);
     if has_closures {
-        let (in_set, out_set) = compute_liveness_with_dead(func, num_regs, &vec![false; n]);
+        let (in_set, out_set) = compute_liveness_with_cfg(func, num_regs, &vec![false; n], &successors, &predecessors);
         return (vec![false; n], in_set, out_set);
     }
     let mut is_dead = vec![false; n];
     let mut live_in = vec![vec![false; num_regs]; n];
     let mut live_out = vec![vec![false; num_regs]; n];
 
-    for _ in 0..8 {
-        let (in_set, out_set) = compute_liveness_with_dead(func, num_regs, &is_dead);
+    let max_passes = if n > 300 { 2 } else { 8 };
+    for _ in 0..max_passes {
+        let (in_set, out_set) = compute_liveness_with_cfg(func, num_regs, &is_dead, &successors, &predecessors);
         live_in = in_set;
         live_out = out_set;
         let mut changed = false;

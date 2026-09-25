@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use regex::Regex;
-use crate::compiler;
+use crate::bridge;
 use super::commands::{get_port_from_config_file, BuildMode};
 
 #[derive(Debug, Clone)]
@@ -217,7 +217,7 @@ pub fn build_dir_recursive(
 
                     let content = fs::read_to_string(&path)?;
                     let parent_dir = path.parent().unwrap().to_string_lossy();
-                    match compiler::process_erm_component(path.to_str().unwrap_or(&parent_dir), &content, true, &std::collections::HashMap::new()) {
+                    match bridge::process_erm_component(path.to_str().unwrap_or(&parent_dir), &content, true, &std::collections::HashMap::new()) {
                         Ok(processed) => {
                             let mut html_dest = dest_path.clone();
                             if name_str == "page.erm" || name_str == "index.erm" {
