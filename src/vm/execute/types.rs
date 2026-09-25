@@ -90,6 +90,7 @@ pub struct VM {
     pub mir_ctx: Option<*mut std::ffi::c_void>,
     pub use_jit: bool,
     pub jit_threshold: usize,
+    pub max_jit_code_len: usize,
     pub alloc_count_local: usize,
     pub use_evented_io: bool,
     pub structs: FnvHashMap<Rc<str>, Rc<StructDescriptor>>,

@@ -43,6 +43,11 @@ impl VM {
         } else {
             20
         };
+        let max_jit_code_len = if let Ok(val) = std::env::var("ER_MAX_JIT_LEN") {
+            val.parse::<usize>().unwrap_or(250)
+        } else {
+            250
+        };
         crate::vm::alloc::init_allocator_options();
         Self {
             has_error_flag: 0,
@@ -53,6 +58,7 @@ impl VM {
             mir_ctx: None,
             use_jit,
             jit_threshold,
+            max_jit_code_len,
             alloc_count_local: 0,
             use_evented_io: false,
             structs: FnvHashMap::default(),

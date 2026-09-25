@@ -73,13 +73,14 @@ impl VM {
                 let count = raw_func.invocation_count.get() + 1;
                 raw_func.invocation_count.set(count);
 
-                let can_jit = self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty();
+                let can_jit = self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() && raw_func.chunk.code.len() <= self.max_jit_code_len;
                 let native_ptr = if !can_jit {
                     None
                 } else if let Some(ptr) = raw_func.jit_ptr.get() {
                     Some(ptr)
                 } else if self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold || self.frames.len() <= 1 {
-                    Some(crate::jit::compile_function(self, raw_fn_ptr))
+                    let ptr = crate::jit::compile_function(self, raw_fn_ptr);
+                    if ptr.is_null() { None } else { Some(ptr) }
                 } else {
                     None
                 };

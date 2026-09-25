@@ -91,6 +91,10 @@ pub fn compile_function(vm: &mut VM, func_obj: *mut GcObject) -> *const c_void {
         return ptr;
     }
 
+    if func.chunk.code.len() > vm.max_jit_code_len {
+        return std::ptr::null();
+    }
+
     let instructions = &func.chunk.code;
     let cached_ptr = JIT_STATE.with(|state| {
         let borrow = state.borrow();

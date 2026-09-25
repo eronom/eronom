@@ -32,7 +32,7 @@ pub extern "C" fn er_jit_call_fast(
             _ => return -1,
         };
 
-        if func.is_async || !func.chunk.handlers.is_empty() {
+        if func.is_async || !func.chunk.handlers.is_empty() || func.chunk.code.len() > (*vm).max_jit_code_len {
             return -1;
         }
 
@@ -46,6 +46,10 @@ pub extern "C" fn er_jit_call_fast(
         } else {
             return -1;
         };
+
+        if native_ptr.is_null() {
+            return -1;
+        }
 
         type JitFn = unsafe extern "C" fn(
             vm: *mut VM,
@@ -188,7 +192,7 @@ pub extern "C" fn er_jit_call_non_vm(
                     return -2;
                 }
 
-                if func_val.is_async || !func_val.chunk.handlers.is_empty() {
+                if func_val.is_async || !func_val.chunk.handlers.is_empty() || func_val.chunk.code.len() > (*_vm).max_jit_code_len {
                     return -1; // Fallback to host VM loop for async or exception handlers
                 } else {
                     let offset_from_base = callee_frame_slots.offset_from((*_vm).stack.as_ptr()) as usize;
@@ -208,6 +212,10 @@ pub extern "C" fn er_jit_call_non_vm(
                     } else {
                         return -1;
                     };
+
+                    if native_ptr.is_null() {
+                        return -1;
+                    }
 
                     type JitFn = unsafe extern "C" fn(
                         vm: *mut VM,

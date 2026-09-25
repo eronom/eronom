@@ -72,7 +72,7 @@ impl VM {
             let count = raw_func.invocation_count.get() + 1;
             raw_func.invocation_count.set(count);
 
-            if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() {
+            if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() && raw_func.chunk.code.len() <= self.max_jit_code_len {
                 if raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold) {
                     crate::jit::compile_function(self, raw_fn_ptr);
                 }
