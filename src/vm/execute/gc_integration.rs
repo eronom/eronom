@@ -7,7 +7,7 @@ use crate::vm::gc::{
     mark_value, gc_with_state, gc_blacken_object,
     GC_ROOTS, GC_NEEDS_STEP, GcColor, GcPhase, GcObject
 };
-use super::types::{VM, VmTimerAction};
+use super::types::{VM, VmTimerAction, AsyncResult};
 
 thread_local! {
     pub static GC_TIME: Cell<Duration> = const { Cell::new(Duration::from_nanos(0)) };
@@ -140,6 +140,23 @@ impl VM {
                     for arg in task.args.iter() {
                         mark_value(arg);
                     }
+                    match &task.result {
+                        AsyncResult::ResolvePromise(ptr, val) => {
+                            if !ptr.is_null() {
+                                crate::vm::gc::mark_object(*ptr);
+                            }
+                            mark_value(val);
+                        }
+                        AsyncResult::ResolveFetchPromise(ptr, _) |
+                        AsyncResult::ResolveTextPromise(ptr, _) |
+                        AsyncResult::ResolveJsonPromise(ptr, _) |
+                        AsyncResult::ResolveWritePromise(ptr, _) => {
+                            if !ptr.is_null() {
+                                crate::vm::gc::mark_object(*ptr);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -163,13 +180,52 @@ impl VM {
                                 mark_value(arg);
                             }
                         }
-                        VmTimerAction::ResolvePromise { value, .. } => {
+                        VmTimerAction::ResolvePromise { promise_ptr, value } => {
+                            if !promise_ptr.is_null() {
+                                crate::vm::gc::mark_object(*promise_ptr);
+                            }
                             mark_value(value);
                         }
                     }
                 }
             }
         }
+        crate::vm::er_http::types::ROUTES.with(|routes| {
+            if let Ok(routes) = routes.try_borrow() {
+                for route in routes.iter() {
+                    mark_value(&route.callback);
+                }
+            }
+        });
+        crate::vm::er_http::types::MIDDLEWARES.with(|mws| {
+            if let Ok(mws) = mws.try_borrow() {
+                for mw in mws.iter() {
+                    mark_value(mw);
+                }
+            }
+        });
+        crate::vm::er_http::types::WS_ROUTES.with(|routes| {
+            if let Ok(routes) = routes.try_borrow() {
+                for route in routes.iter() {
+                    if let Some(open_cb) = &route.open {
+                        mark_value(open_cb);
+                    }
+                    if let Some(msg_cb) = &route.message {
+                        mark_value(msg_cb);
+                    }
+                    if let Some(close_cb) = &route.close {
+                        mark_value(close_cb);
+                    }
+                }
+            }
+        });
+        crate::vm::er_http::types::ACTIVE_CONNECTIONS.with(|conns| {
+            if let Ok(conns) = conns.try_borrow() {
+                for obj in conns.values() {
+                    mark_value(obj);
+                }
+            }
+        });
         crate::vm::gc::GC_TEMP_SLICES.with(|slices| {
             if let Ok(borrowed) = slices.try_borrow() {
                 for &(ptr, len) in borrowed.iter() {
@@ -217,6 +273,23 @@ impl VM {
                 for arg in task.args.iter() {
                     mark_value(arg);
                 }
+                match &task.result {
+                    AsyncResult::ResolvePromise(ptr, val) => {
+                        if !ptr.is_null() {
+                            crate::vm::gc::mark_object(*ptr);
+                        }
+                        mark_value(val);
+                    }
+                    AsyncResult::ResolveFetchPromise(ptr, _) |
+                    AsyncResult::ResolveTextPromise(ptr, _) |
+                    AsyncResult::ResolveJsonPromise(ptr, _) |
+                    AsyncResult::ResolveWritePromise(ptr, _) => {
+                        if !ptr.is_null() {
+                            crate::vm::gc::mark_object(*ptr);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         if let Ok(pending) = self.pending_callbacks.lock() {
@@ -236,12 +309,51 @@ impl VM {
                             mark_value(arg);
                         }
                     }
-                    VmTimerAction::ResolvePromise { value, .. } => {
+                    VmTimerAction::ResolvePromise { promise_ptr, value } => {
+                        if !promise_ptr.is_null() {
+                            crate::vm::gc::mark_object(*promise_ptr);
+                        }
                         mark_value(value);
                     }
                 }
             }
         }
+        crate::vm::er_http::types::ROUTES.with(|routes| {
+            if let Ok(routes) = routes.try_borrow() {
+                for route in routes.iter() {
+                    mark_value(&route.callback);
+                }
+            }
+        });
+        crate::vm::er_http::types::MIDDLEWARES.with(|mws| {
+            if let Ok(mws) = mws.try_borrow() {
+                for mw in mws.iter() {
+                    mark_value(mw);
+                }
+            }
+        });
+        crate::vm::er_http::types::WS_ROUTES.with(|routes| {
+            if let Ok(routes) = routes.try_borrow() {
+                for route in routes.iter() {
+                    if let Some(open_cb) = &route.open {
+                        mark_value(open_cb);
+                    }
+                    if let Some(msg_cb) = &route.message {
+                        mark_value(msg_cb);
+                    }
+                    if let Some(close_cb) = &route.close {
+                        mark_value(close_cb);
+                    }
+                }
+            }
+        });
+        crate::vm::er_http::types::ACTIVE_CONNECTIONS.with(|conns| {
+            if let Ok(conns) = conns.try_borrow() {
+                for obj in conns.values() {
+                    mark_value(obj);
+                }
+            }
+        });
         GC_ROOTS.with(|roots| {
             if let Ok(borrowed) = roots.try_borrow() {
                 for root_fn in borrowed.iter() {

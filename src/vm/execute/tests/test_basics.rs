@@ -5,6 +5,7 @@ use crate::vm::compiler::Compiler;
 use std::sync::atomic::Ordering;
 
 pub fn run_code(source: &str) -> Result<VM, String> {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     let tokens = crate::frontend::lex(source);
     let mut parser = crate::frontend::Parser::new(tokens);
@@ -204,6 +205,7 @@ fn test_struct_new_constructor_syntax() {
 
 #[test]
 fn test_incremental_garbage_collector() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
 
     let parent_ptr = gc_allocate(GcData::Array(vec![]));
@@ -256,6 +258,7 @@ fn test_incremental_garbage_collector() {
 
 #[test]
 fn test_gc_stack_roots_deep_no_truncation() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
 
     let mut vm = VM::new();
@@ -296,6 +299,7 @@ fn test_gc_stack_roots_deep_no_truncation() {
 
 #[test]
 fn test_gc_string_cache_sweep() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
 
     let mut vm = VM::new();
@@ -332,6 +336,7 @@ fn test_gc_string_cache_sweep() {
 
 #[test]
 fn test_gc_atomic_flag() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
 
     assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), false);

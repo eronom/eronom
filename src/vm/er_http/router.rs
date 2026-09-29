@@ -233,6 +233,8 @@ pub fn register_route_internal(method: &str, args: Vec<Value>) -> Value {
         }
     });
 
+    let param_names = extract_param_names(&path_str);
+
     ROUTER.with(|r| {
         r.borrow_mut().insert(method, &path_str, callback_val);
     });
@@ -242,10 +244,24 @@ pub fn register_route_internal(method: &str, args: Vec<Value>) -> Value {
             method: method.to_string(),
             path: path_str,
             callback: callback_val,
+            param_names,
         });
     });
     
     Value::null()
+}
+
+pub fn extract_param_names(pattern: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for part in pattern.split('/') {
+        if part.starts_with(':') && part.len() > 1 {
+            names.push(part[1..].to_string());
+        } else if part == "*" || part.starts_with('*') {
+            let key = if part == "*" { "*" } else { &part[1..] };
+            names.push(key.to_string());
+        }
+    }
+    names
 }
 
 pub fn native_router_get(args: Vec<Value>) -> Value {

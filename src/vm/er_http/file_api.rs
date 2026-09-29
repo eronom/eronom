@@ -384,7 +384,9 @@ pub fn register_eronom_file_api(vm: &mut VM) -> Result<(), String> {
     if let Ok(stmts) = parser.parse() {
         let compiler = crate::vm::compiler::Compiler::new();
         if let Ok(func) = compiler.compile(&stmts) {
-            let _ = vm.run(func);
+            if let Err(e) = vm.run(func) {
+                eprintln!("[register_eronom_file_api] Error running preamble: {}", e);
+            }
         }
     }
 

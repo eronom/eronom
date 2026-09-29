@@ -277,7 +277,7 @@ impl VM {
                         frame.ip = ip_out + 1;
                         ip_val = frame.ip;
                     } else {
-                        return Err(format!("[JIT] Can only call functions (callee: 0x{:x})", callee.0).into());
+                        return Err(format!("[JIT] Can only call functions (callee: 0x{:x}, func_reg: {}, dest_reg: {}, ip: {})", callee.0, func_reg_out, dest_reg_out, ip_out).into());
                     }
                 } else if status == 1 {
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.

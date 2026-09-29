@@ -51,13 +51,14 @@ thread_local! {
     }) };
     pub static GC_ROOTS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
     pub static GC_TEMP_SLICES: RefCell<Vec<(*const Value, usize)>> = RefCell::new(Vec::new());
+    pub static GC_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-pub static GC_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static TEST_GC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[inline(always)]
 pub fn gc_epoch() -> u64 {
-    GC_EPOCH.load(Ordering::Relaxed)
+    GC_EPOCH.with(|e| e.get())
 }
 
 #[inline(always)]
@@ -250,7 +251,7 @@ pub fn gc_allocate(data: GcData) -> *mut GcObject {
 
 #[inline(always)]
 pub fn gc_free_all() {
-    GC_EPOCH.fetch_add(1, Ordering::Relaxed);
+    GC_EPOCH.with(|e| e.set(e.get() + 1));
     unsafe {
         GC_STATE.with(|state| {
             let s_ref = &mut *state.get();

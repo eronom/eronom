@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::vm::value::Value;
 use crate::vm::execute::VM;
-use crate::vm::gc::{get_or_create_string, GcData};
+use crate::vm::gc::{get_or_create_string, GcData, ObjectMap};
 use super::context::*;
 use super::multipart::{construct_file_object, parse_header_params, parse_multipart};
 
@@ -11,9 +11,7 @@ pub fn build_request_context(
     clean_path: &str,
     raw_query: &str,
     method: &str,
-    headers_map: &HashMap<String, String>,
-    parsed_query: &HashMap<String, String>,
-    parsed_cookies: &HashMap<String, String>,
+    req_ptr: *mut std::ffi::c_void,
     extracted_params: HashMap<String, String>,
     body_bytes: &[u8],
 ) -> Value {
@@ -37,7 +35,7 @@ pub fn build_request_context(
     let raw_query_str = get_or_create_string(raw_query);
     let method_str = get_or_create_string(method);
 
-    // Parameters map
+    // 1. Parameters map
     let mut params_obj_map = crate::vm::gc::get_pooled_map(extracted_params.len());
     for (k, v) in extracted_params {
         let k_str = get_or_create_string(&k);
@@ -46,41 +44,88 @@ pub fn build_request_context(
     }
     let params_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(params_obj_map)));
 
-    // Query map
+    // 2. Query map
+    let parsed_query = if !raw_query.is_empty() {
+        super::utils::parse_query_string(raw_query)
+    } else {
+        HashMap::new()
+    };
     let mut query_obj_map = crate::vm::gc::get_pooled_map(parsed_query.len());
-    for (k, v) in parsed_query {
+    for (k, v) in &parsed_query {
         let k_str = get_or_create_string(k);
         let v_str = get_or_create_string(v);
         query_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
     }
     let query_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(query_obj_map)));
 
-    // Headers map
-    let mut headers_obj_map = crate::vm::gc::get_pooled_map(headers_map.len());
-    for (k, v) in headers_map {
-        let k_str = get_or_create_string(k);
-        let v_str = get_or_create_string(v);
-        headers_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
+    // 3. Headers & Cookies (single zero-copy extraction pass)
+    let mut headers_obj_map = crate::vm::gc::get_pooled_map(8);
+    let mut content_type = String::new();
+    let mut cookie_header = String::new();
+
+    if !req_ptr.is_null() {
+        struct HdrCollector {
+            map: ObjectMap,
+            content_type: String,
+            cookie_header: String,
+        }
+        let mut collector = HdrCollector {
+            map: headers_obj_map,
+            content_type: String::new(),
+            cookie_header: String::new(),
+        };
+
+        extern "C" fn on_hdr_callback(
+            user_data: *mut std::ffi::c_void,
+            k: *const std::ffi::c_char,
+            k_len: usize,
+            v: *const std::ffi::c_char,
+            v_len: usize,
+        ) {
+            let col = unsafe { &mut *(user_data as *mut HdrCollector) };
+            let k_slice = unsafe { std::slice::from_raw_parts(k as *const u8, k_len) };
+            let v_slice = unsafe { std::slice::from_raw_parts(v as *const u8, v_len) };
+            if let (Ok(k_str), Ok(v_str)) = (std::str::from_utf8(k_slice), std::str::from_utf8(v_slice)) {
+                let k_lower = k_str.to_ascii_lowercase();
+                if k_lower == "content-type" {
+                    col.content_type = v_str.to_string();
+                } else if k_lower == "cookie" {
+                    col.cookie_header = v_str.to_string();
+                }
+                let k_ptr = get_or_create_string(&k_lower);
+                let v_ptr = get_or_create_string(v_str);
+                col.map.insert(crate::vm::value::MapKey(Value::string(k_ptr)), Value::string(v_ptr));
+            }
+        }
+
+        unsafe {
+            super::ffi::er_http_req_for_each_header(
+                req_ptr,
+                on_hdr_callback,
+                &mut collector as *mut _ as *mut std::ffi::c_void,
+            );
+        }
+
+        headers_obj_map = collector.map;
+        content_type = collector.content_type;
+        cookie_header = collector.cookie_header;
     }
+
     let headers_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(headers_obj_map)));
 
-    // Cookies map
+    // 4. Cookies map
+    let parsed_cookies = if !cookie_header.is_empty() {
+        super::utils::parse_cookies(&cookie_header)
+    } else {
+        HashMap::new()
+    };
     let mut cookies_obj_map = crate::vm::gc::get_pooled_map(parsed_cookies.len());
-    for (k, v) in parsed_cookies {
+    for (k, v) in &parsed_cookies {
         let k_str = get_or_create_string(k);
         let v_str = get_or_create_string(v);
         cookies_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
     }
     let cookies_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(cookies_obj_map)));
-
-    // Multipart files parsing
-    let mut content_type = String::new();
-    for (k, v) in headers_map {
-        if k == "content-type" {
-            content_type = v.clone();
-            break;
-        }
-    }
 
     let mut files_obj_map = crate::vm::gc::get_pooled_map(5);
     if content_type.contains("multipart/form-data") {

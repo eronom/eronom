@@ -6,13 +6,45 @@
 #include <memory>
 #include <atomic>
 #include <cstdint>
+#include <vector>
+#include <strings.h>
 
 extern "C" {
+    // Legacy callbacks
     void er_http_on_request(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
     void er_ws_on_open(void* ws, const char* path, size_t path_len);
     void er_ws_on_message(void* ws, const char* path, size_t path_len, const char* message, size_t message_len, int is_binary);
     void er_ws_on_close(void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
     void er_http_on_listening();
+
+    // Direct dispatch callbacks
+    void er_http_on_route(
+        void* rust_server,
+        uint32_t route_id,
+        void* token,
+        void* req,
+        const char* url,
+        size_t url_len,
+        const char* body,
+        size_t body_len
+    );
+
+    void er_http_on_fallback(
+        void* rust_server,
+        void* token,
+        void* req,
+        const char* method,
+        size_t method_len,
+        const char* url,
+        size_t url_len,
+        const char* body,
+        size_t body_len
+    );
+
+    void er_http_on_listening_instance(void* rust_server, int port);
+    void er_ws_on_open_instance(void* rust_server, uint32_t route_id, void* ws, const char* path, size_t path_len);
+    void er_ws_on_message_instance(void* rust_server, uint32_t route_id, void* ws, const char* path, size_t path_len, const char* message, size_t message_len, int is_binary);
+    void er_ws_on_close_instance(void* rust_server, uint32_t route_id, void* ws, const char* path, size_t path_len, int code, const char* message, size_t message_len);
 }
 
 typedef void (*HttpRequestCallback)(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
@@ -26,14 +58,14 @@ static WsMessageCallback g_ws_message_cb = nullptr;
 static WsCloseCallback g_ws_close_cb = nullptr;
 
 struct PerSocketData {
-    // Fill with user data if needed
+    // User socket context
 };
 
 struct HttpResponseToken {
     std::atomic<uWS::HttpResponse<false>*> res;
     std::atomic<bool> aborted{false};
     std::atomic<bool> responded{false};
-    std::atomic<uint32_t> ref_count{2}; // 1 for uWS onAborted wrapper, 1 for Rust/VM context
+    std::atomic<uint32_t> ref_count{2}; // 1 for uWS onAborted wrapper, 1 for Rust context
 
     HttpResponseToken(uWS::HttpResponse<false>* r) : res(r) {}
 
@@ -87,41 +119,247 @@ struct AbortHandler {
     }
 };
 
-// Global app pointer (without SSL support)
+// Unified zero-copy request view
+struct ErReqView {
+    bool is_live{true};
+    uWS::HttpRequest* live_req{nullptr};
+    std::vector<std::pair<std::string, std::string>> saved_headers;
+    std::string saved_url;
+    std::string saved_query;
+    std::string saved_method;
+};
+
+// ─── Zero-Copy Request Inspection APIs ───────────────────────────────────────
+
+extern "C" {
+
+bool er_http_req_get_header(void* req_ptr, const char* key, size_t key_len, const char** out_val, size_t* out_len) {
+    if (!req_ptr || !key || !out_val || !out_len) return false;
+    auto* view = static_cast<ErReqView*>(req_ptr);
+    if (view->is_live && view->live_req) {
+        std::string_view val = view->live_req->getHeader(std::string_view(key, key_len));
+        if (val.data() != nullptr) {
+            *out_val = val.data();
+            *out_len = val.length();
+            return true;
+        }
+        return false;
+    }
+    for (const auto& h : view->saved_headers) {
+        if (h.first.length() == key_len && strncasecmp(h.first.data(), key, key_len) == 0) {
+            *out_val = h.second.data();
+            *out_len = h.second.length();
+            return true;
+        }
+    }
+    return false;
+}
+
+typedef void (*HeaderIterCallback)(void* user_data, const char* key, size_t key_len, const char* val, size_t val_len);
+
+void er_http_req_for_each_header(void* req_ptr, HeaderIterCallback cb, void* user_data) {
+    if (!req_ptr || !cb) return;
+    auto* view = static_cast<ErReqView*>(req_ptr);
+    if (view->is_live && view->live_req) {
+        for (auto h : *(view->live_req)) {
+            cb(user_data, h.first.data(), h.first.length(), h.second.data(), h.second.length());
+        }
+    } else {
+        for (const auto& h : view->saved_headers) {
+            cb(user_data, h.first.data(), h.first.length(), h.second.data(), h.second.length());
+        }
+    }
+}
+
+void er_http_req_get_url(void* req_ptr, const char** out_url, size_t* out_len) {
+    if (!req_ptr || !out_url || !out_len) return;
+    auto* view = static_cast<ErReqView*>(req_ptr);
+    if (view->is_live && view->live_req) {
+        std::string_view u = view->live_req->getUrl();
+        *out_url = u.data();
+        *out_len = u.length();
+    } else {
+        *out_url = view->saved_url.data();
+        *out_len = view->saved_url.length();
+    }
+}
+
+void er_http_req_get_query(void* req_ptr, const char** out_q, size_t* out_len) {
+    if (!req_ptr || !out_q || !out_len) return;
+    auto* view = static_cast<ErReqView*>(req_ptr);
+    if (view->is_live && view->live_req) {
+        std::string_view q = view->live_req->getQuery();
+        *out_q = q.data();
+        *out_len = q.length();
+    } else {
+        *out_q = view->saved_query.data();
+        *out_len = view->saved_query.length();
+    }
+}
+
+void er_http_req_get_method(void* req_ptr, const char** out_m, size_t* out_len) {
+    if (!req_ptr || !out_m || !out_len) return;
+    auto* view = static_cast<ErReqView*>(req_ptr);
+    if (view->is_live && view->live_req) {
+        std::string_view m = view->live_req->getCaseSensitiveMethod();
+        *out_m = m.data();
+        *out_len = m.length();
+    } else {
+        *out_m = view->saved_method.data();
+        *out_len = view->saved_method.length();
+    }
+}
+
+bool er_http_req_get_parameter(void* req_ptr, unsigned short index, const char** out_p, size_t* out_len) {
+    if (!req_ptr || !out_p || !out_len) return false;
+    auto* view = static_cast<ErReqView*>(req_ptr);
+    if (view->is_live && view->live_req) {
+        std::string_view p = view->live_req->getParameter(index);
+        if (p.data() != nullptr) {
+            *out_p = p.data();
+            *out_len = p.length();
+            return true;
+        }
+    }
+    return false;
+}
+
+} // extern "C"
+
+// ─── ErServer Structure & Instance Lifecycle ─────────────────────────────────
+
+struct ErServer {
+    bool ssl{false};
+    uWS::App* app{nullptr};
+    void* rust_server{nullptr};
+    us_listen_socket_t* listen_socket{nullptr};
+
+    ErServer(bool is_ssl, void* r_server) : ssl(is_ssl), rust_server(r_server) {
+        app = new uWS::App();
+    }
+
+    ~ErServer() {
+        if (listen_socket) {
+            us_listen_socket_close(ssl ? 1 : 0, listen_socket);
+            listen_socket = nullptr;
+        }
+        if (app) {
+            delete app;
+            app = nullptr;
+        }
+    }
+};
+
+static ErServer* g_default_server = nullptr;
 static uWS::App* g_app = nullptr;
 
-extern "C" void er_http_init() {
-    if (g_app) {
-        delete g_app;
-    }
-    g_app = new uWS::App();
-    g_http_req_cb = nullptr;
-    g_ws_open_cb = nullptr;
-    g_ws_message_cb = nullptr;
-    g_ws_close_cb = nullptr;
+extern "C" {
+
+void* er_server_create(int ssl, void* rust_server) {
+    return new ErServer(ssl != 0, rust_server);
 }
 
-extern "C" void er_http_init_with_callbacks(
-    HttpRequestCallback http_req_cb,
-    WsOpenCallback ws_open_cb,
-    WsMessageCallback ws_message_cb,
-    WsCloseCallback ws_close_cb
-) {
-    if (g_app) {
-        delete g_app;
+void er_server_destroy(void* server_ptr) {
+    if (server_ptr) {
+        delete static_cast<ErServer*>(server_ptr);
     }
-    g_app = new uWS::App();
-    g_http_req_cb = http_req_cb;
-    g_ws_open_cb = ws_open_cb;
-    g_ws_message_cb = ws_message_cb;
-    g_ws_close_cb = ws_close_cb;
 }
 
-extern "C" void er_ws_register_route(const char* path) {
-    if (!g_app) return;
-    
+void er_server_register_route(void* server_ptr, const char* method, const char* path, uint32_t route_id) {
+    if (!server_ptr || !method || !path) return;
+    auto* server = static_cast<ErServer*>(server_ptr);
+    auto* app = server->app;
+    if (!app) return;
+
+    std::string method_str(method);
+    for (char &c : method_str) c = (char)toupper((unsigned char)c);
     std::string path_str(path);
-    
+    void* rust_server = server->rust_server;
+
+    if (method_str == "GET") {
+        app->get(path_str, [rust_server, route_id](auto* res, auto* req) {
+            auto* token = new HttpResponseToken(res);
+            res->onAborted(AbortHandler(token));
+            std::string_view full_url = req->getFullUrl();
+            ErReqView view;
+            view.is_live = true;
+            view.live_req = req;
+            er_http_on_route(rust_server, route_id, token, &view, full_url.data(), full_url.length(), nullptr, 0);
+        });
+    } else if (method_str == "HEAD") {
+        app->head(path_str, [rust_server, route_id](auto* res, auto* req) {
+            auto* token = new HttpResponseToken(res);
+            res->onAborted(AbortHandler(token));
+            std::string_view full_url = req->getFullUrl();
+            ErReqView view;
+            view.is_live = true;
+            view.live_req = req;
+            er_http_on_route(rust_server, route_id, token, &view, full_url.data(), full_url.length(), nullptr, 0);
+        });
+    } else {
+        auto register_body = [app, rust_server, route_id, &path_str](auto attach_fn) {
+            attach_fn(path_str, [rust_server, route_id](auto* res, auto* req) {
+                auto* token = new HttpResponseToken(res);
+                res->onAborted(AbortHandler(token));
+                std::string full_url(req->getFullUrl());
+
+                struct BodyCtx {
+                    HttpResponseToken* token;
+                    std::string url;
+                    std::string body;
+                    ErReqView view;
+                    BodyCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
+                    ~BodyCtx() { if (token) token->release(); }
+                };
+                auto ctx = std::make_shared<BodyCtx>(token);
+                ctx->url = std::move(full_url);
+                ctx->view.is_live = false;
+                ctx->view.saved_url = ctx->url;
+                std::string_view q = req->getQuery();
+                ctx->view.saved_query = std::string(q);
+                std::string_view m = req->getCaseSensitiveMethod();
+                ctx->view.saved_method = std::string(m);
+                for (auto h : *req) {
+                    ctx->view.saved_headers.push_back({std::string(h.first), std::string(h.second)});
+                }
+
+                res->onData([ctx, token, rust_server, route_id](std::string_view chunk, bool isLast) {
+                    if (token->aborted.load(std::memory_order_acquire)) return;
+                    ctx->body.append(chunk.data(), chunk.length());
+                    if (isLast) {
+                        er_http_on_route(rust_server, route_id, token, &ctx->view,
+                                         ctx->url.data(), ctx->url.length(),
+                                         ctx->body.data(), ctx->body.length());
+                    }
+                });
+            });
+        };
+
+        if (method_str == "POST") {
+            register_body([app](const std::string& p, auto h) { app->post(p, std::move(h)); });
+        } else if (method_str == "PUT") {
+            register_body([app](const std::string& p, auto h) { app->put(p, std::move(h)); });
+        } else if (method_str == "PATCH") {
+            register_body([app](const std::string& p, auto h) { app->patch(p, std::move(h)); });
+        } else if (method_str == "DELETE" || method_str == "DEL") {
+            register_body([app](const std::string& p, auto h) { app->del(p, std::move(h)); });
+        } else if (method_str == "OPTIONS") {
+            register_body([app](const std::string& p, auto h) { app->options(p, std::move(h)); });
+        } else if (method_str == "ALL" || method_str == "ANY" || method_str == "*") {
+            register_body([app](const std::string& p, auto h) { app->any(p, std::move(h)); });
+        }
+    }
+}
+
+void er_server_register_ws_route(void* server_ptr, const char* path, uint32_t route_id) {
+    if (!server_ptr || !path) return;
+    auto* server = static_cast<ErServer*>(server_ptr);
+    auto* app = server->app;
+    if (!app) return;
+
+    std::string path_str(path);
+    void* rust_server = server->rust_server;
+
     uWS::App::WebSocketBehavior<PerSocketData> ws_behavior;
     ws_behavior.compression = uWS::CompressOptions(uWS::SHARED_COMPRESSOR);
     ws_behavior.maxPayloadLength = 16 * 1024 * 1024;
@@ -130,46 +368,176 @@ extern "C" void er_ws_register_route(const char* path) {
     ws_behavior.closeOnBackpressureLimit = false;
     ws_behavior.resetIdleTimeoutOnSend = false;
     ws_behavior.sendPingsAutomatically = true;
-    ws_behavior.open = [path_str](auto* ws) {
+
+    ws_behavior.open = [rust_server, route_id, path_str](auto* ws) {
         if (g_ws_open_cb) {
             g_ws_open_cb(ws, path_str.data(), path_str.length());
         } else {
-            er_ws_on_open(ws, path_str.data(), path_str.length());
+            er_ws_on_open_instance(rust_server, route_id, ws, path_str.data(), path_str.length());
         }
     };
-    ws_behavior.message = [path_str](auto* ws, std::string_view message, uWS::OpCode opCode) {
+    ws_behavior.message = [rust_server, route_id, path_str](auto* ws, std::string_view message, uWS::OpCode opCode) {
         int is_binary = (opCode == uWS::OpCode::BINARY) ? 1 : 0;
         if (g_ws_message_cb) {
             g_ws_message_cb(ws, path_str.data(), path_str.length(), message.data(), message.length(), is_binary);
         } else {
-            er_ws_on_message(ws, path_str.data(), path_str.length(), message.data(), message.length(), is_binary);
+            er_ws_on_message_instance(rust_server, route_id, ws, path_str.data(), path_str.length(), message.data(), message.length(), is_binary);
         }
     };
-    ws_behavior.close = [path_str](auto* ws, int code, std::string_view message) {
+    ws_behavior.close = [rust_server, route_id, path_str](auto* ws, int code, std::string_view message) {
         if (g_ws_close_cb) {
             g_ws_close_cb(ws, path_str.data(), path_str.length(), code, message.data(), message.length());
         } else {
-            er_ws_on_close(ws, path_str.data(), path_str.length(), code, message.data(), message.length());
+            er_ws_on_close_instance(rust_server, route_id, ws, path_str.data(), path_str.length(), code, message.data(), message.length());
         }
     };
 
-    g_app->ws<PerSocketData>(path_str, std::move(ws_behavior));
+    app->ws<PerSocketData>(path_str, std::move(ws_behavior));
 }
 
-extern "C" void er_ws_send(void* ws, const char* message, size_t message_len, int is_binary) {
+static void register_fallback_internal(ErServer* server) {
+    if (!server || !server->app) return;
+    auto* app = server->app;
+    void* rust_server = server->rust_server;
+
+    app->any("/*", [rust_server](auto* res, auto* req) {
+        auto* token = new HttpResponseToken(res);
+        res->onAborted(AbortHandler(token));
+
+        std::string method_str(req->getCaseSensitiveMethod());
+        for (char &c : method_str) c = (char)toupper((unsigned char)c);
+        std::string full_url(req->getFullUrl());
+
+        if (method_str == "GET" || method_str == "HEAD") {
+            ErReqView view;
+            view.is_live = true;
+            view.live_req = req;
+            er_http_on_fallback(rust_server, token, &view,
+                                method_str.data(), method_str.length(),
+                                full_url.data(), full_url.length(),
+                                nullptr, 0);
+        } else {
+            struct FallbackCtx {
+                HttpResponseToken* token;
+                std::string method;
+                std::string url;
+                std::string body;
+                ErReqView view;
+                FallbackCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
+                ~FallbackCtx() { if (token) token->release(); }
+            };
+            auto ctx = std::make_shared<FallbackCtx>(token);
+            ctx->method = std::move(method_str);
+            ctx->url = std::move(full_url);
+            ctx->view.is_live = false;
+            ctx->view.saved_url = ctx->url;
+            std::string_view q = req->getQuery();
+            ctx->view.saved_query = std::string(q);
+            ctx->view.saved_method = ctx->method;
+            for (auto h : *req) {
+                ctx->view.saved_headers.push_back({std::string(h.first), std::string(h.second)});
+            }
+
+            res->onData([ctx, token, rust_server](std::string_view chunk, bool isLast) {
+                if (token->aborted.load(std::memory_order_acquire)) return;
+                ctx->body.append(chunk.data(), chunk.length());
+                if (isLast) {
+                    er_http_on_fallback(rust_server, token, &ctx->view,
+                                        ctx->method.data(), ctx->method.length(),
+                                        ctx->url.data(), ctx->url.length(),
+                                        ctx->body.data(), ctx->body.length());
+                }
+            });
+        }
+    });
+}
+
+bool er_server_listen(void* server_ptr, int port) {
+    if (!server_ptr) return false;
+    auto* server = static_cast<ErServer*>(server_ptr);
+    if (!server->app) return false;
+
+    register_fallback_internal(server);
+
+    void* rust_server = server->rust_server;
+    bool success = false;
+    server->app->listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, [&success, server, rust_server, port](auto* socket) {
+        if (socket) {
+            server->listen_socket = (us_listen_socket_t*)socket;
+            success = true;
+            er_http_on_listening_instance(rust_server, port);
+            er_http_on_listening();
+        } else {
+            std::cerr << "[uWebSockets] Failed to listen on port " << port << std::endl;
+        }
+    });
+    return success;
+}
+
+void er_server_run(void* server_ptr) {
+    if (!server_ptr) return;
+    auto* server = static_cast<ErServer*>(server_ptr);
+    if (server->app) {
+        server->app->run();
+    }
+}
+
+void er_server_stop(void* server_ptr) {
+    if (!server_ptr) return;
+    auto* server = static_cast<ErServer*>(server_ptr);
+    if (server->listen_socket) {
+        us_listen_socket_close(server->ssl ? 1 : 0, server->listen_socket);
+        server->listen_socket = nullptr;
+    }
+}
+
+// ─── Legacy Wrapper APIs (Backward Compatibility) ───────────────────────────
+
+void er_http_init() {
+    if (g_default_server) {
+        delete g_default_server;
+    }
+    g_default_server = new ErServer(false, nullptr);
+    g_app = g_default_server->app;
+    g_http_req_cb = nullptr;
+    g_ws_open_cb = nullptr;
+    g_ws_message_cb = nullptr;
+    g_ws_close_cb = nullptr;
+}
+
+void er_http_init_with_callbacks(
+    HttpRequestCallback http_req_cb,
+    WsOpenCallback ws_open_cb,
+    WsMessageCallback ws_message_cb,
+    WsCloseCallback ws_close_cb
+) {
+    er_http_init();
+    g_http_req_cb = http_req_cb;
+    g_ws_open_cb = ws_open_cb;
+    g_ws_message_cb = ws_message_cb;
+    g_ws_close_cb = ws_close_cb;
+}
+
+void er_ws_register_route(const char* path) {
+    if (g_default_server) {
+        er_server_register_ws_route(g_default_server, path, 0);
+    }
+}
+
+void er_ws_send(void* ws, const char* message, size_t message_len, int is_binary) {
     if (!ws || !message) return;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
     web_socket->send(std::string_view(message, message_len), op, false);
 }
 
-extern "C" void er_ws_close(void* ws) {
+void er_ws_close(void* ws) {
     if (!ws) return;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     web_socket->close();
 }
 
-extern "C" void er_ws_close_with_code(void* ws, int code, const char* message, size_t message_len) {
+void er_ws_close_with_code(void* ws, int code, const char* message, size_t message_len) {
     if (!ws) return;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     if (code > 0 || message_len > 0) {
@@ -179,275 +547,70 @@ extern "C" void er_ws_close_with_code(void* ws, int code, const char* message, s
     }
 }
 
-extern "C" bool er_ws_subscribe(void* ws, const char* topic, size_t topic_len) {
+bool er_ws_subscribe(void* ws, const char* topic, size_t topic_len) {
     if (!ws || !topic) return false;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     return web_socket->subscribe(std::string_view(topic, topic_len));
 }
 
-extern "C" bool er_ws_unsubscribe(void* ws, const char* topic, size_t topic_len) {
+bool er_ws_unsubscribe(void* ws, const char* topic, size_t topic_len) {
     if (!ws || !topic) return false;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     return web_socket->unsubscribe(std::string_view(topic, topic_len));
 }
 
-extern "C" bool er_ws_is_subscribed(void* ws, const char* topic, size_t topic_len) {
+bool er_ws_is_subscribed(void* ws, const char* topic, size_t topic_len) {
     if (!ws || !topic) return false;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     return web_socket->isSubscribed(std::string_view(topic, topic_len));
 }
 
-extern "C" bool er_ws_publish(void* ws, const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
+bool er_ws_publish(void* ws, const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
     if (!ws || !topic || !message) return false;
     auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
     return web_socket->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
 }
 
-extern "C" bool er_app_publish(const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
-    if (!g_app || !topic || !message) return false;
+bool er_app_publish(const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
+    if (!g_default_server || !g_default_server->app || !topic || !message) return false;
     uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
-    return g_app->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+    return g_default_server->app->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
 }
 
-extern "C" unsigned int er_app_num_subscribers(const char* topic, size_t topic_len) {
-    if (!g_app || !topic) return 0;
-    return g_app->numSubscribers(std::string_view(topic, topic_len));
+unsigned int er_app_num_subscribers(const char* topic, size_t topic_len) {
+    if (!g_default_server || !g_default_server->app || !topic) return 0;
+    return g_default_server->app->numSubscribers(std::string_view(topic, topic_len));
 }
 
-extern "C" void er_http_register_route(const char* method, const char* path) {
-    if (!g_app) return;
-    
-    std::string method_str(method);
-    std::string path_str(path);
-    for (char &c : method_str) {
-        c = (char)toupper((unsigned char)c);
-    }
-    
-    if (method_str == "GET") {
-        g_app->get(path_str, [](auto* res, auto* req) {
-            std::string_view method = "GET";
-            std::string full_url = std::string(req->getUrl());
-            std::string_view query = req->getQuery();
-            if (!query.empty()) {
-                full_url.push_back('?');
-                full_url.append(query);
-            }
-            
-            std::string headers_str;
-            for (auto h : *req) {
-                headers_str.append(h.first);
-                headers_str.append(": ");
-                headers_str.append(h.second);
-                headers_str.append("\r\n");
-            }
-            
-            auto* token = new HttpResponseToken(res);
-            res->onAborted(AbortHandler(token));
-            if (g_http_req_cb) {
-                g_http_req_cb(token, method.data(), method.length(), full_url.data(), full_url.length(),
-                              headers_str.data(), headers_str.length(), nullptr, 0);
-            } else {
-                er_http_on_request(token, method.data(), method.length(), full_url.data(), full_url.length(),
-                                   headers_str.data(), headers_str.length(), nullptr, 0);
-            }
-        });
-    } else if (method_str == "HEAD") {
-        g_app->head(path_str, [](auto* res, auto* req) {
-            std::string_view method = "HEAD";
-            std::string full_url = std::string(req->getUrl());
-            std::string_view query = req->getQuery();
-            if (!query.empty()) {
-                full_url.push_back('?');
-                full_url.append(query);
-            }
-            
-            std::string headers_str;
-            for (auto h : *req) {
-                headers_str.append(h.first);
-                headers_str.append(": ");
-                headers_str.append(h.second);
-                headers_str.append("\r\n");
-            }
-            
-            auto* token = new HttpResponseToken(res);
-            res->onAborted(AbortHandler(token));
-            if (g_http_req_cb) {
-                g_http_req_cb(token, method.data(), method.length(), full_url.data(), full_url.length(),
-                              headers_str.data(), headers_str.length(), nullptr, 0);
-            } else {
-                er_http_on_request(token, method.data(), method.length(), full_url.data(), full_url.length(),
-                                   headers_str.data(), headers_str.length(), nullptr, 0);
-            }
-        });
-    } else {
-        auto register_body_handler = [&](auto attach_fn, const char* default_verb) {
-            attach_fn(path_str, [default_verb](auto* res, auto* req) {
-                std::string method_name = default_verb ? std::string(default_verb) : "";
-                if (method_name.empty()) {
-                    std::string_view req_m = req->getCaseSensitiveMethod();
-                    method_name = std::string(req_m);
-                    for (char &c : method_name) {
-                        c = (char)toupper((unsigned char)c);
-                    }
-                }
-                std::string full_url = std::string(req->getUrl());
-                std::string_view query = req->getQuery();
-                if (!query.empty()) {
-                    full_url.push_back('?');
-                    full_url.append(query);
-                }
-                
-                std::string headers_str;
-                for (auto h : *req) {
-                    headers_str.append(h.first);
-                    headers_str.append(": ");
-                    headers_str.append(h.second);
-                    headers_str.append("\r\n");
-                }
-                
-                auto* token = new HttpResponseToken(res);
-                res->onAborted(AbortHandler(token));
-
-                struct ReqCtx {
-                    HttpResponseToken* token;
-                    std::string method;
-                    std::string path;
-                    std::string headers;
-                    std::string body;
-                    ReqCtx(HttpResponseToken* t) : token(t) {
-                        if (token) token->add_ref();
-                    }
-                    ~ReqCtx() {
-                        if (token) {
-                            token->release();
-                            token = nullptr;
-                        }
-                    }
-                };
-                auto ctx = std::make_shared<ReqCtx>(token);
-                ctx->method = std::move(method_name);
-                ctx->path = std::move(full_url);
-                ctx->headers = std::move(headers_str);
-                
-                res->onData([ctx, token](std::string_view chunk, bool isLast) {
-                    if (token->aborted.load(std::memory_order_acquire)) return;
-                    ctx->body.append(chunk.data(), chunk.length());
-                    if (isLast) {
-                        if (g_http_req_cb) {
-                            g_http_req_cb(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                          ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
-                        } else {
-                            er_http_on_request(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                               ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
-                        }
-                    }
-                });
-            });
-        };
-
-        if (method_str == "POST") {
-            register_body_handler([](const std::string& p, auto h) { g_app->post(p, std::move(h)); }, "POST");
-        } else if (method_str == "PUT") {
-            register_body_handler([](const std::string& p, auto h) { g_app->put(p, std::move(h)); }, "PUT");
-        } else if (method_str == "PATCH") {
-            register_body_handler([](const std::string& p, auto h) { g_app->patch(p, std::move(h)); }, "PATCH");
-        } else if (method_str == "DELETE" || method_str == "DEL") {
-            register_body_handler([](const std::string& p, auto h) { g_app->del(p, std::move(h)); }, "DELETE");
-        } else if (method_str == "OPTIONS") {
-            register_body_handler([](const std::string& p, auto h) { g_app->options(p, std::move(h)); }, "OPTIONS");
-        } else if (method_str == "ALL" || method_str == "ANY" || method_str == "*") {
-            register_body_handler([](const std::string& p, auto h) { g_app->any(p, std::move(h)); }, nullptr);
-        }
+void er_http_register_route(const char* method, const char* path) {
+    if (g_default_server) {
+        er_server_register_route(g_default_server, method, path, 0);
     }
 }
 
-extern "C" void er_http_listen_and_run(int port) {
-    if (!g_app) return;
-    
-    // Register wildcard fallback on any method to catch any unhandled request and forward to er_http_on_request
-    g_app->any("/*", [](auto* res, auto* req) {
-        std::string_view req_m = req->getCaseSensitiveMethod();
-        std::string method_str = std::string(req_m);
-        for (char &c : method_str) {
-            c = (char)toupper((unsigned char)c);
-        }
-        std::string full_url = std::string(req->getUrl());
-        std::string_view query = req->getQuery();
-        if (!query.empty()) {
-            full_url.push_back('?');
-            full_url.append(query);
-        }
-        
-        std::string headers_str;
-        for (auto h : *req) {
-            headers_str.append(h.first);
-            headers_str.append(": ");
-            headers_str.append(h.second);
-            headers_str.append("\r\n");
-        }
-        
-        auto* token = new HttpResponseToken(res);
-        res->onAborted(AbortHandler(token));
-
-        struct FallbackCtx {
-            HttpResponseToken* token;
-            std::string method;
-            std::string path;
-            std::string headers;
-            std::string body;
-            FallbackCtx(HttpResponseToken* t) : token(t) {
-                if (token) token->add_ref();
-            }
-            ~FallbackCtx() {
-                if (token) {
-                    token->release();
-                    token = nullptr;
-                }
-            }
-        };
-        auto ctx = std::make_shared<FallbackCtx>(token);
-        ctx->method = std::move(method_str);
-        ctx->path = std::move(full_url);
-        ctx->headers = std::move(headers_str);
-        
-        res->onData([ctx, token](std::string_view chunk, bool isLast) {
-            if (token->aborted.load(std::memory_order_acquire)) return;
-            ctx->body.append(chunk.data(), chunk.length());
-            if (isLast) {
-                if (g_http_req_cb) {
-                    g_http_req_cb(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                  ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
-                } else {
-                    er_http_on_request(token, ctx->method.data(), ctx->method.length(), ctx->path.data(), ctx->path.length(),
-                                       ctx->headers.data(), ctx->headers.length(), ctx->body.data(), ctx->body.length());
-                }
-            }
-        });
-    });
-    
-    g_app->listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, [port](auto* listen_socket) {
-        if (listen_socket) {
-            er_http_on_listening();
-        } else {
-            std::cerr << "[uWebSockets] Failed to listen on port " << port << std::endl;
-        }
-    }).run();
+void er_http_listen_and_run(int port) {
+    if (!g_default_server) return;
+    if (er_server_listen(g_default_server, port)) {
+        er_server_run(g_default_server);
+    }
 }
 
-extern "C" bool er_http_response_is_alive(void* token_ptr) {
+// ─── Response Handling ───────────────────────────────────────────────────────
+
+bool er_http_response_is_alive(void* token_ptr) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     return !token->aborted.load(std::memory_order_acquire) && !token->responded.load(std::memory_order_acquire);
 }
 
-extern "C" void er_http_response_release(void* token_ptr) {
+void er_http_response_release(void* token_ptr) {
     if (!token_ptr) return;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     token->release();
 }
 
-extern "C" bool er_http_response_end_json(void* token_ptr, const char* json_str, size_t json_len) {
+bool er_http_response_end_json(void* token_ptr, const char* json_str, size_t json_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
@@ -462,7 +625,7 @@ extern "C" bool er_http_response_end_json(void* token_ptr, const char* json_str,
     return true;
 }
 
-extern "C" bool er_http_response_end_html(void* token_ptr, const char* html_str, size_t html_len) {
+bool er_http_response_end_html(void* token_ptr, const char* html_str, size_t html_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
@@ -477,7 +640,7 @@ extern "C" bool er_http_response_end_html(void* token_ptr, const char* html_str,
     return true;
 }
 
-extern "C" bool er_http_response_write_status(void* token_ptr, const char* status_str, size_t status_len) {
+bool er_http_response_write_status(void* token_ptr, const char* status_str, size_t status_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
@@ -487,7 +650,7 @@ extern "C" bool er_http_response_write_status(void* token_ptr, const char* statu
     return true;
 }
 
-extern "C" bool er_http_response_write_header(void* token_ptr, const char* key_str, size_t key_len, const char* val_str, size_t val_len) {
+bool er_http_response_write_header(void* token_ptr, const char* key_str, size_t key_len, const char* val_str, size_t val_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
@@ -497,7 +660,7 @@ extern "C" bool er_http_response_write_header(void* token_ptr, const char* key_s
     return true;
 }
 
-extern "C" bool er_http_response_end(void* token_ptr, const char* data_str, size_t data_len) {
+bool er_http_response_end(void* token_ptr, const char* data_str, size_t data_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
@@ -511,7 +674,7 @@ extern "C" bool er_http_response_end(void* token_ptr, const char* data_str, size
     return true;
 }
 
-extern "C" bool er_http_response_write(void* token_ptr, const char* data_str, size_t data_len) {
+bool er_http_response_write(void* token_ptr, const char* data_str, size_t data_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
@@ -524,7 +687,7 @@ struct AsyncSocketAccessor : public uWS::AsyncSocket<false> {
     using uWS::AsyncSocket<false>::getBufferedAmount;
 };
 
-extern "C" size_t er_http_response_get_buffered_amount(void* token_ptr) {
+size_t er_http_response_get_buffered_amount(void* token_ptr) {
     if (!token_ptr) return 0;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return 0;
@@ -533,13 +696,13 @@ extern "C" size_t er_http_response_get_buffered_amount(void* token_ptr) {
     return static_cast<AsyncSocketAccessor*>(static_cast<void*>(http_res))->getBufferedAmount();
 }
 
-extern "C" size_t er_ws_get_buffered_amount(void* ws) {
+size_t er_ws_get_buffered_amount(void* ws) {
     if (!ws) return 0;
     auto* websocket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
     return websocket->getBufferedAmount();
 }
 
-extern "C" void er_http_create_timer(int ms, void (*cb)(void*)) {
+void er_http_create_timer(int ms, void (*cb)(void*)) {
     auto* loop = uWS::Loop::get();
     struct us_timer_t *timer = us_create_timer((struct us_loop_t *) loop, 0, sizeof(void (*)(void*)));
     std::memcpy(us_timer_ext(timer), &cb, sizeof(void (*)(void*)));
@@ -550,5 +713,4 @@ extern "C" void er_http_create_timer(int ms, void (*cb)(void*)) {
     }, ms, ms);
 }
 
-
-
+} // extern "C"

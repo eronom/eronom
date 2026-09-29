@@ -154,6 +154,25 @@ pub fn native_context_header(args: Vec<Value>) -> Value {
             Some(s) => s.to_ascii_lowercase(),
             None => return Value::null(),
         };
+
+        // 1. Fast zero-copy lookup directly from active uWS request handle
+        let req_ptr = ACTIVE_REQ_HANDLE.get();
+        if !req_ptr.is_null() {
+            let mut out_val: *const c_char = std::ptr::null();
+            let mut out_len: usize = 0;
+            let found = unsafe {
+                er_http_req_get_header(req_ptr, name.as_ptr() as *const c_char, name.len(), &mut out_val, &mut out_len)
+            };
+            if found && !out_val.is_null() {
+                let slice = unsafe { std::slice::from_raw_parts(out_val as *const u8, out_len) };
+                if let Ok(val) = std::str::from_utf8(slice) {
+                    let ptr = get_or_create_string(val);
+                    return Value::string(ptr);
+                }
+            }
+        }
+
+        // 2. Fallback to active headers map
         let val_opt = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().get(&name).cloned());
         if let Some(val) = val_opt {
             let ptr = get_or_create_string(&val);
@@ -187,6 +206,25 @@ pub fn native_req_header(args: Vec<Value>) -> Value {
         Some(s) => s.to_ascii_lowercase(),
         None => return Value::null(),
     };
+
+    // 1. Fast zero-copy lookup directly from active uWS request handle
+    let req_ptr = ACTIVE_REQ_HANDLE.get();
+    if !req_ptr.is_null() {
+        let mut out_val: *const c_char = std::ptr::null();
+        let mut out_len: usize = 0;
+        let found = unsafe {
+            er_http_req_get_header(req_ptr, name.as_ptr() as *const c_char, name.len(), &mut out_val, &mut out_len)
+        };
+        if found && !out_val.is_null() {
+            let slice = unsafe { std::slice::from_raw_parts(out_val as *const u8, out_len) };
+            if let Ok(val) = std::str::from_utf8(slice) {
+                let ptr = get_or_create_string(val);
+                return Value::string(ptr);
+            }
+        }
+    }
+
+    // 2. Fallback to active headers map
     let val_opt = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().get(&name).cloned());
     if let Some(val) = val_opt {
         let ptr = get_or_create_string(&val);
@@ -204,6 +242,33 @@ pub fn native_req_cookie(args: Vec<Value>) -> Value {
         Some(s) => s,
         None => return Value::null(),
     };
+
+    // 1. Fast zero-copy lookup directly from active Cookie header
+    let req_ptr = ACTIVE_REQ_HANDLE.get();
+    if !req_ptr.is_null() {
+        let mut out_val: *const c_char = std::ptr::null();
+        let mut out_len: usize = 0;
+        let found = unsafe {
+            er_http_req_get_header(req_ptr, "cookie".as_ptr() as *const c_char, 6, &mut out_val, &mut out_len)
+        };
+        if found && !out_val.is_null() && out_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(out_val as *const u8, out_len) };
+            if let Ok(cookie_str) = std::str::from_utf8(slice) {
+                for item in cookie_str.split(';') {
+                    let item = item.trim();
+                    if let Some(pos) = item.find('=') {
+                        if item[..pos].trim() == name {
+                            let val = item[pos + 1..].trim();
+                            let ptr = get_or_create_string(val);
+                            return Value::string(ptr);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback to active cookies map
     let val_opt = ACTIVE_REQUEST_COOKIES.with(|c| c.borrow().get(name).cloned());
     if let Some(val) = val_opt {
         let ptr = get_or_create_string(&val);
@@ -221,6 +286,26 @@ pub fn native_req_query(args: Vec<Value>) -> Value {
         Some(s) => s,
         None => return Value::null(),
     };
+
+    // 1. Direct slice scan from raw query string (zero allocation)
+    let raw_query = ACTIVE_REQUEST_RAW_QUERY.with(|q| q.borrow().clone());
+    if !raw_query.is_empty() {
+        for part in raw_query.split('&') {
+            if let Some(pos) = part.find('=') {
+                if &part[..pos] == name {
+                    let val = &part[pos + 1..];
+                    let decoded = super::utils::percent_decode(val);
+                    let ptr = get_or_create_string(&decoded);
+                    return Value::string(ptr);
+                }
+            } else if part == name {
+                let ptr = get_or_create_string("");
+                return Value::string(ptr);
+            }
+        }
+    }
+
+    // 2. Fallback to active query map
     let val_opt = ACTIVE_REQUEST_QUERY.with(|q| q.borrow().get(name).cloned());
     if let Some(val) = val_opt {
         let ptr = get_or_create_string(&val);
