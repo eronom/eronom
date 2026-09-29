@@ -408,6 +408,45 @@ static void register_fallback_internal(ErServer* server) {
         for (char &c : method_str) c = (char)toupper((unsigned char)c);
         std::string full_url(req->getFullUrl());
 
+        if (g_http_req_cb) {
+            std::string headers_str;
+            for (auto h : *req) {
+                headers_str.append(h.first).append(": ").append(h.second).append("\r\n");
+            }
+            if (method_str == "GET" || method_str == "HEAD") {
+                g_http_req_cb(token, method_str.data(), method_str.length(),
+                              full_url.data(), full_url.length(),
+                              headers_str.data(), headers_str.length(),
+                              nullptr, 0);
+            } else {
+                struct FallbackDevCtx {
+                    HttpResponseToken* token;
+                    std::string method;
+                    std::string url;
+                    std::string headers;
+                    std::string body;
+                    FallbackDevCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
+                    ~FallbackDevCtx() { if (token) token->release(); }
+                };
+                auto ctx = std::make_shared<FallbackDevCtx>(token);
+                ctx->method = std::move(method_str);
+                ctx->url = std::move(full_url);
+                ctx->headers = std::move(headers_str);
+
+                res->onData([ctx, token](std::string_view chunk, bool isLast) {
+                    if (token->aborted.load(std::memory_order_acquire)) return;
+                    ctx->body.append(chunk.data(), chunk.length());
+                    if (isLast) {
+                        g_http_req_cb(token, ctx->method.data(), ctx->method.length(),
+                                      ctx->url.data(), ctx->url.length(),
+                                      ctx->headers.data(), ctx->headers.length(),
+                                      ctx->body.data(), ctx->body.length());
+                    }
+                });
+            }
+            return;
+        }
+
         if (method_str == "GET" || method_str == "HEAD") {
             ErReqView view;
             view.is_live = true;
