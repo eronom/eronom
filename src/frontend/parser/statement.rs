@@ -159,6 +159,7 @@ impl Parser {
             Ok(Stmt::Switch(target, cases, default_body))
         } else if self.match_token(&[TokenType::For]) {
             let has_paren = self.match_token(&[TokenType::LeftParen]);
+            self.match_token(&[TokenType::Let, TokenType::Const]);
             let var_name = self.consume_ident("Expected loop variable name.")?;
             self.consume(TokenType::In, "Expected 'in' after variable name.")?;
             let first_expr = self.expression()?;

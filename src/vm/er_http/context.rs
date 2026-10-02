@@ -454,3 +454,119 @@ pub fn native_res_end(args: Vec<Value>) -> Value {
     flush_response(res_ptr, Some(&body_bytes), None, 200);
     Value::null()
 }
+
+pub fn handle_fetch_return_value(res_ptr: *mut c_void, val: Value) {
+    if res_ptr.is_null() {
+        return;
+    }
+    let already_finished = ACTIVE_RESPONSE_STATE.with(|s| s.borrow().finished);
+    if already_finished {
+        return;
+    }
+
+    if val.is_string() {
+        let s = val.as_str().unwrap_or("");
+        flush_response(res_ptr, Some(s.as_bytes()), Some("text/html; charset=utf-8"), 200);
+    } else if val.is_object() {
+        let ptr = val.as_gc_ptr();
+        let mut has_is_response_flag = false;
+        let mut has_body = false;
+        let mut has_status = false;
+        let mut status = 200;
+        let mut headers = Vec::new();
+        let mut body_bytes: Option<Vec<u8>> = None;
+
+        let mut process_kv = |key_str: &str, v: Value| {
+            match key_str {
+                "_isResponse" => {
+                    if v.as_boolean() {
+                        has_is_response_flag = true;
+                    }
+                }
+                "status" => {
+                    if v.is_number() {
+                        status = v.as_number() as u16;
+                        has_status = true;
+                    }
+                }
+                "body" => {
+                    if let Some(s) = v.as_str() {
+                        body_bytes = Some(s.as_bytes().to_vec());
+                        has_body = true;
+                    }
+                }
+                "headers" => {
+                    if v.is_object() {
+                        let h_ptr = v.as_gc_ptr();
+                        unsafe {
+                            match &(*h_ptr).data {
+                                GcData::Object(h_map) => {
+                                    for (hk, hv) in h_map.iter() {
+                                        if let (Some(k), Some(val)) = (hk.0.as_str(), hv.as_str()) {
+                                            headers.push((k.to_string(), val.to_string()));
+                                        }
+                                    }
+                                }
+                                GcData::Struct(hs) => {
+                                    for (map_key, &idx) in &hs.descriptor.field_indices {
+                                        if let (Some(k), Some(val)) = (map_key.0.as_str(), hs.fields[idx].as_str()) {
+                                            headers.push((k.to_string(), val.to_string()));
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        };
+
+        unsafe {
+            match &(*ptr).data {
+                GcData::Object(map) => {
+                    for (k, v) in map.iter() {
+                        if let Some(key_str) = k.0.as_str() {
+                            process_kv(key_str, *v);
+                        }
+                    }
+                }
+                GcData::Struct(s) => {
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        if let Some(key_str) = map_key.0.as_str() {
+                            process_kv(key_str, s.fields[idx]);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if has_is_response_flag || (has_body && has_status) {
+            ACTIVE_RESPONSE_STATE.with(|s| {
+                let mut state = s.borrow_mut();
+                state.status = Some(status);
+                for (k, v) in headers {
+                    state.headers.push((k, v));
+                }
+            });
+            let b = body_bytes.as_deref().unwrap_or(b"");
+            flush_response(res_ptr, Some(b), None, status);
+        } else {
+            let json_val = value_to_json(val);
+            let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+            flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
+        }
+    } else if val.is_array() {
+        let json_val = value_to_json(val);
+        let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "[]".to_string());
+        flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
+    } else if val.is_number() || val.is_boolean() {
+        let s = val.to_string();
+        flush_response(res_ptr, Some(s.as_bytes()), Some("text/plain"), 200);
+    } else {
+        flush_response(res_ptr, Some(b""), Some("text/plain"), 200);
+    }
+}
+

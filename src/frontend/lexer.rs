@@ -136,8 +136,20 @@ impl<'a> Lexer<'a> {
                     TokenType::Percent
                 }
             }
-            '&' => TokenType::Ampersand,
-            '|' => TokenType::Pipe,
+            '&' => {
+                if self.match_char('&') {
+                    TokenType::And
+                } else {
+                    TokenType::Ampersand
+                }
+            }
+            '|' => {
+                if self.match_char('|') {
+                    TokenType::Or
+                } else {
+                    TokenType::Pipe
+                }
+            }
             '^' => TokenType::Caret,
             '~' => TokenType::Tilde,
             '?' => TokenType::Question,

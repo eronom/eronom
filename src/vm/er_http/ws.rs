@@ -426,9 +426,19 @@ pub extern "C" fn er_ws_on_open_instance(
     _path_ptr: *const c_char,
     _path_len: usize,
 ) {
-    let open_cb = WS_ROUTES.with(|routes| {
-        routes.borrow().get(route_id as usize).and_then(|r| r.open)
-    });
+    let port = _rust_server as usize as i32;
+    let serve_ws = if port > 0 {
+        ACTIVE_SERVERS.with(|s| s.borrow().get(&port).and_then(|st| st.websocket.clone()))
+    } else {
+        None
+    };
+    let open_cb = if let Some(ws_cfg) = &serve_ws {
+        ws_cfg.open
+    } else {
+        WS_ROUTES.with(|routes| {
+            routes.borrow().get(route_id as usize).and_then(|r| r.open)
+        })
+    };
 
     let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
         let mut cache = conns.borrow_mut();
@@ -482,9 +492,19 @@ pub extern "C" fn er_ws_on_message_instance(
         }
     };
 
-    let msg_cb = WS_ROUTES.with(|routes| {
-        routes.borrow().get(route_id as usize).and_then(|r| r.message)
-    });
+    let port = _rust_server as usize as i32;
+    let serve_ws = if port > 0 {
+        ACTIVE_SERVERS.with(|s| s.borrow().get(&port).and_then(|st| st.websocket.clone()))
+    } else {
+        None
+    };
+    let msg_cb = if let Some(ws_cfg) = &serve_ws {
+        ws_cfg.message
+    } else {
+        WS_ROUTES.with(|routes| {
+            routes.borrow().get(route_id as usize).and_then(|r| r.message)
+        })
+    };
 
     let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
         let mut cache = conns.borrow_mut();
@@ -532,9 +552,20 @@ pub extern "C" fn er_ws_on_close_instance(
         }
     };
 
-    let close_cb = WS_ROUTES.with(|routes| {
-        routes.borrow().get(route_id as usize).and_then(|r| r.close)
-    });
+    let port = _rust_server as usize as i32;
+    let serve_ws = if port > 0 {
+        ACTIVE_SERVERS.with(|s| s.borrow().get(&port).and_then(|st| st.websocket.clone()))
+    } else {
+        None
+    };
+    let close_cb = if let Some(ws_cfg) = &serve_ws {
+        ws_cfg.close
+    } else {
+        WS_ROUTES.with(|routes| {
+            routes.borrow().get(route_id as usize).and_then(|r| r.close)
+        })
+    };
+
 
     let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
         let mut cache = conns.borrow_mut();

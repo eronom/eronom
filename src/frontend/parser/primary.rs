@@ -255,7 +255,7 @@ impl Parser {
             let mut pairs = Vec::new();
             if !self.check(&TokenType::RightBrace) {
                 loop {
-                    let key = self.consume_ident("Expected property key.")?;
+                    let key = self.consume_prop_key("Expected property key.")?;
                     self.consume(TokenType::Colon, "Expected ':' after property key.")?;
                     let value = self.expression()?;
                     pairs.push((key, value));

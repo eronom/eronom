@@ -21,5 +21,7 @@ Follow these safety rules when executing Git commands in the workspace:
    - `feat/<feature-name>` (e.g. `feat/operators-and-collection-iteration`)
    - `fix/<bug-description>` (e.g. `fix/const-assignment-panic`)
    - `refactor/<subsystem>` (e.g. `refactor/vendor-native-deps`)
+   - **No External Runtime / Tool Names in Branch Names**: Never include Bun, Node, Deno, Hono, Express, or any other external runtime or framework names in branch names.
 7. **Pre-Commit Verification**: Ensure the codebase builds cleanly (`cargo build`) and tests pass before committing to ensure the commit history remains in a green, working state.
 8. **Credential & Secret Protection**: Never commit environment files (`.env`), API keys, access tokens, credentials, or private keys to the repository. Ensure sensitive files remain in `.gitignore`.
+9. **No External Runtime / Tool Names in Commit Messages or Branch Names**: Never mention Bun, Node, Deno, Hono, Express, or any other external runtime or framework names in commit messages, branch names, or pull request titles/descriptions. All Git metadata must refer strictly to Eronom-native functionality.

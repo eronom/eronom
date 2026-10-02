@@ -131,6 +131,15 @@ impl Parser {
         Err(format!("Error at line {}: {}", self.peek().line, msg))
     }
 
+    pub(crate) fn consume_prop_key(&mut self, msg: &str) -> Result<String, String> {
+        if let TokenType::String(s) = &self.peek().ty {
+            let s_clone = s.clone();
+            self.advance();
+            return Ok(s_clone);
+        }
+        self.consume_ident(msg)
+    }
+
     pub fn parse(&mut self) -> Result<Vec<Stmt>, String> {
         let mut statements = Vec::new();
         while !self.is_at_end() {

@@ -66,7 +66,20 @@ pub struct ErServerInstance {
     pub is_ssl: bool,
 }
 
+#[derive(Clone)]
+pub struct ServerState {
+    pub raw: *mut c_void,
+    pub port: i32,
+    pub hostname: String,
+    pub fetch: Value,
+    pub websocket: Option<WsRoute>,
+    pub error: Option<Value>,
+    pub is_running: bool,
+    pub server_val: Option<Value>,
+}
+
 thread_local! {
+    pub static ACTIVE_SERVERS: RefCell<HashMap<i32, ServerState>> = RefCell::new(HashMap::new());
     pub static ROUTER: RefCell<RadixRouter> = RefCell::new(RadixRouter::new());
     pub static ROUTES: RefCell<Vec<Route>> = const { RefCell::new(Vec::new()) };
     pub static WS_ROUTES: RefCell<Vec<WsRoute>> = const { RefCell::new(Vec::new()) };
@@ -96,3 +109,4 @@ thread_local! {
     pub static ACTIVE_REQUEST_METHOD: RefCell<String> = RefCell::new(String::new());
     pub static ACTIVE_RESPONSE_STATE: RefCell<ResponseState> = RefCell::new(ResponseState::new());
 }
+

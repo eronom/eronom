@@ -216,7 +216,7 @@ pub fn build_request_context(
     let res_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(res_map)));
 
     // Context object (c)
-    let mut map = crate::vm::gc::get_pooled_map(16);
+    let mut map = crate::vm::gc::get_pooled_map(26);
     let json_name = get_or_create_string("json");
     let html_name = get_or_create_string("html");
     let text_name = get_or_create_string("text");
@@ -249,5 +249,18 @@ pub fn build_request_context(
     map.insert(crate::vm::value::MapKey(Value::string(req_key_name)), req_obj);
     map.insert(crate::vm::value::MapKey(Value::string(res_key_name)), res_obj);
 
+    // Direct shortcuts on c: c.url, c.path, c.method, c.headers, c.params, c.query, c.body
+    map.insert(crate::vm::value::MapKey(Value::string(url_name)), Value::string(full_url_str));
+    map.insert(crate::vm::value::MapKey(Value::string(path_name)), Value::string(clean_path_str));
+    map.insert(crate::vm::value::MapKey(Value::string(method_name)), Value::string(method_str));
+    map.insert(crate::vm::value::MapKey(Value::string(params_name)), params_obj);
+    map.insert(crate::vm::value::MapKey(Value::string(query_name)), query_obj);
+    map.insert(crate::vm::value::MapKey(Value::string(raw_query_name)), Value::string(raw_query_str));
+    map.insert(crate::vm::value::MapKey(Value::string(headers_name)), headers_obj);
+    map.insert(crate::vm::value::MapKey(Value::string(cookies_name)), cookies_obj);
+    let c_body_name = get_or_create_string("body");
+    map.insert(crate::vm::value::MapKey(Value::string(c_body_name)), body_val);
+
     Value::object(crate::vm::gc::gc_allocate(GcData::Object(map)))
 }
+

@@ -105,6 +105,25 @@ impl<const SSL: bool> Drop for ErServer<SSL> {
 // ─── Server Startup ──────────────────────────────────────────────────────────
 
 pub fn start_http_server_if_needed(vm: &mut VM) {
+    let has_serve = ACTIVE_SERVERS.with(|s| !s.borrow().is_empty());
+    if has_serve {
+        let active_server_raw = ACTIVE_SERVERS.with(|s| {
+            s.borrow().values().find(|state| state.is_running && !state.raw.is_null()).map(|state| state.raw)
+        });
+        if let Some(raw) = active_server_raw {
+            ACTIVE_VM.with(|active| {
+                active.set(vm as *mut VM);
+            });
+            unsafe {
+                er_server_run(raw);
+            }
+            ACTIVE_VM.with(|active| {
+                active.set(std::ptr::null_mut());
+            });
+        }
+        return;
+    }
+
     let has_http_routes = ROUTES.with(|r| !r.borrow().is_empty());
     let has_ws_routes = WS_ROUTES.with(|r| !r.borrow().is_empty());
     let has_listen = LISTEN_PORT.with(|p| p.get().is_some());
@@ -384,6 +403,75 @@ pub extern "C" fn er_http_on_fallback(
         None => (raw_url, ""),
     };
 
+    // Check if this request is handled by an active serve() instance:
+    let server_port = _rust_server as usize as i32;
+    let serve_state_opt = if server_port > 0 {
+        ACTIVE_SERVERS.with(|s| s.borrow().get(&server_port).cloned())
+    } else {
+        ACTIVE_SERVERS.with(|s| s.borrow().values().find(|st| st.is_running).cloned())
+    };
+
+    if let Some(state) = serve_state_opt {
+        ACTIVE_REQUEST_PATH.with(|p| *p.borrow_mut() = clean_path.to_string());
+        ACTIVE_REQUEST_RAW_QUERY.with(|q| *q.borrow_mut() = raw_query.to_string());
+        ACTIVE_REQUEST_METHOD.with(|m| *m.borrow_mut() = method.to_string());
+        ACTIVE_REQ_HANDLE.set(req_ptr);
+        ACTIVE_HTTP_RESPONSE.set(res);
+        ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().reset());
+
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                let c_val = build_request_context(
+                    vm,
+                    raw_url,
+                    clean_path,
+                    raw_query,
+                    method,
+                    req_ptr,
+                    HashMap::new(),
+                    body_bytes,
+                );
+
+                let server_obj = state.server_val.unwrap_or(Value::null());
+                let ret_result = vm.call_function_reentrant(state.fetch, vec![c_val, server_obj]);
+                match ret_result {
+                    Ok(ret_val) => {
+                        let finished = ACTIVE_RESPONSE_STATE.with(|s| s.borrow().finished);
+                        if !finished {
+                            super::context::handle_fetch_return_value(res, ret_val);
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("[HTTP] Error in serve fetch: {}", err);
+                        if let Some(err_cb) = state.error {
+                            let err_str = get_or_create_string(&err);
+                            if let Ok(err_ret) = vm.call_function_reentrant(err_cb, vec![Value::string(err_str), server_obj]) {
+                                let finished = ACTIVE_RESPONSE_STATE.with(|s| s.borrow().finished);
+                                if !finished {
+                                    super::context::handle_fetch_return_value(res, err_ret);
+                                }
+                            }
+                        } else {
+                            let json_msg = serde_json::to_string(&err).unwrap_or_else(|_| "\"Internal Server Error\"".to_string());
+                            let body = format!("{{\"error\":\"Internal Server Error\",\"message\":{}}}", json_msg);
+                            super::context::flush_response(res, Some(body.as_bytes()), Some("application/json"), 500);
+                        }
+                    }
+                }
+
+                if let Err(e) = vm.run_event_loop() {
+                    eprintln!("[HTTP] Event loop error: {}", e);
+                }
+            }
+        });
+
+        ACTIVE_HTTP_RESPONSE.set(std::ptr::null_mut());
+        ACTIVE_REQ_HANDLE.set(std::ptr::null_mut());
+        return;
+    }
+
     // 1. Check if an ALL/wildcard route matches dynamically
     let mut extracted_params = HashMap::new();
     let callback_opt = ROUTER.with(|router| {
@@ -513,3 +601,240 @@ pub extern "C" fn er_http_on_request(
         body_len,
     );
 }
+
+// ─── Native serve() Primitive ──────────────────────────────────────────────
+
+pub fn native_serve(args: Vec<Value>) -> Value {
+    let vm_ptr = ACTIVE_VM.with(|active| active.get());
+    let (config_port, config_host) = if !vm_ptr.is_null() {
+        let vm = unsafe { &*vm_ptr };
+        (get_port_from_config(vm), "0.0.0.0".to_string())
+    } else {
+        (3000, "0.0.0.0".to_string())
+    };
+
+    let mut port = config_port;
+    let mut hostname = config_host;
+    let mut fetch_val = Value::null();
+    let mut ws_val: Option<WsRoute> = None;
+    let mut error_val: Option<Value> = None;
+
+    if !args.is_empty() && args[0].is_object() {
+        let opts = args[0];
+        let port_key = get_or_create_string("port");
+        let port_prop = get_property_helper(opts, Value::string(port_key));
+        if port_prop.is_number() {
+            port = port_prop.as_number() as i32;
+        }
+
+        let host_key = get_or_create_string("hostname");
+        let host_prop = get_property_helper(opts, Value::string(host_key));
+        if let Some(h) = host_prop.as_str() {
+            hostname = h.to_string();
+        }
+
+        let fetch_key = get_or_create_string("fetch");
+        let fetch_prop = get_property_helper(opts, Value::string(fetch_key));
+        if fetch_prop.is_function() || fetch_prop.is_native_function() {
+            fetch_val = fetch_prop;
+        }
+
+        let err_key = get_or_create_string("error");
+        let err_prop = get_property_helper(opts, Value::string(err_key));
+        if err_prop.is_function() || err_prop.is_native_function() {
+            error_val = Some(err_prop);
+        }
+
+        let ws_key = get_or_create_string("websocket");
+        let ws_prop = get_property_helper(opts, Value::string(ws_key));
+        if ws_prop.is_object() {
+            let open_key = get_or_create_string("open");
+            let msg_key = get_or_create_string("message");
+            let close_key = get_or_create_string("close");
+
+            let open = {
+                let v = get_property_helper(ws_prop, Value::string(open_key));
+                if v.is_function() || v.is_native_function() { Some(v) } else { None }
+            };
+            let message = {
+                let v = get_property_helper(ws_prop, Value::string(msg_key));
+                if v.is_function() || v.is_native_function() { Some(v) } else { None }
+            };
+            let close = {
+                let v = get_property_helper(ws_prop, Value::string(close_key));
+                if v.is_function() || v.is_native_function() { Some(v) } else { None }
+            };
+
+            ws_val = Some(WsRoute {
+                path: "/*".to_string(),
+                open,
+                message,
+                close,
+            });
+        }
+    }
+
+    // 1. Hot reload check: If server already listening on this port, update and return!
+    let existing_server = ACTIVE_SERVERS.with(|servers| {
+        servers.borrow().get(&port).cloned()
+    });
+    if let Some(mut state) = existing_server {
+        state.fetch = fetch_val;
+        state.websocket = ws_val;
+        state.error = error_val;
+        let srv_obj = state.server_val.unwrap_or(Value::null());
+        ACTIVE_SERVERS.with(|servers| {
+            servers.borrow_mut().insert(port, state);
+        });
+        println!("[HTTP] Hot-reloaded server on port {}...", port);
+        return srv_obj;
+    }
+
+    // 2. Determine final port
+    let final_port = if port > 0 {
+        crate::server::find_available_port(port as u16) as i32
+    } else {
+        3000
+    };
+    if final_port != port {
+        println!("Port {} is in use, listening on port {} instead.", port, final_port);
+    }
+
+    // 3. Create ErServer instance passing final_port as user pointer
+    let mut server = ErServer::<false>::new(final_port as usize as *mut c_void);
+
+    if ws_val.is_some() {
+        server.register_ws_route("/*", 0);
+    }
+
+    if !server.listen(final_port) {
+        eprintln!("[HTTP] Failed to listen on port {}", final_port);
+        return Value::null();
+    }
+
+    println!("[HTTP] Server listening on http://{}:{}", hostname, final_port);
+
+    // 4. Construct JS Server object
+    let mut server_map = crate::vm::gc::get_pooled_map(8);
+    let port_str = get_or_create_string("port");
+    let host_str = get_or_create_string("hostname");
+    let stop_str = get_or_create_string("stop");
+    let reload_str = get_or_create_string("reload");
+    let publish_str = get_or_create_string("publish");
+    let num_subs_str = get_or_create_string("numSubscribers");
+    let upgrade_str = get_or_create_string("upgrade");
+    let fetch_str = get_or_create_string("fetch");
+
+    server_map.insert(crate::vm::value::MapKey(Value::string(port_str)), Value::number(final_port as f64));
+    server_map.insert(crate::vm::value::MapKey(Value::string(host_str)), Value::string(get_or_create_string(&hostname)));
+    server_map.insert(crate::vm::value::MapKey(Value::string(stop_str)), Value::native_function(native_server_stop));
+    server_map.insert(crate::vm::value::MapKey(Value::string(reload_str)), Value::native_function(native_server_reload));
+    server_map.insert(crate::vm::value::MapKey(Value::string(publish_str)), Value::native_function(super::router::native_router_publish));
+    server_map.insert(crate::vm::value::MapKey(Value::string(num_subs_str)), Value::native_function(super::router::native_router_num_subscribers));
+    server_map.insert(crate::vm::value::MapKey(Value::string(upgrade_str)), Value::native_function(native_server_upgrade));
+    server_map.insert(crate::vm::value::MapKey(Value::string(fetch_str)), fetch_val);
+
+    let server_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(server_map)));
+
+    // 5. Store server state and prevent server Drop from closing listen socket
+    let raw_server = server.raw;
+    std::mem::forget(server);
+
+    ACTIVE_SERVERS.with(|servers| {
+        servers.borrow_mut().insert(final_port, ServerState {
+            raw: raw_server,
+            port: final_port,
+            hostname,
+            fetch: fetch_val,
+            websocket: ws_val,
+            error: error_val,
+            is_running: true,
+            server_val: Some(server_obj),
+        });
+    });
+
+    // 6. GC Roots
+    crate::vm::gc::GC_ROOTS.with(|roots| {
+        roots.borrow_mut().push(Box::new(|| {
+            ACTIVE_SERVERS.with(|s| {
+                for state in s.borrow().values() {
+                    crate::vm::gc::mark_value(&state.fetch);
+                    if let Some(err_cb) = &state.error {
+                        crate::vm::gc::mark_value(err_cb);
+                    }
+                    if let Some(ws) = &state.websocket {
+                        if let Some(open) = &ws.open { crate::vm::gc::mark_value(open); }
+                        if let Some(msg) = &ws.message { crate::vm::gc::mark_value(msg); }
+                        if let Some(close) = &ws.close { crate::vm::gc::mark_value(close); }
+                    }
+                    if let Some(srv) = &state.server_val {
+                        crate::vm::gc::mark_value(srv);
+                    }
+                }
+            });
+        }));
+    });
+
+    // 7. Off-hot-path timer
+    unsafe {
+        er_http_create_timer(100, er_http_on_timer);
+    }
+    SERVER_RUNNING.with(|r| r.set(true));
+    LISTEN_PORT.with(|p| p.set(Some(final_port)));
+
+    server_obj
+}
+
+pub fn native_server_stop(args: Vec<Value>) -> Value {
+    let target_port = if !args.is_empty() && args[0].is_number() {
+        Some(args[0].as_number() as i32)
+    } else {
+        None
+    };
+
+    ACTIVE_SERVERS.with(|servers| {
+        let mut s = servers.borrow_mut();
+        if let Some(p) = target_port {
+            if let Some(state) = s.get_mut(&p) {
+                if !state.raw.is_null() {
+                    unsafe { er_server_stop(state.raw) };
+                    state.is_running = false;
+                }
+            }
+        } else {
+            for state in s.values_mut() {
+                if !state.raw.is_null() {
+                    unsafe { er_server_stop(state.raw) };
+                    state.is_running = false;
+                }
+            }
+        }
+    });
+    SERVER_RUNNING.with(|r| r.set(false));
+    LISTEN_PORT.with(|p| p.set(None));
+    Value::null()
+}
+
+pub fn native_server_reload(args: Vec<Value>) -> Value {
+    if args.is_empty() || !args[0].is_object() {
+        return Value::null();
+    }
+    let opts = args[0];
+    let fetch_key = get_or_create_string("fetch");
+    let fetch_prop = get_property_helper(opts, Value::string(fetch_key));
+
+    ACTIVE_SERVERS.with(|servers| {
+        let mut s = servers.borrow_mut();
+        for state in s.values_mut() {
+            if fetch_prop.is_function() || fetch_prop.is_native_function() {
+                state.fetch = fetch_prop;
+            }
+        }
+    });
+    Value::boolean(true)
+}
+
+pub fn native_server_upgrade(_args: Vec<Value>) -> Value {
+    Value::boolean(true)
+}
+
