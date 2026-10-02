@@ -352,6 +352,10 @@ pub fn build_standalone_executable(
     let serialized_payload = bundle.serialize();
     let payload_len = serialized_payload.len() as u64;
 
+    if output_path.is_dir() {
+        anyhow::bail!("Cannot write executable to '{}' because it is a directory.", output_path.display());
+    }
+
     if let Some(parent) = output_path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent)?;
