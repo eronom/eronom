@@ -4,7 +4,7 @@
     let cartCount = useState(0);
     let cartSubtotal = useState(0);
     let cartTax = useState(0);
-    let cartShipping = useState(0);
+    let cartShipping = useState("FREE");
     let cartTotal = useState(0);
     
     let isCartOpen = useState(false);
@@ -16,97 +16,149 @@
         let count = 0;
         let subtotal = 0;
         for (let i = 0; i < items.length; i++) {
-            count += items[i].qty;
-            subtotal += items[i].price * items[i].qty;
+            count = count + items[i].qty;
+            subtotal = subtotal + (items[i].price * items[i].qty);
         }
-        cartCount = count;
-        cartSubtotal = subtotal;
-        cartTax = Math.round(subtotal * 0.08);
-        cartShipping = subtotal > 150 || subtotal === 0 ? 0 : 15;
-        cartTotal = subtotal + cartTax + cartShipping;
+        cartCount.value = count;
+        cartSubtotal.value = subtotal;
+        let tax = Math.round(subtotal * 0.08);
+        cartTax.value = tax;
+        let shippingVal = (subtotal > 150 || subtotal === 0) ? 0 : 15;
+        cartShipping.value = shippingVal === 0 ? "FREE" : "$" + shippingVal;
+        cartTotal.value = subtotal + tax + shippingVal;
     }
 
     function addToCart(id, name, price, emoji, category) {
-        let items = [...cartItems.value];
-        let existingIndex = -1;
+        let current = cartItems.value;
+        let items = [];
+        if (current && current.length) {
+            for (let i = 0; i < current.length; i++) {
+                items.push({
+                    id: current[i].id,
+                    name: current[i].name,
+                    price: current[i].price,
+                    emoji: current[i].emoji,
+                    category: current[i].category,
+                    qty: current[i].qty
+                });
+            }
+        }
+        let found = false;
         for (let i = 0; i < items.length; i++) {
             if (items[i].id === id) {
-                existingIndex = i;
+                items[i].qty = items[i].qty + 1;
+                found = true;
                 break;
             }
         }
-
-        if (existingIndex >= 0) {
-            items[existingIndex] = {
-                ...items[existingIndex],
-                qty: items[existingIndex].qty + 1
-            };
-        } else {
-            items.push({ id, name, price, emoji, category, qty: 1 });
+        if (!found) {
+            items.push({ id: id, name: name, price: price, emoji: emoji, category: category, qty: 1 });
         }
-
-        cartItems = items;
+        cartItems.value = items;
         recalculate(items);
 
-        toastMessage = "Added " + name + " to cart!";
-        setTimeout(() => {
-            if (toastMessage.value.includes(name)) {
-                toastMessage = "";
-            }
-        }, 3000);
+        toastMessage.value = "Added " + name + " to cart!";
+        let toast = document.getElementById("toast-pill");
+        if (toast) {
+            toast.classList.add("active");
+            setTimeout(() => {
+                if (toastMessage.value.indexOf(name) !== -1) {
+                    toast.classList.remove("active");
+                }
+            }, 3000);
+        }
     }
 
     function updateQty(id, delta) {
-        let items = [...cartItems.value];
-        let newItems = [];
-        for (let i = 0; i < items.length; i++) {
-            if (items[i].id === id) {
-                let newQty = items[i].qty + delta;
-                if (newQty > 0) {
-                    newItems.push({ ...items[i], qty: newQty });
+        let current = cartItems.value;
+        let items = [];
+        if (current && current.length) {
+            for (let i = 0; i < current.length; i++) {
+                if (current[i].id === id) {
+                    let newQty = current[i].qty + delta;
+                    if (newQty > 0) {
+                        items.push({
+                            id: current[i].id,
+                            name: current[i].name,
+                            price: current[i].price,
+                            emoji: current[i].emoji,
+                            category: current[i].category,
+                            qty: newQty
+                        });
+                    }
+                } else {
+                    items.push(current[i]);
                 }
-            } else {
-                newItems.push(items[i]);
             }
         }
-        cartItems = newItems;
-        recalculate(newItems);
+        cartItems.value = items;
+        recalculate(items);
     }
 
     function removeFromCart(id) {
-        let items = cartItems.value.filter(item => item.id !== id);
-        cartItems = items;
+        let current = cartItems.value;
+        let items = [];
+        if (current && current.length) {
+            for (let i = 0; i < current.length; i++) {
+                if (current[i].id !== id) {
+                    items.push(current[i]);
+                }
+            }
+        }
+        cartItems.value = items;
         recalculate(items);
     }
 
     function clearCart() {
-        cartItems = [];
+        cartItems.value = [];
         recalculate([]);
     }
 
     function openCart() {
-        isCartOpen = true;
+        isCartOpen.value = true;
+        let drawer = document.getElementById("cart-drawer");
+        let backdrop = document.getElementById("cart-backdrop");
+        if (drawer) drawer.classList.add("active");
+        if (backdrop) backdrop.classList.add("active");
     }
 
     function closeCart() {
-        isCartOpen = false;
+        isCartOpen.value = false;
+        let drawer = document.getElementById("cart-drawer");
+        let backdrop = document.getElementById("cart-backdrop");
+        if (drawer) drawer.classList.remove("active");
+        if (backdrop) backdrop.classList.remove("active");
     }
 
     function checkout() {
-        if (cartCount === 0) return;
-        orderSuccess = true;
-        cartItems = [];
+        if (cartCount.value === 0) return;
+        orderSuccess.value = true;
+        cartItems.value = [];
         recalculate([]);
-        toastMessage = "🎉 Order placed successfully! Thank you.";
+        toastMessage.value = "🎉 Order placed successfully! Thank you.";
+        let toast = document.getElementById("toast-pill");
+        if (toast) toast.classList.add("active");
         setTimeout(() => {
-            orderSuccess = false;
-            isCartOpen = false;
-            toastMessage = "";
+            closeCart();
+            orderSuccess.value = false;
+            if (toast) toast.classList.remove("active");
+            toastMessage.value = "";
         }, 3000);
     }
 
     function setCategory(cat) {
-        activeCategory = cat;
+        activeCategory.value = cat;
+        const cats = ["All", "Keyboards", "Audio", "Accessories", "Displays"];
+        for (let i = 0; i < cats.length; i++) {
+            let btn = document.getElementById("cat-btn-" + cats[i]);
+            if (btn) {
+                if (cats[i] === cat) {
+                    btn.classList.add("active");
+                } else {
+                    btn.classList.remove("active");
+                }
+            }
+        }
     }
 </script>
 
@@ -425,7 +477,14 @@
         backdrop-filter: blur(4px);
         -webkit-backdrop-filter: blur(4px);
         z-index: 200;
+        opacity: 0;
+        pointer-events: none;
         transition: opacity 0.3s ease;
+    }
+
+    .cart-backdrop.active {
+        opacity: 1;
+        pointer-events: auto;
     }
 
     .cart-drawer {
@@ -440,8 +499,13 @@
         z-index: 201;
         display: flex;
         flex-direction: column;
+        transform: translateX(100%);
         transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
         box-shadow: -10px 0 50px rgba(0, 0, 0, 0.8);
+    }
+
+    .cart-drawer.active {
+        transform: translateX(0);
     }
 
     .cart-header {
@@ -646,18 +710,16 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        animation: toastIn 0.3s ease forwards;
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+        pointer-events: none;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    @keyframes toastIn {
-        from {
-            opacity: 0;
-            transform: translateY(20px) scale(0.95);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-        }
+    .toast-pill.active {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        pointer-events: auto;
     }
 
     /* Footer */
@@ -716,11 +778,11 @@
 
     <!-- Category Filter Tabs -->
     <div class="filter-bar">
-        <button class="filter-tab active" onclick={() => setCategory("All")}>All Gear</button>
-        <button class="filter-tab" onclick={() => setCategory("Keyboards")}>Keyboards</button>
-        <button class="filter-tab" onclick={() => setCategory("Audio")}>Audio</button>
-        <button class="filter-tab" onclick={() => setCategory("Accessories")}>Accessories</button>
-        <button class="filter-tab" onclick={() => setCategory("Displays")}>Displays</button>
+        <button id="cat-btn-All" class="filter-tab active" onclick={() => setCategory("All")}>All Gear</button>
+        <button id="cat-btn-Keyboards" class="filter-tab" onclick={() => setCategory("Keyboards")}>Keyboards</button>
+        <button id="cat-btn-Audio" class="filter-tab" onclick={() => setCategory("Audio")}>Audio</button>
+        <button id="cat-btn-Accessories" class="filter-tab" onclick={() => setCategory("Accessories")}>Accessories</button>
+        <button id="cat-btn-Displays" class="filter-tab" onclick={() => setCategory("Displays")}>Displays</button>
     </div>
 
     <!-- Product Grid -->
@@ -790,11 +852,11 @@
                     🖥️
                 </div>
                 <div class="product-rating">★★★★★ 5.0 (61 reviews)</div>
-                <h3 class="product-name">Ultrawide 34" QD-OLED Display</h3>
+                <h3 class="product-name">Ultrawide 34-Inch QD-OLED Display</h3>
                 <p class="product-desc">1800R curved quantum dot OLED panel, 175Hz refresh rate, 0.03ms pixel response time, and 99.3% DCI-P3 cinematic color gamut.</p>
                 <div class="product-footer">
                     <span class="product-price">$799</span>
-                    <button class="add-btn" onclick={() => addToCart(4, '34-Inch QD-OLED Display', 799, '🖥️', 'Displays')}>
+                    <button class="add-btn" onclick={() => addToCart(4, "34-Inch QD-OLED Display", 799, "🖥️", "Displays")}>
                         Add to Cart +
                     </button>
                 </div>
@@ -842,86 +904,78 @@
 </main>
 
 <!-- Cart Slide-Over Drawer -->
-if isCartOpen {
-    <div class="cart-backdrop" onclick={closeCart}></div>
-    <div class="cart-drawer">
-        <div class="cart-header">
-            <div class="cart-title">
-                <span>🛍️ Shopping Cart</span>
-                <span class="cart-badge-count">{cartCount}</span>
-            </div>
-            <button class="close-btn" onclick={closeCart}>✕</button>
+<div id="cart-backdrop" class="cart-backdrop" onclick={closeCart}></div>
+<div id="cart-drawer" class="cart-drawer">
+    <div class="cart-header">
+        <div class="cart-title">
+            <span>🛍️ Shopping Cart</span>
+            <span class="cart-badge-count">{cartCount}</span>
         </div>
+        <button class="close-btn" onclick={closeCart}>✕</button>
+    </div>
 
-        <div class="cart-items-container">
-            if cartCount == 0 {
-                <div class="cart-empty-state">
-                    <div class="empty-icon">🛒</div>
-                    <h3 style="color: #ffffff; margin-bottom: 8px;">Your cart is empty</h3>
-                    <p style="font-size: 0.9rem;">Add some high-performance gear from the store catalog to get started!</p>
-                </div>
-            } else {
-                for item in cartItems {
-                    <div class="cart-item-row">
-                        <div class="cart-item-icon">{item.emoji}</div>
-                        <div class="cart-item-details">
-                            <div class="cart-item-name">{item.name}</div>
-                            <div class="cart-item-price">${item.price} each</div>
-                        </div>
-                        <div class="qty-controls">
-                            <button class="qty-btn" onclick={() => updateQty(item.id, -1)}>−</button>
-                            <span class="qty-num">{item.qty}</span>
-                            <button class="qty-btn" onclick={() => updateQty(item.id, 1)}>+</button>
-                        </div>
-                        <button class="item-del-btn" onclick={() => removeFromCart(item.id)}>✕</button>
-                    </div>
-                }
-            }
-        </div>
-
-        if cartCount > 0 {
-            <div class="cart-footer">
-                <div class="summary-line">
-                    <span>Subtotal</span>
-                    <strong style="color: #ffffff;">${cartSubtotal}</strong>
-                </div>
-                <div class="summary-line">
-                    <span>Estimated Tax (8%)</span>
-                    <span>${cartTax}</span>
-                </div>
-                <div class="summary-line">
-                    <span>Shipping</span>
-                    if cartShipping == 0 {
-                        <span style="color: #10b981; font-weight: 700;">FREE (Orders &gt; $150)</span>
-                    } else {
-                        <span>${cartShipping}</span>
-                    }
-                </div>
-                <div class="summary-total">
-                    <span>Total Due</span>
-                    <span style="color: #38bdf8;">${cartTotal}</span>
-                </div>
-
-                <button class="checkout-btn" onclick={checkout}>
-                    Complete Order &rarr;
-                </button>
-                <div style="text-align: center; margin-top: 12px;">
-                    <button style="background: none; border: none; color: #64748b; font-size: 0.8rem; cursor: pointer; text-decoration: underline;" onclick={clearCart}>
-                        Clear entire cart
-                    </button>
-                </div>
+    <div class="cart-items-container">
+        if cartCount == 0 {
+            <div class="cart-empty-state">
+                <div class="empty-icon">🛒</div>
+                <h3 style="color: #ffffff; margin-bottom: 8px;">Your cart is empty</h3>
+                <p style="font-size: 0.9rem;">Add some high-performance gear from the store catalog to get started!</p>
             </div>
         }
+
+        <div class="cart-items-list">
+            for item in cartItems {
+                <div class="cart-item-row">
+                    <div class="cart-item-icon">{item.emoji}</div>
+                    <div class="cart-item-details">
+                        <div class="cart-item-name">{item.name}</div>
+                        <div class="cart-item-price">${item.price} each</div>
+                    </div>
+                    <div class="qty-controls">
+                        <button class="qty-btn" onclick={() => updateQty(item.id, -1)}>−</button>
+                        <span class="qty-num">{item.qty}</span>
+                        <button class="qty-btn" onclick={() => updateQty(item.id, 1)}>+</button>
+                    </div>
+                    <button class="item-del-btn" onclick={() => removeFromCart(item.id)}>✕</button>
+                </div>
+            }
+        </div>
     </div>
-}
+
+    <div class="cart-footer">
+        <div class="summary-line">
+            <span>Subtotal</span>
+            <strong style="color: #ffffff;">${cartSubtotal}</strong>
+        </div>
+        <div class="summary-line">
+            <span>Estimated Tax (8%)</span>
+            <span>${cartTax}</span>
+        </div>
+        <div class="summary-line">
+            <span>Shipping</span>
+            <span>{cartShipping}</span>
+        </div>
+        <div class="summary-total">
+            <span>Total Due</span>
+            <span style="color: #38bdf8;">${cartTotal}</span>
+        </div>
+
+        <button class="checkout-btn" onclick={checkout}>
+            Complete Order &rarr;
+        </button>
+        <div style="text-align: center; margin-top: 12px;">
+            <button style="background: none; border: none; color: #64748b; font-size: 0.8rem; cursor: pointer; text-decoration: underline;" onclick={clearCart}>
+                Clear entire cart
+            </button>
+        </div>
+    </div>
+</div>
 
 <!-- Floating Toast Notification -->
-if toastMessage != "" {
-    <div class="toast-pill">
-        <span>⚡</span>
-        <span>{toastMessage}</span>
-    </div>
-}
+<div id="toast-pill" class="toast-pill">
+    <span>⚡</span>
+    <span>{toastMessage}</span>
+</div>
 
 <!-- Footer -->
 <footer class="estore-footer">
