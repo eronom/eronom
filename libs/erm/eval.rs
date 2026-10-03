@@ -480,7 +480,11 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
             if let Some(v) = inner {
                 list.push(v);
             }
-            p += next_p;
+            if next_p == 0 {
+                p += 1;
+            } else {
+                p += next_p;
+            }
             while p < s.len() && (s.as_bytes()[p] == b',' || s.as_bytes()[p].is_ascii_whitespace()) { p += 1; }
         }
         if p < s.len() { p += 1; }
@@ -517,7 +521,11 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
             if let Some(v) = inner {
                 map.insert(key, v);
             }
-            p += next_p;
+            if next_p == 0 {
+                p += 1;
+            } else {
+                p += next_p;
+            }
             while p < s.len() && (s.as_bytes()[p] == b',' || s.as_bytes()[p].is_ascii_whitespace()) { p += 1; }
         }
         if p < s.len() { p += 1; }

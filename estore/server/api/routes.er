@@ -1,0 +1,22 @@
+import { router } from "std/http"
+
+let app = router()
+
+let todos = [
+  { id: 1, text: "Explore app/pages/index.erm", done: true },
+  { id: 2, text: "Experience connection-preserving HMR", done: true },
+  { id: 3, text: "Create API routes in server/api/routes.er", done: false },
+  { id: 4, text: "Compile components with reactive signals", done: true },
+  { id: 5, text: "Deploy with native MIR JIT acceleration", done: false }
+]
+
+app.get('/todo', (c) => {
+  return c.json(todos)
+})
+
+app.get('/slow', (c) => {
+  return c.json({
+    status: "ok",
+    message: "API data fetched successfully from Eronom server"
+  })
+})

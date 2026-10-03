@@ -1,0 +1,936 @@
+<script>
+    // --- Reactive State Management ---
+    let cartItems = useState([]);
+    let cartCount = useState(0);
+    let cartSubtotal = useState(0);
+    let cartTax = useState(0);
+    let cartShipping = useState(0);
+    let cartTotal = useState(0);
+    
+    let isCartOpen = useState(false);
+    let activeCategory = useState("All");
+    let toastMessage = useState("");
+    let orderSuccess = useState(false);
+
+    function recalculate(items) {
+        let count = 0;
+        let subtotal = 0;
+        for (let i = 0; i < items.length; i++) {
+            count += items[i].qty;
+            subtotal += items[i].price * items[i].qty;
+        }
+        cartCount = count;
+        cartSubtotal = subtotal;
+        cartTax = Math.round(subtotal * 0.08);
+        cartShipping = subtotal > 150 || subtotal === 0 ? 0 : 15;
+        cartTotal = subtotal + cartTax + cartShipping;
+    }
+
+    function addToCart(id, name, price, emoji, category) {
+        let items = [...cartItems.value];
+        let existingIndex = -1;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].id === id) {
+                existingIndex = i;
+                break;
+            }
+        }
+
+        if (existingIndex >= 0) {
+            items[existingIndex] = {
+                ...items[existingIndex],
+                qty: items[existingIndex].qty + 1
+            };
+        } else {
+            items.push({ id, name, price, emoji, category, qty: 1 });
+        }
+
+        cartItems = items;
+        recalculate(items);
+
+        toastMessage = "Added " + name + " to cart!";
+        setTimeout(() => {
+            if (toastMessage.value.includes(name)) {
+                toastMessage = "";
+            }
+        }, 3000);
+    }
+
+    function updateQty(id, delta) {
+        let items = [...cartItems.value];
+        let newItems = [];
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].id === id) {
+                let newQty = items[i].qty + delta;
+                if (newQty > 0) {
+                    newItems.push({ ...items[i], qty: newQty });
+                }
+            } else {
+                newItems.push(items[i]);
+            }
+        }
+        cartItems = newItems;
+        recalculate(newItems);
+    }
+
+    function removeFromCart(id) {
+        let items = cartItems.value.filter(item => item.id !== id);
+        cartItems = items;
+        recalculate(items);
+    }
+
+    function clearCart() {
+        cartItems = [];
+        recalculate([]);
+    }
+
+    function openCart() {
+        isCartOpen = true;
+    }
+
+    function closeCart() {
+        isCartOpen = false;
+    }
+
+    function checkout() {
+        if (cartCount === 0) return;
+        orderSuccess = true;
+        cartItems = [];
+        recalculate([]);
+        toastMessage = "🎉 Order placed successfully! Thank you.";
+        setTimeout(() => {
+            orderSuccess = false;
+            isCartOpen = false;
+            toastMessage = "";
+        }, 3000);
+    }
+
+    function setCategory(cat) {
+        activeCategory = cat;
+    }
+</script>
+
+<style>
+    /* Estore Custom Luxury Styling */
+    .estore-container {
+        width: 100%;
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 0 24px;
+    }
+
+    /* Ambient Background Glow */
+    .ambient-glow {
+        position: fixed;
+        top: -150px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 800px;
+        height: 450px;
+        background: radial-gradient(circle, rgba(59, 130, 246, 0.12) 0%, rgba(99, 102, 241, 0.05) 50%, transparent 80%);
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    /* Glass Navbar */
+    .navbar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        background: rgba(10, 10, 15, 0.75);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 16px 0;
+    }
+
+    .nav-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .brand-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.4rem;
+        font-weight: 800;
+        letter-spacing: -0.5px;
+        color: #ffffff;
+    }
+
+    .brand-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+    }
+
+    .nav-actions {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .cart-trigger-btn {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 9999px;
+        color: #ffffff;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .cart-trigger-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(59, 130, 246, 0.4);
+        transform: translateY(-1px);
+    }
+
+    .cart-badge-count {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        height: 22px;
+        padding: 0 6px;
+        border-radius: 9999px;
+        background: #3b82f6;
+        color: #ffffff;
+        font-size: 0.75rem;
+        font-weight: 700;
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+    }
+
+    /* Hero Section */
+    .hero-banner {
+        position: relative;
+        padding: 60px 0 40px;
+        text-align: center;
+    }
+
+    .hero-title {
+        font-size: clamp(2.2rem, 5vw, 3.8rem);
+        font-weight: 800;
+        letter-spacing: -1.5px;
+        line-height: 1.15;
+        background: linear-gradient(180deg, #ffffff 40%, rgba(255, 255, 255, 0.6) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 16px;
+    }
+
+    .hero-subtitle {
+        font-size: 1.15rem;
+        color: #94a3b8;
+        max-width: 650px;
+        margin: 0 auto 32px;
+        line-height: 1.6;
+    }
+
+    .stats-row {
+        display: flex;
+        justify-content: center;
+        gap: 32px;
+        flex-wrap: wrap;
+        margin-top: 24px;
+    }
+
+    .stat-pill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 0.85rem;
+        color: #cbd5e1;
+    }
+
+    .stat-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #10b981;
+        box-shadow: 0 0 8px #10b981;
+    }
+
+    /* Category Filter Tabs */
+    .filter-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 40px 0 32px;
+    }
+
+    .filter-tab {
+        padding: 9px 20px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: #94a3b8;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .filter-tab:hover {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .filter-tab.active {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #ffffff;
+        font-weight: 600;
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
+    }
+
+    /* Product Grid */
+    .product-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 28px;
+        margin-bottom: 80px;
+    }
+
+    .product-card-wrap {
+        display: flex;
+        flex-direction: column;
+        background: rgba(18, 18, 26, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 20px;
+        padding: 24px;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .product-card-wrap:hover {
+        transform: translateY(-6px);
+        border-color: rgba(99, 102, 241, 0.4);
+        box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6), 0 0 30px rgba(59, 130, 246, 0.15);
+    }
+
+    .product-visual {
+        height: 180px;
+        border-radius: 14px;
+        background: radial-gradient(circle at center, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 4.5rem;
+        margin-bottom: 20px;
+        position: relative;
+    }
+
+    .product-badge-tag {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #38bdf8;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+    }
+
+    .product-rating {
+        font-size: 0.85rem;
+        color: #fbbf24;
+        margin-bottom: 8px;
+    }
+
+    .product-name {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: #f8fafc;
+        margin-bottom: 8px;
+        line-height: 1.3;
+    }
+
+    .product-desc {
+        font-size: 0.88rem;
+        color: #94a3b8;
+        line-height: 1.5;
+        margin-bottom: 20px;
+        flex-grow: 1;
+    }
+
+    .product-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: auto;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .product-price {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: #ffffff;
+    }
+
+    .add-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        border: none;
+        color: #ffffff;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+    }
+
+    .add-btn:hover {
+        background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+        transform: scale(1.03);
+        box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
+    }
+
+    /* Cart Slide-over Drawer */
+    .cart-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.65);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        z-index: 200;
+        transition: opacity 0.3s ease;
+    }
+
+    .cart-drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        max-width: 440px;
+        background: #0f111a;
+        border-left: 1px solid rgba(255, 255, 255, 0.1);
+        z-index: 201;
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        box-shadow: -10px 0 50px rgba(0, 0, 0, 0.8);
+    }
+
+    .cart-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 24px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .cart-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .close-btn {
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        font-size: 1.5rem;
+        cursor: pointer;
+        padding: 4px;
+        line-height: 1;
+        transition: color 0.2s ease;
+    }
+
+    .close-btn:hover {
+        color: #ffffff;
+    }
+
+    .cart-items-container {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .cart-item-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .cart-item-icon {
+        font-size: 2rem;
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+    }
+
+    .cart-item-details {
+        flex: 1;
+    }
+
+    .cart-item-name {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #f1f5f9;
+        margin-bottom: 4px;
+    }
+
+    .cart-item-price {
+        font-size: 0.85rem;
+        color: #94a3b8;
+    }
+
+    .qty-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 2px 6px;
+    }
+
+    .qty-btn {
+        background: transparent;
+        border: none;
+        color: #ffffff;
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+        padding: 2px 6px;
+    }
+
+    .qty-btn:hover {
+        color: #3b82f6;
+    }
+
+    .qty-num {
+        font-size: 0.85rem;
+        font-weight: 700;
+        min-width: 16px;
+        text-align: center;
+    }
+
+    .item-del-btn {
+        background: transparent;
+        border: none;
+        color: #64748b;
+        font-size: 1rem;
+        cursor: pointer;
+        margin-left: 6px;
+    }
+
+    .item-del-btn:hover {
+        color: #ef4444;
+    }
+
+    .cart-empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        height: 100%;
+        color: #64748b;
+        padding: 40px 20px;
+    }
+
+    .empty-icon {
+        font-size: 3.5rem;
+        margin-bottom: 16px;
+        opacity: 0.6;
+    }
+
+    .cart-footer {
+        padding: 24px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(10, 10, 15, 0.6);
+    }
+
+    .summary-line {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.9rem;
+        color: #94a3b8;
+        margin-bottom: 10px;
+    }
+
+    .summary-total {
+        display: flex;
+        justify-content: space-between;
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: #ffffff;
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px dashed rgba(255, 255, 255, 0.15);
+        margin-bottom: 20px;
+    }
+
+    .checkout-btn {
+        width: 100%;
+        padding: 14px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        border: none;
+        color: #ffffff;
+        font-size: 1rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
+    }
+
+    .checkout-btn:hover {
+        background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 25px rgba(16, 185, 129, 0.45);
+    }
+
+    /* Floating Toast Notification */
+    .toast-pill {
+        position: fixed;
+        bottom: 28px;
+        right: 28px;
+        background: #1e293b;
+        border: 1px solid rgba(59, 130, 246, 0.4);
+        padding: 14px 24px;
+        border-radius: 9999px;
+        color: #ffffff;
+        font-size: 0.95rem;
+        font-weight: 600;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(59, 130, 246, 0.3);
+        z-index: 300;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        animation: toastIn 0.3s ease forwards;
+    }
+
+    @keyframes toastIn {
+        from {
+            opacity: 0;
+            transform: translateY(20px) scale(0.95);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    /* Footer */
+    .estore-footer {
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 60px 0 40px;
+        background: rgba(10, 10, 15, 0.4);
+        text-align: center;
+    }
+</style>
+
+<div class="ambient-glow"></div>
+
+<!-- Sticky Navbar -->
+<header class="navbar">
+    <div class="estore-container nav-inner">
+        <div class="brand-logo">
+            <div class="brand-icon">⚡</div>
+            <span>estore</span>
+            <Badge status="info">v1.0</Badge>
+        </div>
+
+        <div class="nav-actions">
+            <button class="cart-trigger-btn" onclick={openCart}>
+                <span>🛍️ Cart</span>
+                <span class="cart-badge-count">{cartCount}</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<main class="estore-container">
+    <!-- Hero Banner -->
+    <section class="hero-banner">
+        <Badge status="info">Fine-Grained Signal Reactivity</Badge>
+        <h1 class="hero-title">High-Performance Hardware<br />Engineered for Creators</h1>
+        <p class="hero-subtitle">
+            Experience lightning-fast e-commerce powered by Eronom, the ERM component compiler, and reactive signal state management.
+        </p>
+
+        <div class="stats-row">
+            <div class="stat-pill">
+                <div class="stat-dot"></div>
+                <span>Zero Virtual DOM Overhead</span>
+            </div>
+            <div class="stat-pill">
+                <div class="stat-dot"></div>
+                <span>Fine-Grained Signal Stores</span>
+            </div>
+            <div class="stat-pill">
+                <div class="stat-dot"></div>
+                <span>Native uWebSockets Server</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Category Filter Tabs -->
+    <div class="filter-bar">
+        <button class="filter-tab active" onclick={() => setCategory("All")}>All Gear</button>
+        <button class="filter-tab" onclick={() => setCategory("Keyboards")}>Keyboards</button>
+        <button class="filter-tab" onclick={() => setCategory("Audio")}>Audio</button>
+        <button class="filter-tab" onclick={() => setCategory("Accessories")}>Accessories</button>
+        <button class="filter-tab" onclick={() => setCategory("Displays")}>Displays</button>
+    </div>
+
+    <!-- Product Grid -->
+    <div class="product-grid">
+        <!-- Product 1: Apex Pro 75 Keyboard -->
+        if activeCategory == "All" || activeCategory == "Keyboards" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Bestseller</span>
+                    ⌨️
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (142 reviews)</div>
+                <h3 class="product-name">Apex Pro 75 Mechanical Keyboard</h3>
+                <p class="product-desc">CNC anodized aluminum body, hot-swappable tactile switches, and doubleshot PBT keycaps with sound-dampening silicone gasket.</p>
+                <div class="product-footer">
+                    <span class="product-price">$189</span>
+                    <button class="add-btn" onclick={() => addToCart(1, "Apex Pro 75 Keyboard", 189, "⌨️", "Keyboards")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 2: Aura Studio ANC Headphones -->
+        if activeCategory == "All" || activeCategory == "Audio" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Trending</span>
+                    🎧
+                </div>
+                <div class="product-rating">★★★★★ 4.8 (98 reviews)</div>
+                <h3 class="product-name">Aura Studio Planar Headphones</h3>
+                <p class="product-desc">Planar magnetic drivers delivering lossless 24-bit audio, active noise cancellation, and up to 45 hours of ultra-low latency playback.</p>
+                <div class="product-footer">
+                    <span class="product-price">$299</span>
+                    <button class="add-btn" onclick={() => addToCart(2, "Aura Studio Headphones", 299, "🎧", "Audio")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 3: Precision Magnetic Mouse -->
+        if activeCategory == "All" || activeCategory == "Accessories" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Popular</span>
+                    🖱️
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (84 reviews)</div>
+                <h3 class="product-name">MagFlow Wireless Gaming Mouse</h3>
+                <p class="product-desc">Ultra-lightweight magnesium alloy chassis, 4,000Hz polling rate, optical micro-switches, and zero-latency wireless connectivity.</p>
+                <div class="product-footer">
+                    <span class="product-price">$89</span>
+                    <button class="add-btn" onclick={() => addToCart(3, "MagFlow Wireless Mouse", 89, "🖱️", "Accessories")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 4: Ultrawide QD-OLED Monitor -->
+        if activeCategory == "All" || activeCategory == "Displays" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Flagship</span>
+                    🖥️
+                </div>
+                <div class="product-rating">★★★★★ 5.0 (61 reviews)</div>
+                <h3 class="product-name">Ultrawide 34" QD-OLED Display</h3>
+                <p class="product-desc">1800R curved quantum dot OLED panel, 175Hz refresh rate, 0.03ms pixel response time, and 99.3% DCI-P3 cinematic color gamut.</p>
+                <div class="product-footer">
+                    <span class="product-price">$799</span>
+                    <button class="add-btn" onclick={() => addToCart(4, '34-Inch QD-OLED Display', 799, '🖥️', 'Displays')}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 5: Dark Grid Deskmat -->
+        if activeCategory == "All" || activeCategory == "Accessories" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Essential</span>
+                    ⚡
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (218 reviews)</div>
+                <h3 class="product-name">Eronom Stealth Deskmat</h3>
+                <p class="product-desc">900x400mm waterproof textured microfiber surface with anti-fray stitched perimeter and anti-slip natural rubber foundation.</p>
+                <div class="product-footer">
+                    <span class="product-price">$35</span>
+                    <button class="add-btn" onclick={() => addToCart(5, "Eronom Stealth Deskmat", 35, "⚡", "Accessories")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 6: Audiophile Dual DAC -->
+        if activeCategory == "All" || activeCategory == "Audio" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Hi-Res</span>
+                    🎚️
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (73 reviews)</div>
+                <h3 class="product-name">AeroDAC Hi-Res Audio Decoder</h3>
+                <p class="product-desc">Dual flagship DAC architecture supporting 32-bit/384kHz PCM & DSD256 decoding with 4.4mm balanced and 3.5mm headphone jacks.</p>
+                <div class="product-footer">
+                    <span class="product-price">$129</span>
+                    <button class="add-btn" onclick={() => addToCart(6, "AeroDAC Audio Decoder", 129, "🎚️", "Audio")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+</main>
+
+<!-- Cart Slide-Over Drawer -->
+if isCartOpen {
+    <div class="cart-backdrop" onclick={closeCart}></div>
+    <div class="cart-drawer">
+        <div class="cart-header">
+            <div class="cart-title">
+                <span>🛍️ Shopping Cart</span>
+                <span class="cart-badge-count">{cartCount}</span>
+            </div>
+            <button class="close-btn" onclick={closeCart}>✕</button>
+        </div>
+
+        <div class="cart-items-container">
+            if cartCount == 0 {
+                <div class="cart-empty-state">
+                    <div class="empty-icon">🛒</div>
+                    <h3 style="color: #ffffff; margin-bottom: 8px;">Your cart is empty</h3>
+                    <p style="font-size: 0.9rem;">Add some high-performance gear from the store catalog to get started!</p>
+                </div>
+            } else {
+                for item in cartItems {
+                    <div class="cart-item-row">
+                        <div class="cart-item-icon">{item.emoji}</div>
+                        <div class="cart-item-details">
+                            <div class="cart-item-name">{item.name}</div>
+                            <div class="cart-item-price">${item.price} each</div>
+                        </div>
+                        <div class="qty-controls">
+                            <button class="qty-btn" onclick={() => updateQty(item.id, -1)}>−</button>
+                            <span class="qty-num">{item.qty}</span>
+                            <button class="qty-btn" onclick={() => updateQty(item.id, 1)}>+</button>
+                        </div>
+                        <button class="item-del-btn" onclick={() => removeFromCart(item.id)}>✕</button>
+                    </div>
+                }
+            }
+        </div>
+
+        if cartCount > 0 {
+            <div class="cart-footer">
+                <div class="summary-line">
+                    <span>Subtotal</span>
+                    <strong style="color: #ffffff;">${cartSubtotal}</strong>
+                </div>
+                <div class="summary-line">
+                    <span>Estimated Tax (8%)</span>
+                    <span>${cartTax}</span>
+                </div>
+                <div class="summary-line">
+                    <span>Shipping</span>
+                    if cartShipping == 0 {
+                        <span style="color: #10b981; font-weight: 700;">FREE (Orders &gt; $150)</span>
+                    } else {
+                        <span>${cartShipping}</span>
+                    }
+                </div>
+                <div class="summary-total">
+                    <span>Total Due</span>
+                    <span style="color: #38bdf8;">${cartTotal}</span>
+                </div>
+
+                <button class="checkout-btn" onclick={checkout}>
+                    Complete Order &rarr;
+                </button>
+                <div style="text-align: center; margin-top: 12px;">
+                    <button style="background: none; border: none; color: #64748b; font-size: 0.8rem; cursor: pointer; text-decoration: underline;" onclick={clearCart}>
+                        Clear entire cart
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<!-- Floating Toast Notification -->
+if toastMessage != "" {
+    <div class="toast-pill">
+        <span>⚡</span>
+        <span>{toastMessage}</span>
+    </div>
+}
+
+<!-- Footer -->
+<footer class="estore-footer">
+    <div class="estore-container">
+        <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 8px;">
+            estore ⚡ An Eronom Reactive Component Framework Demonstration
+        </p>
+        <p style="color: #475569; font-size: 0.8rem;">
+            Built with fine-grained signals, EDS design system, and connection-preserving HMR.
+        </p>
+    </div>
+</footer>
