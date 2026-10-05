@@ -1,22 +1,112 @@
-import { router } from "std/http"
+import { Erm, render, renderString } from "std/erm"
+import { router, Response } from "std/http"
 
 let app = router()
 
 let todos = [
   { id: 1, text: "Explore app/pages/index.erm", done: true },
   { id: 2, text: "Experience connection-preserving HMR", done: true },
-  { id: 3, text: "Create API routes in server/api/routes.er", done: false },
+  { id: 3, text: "Create API routes in server/api/routes.er", done: true },
   { id: 4, text: "Compile components with reactive signals", done: true },
-  { id: 5, text: "Deploy with native MIR JIT acceleration", done: false }
+  { id: 5, text: "Render components server-side via std/erm", done: true },
+  { id: 6, text: "Deploy with native MIR JIT acceleration", done: true }
 ]
 
+let products = [
+  { id: 1, name: "Apex Pro 75 Keyboard", price: 189, emoji: "⌨️", category: "Keyboards" },
+  { id: 2, name: "Aura Studio Headphones", price: 299, emoji: "🎧", category: "Audio" },
+  { id: 3, name: "MagFlow Wireless Mouse", price: 89, emoji: "🖱️", category: "Accessories" },
+  { id: 4, name: "Ultrawide QD-OLED Display", price: 899, emoji: "🖥️", category: "Displays" }
+]
+
+// 1. JSON Todo API
 app.get('/todo', (c) => {
   return c.json(todos)
 })
 
+// 2. Simulated Latency Endpoint
 app.get('/slow', (c) => {
   return c.json({
     status: "ok",
-    message: "API data fetched successfully from Eronom server"
+    message: "API data fetched successfully from Eronom server",
+    engine: "Eronom MIR JIT + uWebSockets"
+  })
+})
+
+// 3. Products JSON Catalog API
+app.get('/products', (c) => {
+  return c.json({
+    count: products.length,
+    items: products
+  })
+})
+
+// 4. Server-Side Rendered Deal of the Day Component (using c.render with .erm template file)
+app.get('/deal', (c) => {
+  return c.render("app/components/DealBanner.erm", {
+    title: "Apex Pro 75 Mechanical Keyboard (Special Edition)",
+    discount: 30,
+    price: 189,
+    originalPrice: 269,
+    emoji: "⌨️"
+  })
+})
+
+// 5. Server-Side Rendered Deal using c.renderString (inline ERM template string)
+app.get('/deal-inline', (c) => {
+  let template = "<div class='inline-deal' style='background:#1e293b;border:1px solid #3b82f6;padding:20px;border-radius:12px;color:#fff;font-family:sans-serif;'>" +
+    "<div style='display:flex;align-items:center;gap:12px;'>" +
+    "<span style='font-size:2.5rem;'>\{emoji\}</span>" +
+    "<div>" +
+    "<h3 style='margin:0;color:#60a5fa;'>\{title\}</h3>" +
+    "<p style='margin:4px 0 8px;color:#94a3b8;'>Exclusive inline server-rendered component compiled by std/erm</p>" +
+    "<span style='font-size:1.3rem;font-weight:bold;'>$\{price\}</span> " +
+    "<span style='text-decoration:line-through;color:#64748b;margin-left:8px;'>$\{originalPrice\}</span>" +
+    "<span style='margin-left:12px;background:#10b98122;color:#10b981;padding:2px 8px;border-radius:4px;font-weight:bold;'>-\{discount\}% OFF</span>" +
+    "</div></div></div>"
+
+  return c.renderString(template, {
+    title: "Aura Studio Planar Headphones",
+    discount: 25,
+    price: 299,
+    originalPrice: 399,
+    emoji: "🎧"
+  })
+})
+
+// 6. Server-Side Rendered Cart Summary (using Response.renderString)
+app.get('/cart-preview', (c) => {
+  let template = "<div class='cart-preview-card' style='background:#0f172a;border:1px solid rgba(255,255,255,0.1);padding:24px;border-radius:16px;color:#fff;font-family:sans-serif;max-width:400px;'>" +
+    "<div style='display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:12px;margin-bottom:16px;'>" +
+    "<span style='font-weight:bold;color:#38bdf8;'>⚡ Quick Cart Preview</span>" +
+    "<span style='color:#94a3b8;'>\{count\} items</span>" +
+    "</div>" +
+    "<div style='display:flex;justify-content:space-between;margin-bottom:8px;color:#cbd5e1;'><span>Subtotal:</span><span>$\{subtotal\}</span></div>" +
+    "<div style='display:flex;justify-content:space-between;margin-bottom:8px;color:#cbd5e1;'><span>Tax (8%):</span><span>$\{tax\}</span></div>" +
+    "<div style='display:flex;justify-content:space-between;margin-bottom:12px;color:#cbd5e1;'><span>Shipping:</span><span style='color:#10b981;'>\{shipping\}</span></div>" +
+    "<div style='display:flex;justify-content:space-between;font-size:1.2rem;font-weight:bold;border-top:1px solid rgba(255,255,255,0.1);padding-top:12px;'>" +
+    "<span>Total:</span><span style='color:#60a5fa;'>$\{total\}</span>" +
+    "</div>" +
+    "<div style='margin-top:16px;font-size:0.75rem;color:#64748b;text-align:center;'>Rendered server-side via std/http Response.renderString</div>" +
+    "</div>"
+
+  return Response.renderString(template, {
+    count: 2,
+    subtotal: 488,
+    tax: 39,
+    shipping: "FREE",
+    total: 527
+  })
+})
+
+// 7. Server Health & ERM Architecture Info
+app.get('/status', (c) => {
+  return c.json({
+    status: "healthy",
+    engine: "Eronom Reactive Model (ERM)",
+    version: "0.9.2",
+    jit: "MIR JIT Native Code Generation",
+    http: "uWebSockets High-Throughput Engine",
+    serverSideRendering: "std/erm active"
   })
 })

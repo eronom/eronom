@@ -1,0 +1,159 @@
+<div class="deal-banner-card">
+    <div class="deal-badge-row">
+        <span class="deal-pill">⚡ FLASH DEAL OF THE DAY</span>
+        <span class="deal-discount">-{discount}% OFF</span>
+    </div>
+
+    <div class="deal-content">
+        <div class="deal-visual">
+            <span class="deal-emoji">{emoji}</span>
+        </div>
+        <div class="deal-info">
+            <h3 class="deal-title">{title}</h3>
+            <p class="deal-desc">Precision-tuned enthusiast hardware compiled with native MIR JIT speed.</p>
+            <div class="deal-pricing">
+                <span class="deal-price-current">${price}</span>
+                <span class="deal-price-old">${originalPrice}</span>
+                <span class="deal-shipping-badge">✓ Free Express Delivery</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="deal-footer">
+        <span class="deal-timer">⏳ Limited inventory remaining today</span>
+        <span class="deal-tag">Server-Rendered via std/erm</span>
+    </div>
+</div>
+
+<style>
+    .deal-banner-card {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 20px;
+        padding: 24px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4), 0 0 24px rgba(59, 130, 246, 0.15);
+        color: #ffffff;
+        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+        margin: 20px 0;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .deal-banner-card:hover {
+        border-color: rgba(99, 102, 241, 0.5);
+        transform: translateY(-2px);
+    }
+
+    .deal-badge-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .deal-pill {
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        color: #60a5fa;
+        text-transform: uppercase;
+        background: rgba(59, 130, 246, 0.15);
+        padding: 4px 12px;
+        border-radius: 9999px;
+        border: 1px solid rgba(59, 130, 246, 0.25);
+    }
+
+    .deal-discount {
+        font-size: 0.85rem;
+        font-weight: 800;
+        color: #10b981;
+        background: rgba(16, 185, 129, 0.12);
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+
+    .deal-content {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+    }
+
+    .deal-visual {
+        width: 80px;
+        height: 80px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2.8rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        flex-shrink: 0;
+    }
+
+    .deal-info {
+        flex: 1;
+    }
+
+    .deal-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin: 0 0 6px 0;
+        color: #f8fafc;
+    }
+
+    .deal-desc {
+        font-size: 0.88rem;
+        color: #94a3b8;
+        margin: 0 0 12px 0;
+        line-height: 1.4;
+    }
+
+    .deal-pricing {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .deal-price-current {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #ffffff;
+    }
+
+    .deal-price-old {
+        font-size: 0.95rem;
+        color: #64748b;
+        text-decoration: line-through;
+    }
+
+    .deal-shipping-badge {
+        font-size: 0.8rem;
+        color: #38bdf8;
+        font-weight: 500;
+    }
+
+    .deal-footer {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.78rem;
+        color: #64748b;
+    }
+
+    .deal-timer {
+        color: #cbd5e1;
+    }
+
+    .deal-tag {
+        font-family: 'JetBrains Mono', monospace;
+        color: #818cf8;
+        background: rgba(129, 140, 248, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
+</style>

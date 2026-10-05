@@ -109,7 +109,7 @@ export const Response = {
       }
     }
     let p = params || {}
-    let htmlStr = render(filePath, p)
+    let htmlStr = typeof render == "function" ? render(filePath, p) : (typeof Eronom_nativeRender == "function" ? Eronom_nativeRender(filePath, p) : "")
     return {
       _isResponse: true,
       status: s,
@@ -129,7 +129,7 @@ export const Response = {
       }
     }
     let p = params || {}
-    let htmlStr = renderString(templateString, p)
+    let htmlStr = typeof renderString == "function" ? renderString(templateString, p) : (typeof Eronom_nativeRenderString == "function" ? Eronom_nativeRenderString(templateString, p) : "")
     return {
       _isResponse: true,
       status: s,
@@ -184,8 +184,33 @@ export const router = () => {
   let wsConfig = null
   let serverInstance = null
 
+  let nativeR = null
+  if (typeof Eronom_nativeRoute == "function") {
+    nativeR = Eronom_nativeRoute()
+  }
+
   let addRoute = (method, path, handler) => {
     routes.push({ method: method, path: path, handler: handler })
+    if (nativeR) {
+      let m = method.toLowerCase()
+      if (m == "get" && nativeR.get) {
+        nativeR.get(path, handler)
+      } else if (m == "post" && nativeR.post) {
+        nativeR.post(path, handler)
+      } else if (m == "put" && nativeR.put) {
+        nativeR.put(path, handler)
+      } else if (m == "delete" && nativeR.delete) {
+        nativeR.delete(path, handler)
+      } else if (m == "patch" && nativeR.patch) {
+        nativeR.patch(path, handler)
+      } else if (m == "head" && nativeR.head) {
+        nativeR.head(path, handler)
+      } else if (m == "options" && nativeR.options) {
+        nativeR.options(path, handler)
+      } else if (m == "all" && nativeR.all) {
+        nativeR.all(path, handler)
+      }
+    }
   }
 
   let app = {
@@ -279,7 +304,7 @@ export const router = () => {
         if (st) {
           s = st
         }
-        let htmlStr = render(filePath, params || {})
+        let htmlStr = typeof render == "function" ? render(filePath, params || {}) : (typeof Eronom_nativeRender == "function" ? Eronom_nativeRender(filePath, params || {}) : "")
         return Response.html(htmlStr, { status: s })
       }
       c.renderString = (templateString, params, st) => {
@@ -287,7 +312,7 @@ export const router = () => {
         if (st) {
           s = st
         }
-        let htmlStr = renderString(templateString, params || {})
+        let htmlStr = typeof renderString == "function" ? renderString(templateString, params || {}) : (typeof Eronom_nativeRenderString == "function" ? Eronom_nativeRenderString(templateString, params || {}) : "")
         return Response.html(htmlStr, { status: s })
       }
 
@@ -377,11 +402,11 @@ export const createServer = (handler) => {
       json: (data, code) => { c.res.json(data, code) },
       html: (data, code) => { c.res.html(data, code) },
       render: (filePath, params, code) => {
-        let htmlStr = render(filePath, params || {})
+        let htmlStr = typeof render == "function" ? render(filePath, params || {}) : (typeof Eronom_nativeRender == "function" ? Eronom_nativeRender(filePath, params || {}) : "")
         c.res.html(htmlStr, code)
       },
       renderString: (templateString, params, code) => {
-        let htmlStr = renderString(templateString, params || {})
+        let htmlStr = typeof renderString == "function" ? renderString(templateString, params || {}) : (typeof Eronom_nativeRenderString == "function" ? Eronom_nativeRenderString(templateString, params || {}) : "")
         c.res.html(htmlStr, code)
       },
       send: (data, code) => { c.res.send(data, code) },

@@ -81,6 +81,18 @@
             }
         }
     }
+
+    useEffect(() => {
+        fetch("/api/deal")
+            .then((res) => res.text())
+            .then((html) => {
+                let slot = document.getElementById("server-deal-slot");
+                if (slot && html) {
+                    slot.innerHTML = html;
+                }
+            })
+            .catch((err) => console.error("Server deal fetch error:", err));
+    }, []);
 </script>
 
 <style>
@@ -90,6 +102,11 @@
         max-width: 1280px;
         margin: 0 auto;
         padding: 0 24px;
+    }
+
+    .server-deal-slot {
+        margin: 20px auto 10px;
+        max-width: 960px;
     }
 
     /* Ambient Background Glow */
@@ -338,6 +355,9 @@
             </div>
         </div>
     </section>
+
+    <!-- Server-Side Rendered Deal of the Day (std/erm component compiled via backend /api/deal) -->
+    <div id="server-deal-slot" class="server-deal-slot"></div>
 
     <!-- Category Filter Tabs -->
     <div class="filter-bar">

@@ -196,6 +196,8 @@ pub fn build_request_context(
     let text_key = get_or_create_string("text");
     let json_key = get_or_create_string("json");
     let html_key = get_or_create_string("html");
+    let render_key = get_or_create_string("render");
+    let render_string_key = get_or_create_string("renderString");
     let end_key = get_or_create_string("end");
     let redirect_key = get_or_create_string("redirect");
 
@@ -210,15 +212,19 @@ pub fn build_request_context(
     res_map.insert(crate::vm::value::MapKey(Value::string(text_key)), Value::native_function(native_context_text));
     res_map.insert(crate::vm::value::MapKey(Value::string(json_key)), Value::native_function(native_context_json));
     res_map.insert(crate::vm::value::MapKey(Value::string(html_key)), Value::native_function(native_context_html));
+    res_map.insert(crate::vm::value::MapKey(Value::string(render_key)), Value::native_function(native_context_render));
+    res_map.insert(crate::vm::value::MapKey(Value::string(render_string_key)), Value::native_function(native_context_render_string));
     res_map.insert(crate::vm::value::MapKey(Value::string(end_key)), Value::native_function(native_res_end));
     res_map.insert(crate::vm::value::MapKey(Value::string(redirect_key)), Value::native_function(native_context_redirect));
 
     let res_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(res_map)));
 
     // Context object (c)
-    let mut map = crate::vm::gc::get_pooled_map(26);
+    let mut map = crate::vm::gc::get_pooled_map(28);
     let json_name = get_or_create_string("json");
     let html_name = get_or_create_string("html");
+    let render_name_c = get_or_create_string("render");
+    let render_string_name_c = get_or_create_string("renderString");
     let text_name = get_or_create_string("text");
     let send_name = get_or_create_string("send");
     let status_name = get_or_create_string("status");
@@ -235,6 +241,8 @@ pub fn build_request_context(
 
     map.insert(crate::vm::value::MapKey(Value::string(json_name)), Value::native_function(native_context_json));
     map.insert(crate::vm::value::MapKey(Value::string(html_name)), Value::native_function(native_context_html));
+    map.insert(crate::vm::value::MapKey(Value::string(render_name_c)), Value::native_function(native_context_render));
+    map.insert(crate::vm::value::MapKey(Value::string(render_string_name_c)), Value::native_function(native_context_render_string));
     map.insert(crate::vm::value::MapKey(Value::string(text_name)), Value::native_function(native_context_text));
     map.insert(crate::vm::value::MapKey(Value::string(send_name)), Value::native_function(native_context_text));
     map.insert(crate::vm::value::MapKey(Value::string(status_name)), Value::native_function(native_context_status));

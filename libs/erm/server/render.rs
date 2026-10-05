@@ -93,7 +93,28 @@ pub fn native_render(args: Vec<Value>) -> Value {
         }
     }
     if !path.exists() {
-        return Value::null();
+        if Path::new(file_path).exists() {
+            path = Path::new(file_path).to_path_buf();
+        } else if let Some(target_script) = crate::vm::er_http::get_target_script_path() {
+            let mut curr = Path::new(&target_script).parent();
+            let mut found = false;
+            while let Some(dir) = curr {
+                let candidate = dir.join(file_path);
+                if candidate.exists() {
+                    path = candidate;
+                    found = true;
+                    break;
+                }
+                curr = dir.parent();
+            }
+            if !found {
+                eprintln!("[render] File not found: {} (tried: {:?})", file_path, path);
+                return Value::null();
+            }
+        } else {
+            eprintln!("[render] File not found: {} (tried: {:?})", file_path, path);
+            return Value::null();
+        }
     }
     
     let is_html = path.extension().map_or(false, |ext| ext == "html");
@@ -137,7 +158,10 @@ pub fn native_render(args: Vec<Value>) -> Value {
                     }
                 }
             }
-            Err(_) => Value::null(),
+            Err(e) => {
+                eprintln!("[render] Read error for {:?}: {:?}", path, e);
+                Value::null()
+            }
         }
     }
 }
@@ -238,16 +262,20 @@ pub fn execute_api_route(
     let mut vm = crate::vm::execute::VM::new();
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("router", Value::native_function(crate::vm::er_http::native_route));
+    vm.register_global("Eronom_nativeRoute", Value::native_function(crate::vm::er_http::native_route));
+    vm.register_global("serve", Value::native_function(crate::vm::er_http::native_serve));
     vm.register_global("render", Value::native_function(native_render));
     vm.register_global("renderString", Value::native_function(native_render_string));
     vm.register_global("Eronom_nativeRender", Value::native_function(native_render));
     vm.register_global("Eronom_nativeRenderString", Value::native_function(native_render_string));
     vm.register_global("fetch", Value::native_function(crate::vm::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+    vm.register_global("clearTimeout", Value::native_function(crate::vm::er_http::native_clear_timeout));
     vm.register_global("fetchSync", Value::native_function(crate::vm::er_http::native_fetch_sync));
     vm.register_global("fetchEvented", Value::native_function(crate::vm::er_http::native_fetch_evented));
     vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
     vm.register_global("arrayLen", Value::native_function(crate::vm::er_http::native_array_len));
+    vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
     vm.register_global("sleep", Value::native_function(crate::vm::er_http::native_sleep));
     vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
     vm.register_global("setIoMode", Value::native_function(crate::vm::er_http::native_set_io_mode));

@@ -116,6 +116,75 @@ pub fn native_context_html(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+pub fn native_context_render(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    for arg in &args[1..] {
+        if arg.is_number() {
+            ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(arg.as_number() as u16));
+            break;
+        }
+    }
+    let mut render_args = vec![args[0]];
+    if args.len() > 1 && (args[1].is_object() || args[1].is_null()) {
+        render_args.push(args[1]);
+    } else {
+        render_args.push(Value::null());
+    }
+    let html_val = crate::server::render::native_render(render_args);
+    if html_val.is_null() {
+        flush_response(res_ptr, Some(b"404 Not Found"), Some("text/plain"), 404);
+        return Value::null();
+    }
+    let html_str = if let Some(s) = html_val.as_str() {
+        s.to_string()
+    } else {
+        html_val.to_string()
+    };
+    flush_response(res_ptr, Some(html_str.as_bytes()), Some("text/html; charset=utf-8"), 200);
+    Value::null()
+}
+
+pub fn native_context_render_string(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    for arg in &args[1..] {
+        if arg.is_number() {
+            ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(arg.as_number() as u16));
+            break;
+        }
+    }
+    let mut render_args = vec![args[0]];
+    if args.len() > 1 && (args[1].is_object() || args[1].is_null()) {
+        render_args.push(args[1]);
+    } else {
+        render_args.push(Value::null());
+    }
+    let html_val = crate::server::render::native_render_string(render_args);
+    if html_val.is_null() {
+        flush_response(res_ptr, Some(b"500 Internal Server Error"), Some("text/plain"), 500);
+        return Value::null();
+    }
+    let html_str = if let Some(s) = html_val.as_str() {
+        s.to_string()
+    } else {
+        html_val.to_string()
+    };
+    flush_response(res_ptr, Some(html_str.as_bytes()), Some("text/html; charset=utf-8"), 200);
+    Value::null()
+}
+
+
 pub fn native_context_text(args: Vec<Value>) -> Value {
     if args.is_empty() {
         return Value::null();

@@ -183,10 +183,17 @@ pub fn native_render(args: Vec<Value>) -> Value {
     let params_map = extract_params_map(params_val);
     
     let path = std::path::Path::new(file_path);
-    let mut resolved_path = if path.is_relative() {
+    let mut resolved_path = if path.exists() {
+        path.to_path_buf()
+    } else if path.is_relative() {
         if let Some(script_path) = backend::er_http::get_target_script_path() {
             if let Some(parent) = std::path::Path::new(&script_path).parent() {
-                parent.join(path)
+                let candidate = parent.join(path);
+                if candidate.exists() {
+                    candidate
+                } else {
+                    path.to_path_buf()
+                }
             } else {
                 path.to_path_buf()
             }

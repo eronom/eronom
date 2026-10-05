@@ -517,8 +517,13 @@ pub extern "C" fn er_http_on_fallback(
                 }
 
                 if !mw_err {
-                    if let Err(e) = vm.call_function_reentrant(callback, vec![c_val]) {
-                        eprintln!("[HTTP] Error executing callback: {}", e);
+                    match vm.call_function_reentrant(callback, vec![c_val]) {
+                        Ok(ret_val) => {
+                            super::context::handle_fetch_return_value(res, ret_val);
+                        }
+                        Err(e) => {
+                            eprintln!("[HTTP] Error executing callback: {}", e);
+                        }
                     }
                 }
 

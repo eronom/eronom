@@ -70,6 +70,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     let mut vm = VM::new();
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("router", Value::native_function(backend::er_http::native_route));
+    vm.register_global("Eronom_nativeRoute", Value::native_function(backend::er_http::native_route));
     vm.register_global("serve", Value::native_function(backend::er_http::native_serve));
     vm.register_global("render", Value::native_function(native_render));
     vm.register_global("renderString", Value::native_function(native_render_string));
