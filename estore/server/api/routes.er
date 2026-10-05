@@ -41,8 +41,21 @@ app.get('/products', (c) => {
   })
 })
 
-// 4. Server-Side Rendered Deal of the Day Component (using c.render with .erm template file)
+// 4. Deal of the Day API (JSON endpoint for reactive DealBanner component)
 app.get('/deal', (c) => {
+  return c.json({
+    id: 101,
+    title: "Apex Pro 75 Mechanical Keyboard (Special Edition)",
+    discount: 30,
+    price: 189,
+    originalPrice: 269,
+    emoji: "⌨️",
+    category: "Keyboards"
+  })
+})
+
+// 4b. Server-Side Rendered Deal of the Day Component (using c.render with .erm template file)
+app.get('/deal-ssr', (c) => {
   return c.render("app/components/DealBanner.erm", {
     title: "Apex Pro 75 Mechanical Keyboard (Special Edition)",
     discount: 30,

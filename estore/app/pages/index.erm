@@ -12,6 +12,15 @@
     export let toastMessage = useState("");
     export let orderSuccess = useState(false);
 
+    // --- Reactive Deal of the Day State (Shared with <DealBanner>) ---
+    export let dealTitle = useState("Apex Pro 75 Mechanical Keyboard (Special Edition)");
+    export let dealDiscount = useState(30);
+    export let dealPrice = useState(189);
+    export let dealOriginalPrice = useState(269);
+    export let dealEmoji = useState("⌨️");
+    export let dealCategory = useState("Keyboards");
+    export let isDealLoading = useState(true);
+
     function recalculate(items) {
         let count = 0;
         let subtotal = 0;
@@ -59,6 +68,10 @@
         toastMessage.value = "Added " + name + " to cart!";
     }
 
+    if (typeof window !== "undefined") {
+        window.addToCart = addToCart;
+    }
+
     function openCart() {
         isCartOpen.value = true;
     }
@@ -82,28 +95,28 @@
         }
     }
 
+    // Declarative API Fetch for Deal of the Day (Svelte-style reactive signal update)
     useEffect(() => {
         fetch("/api/deal")
-            .then(async (res) => {
-                if (!res.ok) {
-                    let detail = await res.text();
-                    throw new Error("HTTP " + res.status + (detail ? ": " + detail : ""));
-                }
-                return res.text();
+            .then((res) => {
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return res.json();
             })
-            .then((html) => {
-                let slot = document.getElementById("server-deal-slot");
-                if (slot && html) {
-                    slot.innerHTML = html;
-                    slot.querySelectorAll("script").forEach((oldScript) => {
-                        let newScript = document.createElement("script");
-                        Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
-                        newScript.textContent = oldScript.textContent;
-                        oldScript.parentNode.replaceChild(newScript, oldScript);
-                    });
+            .then((data) => {
+                if (data) {
+                    if (data.title) dealTitle.value = data.title;
+                    if (data.discount) dealDiscount.value = data.discount;
+                    if (data.price) dealPrice.value = data.price;
+                    if (data.originalPrice) dealOriginalPrice.value = data.originalPrice;
+                    if (data.emoji) dealEmoji.value = data.emoji;
+                    if (data.category) dealCategory.value = data.category;
+                    isDealLoading.value = false;
                 }
             })
-            .catch((err) => console.error("Server deal fetch error:", err));
+            .catch((err) => {
+                console.error("Server deal fetch error:", err);
+                isDealLoading.value = false;
+            });
     }, []);
 </script>
 
@@ -116,9 +129,10 @@
         padding: 0 24px;
     }
 
-    .server-deal-slot {
-        margin: 20px auto 10px;
+    .deal-section-wrap {
+        margin: 24px auto 16px;
         max-width: 960px;
+        width: 100%;
     }
 
     /* Ambient Background Glow */
@@ -368,8 +382,10 @@
         </div>
     </section>
 
-    <!-- Server-Side Rendered Deal of the Day (std/erm component compiled via backend /api/deal) -->
-    <div id="server-deal-slot" class="server-deal-slot"></div>
+    <!-- Reactive Deal of the Day (Declarative Eronom Component via /api/deal) -->
+    <div class="deal-section-wrap">
+        <DealBanner />
+    </div>
 
     <!-- Category Filter Tabs -->
     <div class="filter-bar">
