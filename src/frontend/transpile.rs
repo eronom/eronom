@@ -463,8 +463,21 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
             )
         }
         Expr::Set(obj, prop, val) => {
+            let new_obj = if prop == "value" {
+                if let Expr::Variable(name, _) = &**obj {
+                    if state_vars.contains(name) {
+                        obj.clone()
+                    } else {
+                        Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
+                    }
+                } else {
+                    Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
+                }
+            } else {
+                Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
+            };
             Expr::Set(
-                Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
+                new_obj,
                 prop.clone(),
                 Box::new(transform_expr_reactivity(val, state_vars, shadowed)),
             )
@@ -779,5 +792,20 @@ mod tests {
         let state_vars = vec!["count".to_string()];
         let res = transpile_expr_reactivity("count.value + 1", &state_vars).unwrap();
         assert_eq!(res, "(count.value + 1)");
+    }
+
+    #[test]
+    fn test_ast_reactivity_no_double_value_set() {
+        let state_vars = vec!["count".to_string()];
+        let res = transpile_expr_reactivity("count.value = 1", &state_vars).unwrap();
+        assert_eq!(res, "(count.value = 1)");
+    }
+
+    #[test]
+    fn test_transpile_function_keyword() {
+        let state_vars = vec!["isCartOpen".to_string()];
+        let res = transform_script_reactivity("function openCart() { isCartOpen = true; }", &state_vars).unwrap();
+        assert!(res.contains("function openCart() {"));
+        assert!(!res.contains("function;"));
     }
 }
