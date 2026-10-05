@@ -84,8 +84,11 @@
 
     useEffect(() => {
         fetch("/api/deal")
-            .then((res) => {
-                if (!res.ok) throw new Error("HTTP " + res.status);
+            .then(async (res) => {
+                if (!res.ok) {
+                    let detail = await res.text();
+                    throw new Error("HTTP " + res.status + (detail ? ": " + detail : ""));
+                }
                 return res.text();
             })
             .then((html) => {
