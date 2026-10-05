@@ -86,6 +86,7 @@ thread_local! {
     pub static STATIC_MOUNTS: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
     pub static MIDDLEWARES: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     pub static ACTIVE_VM: Cell<*mut VM> = const { Cell::new(std::ptr::null_mut()) };
+    pub static VM_STACK: RefCell<Vec<*mut VM>> = const { RefCell::new(Vec::new()) };
     pub static ACTIVE_CURRENT_SERVER: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_REQ_HANDLE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };

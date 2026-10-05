@@ -315,6 +315,9 @@ pub fn collect_std_library_files() -> HashMap<String, Vec<u8>> {
     if !files.contains_key("std/test.er") {
         files.insert("std/test.er".to_string(), include_bytes!("../../std/test.er").to_vec());
     }
+    if !files.contains_key("std/erm.er") {
+        files.insert("std/erm.er".to_string(), include_bytes!("../../std/erm.er").to_vec());
+    }
 
     // Built-in ERM client reactive runtime files
     if !files.contains_key("modules/erm/runtime.js") {

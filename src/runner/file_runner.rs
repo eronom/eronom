@@ -72,6 +72,9 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("router", Value::native_function(backend::er_http::native_route));
     vm.register_global("serve", Value::native_function(backend::er_http::native_serve));
     vm.register_global("render", Value::native_function(native_render));
+    vm.register_global("renderString", Value::native_function(native_render_string));
+    vm.register_global("Eronom_nativeRender", Value::native_function(native_render));
+    vm.register_global("Eronom_nativeRenderString", Value::native_function(native_render_string));
     vm.register_global("fetch", Value::native_function(backend::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(backend::er_http::native_set_timeout));
     vm.register_global("clearTimeout", Value::native_function(backend::er_http::native_clear_timeout));

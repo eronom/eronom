@@ -89,6 +89,7 @@ impl VM {
     }
 
     pub fn run_function_ptr(&mut self, func_ptr: *mut GcObject) -> Result<Value, String> {
+        crate::vm::er_http::types::VM_STACK.with(|s| s.borrow_mut().push(self as *mut VM));
         let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
         self.frames.push(CallFrame {
             function: func_ptr,
@@ -99,6 +100,12 @@ impl VM {
 
         let res = self.execute();
         crate::vm::er_http::ACTIVE_VM.with(|active| active.set(prev_vm));
+        crate::vm::er_http::types::VM_STACK.with(|s| {
+            let mut stack = s.borrow_mut();
+            if let Some(pos) = stack.iter().rposition(|&p| p == (self as *mut VM)) {
+                stack.remove(pos);
+            }
+        });
         res
     }
 

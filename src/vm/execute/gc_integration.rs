@@ -119,7 +119,7 @@ impl VM {
         }
     }
 
-    fn mark_roots(&self) {
+    pub fn mark_roots_only(&self) {
         for val in &self.stack {
             mark_value(val);
         }
@@ -190,6 +190,25 @@ impl VM {
                 }
             }
         }
+    }
+
+    fn mark_roots(&self) {
+        self.mark_roots_only();
+
+        crate::vm::er_http::types::VM_STACK.with(|s| {
+            if let Ok(stack) = s.try_borrow() {
+                for &vm_ptr in stack.iter() {
+                    if !vm_ptr.is_null() && vm_ptr != (self as *const VM as *mut VM) {
+                        unsafe {
+                            (*vm_ptr).mark_roots_only();
+                        }
+                    }
+                }
+            }
+        });
+
+        crate::compiler::eds::mark_eds_roots();
+
         crate::vm::er_http::types::ROUTES.with(|routes| {
             if let Ok(routes) = routes.try_borrow() {
                 for route in routes.iter() {
@@ -254,113 +273,7 @@ impl VM {
         });
 
         // 1. Mark phase: mark roots
-        for val in &self.stack {
-            mark_value(val);
-        }
-        for val in self.globals.values() {
-            mark_value(val);
-        }
-        for frame in &self.frames {
-            mark_value(&Value::function(frame.function));
-        }
-        for &upval_ptr in &self.open_upvalues {
-            crate::vm::gc::mark_object(upval_ptr);
-        }
-        mark_value(&self.thrown_value);
-        if let Ok(queue) = self.event_loop_queue.lock() {
-            for task in queue.iter() {
-                mark_value(&task.callback);
-                for arg in task.args.iter() {
-                    mark_value(arg);
-                }
-                match &task.result {
-                    AsyncResult::ResolvePromise(ptr, val) => {
-                        if !ptr.is_null() {
-                            crate::vm::gc::mark_object(*ptr);
-                        }
-                        mark_value(val);
-                    }
-                    AsyncResult::ResolveFetchPromise(ptr, _) |
-                    AsyncResult::ResolveTextPromise(ptr, _) |
-                    AsyncResult::ResolveJsonPromise(ptr, _) |
-                    AsyncResult::ResolveWritePromise(ptr, _) => {
-                        if !ptr.is_null() {
-                            crate::vm::gc::mark_object(*ptr);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if let Ok(pending) = self.pending_callbacks.lock() {
-            for item in pending.iter() {
-                mark_value(&item.callback);
-                for arg in item.args.iter() {
-                    mark_value(arg);
-                }
-            }
-        }
-        if let Ok(timers) = self.timers.lock() {
-            for timer in timers.iter() {
-                match &timer.action {
-                    VmTimerAction::Callback { callback, args } => {
-                        mark_value(callback);
-                        for arg in args {
-                            mark_value(arg);
-                        }
-                    }
-                    VmTimerAction::ResolvePromise { promise_ptr, value } => {
-                        if !promise_ptr.is_null() {
-                            crate::vm::gc::mark_object(*promise_ptr);
-                        }
-                        mark_value(value);
-                    }
-                }
-            }
-        }
-        crate::vm::er_http::types::ROUTES.with(|routes| {
-            if let Ok(routes) = routes.try_borrow() {
-                for route in routes.iter() {
-                    mark_value(&route.callback);
-                }
-            }
-        });
-        crate::vm::er_http::types::MIDDLEWARES.with(|mws| {
-            if let Ok(mws) = mws.try_borrow() {
-                for mw in mws.iter() {
-                    mark_value(mw);
-                }
-            }
-        });
-        crate::vm::er_http::types::WS_ROUTES.with(|routes| {
-            if let Ok(routes) = routes.try_borrow() {
-                for route in routes.iter() {
-                    if let Some(open_cb) = &route.open {
-                        mark_value(open_cb);
-                    }
-                    if let Some(msg_cb) = &route.message {
-                        mark_value(msg_cb);
-                    }
-                    if let Some(close_cb) = &route.close {
-                        mark_value(close_cb);
-                    }
-                }
-            }
-        });
-        crate::vm::er_http::types::ACTIVE_CONNECTIONS.with(|conns| {
-            if let Ok(conns) = conns.try_borrow() {
-                for obj in conns.values() {
-                    mark_value(obj);
-                }
-            }
-        });
-        GC_ROOTS.with(|roots| {
-            if let Ok(borrowed) = roots.try_borrow() {
-                for root_fn in borrowed.iter() {
-                    root_fn();
-                }
-            }
-        });
+        self.mark_roots();
 
         // 2. Trace phase: process gray stack until empty
         loop {

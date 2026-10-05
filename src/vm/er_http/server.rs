@@ -126,8 +126,7 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
 
     let has_http_routes = ROUTES.with(|r| !r.borrow().is_empty());
     let has_ws_routes = WS_ROUTES.with(|r| !r.borrow().is_empty());
-    let has_listen = LISTEN_PORT.with(|p| p.get().is_some());
-    if !has_http_routes && !has_ws_routes && !has_listen {
+    if !has_http_routes && !has_ws_routes {
         return;
     }
     

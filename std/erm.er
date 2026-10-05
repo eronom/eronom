@@ -1,0 +1,24 @@
+// Standard Eronom Reactive Model (ERM) Template Engine
+// Bridges Eronom scripts (.er) with the native high-performance Rust ERM compiler.
+
+export const render = (filePath, params, isProd) => {
+  let p = params || {}
+  let prod = isProd == null ? true : isProd
+  return Eronom_nativeRender(filePath, p, prod)
+}
+
+export const renderString = (templateString, params, isProd) => {
+  let p = params || {}
+  let prod = isProd == null ? true : isProd
+  return Eronom_nativeRenderString(templateString, p, prod)
+}
+
+export const compile = render
+export const compileString = renderString
+
+export const Erm = {
+  render: render,
+  compile: compile,
+  renderString: renderString,
+  compileString: compileString
+}
