@@ -620,17 +620,45 @@ fn test_render_params_ssr_and_client_bindings() {
 
     let res = process_erm_component(".", content, false, &params).unwrap();
 
-    // 1. SSR spans should be populated with the param values
-    assert!(res.contains("Apex Pro Keyboard"), "Expected SSR HTML to contain title");
-    assert!(res.contains("189"), "Expected SSR HTML to contain price");
-    assert!(res.contains("269"), "Expected SSR HTML to contain originalPrice");
-    assert!(res.contains("30"), "Expected SSR HTML to contain discount");
+    // 1. SSR spans should be directly populated with the param values
+    assert!(res.contains(">Apex Pro Keyboard</span>"), "Expected SSR HTML span to contain title");
+    assert!(res.contains(">189</span>"), "Expected SSR HTML span to contain price");
+    assert!(res.contains(">269</span>"), "Expected SSR HTML span to contain originalPrice");
+    assert!(res.contains(">30</span>"), "Expected SSR HTML span to contain discount");
 
     // 2. Client script declarations should define each param from window.__erm_params
     assert!(res.contains("let originalPrice = window.__erm_params[\"originalPrice\"];"));
     assert!(res.contains("let price = window.__erm_params[\"price\"];"));
     assert!(res.contains("let title = window.__erm_params[\"title\"];"));
     assert!(res.contains("let discount = window.__erm_params[\"discount\"];"));
+}
+
+#[test]
+fn test_component_render_fragment_and_ssr_spans() {
+    let content = r#"
+    <div class="deal-banner">
+        <h3>{title}</h3>
+        <span>${price}</span>
+    </div>
+    <style>
+        .deal-banner { background: #000; color: #fff; }
+    </style>
+    "#;
+    let mut params = std::collections::HashMap::new();
+    params.insert("title".to_string(), "Aura Studio Headphones".to_string());
+    params.insert("price".to_string(), "299".to_string());
+
+    let res = process_erm_component("app/components/DealBanner.erm", content, false, &params).unwrap();
+
+    // 1. Must NOT be wrapped in full page HTML doctype or body
+    assert!(!res.contains("<!DOCTYPE html>"), "Component should not have <!DOCTYPE html>");
+    assert!(!res.contains("<html"), "Component should not have <html");
+    assert!(!res.contains("<body"), "Component should not have <body");
+
+    // 2. Must contain scoped styles and populated markup
+    assert!(res.contains("<style id=\"__erm_scoped_styles\">"), "Component should have scoped style tag");
+    assert!(res.contains(">Aura Studio Headphones</span>"), "Component span should contain title");
+    assert!(res.contains(">299</span>"), "Component span should contain price");
 }
 
 

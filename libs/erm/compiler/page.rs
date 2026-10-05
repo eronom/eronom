@@ -26,6 +26,23 @@ fn is_valid_js_identifier(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
+fn extract_arrow_expr(s: &str) -> Option<&str> {
+    let start_idx = s.find("() => (")? + 7;
+    let remainder = &s[start_idx..];
+    let mut depth = 1;
+    for (i, c) in remainder.char_indices() {
+        if c == '(' {
+            depth += 1;
+        } else if c == ')' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(&remainder[..i]);
+            }
+        }
+    }
+    None
+}
+
 pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let preprocessed;
     let content = if is_function_template(content) {
@@ -42,71 +59,83 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         file_path
     };
 
+    let is_component = file_path == "<inline.erm>"
+        || file_path.contains("components/")
+        || file_path.contains("components\\")
+        || file_path.starts_with("components/")
+        || file_path.starts_with("components\\")
+        || file_path.contains("component/")
+        || file_path.contains("component\\");
+
     let mut visited = HashMap::new();
     let mut state_var_sources = HashMap::new();
     
-    // Automatic Layout support: search for layout.erm in current and parent directories.
+    // Automatic Layout support: search for layout.erm in current and parent directories (pages only).
     let mut layout_path = None;
-    let mut curr = std::path::PathBuf::from(base_dir);
-    loop {
-        let p_layouts = curr.join("layouts").join("layout.erm");
-        if file_exists_or_vfs(&p_layouts) {
-            layout_path = Some(p_layouts);
-            break;
-        }
-        let p_direct = curr.join("layout.erm");
-        if file_exists_or_vfs(&p_direct) {
-            layout_path = Some(p_direct);
-            break;
-        }
-        if let Some(parent) = curr.parent() {
-            if curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
+    if !is_component {
+        let mut curr = std::path::PathBuf::from(base_dir);
+        loop {
+            let p_layouts = curr.join("layouts").join("layout.erm");
+            if file_exists_or_vfs(&p_layouts) {
+                layout_path = Some(p_layouts);
                 break;
             }
-            curr = parent.to_path_buf();
-        } else {
-            break;
+            let p_direct = curr.join("layout.erm");
+            if file_exists_or_vfs(&p_direct) {
+                layout_path = Some(p_direct);
+                break;
+            }
+            if let Some(parent) = curr.parent() {
+                if curr.join("Cargo.toml").exists() || curr.join(".git").exists() {
+                    break;
+                }
+                curr = parent.to_path_buf();
+            } else {
+                break;
+            }
         }
-    }
-    if layout_path.is_none() {
-        let fallback_app_layout = std::path::PathBuf::from("app/layouts/layout.erm");
-        if file_exists_or_vfs(&fallback_app_layout) {
-            layout_path = Some(fallback_app_layout);
-        } else {
-            let fallback_layout = std::path::PathBuf::from("layouts/layout.erm");
-            if file_exists_or_vfs(&fallback_layout) {
-                layout_path = Some(fallback_layout);
+        if layout_path.is_none() {
+            let fallback_app_layout = std::path::PathBuf::from("app/layouts/layout.erm");
+            if file_exists_or_vfs(&fallback_app_layout) {
+                layout_path = Some(fallback_app_layout);
+            } else {
+                let fallback_layout = std::path::PathBuf::from("layouts/layout.erm");
+                if file_exists_or_vfs(&fallback_layout) {
+                    layout_path = Some(fallback_layout);
+                }
             }
         }
     }
 
-    // Automatic Loading support: search for loading.erm in current and parent directories.
+    // Automatic Loading support: search for loading.erm in current and parent directories (pages only).
     let mut loading_path = None;
-    let mut curr_load = std::path::PathBuf::from(base_dir);
-    loop {
-        let p_loadings = curr_load.join("layouts").join("loading.erm");
-        if file_exists_or_vfs(&p_loadings) {
-            loading_path = Some(p_loadings);
-            break;
-        }
-        let p_loading_direct = curr_load.join("loading.erm");
-        if file_exists_or_vfs(&p_loading_direct) {
-            loading_path = Some(p_loading_direct);
-            break;
-        }
-        if let Some(parent) = curr_load.parent() {
-            if curr_load.join("Cargo.toml").exists() || curr_load.join(".git").exists() {
+    if !is_component {
+        let mut curr_load = std::path::PathBuf::from(base_dir);
+        loop {
+            let p_loadings = curr_load.join("layouts").join("loading.erm");
+            if file_exists_or_vfs(&p_loadings) {
+                loading_path = Some(p_loadings);
                 break;
             }
-            curr_load = parent.to_path_buf();
-        } else {
-            break;
+            let p_loading_direct = curr_load.join("loading.erm");
+            if file_exists_or_vfs(&p_loading_direct) {
+                loading_path = Some(p_loading_direct);
+                break;
+            }
+            if let Some(parent) = curr_load.parent() {
+                if curr_load.join("Cargo.toml").exists() || curr_load.join(".git").exists() {
+                    break;
+                }
+                curr_load = parent.to_path_buf();
+            } else {
+                break;
+            }
         }
-    }
-    if loading_path.is_none() {
-        let fallback_app_loading = std::path::PathBuf::from("app/layouts/loading.erm");
-        if file_exists_or_vfs(&fallback_app_loading) {
-            loading_path = Some(fallback_app_loading);
+        if loading_path.is_none() {
+            let fallback_app_loading = std::path::PathBuf::from("app/layouts/loading.erm");
+            if file_exists_or_vfs(&fallback_app_loading) {
+                loading_path = Some(fallback_app_loading);
+            }
         }
     }
 
@@ -227,18 +256,15 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         if s.starts_with("bindText(\"") {
             if let Some(id_end) = s[10..].find('"') {
                 let id = &s[10..10 + id_end];
-                if let Some(get_start) = s.find("() => (") {
-                    if let Some(get_end) = s[get_start + 7..].rfind(')') {
-                        let expr = &s[get_start + 7..get_start + 7 + get_end];
-                        if let Ok(val) = ev.eval(expr) {
-                            if val != eval::Value::Null {
-                                let val_str = val.to_string();
-                                let id_pattern = format!("id=\"{}\"", id);
-                                if let Some(pos) = res_html.find(&id_pattern) {
-                                    if let Some(close_tag) = res_html[pos..].find('>') {
-                                        let insert_pos = pos + close_tag + 1;
-                                        res_html.insert_str(insert_pos, &val_str);
-                                    }
+                if let Some(expr) = extract_arrow_expr(s) {
+                    if let Ok(val) = ev.eval(expr) {
+                        if val != eval::Value::Null {
+                            let val_str = val.to_string();
+                            let id_pattern = format!("id=\"{}\"", id);
+                            if let Some(pos) = res_html.find(&id_pattern) {
+                                if let Some(close_tag) = res_html[pos..].find('>') {
+                                    let insert_pos = pos + close_tag + 1;
+                                    res_html.insert_str(insert_pos, &val_str);
                                 }
                             }
                         }
@@ -249,18 +275,15 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             if let Some(id_start) = s.find("id: \"") {
                 let id_end = s[id_start + 5..].find('"').unwrap_or(0);
                 let id = &s[id_start + 5..id_start + 5 + id_end];
-                if let Some(get_start) = s.find("get: () => (") {
-                    if let Some(get_end) = s[get_start + 12..].rfind(')') {
-                        let expr = &s[get_start + 12..get_start + 12 + get_end];
-                        if let Ok(val) = ev.eval(expr) {
-                            if val != eval::Value::Null {
-                                let val_str = val.to_string();
-                                let id_pattern = format!("id=\"{}\"", id);
-                                if let Some(pos) = res_html.find(&id_pattern) {
-                                    if let Some(close_tag) = res_html[pos..].find('>') {
-                                        let insert_pos = pos + close_tag + 1;
-                                        res_html.insert_str(insert_pos, &val_str);
-                                    }
+                if let Some(expr) = extract_arrow_expr(s) {
+                    if let Ok(val) = ev.eval(expr) {
+                        if val != eval::Value::Null {
+                            let val_str = val.to_string();
+                            let id_pattern = format!("id=\"{}\"", id);
+                            if let Some(pos) = res_html.find(&id_pattern) {
+                                if let Some(close_tag) = res_html[pos..].find('>') {
+                                    let insert_pos = pos + close_tag + 1;
+                                    res_html.insert_str(insert_pos, &val_str);
                                 }
                             }
                         }
@@ -386,6 +409,17 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     }
 
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
+
+    if is_component {
+        let mut final_res = String::new();
+        final_res.push_str(&style_assets);
+        final_res.push_str(&output);
+        if !script_assets.is_empty() {
+            final_res.push('\n');
+            final_res.push_str(&script_assets);
+        }
+        return Ok(final_res);
+    }
 
     if !output.contains("<html") {
         let mut final_res = String::new();

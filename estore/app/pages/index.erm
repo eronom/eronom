@@ -92,6 +92,12 @@
                 let slot = document.getElementById("server-deal-slot");
                 if (slot && html) {
                     slot.innerHTML = html;
+                    slot.querySelectorAll("script").forEach((oldScript) => {
+                        let newScript = document.createElement("script");
+                        Array.from(oldScript.attributes).forEach((attr) => newScript.setAttribute(attr.name, attr.value));
+                        newScript.textContent = oldScript.textContent;
+                        oldScript.parentNode.replaceChild(newScript, oldScript);
+                    });
                 }
             })
             .catch((err) => console.error("Server deal fetch error:", err));

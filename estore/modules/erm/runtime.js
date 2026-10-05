@@ -777,7 +777,7 @@ export function useEffect(callback, depsFn) {
 
     if (depsFn) {
       try {
-        currentDeps = depsFn();
+        currentDeps = typeof depsFn === 'function' ? depsFn() : depsFn;
       } catch (e) {
         console.error("Effect deps evaluation failed:", e);
       }
