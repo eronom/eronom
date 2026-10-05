@@ -84,7 +84,10 @@
 
     useEffect(() => {
         fetch("/api/deal")
-            .then((res) => res.text())
+            .then((res) => {
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return res.text();
+            })
             .then((html) => {
                 let slot = document.getElementById("server-deal-slot");
                 if (slot && html) {
