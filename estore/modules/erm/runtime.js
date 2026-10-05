@@ -817,7 +817,12 @@ export const effect = createEffect;
 
 let currentParams = {};
 export function setParams(p) { currentParams = p; }
-export function useParams() { return currentParams; }
+export function useParams() {
+  if (typeof window !== 'undefined' && window.__erm_params && Object.keys(window.__erm_params).length > 0) {
+    return window.__erm_params;
+  }
+  return currentParams;
+}
 
 // --- Suspense & Loading Swap ---
 function initLoadingSwap() {
