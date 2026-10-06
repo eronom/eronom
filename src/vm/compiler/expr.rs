@@ -349,7 +349,7 @@ impl Compiler {
                     pairs.len() as u32,
                 );
             }
-            Expr::Function(params, return_type, body) => {
+            Expr::Function(params, return_type, body, is_async) => {
                 let mut compiler = Compiler::new();
                 compiler.parent = Some(self as *mut Compiler);
                 compiler.const_globals = self.const_globals.clone();
@@ -360,7 +360,7 @@ impl Compiler {
                 compiler.current_struct = self.current_struct.clone();
                 compiler.current_return_type = return_type.as_ref().map(|t| t.to_string());
                 compiler.function.arity = params.len();
-                compiler.function.is_async = false;
+                compiler.function.is_async = *is_async;
                 compiler.next_reg = params.len();
                 compiler.begin_scope();
                 for param in params {
@@ -474,6 +474,19 @@ impl Compiler {
                 }
             }
             Expr::TypeCast(inner, _, _) => {
+                self.compile_expr(inner, dest)?;
+            }
+            Expr::Await(inner) => {
+                self.compile_expr(inner, dest)?;
+                self.current_chunk().write_instruction(
+                    OpCode::Await,
+                    dest as u8,
+                    0,
+                    0,
+                    0,
+                );
+            }
+            Expr::New(inner) => {
                 self.compile_expr(inner, dest)?;
             }
         }

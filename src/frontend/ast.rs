@@ -146,12 +146,14 @@ pub enum Expr {
     Set(Box<Expr>, String, Box<Expr>),
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
-    Function(Vec<FnParam>, Option<TypeNode>, Box<Stmt>), // params, return_type, body
+    Function(Vec<FnParam>, Option<TypeNode>, Box<Stmt>, bool), // params, return_type, body, is_async
     GetIndex(Box<Expr>, Box<Expr>),
     SetIndex(Box<Expr>, Box<Expr>, Box<Expr>),
     StructInst(String, Vec<(String, Expr)>, SourceLocation),
     Spawn(Box<Expr>),
     TypeCast(Box<Expr>, TypeNode, SourceLocation),
+    Await(Box<Expr>),
+    New(Box<Expr>),
 }
 
 #[derive(Debug, Clone)]

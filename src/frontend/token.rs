@@ -80,6 +80,9 @@ pub enum TokenType {
     As,
     Is,
     Enum,
+    Async,
+    Await,
+    New,
     Underscore,
     Eof,
 }

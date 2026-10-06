@@ -240,7 +240,9 @@ impl Parser {
             };
             self.declare_variable(name.clone());
             Ok(Stmt::VarDecl(name, type_annotation, is_const, initializer, loc))
-        } else if self.match_token(&[TokenType::Function]) {
+        } else if self.check(&TokenType::Function) || (self.check(&TokenType::Async) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Function)) {
+            let is_async = self.match_token(&[TokenType::Async]);
+            self.consume(TokenType::Function, "Expected 'fn' or 'function'.")?;
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected function name.")?;
             self.declare_variable(name.clone());
@@ -291,7 +293,7 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, return_type, Box::new(body)), loc))
+            Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, return_type, Box::new(body), is_async), loc))
         } else if self.check_ident() && {
             // Check for assignment or short variable declaration: ident = expr
             self.current + 1 < self.tokens.len()

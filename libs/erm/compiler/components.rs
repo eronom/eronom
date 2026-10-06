@@ -247,10 +247,6 @@ pub fn resolve_custom_component(
             visited.insert(comp_path_str.clone(), "".to_string()); // placeholder to avoid infinite recursion
             let comp_content = read_file_or_vfs(&canonical_comp_path)?;
             let mut sub_res = process_component_tree(&comp_path_str, &comp_content, visited, None, params, if_counter, for_counter, state_var_sources)?;
-            println!("DEBUG: compiled component {} scripts count = {}", tag_name, sub_res.scripts.len());
-            for (idx, s) in sub_res.scripts.iter().enumerate() {
-                println!("DEBUG: script {} = {:?}", idx, s);
-            }
             let mut sub_html = sub_res.html;
             let mut sub_scripts = sub_res.scripts;
             scope_component_ids(&mut sub_html, &mut sub_scripts);

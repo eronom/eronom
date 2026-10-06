@@ -4,7 +4,21 @@ use crate::frontend::ast::{Expr, LiteralValue, Stmt, SourceLocation, FnParam};
 
 impl Parser {
     pub(crate) fn primary(&mut self) -> Result<Expr, String> {
-        if self.match_token(&[TokenType::Function]) {
+        let is_async = if self.check(&TokenType::Async) {
+            let next_ty = self.tokens.get(self.current + 1).map(|t| &t.ty);
+            if matches!(next_ty, Some(TokenType::Function)) {
+                self.advance();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if is_async || self.match_token(&[TokenType::Function]) {
+            if is_async {
+                self.consume(TokenType::Function, "Expected 'fn' or 'function' after 'async'.")?;
+            }
             let name = if self.check_ident() {
                 Some(self.consume_ident("Expected function name.")?)
             } else {
@@ -56,7 +70,7 @@ impl Parser {
                 Stmt::Block(stmts)
             };
             self.pop_scope();
-            return Ok(Expr::Function(params, return_type, Box::new(body)));
+            return Ok(Expr::Function(params, return_type, Box::new(body), is_async));
         }
 
         if self.match_token(&[TokenType::False]) {
@@ -78,6 +92,19 @@ impl Parser {
             self.advance();
             return Ok(Expr::Literal(LiteralValue::String(s)));
         }
+
+        let is_async_single = if self.check(&TokenType::Async) {
+            let next_ty = self.tokens.get(self.current + 1).map(|t| &t.ty);
+            let next_next_ty = self.tokens.get(self.current + 2).map(|t| &t.ty);
+            if matches!(next_ty, Some(TokenType::Identifier(_))) && matches!(next_next_ty, Some(TokenType::Arrow)) {
+                self.advance();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         if self.check_ident() {
             let tok = self.peek().clone();
@@ -103,7 +130,7 @@ impl Parser {
                 };
                 self.pop_scope();
                 let params = vec![FnParam { name, ty: None }];
-                return Ok(Expr::Function(params, None, Box::new(body)));
+                return Ok(Expr::Function(params, None, Box::new(body), is_async_single));
             }
             let is_capitalized = name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
             let next_is_prop = self.check(&TokenType::LeftBrace)
@@ -138,7 +165,22 @@ impl Parser {
             return Ok(Expr::Variable(name, loc));
         }
 
-        if self.match_token(&[TokenType::LeftParen]) {
+        let is_async_paren = if self.check(&TokenType::Async) {
+            let next_ty = self.tokens.get(self.current + 1).map(|t| &t.ty);
+            if matches!(next_ty, Some(TokenType::LeftParen)) {
+                self.advance();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if is_async_paren || self.match_token(&[TokenType::LeftParen]) {
+            if is_async_paren {
+                self.consume(TokenType::LeftParen, "Expected '(' after 'async'.")?;
+            }
             let save_pos = self.current;
             let mut params = Vec::new();
             let mut is_arrow = false;
@@ -196,7 +238,7 @@ impl Parser {
                     other => other,
                 };
                 self.pop_scope();
-                return Ok(Expr::Function(params, return_type, Box::new(body)));
+                return Ok(Expr::Function(params, return_type, Box::new(body), is_async_paren));
             } else {
                 self.current = save_pos;
             }
@@ -228,7 +270,11 @@ impl Parser {
                     Expr::Variable(name, _) => vec![FnParam { name, ty: None }],
                     _ => vec![],
                 };
-                return Ok(Expr::Function(params, return_type, Box::new(body)));
+                return Ok(Expr::Function(params, return_type, Box::new(body), is_async_paren));
+            }
+
+            if is_async_paren {
+                return Err(format!("Error at line {}: Expected '=>' after async parameter list.", self.peek().line));
             }
 
             return Ok(expr);

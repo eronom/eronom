@@ -342,6 +342,9 @@ impl<'a> Lexer<'a> {
                     "as" => TokenType::As,
                     "is" => TokenType::Is,
                     "enum" => TokenType::Enum,
+                    "async" => TokenType::Async,
+                    "await" => TokenType::Await,
+                    "new" => TokenType::New,
                     "_" => TokenType::Underscore,
                     _ => TokenType::Identifier(ident),
                 }

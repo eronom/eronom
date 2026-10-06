@@ -44,6 +44,7 @@ impl VM {
             20
         };
         crate::vm::alloc::init_allocator_options();
+        crate::jit::helpers::reset_global_ic();
         Self {
             has_error_flag: 0,
             frames: Vec::new(),

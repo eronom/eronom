@@ -238,16 +238,7 @@ pub fn execute_api_route(
         prefix = String::new();
     }
 
-    let stmts = match crate::frontend::parse_and_resolve_imports(file_path) {
-        Ok(s) => s,
-        Err(e) => anyhow::bail!("Compile/Import error: {}", e),
-    };
-
-    let compiler = crate::vm::compiler::Compiler::new();
-    let function = match compiler.compile(&stmts) {
-        Ok(f) => f,
-        Err(e) => anyhow::bail!("Compile error: {}", e),
-    };
+    let _guard = GcGuard;
 
     crate::vm::er_http::ROUTER.with(|r| r.borrow_mut().clear());
     crate::vm::er_http::ROUTES.with(|r| r.borrow_mut().clear());
@@ -289,8 +280,6 @@ pub fn execute_api_route(
     crate::vm::std_json::register_json_natives(&mut vm);
     crate::vm::std_system::register_system_natives(&mut vm);
     crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
-
-    let _guard = GcGuard;
     
     // Load config from eronom.toml if it exists
     if let Some(parent_dir) = file_path.parent() {
@@ -307,7 +296,24 @@ pub fn execute_api_route(
         }
     }
 
-    if let Err(e) = vm.run(function) {
+    let stmts = match crate::frontend::parse_and_resolve_imports(file_path) {
+        Ok(s) => s,
+        Err(e) => anyhow::bail!("Compile/Import error: {}", e),
+    };
+
+    let compiler = crate::vm::compiler::Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => anyhow::bail!("Compile error: {}", e),
+    };
+
+    let func_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Function(Box::new(function)));
+    let func_val = Value::function(func_ptr);
+    crate::vm::gc::gc_push_temp_slice(&func_val, 1);
+    let run_res = vm.run_function_ptr(func_ptr);
+    crate::vm::gc::gc_pop_temp_slice();
+
+    if let Err(e) = run_res {
         anyhow::bail!("VM Runtime error: {}", e);
     }
     if let Err(e) = vm.run_event_loop() {

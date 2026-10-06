@@ -58,15 +58,6 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         backend::er_http::LISTEN_PORT.with(|p| p.set(Some(final_port)));
     }
 
-    let compiler = Compiler::new();
-    let function = match compiler.compile(&stmts) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
     let mut vm = VM::new();
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("router", Value::native_function(backend::er_http::native_route));
@@ -124,7 +115,22 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         }
     }
 
-    if let Err(e) = vm.run(function) {
+    let compiler = Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let func_ptr = backend::gc::gc_allocate(backend::gc::GcData::Function(Box::new(function)));
+    let func_val = Value::function(func_ptr);
+    backend::gc::gc_push_temp_slice(&func_val, 1);
+    let run_res = vm.run_function_ptr(func_ptr);
+    backend::gc::gc_pop_temp_slice();
+
+    if let Err(e) = run_res {
         anyhow::bail!("VM Runtime error: {}", e);
     }
 

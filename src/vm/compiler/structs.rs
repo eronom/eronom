@@ -23,7 +23,7 @@ pub struct InterfaceInfo {
 
 pub fn collect_structs_expr(expr: &Expr, map: &mut HashMap<String, RawStructInfo>) {
     match expr {
-        Expr::Function(_, _, body) => {
+        Expr::Function(_, _, body, _) => {
             collect_structs(std::slice::from_ref(body), map);
         }
         Expr::Call(callee, args) => {
@@ -36,7 +36,7 @@ pub fn collect_structs_expr(expr: &Expr, map: &mut HashMap<String, RawStructInfo
             collect_structs_expr(left, map);
             collect_structs_expr(right, map);
         }
-        Expr::Unary(_, inner) | Expr::Prefix(_, inner) | Expr::Postfix(_, inner) | Expr::Spawn(inner) => {
+        Expr::Unary(_, inner) | Expr::Prefix(_, inner) | Expr::Postfix(_, inner) | Expr::Spawn(inner) | Expr::Await(inner) | Expr::New(inner) => {
             collect_structs_expr(inner, map);
         }
         Expr::Ternary(cond, then_e, else_e) => {

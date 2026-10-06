@@ -111,6 +111,7 @@ pub struct VM {
 
 impl Drop for VM {
     fn drop(&mut self) {
+        crate::jit::helpers::reset_global_ic();
         if let Some(ctx) = self.mir_ctx {
             crate::jit::cleanup_jit(ctx);
         }

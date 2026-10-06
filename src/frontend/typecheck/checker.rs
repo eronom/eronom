@@ -337,7 +337,7 @@ impl TypeChecker {
                 }
                 TypeNode::Object(props)
             }
-            Expr::Function(params, return_type, body) => {
+            Expr::Function(params, return_type, body, _) => {
                 self.env.push_scope();
                 let prev_ret = self.env.current_return_type.take();
                 self.env.current_return_type = return_type.clone();
@@ -469,7 +469,7 @@ impl TypeChecker {
                 }
                 TypeNode::Named(name.clone(), Vec::new())
             }
-            Expr::Spawn(inner) => self.infer_expr(inner),
+            Expr::Spawn(inner) | Expr::Await(inner) | Expr::New(inner) => self.infer_expr(inner),
         }
     }
 
