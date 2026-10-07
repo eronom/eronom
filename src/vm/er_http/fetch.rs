@@ -279,6 +279,30 @@ pub fn native_future_await(args: Vec<Value>) -> Value {
     let suspended_stack = std::mem::take(&mut vm.stack);
     let suspended_frames = std::mem::take(&mut vm.frames);
 
+    let cid = vm.scheduler.current_fiber_id;
+    let dest_reg = if let Some(frame) = suspended_frames.last() {
+        let func = unsafe {
+            match &(*frame.function).data {
+                GcData::Function(f) => f,
+                GcData::Closure(c) => match &(*c.function).data {
+                    GcData::Function(f) => f,
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            }
+        };
+        let inst = func.chunk.code[frame.ip];
+        inst.ra as usize
+    } else {
+        0
+    };
+    vm.scheduler.suspend_current(promise_ptr, dest_reg);
+    if let Some(fiber) = vm.scheduler.fibers.get_mut(&cid) {
+        fiber.stack = suspended_stack.clone();
+        fiber.frames = suspended_frames.clone();
+        fiber.open_upvalues = std::mem::take(&mut vm.open_upvalues);
+    }
+
     unsafe {
         match &mut (*promise_ptr).data {
             GcData::Promise(p) => {

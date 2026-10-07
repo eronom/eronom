@@ -90,6 +90,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("getIoMode", Value::native_function(backend::er_http::native_get_io_mode));
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
+    backend::execute::fiber::register_fiber_natives(&mut vm);
     backend::er_http::register_eronom_file_api(&mut vm).unwrap();
     backend::std_fs::register_fs_natives(&mut vm);
     backend::std_path::register_path_natives(&mut vm);

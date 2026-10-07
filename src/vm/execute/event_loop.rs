@@ -143,11 +143,17 @@ impl VM {
                             }
                         };
 
+                        // 1. Check if any fiber in scheduler was waiting on this promise
+                        let awakened_fibers = self.scheduler.wake_promise(promise_ptr, resolved_value);
+                        if !awakened_fibers.is_empty() {
+                            continue;
+                        }
+
                         if suspended_frames.is_empty() {
                             continue;
                         }
 
-                        // Restore stack and frames
+                        // Restore stack and frames (legacy single-VM suspension fallback)
                         self.stack = suspended_stack;
                         self.frames = suspended_frames;
 
@@ -194,14 +200,44 @@ impl VM {
                 }
             }
 
+            // 3. Process any ready fibers scheduled in ready_queue
+            while let Some(next_fid) = self.scheduler.ready_queue.pop_front() {
+                self.save_active_fiber();
+                self.load_fiber(next_fid);
+                match self.execute_loop_interpreter(0) {
+                    Ok(val) => {
+                        if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
+                            if f.status == crate::vm::execute::fiber::FiberStatus::Running
+                                && self.frames.is_empty()
+                                && f.frames.is_empty()
+                            {
+                                let comp_prom = f.completion_promise;
+                                f.complete(val);
+                                if !comp_prom.is_null() {
+                                    self.scheduler.wake_promise(comp_prom, val);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
+                            f.fail(e.clone());
+                        }
+                        return Err(e);
+                    }
+                }
+                self.save_active_fiber();
+            }
+
+            let has_ready_fibers = !self.scheduler.ready_queue.is_empty();
             let active = self.active_async_tasks.load(Ordering::SeqCst);
-            if active == 0 || !wait_for_active {
+            if (active == 0 && !has_ready_fibers) || !wait_for_active {
                 let queue_empty = self.event_loop_queue.lock().unwrap().is_empty();
                 let has_due_timers = {
                     let timers = self.timers.lock().unwrap();
                     timers.peek().map_or(false, |t| t.due_time <= Instant::now())
                 };
-                if queue_empty && !has_due_timers {
+                if queue_empty && !has_due_timers && !has_ready_fibers {
                     break;
                 }
             }

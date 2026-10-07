@@ -316,8 +316,16 @@ impl VM {
                     frame.ip = curr_ip;
 
                     self.close_upvalues(0);
+                    let cid = self.scheduler.current_fiber_id;
+                    self.scheduler.suspend_current(promise_ptr, instruction.ra as usize);
                     let suspended_stack = std::mem::take(&mut self.stack);
                     let suspended_frames = std::mem::take(&mut self.frames);
+
+                    if let Some(fiber) = self.scheduler.fibers.get_mut(&cid) {
+                        fiber.stack = suspended_stack.clone();
+                        fiber.frames = suspended_frames.clone();
+                        fiber.open_upvalues = std::mem::take(&mut self.open_upvalues);
+                    }
 
                     match &mut (*promise_ptr).data {
                         GcData::Promise(prom) => {

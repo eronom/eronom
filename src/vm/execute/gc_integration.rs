@@ -132,6 +132,24 @@ impl VM {
         for &upval_ptr in &self.open_upvalues {
             crate::vm::gc::mark_object(upval_ptr);
         }
+        for fiber in self.scheduler.fibers.values() {
+            for val in &fiber.stack {
+                mark_value(val);
+            }
+            for frame in &fiber.frames {
+                mark_value(&Value::function(frame.function));
+            }
+            for &upval_ptr in &fiber.open_upvalues {
+                crate::vm::gc::mark_object(upval_ptr);
+            }
+            mark_value(&fiber.result);
+            if !fiber.completion_promise.is_null() {
+                crate::vm::gc::mark_object(fiber.completion_promise);
+            }
+            for fin in &fiber.finalizers {
+                mark_value(fin);
+            }
+        }
         mark_value(&self.thrown_value);
         if let Ok(queue) = self.event_loop_queue.try_lock() {
             if !queue.is_empty() {

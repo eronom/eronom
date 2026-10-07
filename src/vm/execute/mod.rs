@@ -1,4 +1,6 @@
 pub mod types;
+pub mod fiber;
+pub mod scheduler;
 pub mod gc_integration;
 pub mod upvalues;
 pub mod struct_lookup;
@@ -14,6 +16,8 @@ pub mod loop_impl;
 pub mod tests;
 
 pub use types::{VM, CallFrame, AsyncResult, EventLoopTask, VmTimer, VmTimerAction, PendingAsync, format_undeclared_var_error};
+pub use fiber::{Fiber, FiberStatus};
+pub use scheduler::FiberScheduler;
 pub use gc_integration::{GC_TIME, GC_COUNT, er_gc_reset_stats, er_gc_print_stats};
 pub use builtins::{get_string_builtin_method_id, get_array_builtin_method_id, get_object_builtin_method_id};
 
@@ -69,6 +73,7 @@ impl VM {
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
             timers: Arc::new(Mutex::new(BinaryHeap::new())),
             next_timer_id: Arc::new(AtomicU64::new(1)),
+            scheduler: FiberScheduler::new(),
         }
     }
 
@@ -245,5 +250,26 @@ impl VM {
         
         self.stack.truncate(original_len);
         res
+    }
+
+    pub fn save_active_fiber(&mut self) {
+        let cid = self.scheduler.current_fiber_id;
+        if let Some(fiber) = self.scheduler.fibers.get_mut(&cid) {
+            if !self.frames.is_empty() {
+                fiber.stack = std::mem::take(&mut self.stack);
+                fiber.frames = std::mem::take(&mut self.frames);
+                fiber.open_upvalues = std::mem::take(&mut self.open_upvalues);
+            }
+        }
+    }
+
+    pub fn load_fiber(&mut self, fiber_id: u64) {
+        if let Some(fiber) = self.scheduler.fibers.get_mut(&fiber_id) {
+            self.stack = std::mem::take(&mut fiber.stack);
+            self.frames = std::mem::take(&mut fiber.frames);
+            self.open_upvalues = std::mem::take(&mut fiber.open_upvalues);
+            self.scheduler.current_fiber_id = fiber_id;
+            fiber.status = FiberStatus::Running;
+        }
     }
 }
