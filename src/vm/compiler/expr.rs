@@ -349,7 +349,7 @@ impl Compiler {
                     pairs.len() as u32,
                 );
             }
-            Expr::Function(params, return_type, body, is_async) => {
+            Expr::Function(params, return_type, body, is_async, _) => {
                 let mut compiler = Compiler::new();
                 compiler.parent = Some(self as *mut Compiler);
                 compiler.const_globals = self.const_globals.clone();

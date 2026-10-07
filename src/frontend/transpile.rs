@@ -98,7 +98,7 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
         }
         Stmt::VarDecl(name, _, is_const, expr, _) => {
             // Check if it's a top-level named function declaration: fn name(...) { ... }
-            if let Expr::Function(params, _, body, is_async) = expr {
+            if let Expr::Function(params, _, body, is_async, _) = expr {
                 emit_indent(out, indent);
                 let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
                 let async_prefix = if *is_async { "async " } else { "" };
@@ -238,7 +238,7 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
             emit_stmt(&mut inner_str, inner, 0);
             out.push_str(inner_str.trim_start());
         }
-        Stmt::Concurrent(body) => {
+        Stmt::Concurrent(body) | Stmt::Sync(body) => {
             emit_stmt(out, body, indent);
         }
     }
@@ -360,7 +360,7 @@ pub fn emit_expr(expr: &Expr) -> String {
                 .join(", ");
             format!("{{ {} }}", pairs_str)
         }
-        Expr::Function(params, _, body, is_async) => {
+        Expr::Function(params, _, body, is_async, _) => {
             let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
             let mut body_str = String::new();
             emit_stmt_inline(&mut body_str, body, 0);
@@ -497,13 +497,13 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
                     .collect(),
             )
         }
-        Expr::Function(params, ret_type, body, is_async) => {
+        Expr::Function(params, ret_type, body, is_async, is_sync) => {
             let mut new_shadowed = shadowed.to_vec();
             for p in params {
                 new_shadowed.push(p.name.clone());
             }
             let new_body = transform_stmt_reactivity(body, state_vars, &new_shadowed);
-            Expr::Function(params.clone(), ret_type.clone(), Box::new(new_body), *is_async)
+            Expr::Function(params.clone(), ret_type.clone(), Box::new(new_body), *is_async, *is_sync)
         }
         Expr::GetIndex(obj, idx) => {
             Expr::GetIndex(
@@ -649,6 +649,9 @@ pub fn transform_stmt_reactivity(stmt: &Stmt, state_vars: &[String], shadowed: &
         }
         Stmt::Concurrent(s) => {
             Stmt::Concurrent(Box::new(transform_stmt_reactivity(s, state_vars, shadowed)))
+        }
+        Stmt::Sync(s) => {
+            Stmt::Sync(Box::new(transform_stmt_reactivity(s, state_vars, shadowed)))
         }
         other => other.clone(),
     }

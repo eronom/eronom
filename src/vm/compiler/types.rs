@@ -17,7 +17,7 @@ pub fn get_expr_type(
         Expr::Literal(LiteralValue::Null) => Some("null".to_string()),
         Expr::Array(_) => Some("array".to_string()),
         Expr::Object(_) => Some("object".to_string()),
-        Expr::Function(_, ret_type, _, _) => {
+        Expr::Function(_, ret_type, ..) => {
             if let Some(r) = ret_type {
                 Some(format!("function:{}", r))
             } else {

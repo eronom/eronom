@@ -23,7 +23,7 @@ pub struct InterfaceInfo {
 
 pub fn collect_structs_expr(expr: &Expr, map: &mut HashMap<String, RawStructInfo>) {
     match expr {
-        Expr::Function(_, _, body, _) => {
+        Expr::Function(_, _, body, ..) => {
             collect_structs(std::slice::from_ref(body), map);
         }
         Expr::Call(callee, args) => {
@@ -80,7 +80,7 @@ pub fn collect_structs(stmts: &[Stmt], map: &mut HashMap<String, RawStructInfo>)
                     collect_structs(std::slice::from_ref(eb), map);
                 }
             }
-            Stmt::While(_, body) | Stmt::For(_, _, _, body) | Stmt::ForIn(_, _, body) | Stmt::Concurrent(body) => {
+            Stmt::While(_, body) | Stmt::For(_, _, _, body) | Stmt::ForIn(_, _, body) | Stmt::Concurrent(body) | Stmt::Sync(body) => {
                 collect_structs(std::slice::from_ref(body), map);
             }
             Stmt::Try(try_body, catch_clause, finally_body) => {
@@ -135,7 +135,7 @@ pub fn collect_interfaces(stmts: &[Stmt], map: &mut HashMap<String, InterfaceInf
                     collect_interfaces(std::slice::from_ref(eb), map);
                 }
             }
-            Stmt::While(_, body) | Stmt::For(_, _, _, body) | Stmt::ForIn(_, _, body) | Stmt::Concurrent(body) => {
+            Stmt::While(_, body) | Stmt::For(_, _, _, body) | Stmt::ForIn(_, _, body) | Stmt::Concurrent(body) | Stmt::Sync(body) => {
                 collect_interfaces(std::slice::from_ref(body), map);
             }
             Stmt::Try(try_body, catch_clause, finally_body) => {

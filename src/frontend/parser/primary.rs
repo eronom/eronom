@@ -4,20 +4,23 @@ use crate::frontend::ast::{Expr, LiteralValue, Stmt, SourceLocation, FnParam};
 
 impl Parser {
     pub(crate) fn primary(&mut self) -> Result<Expr, String> {
-        let is_async = if self.check(&TokenType::Async) {
-            let next_ty = self.tokens.get(self.current + 1).map(|t| &t.ty);
-            if matches!(next_ty, Some(TokenType::Function)) {
-                self.advance();
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        if is_async || self.match_token(&[TokenType::Function]) {
-            if is_async {
-                self.consume(TokenType::Function, "Expected 'fn' or 'function' after 'async'.")?;
+        let mut is_sync = false;
+        let mut is_async = false;
+        if self.check(&TokenType::At) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Sync || matches!(&t.ty, TokenType::Identifier(s) if s == "sync")) {
+            self.advance();
+            self.advance();
+            is_sync = true;
+        } else if self.check(&TokenType::Sync) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Function) {
+            self.advance();
+            is_sync = true;
+        } else if self.check(&TokenType::Async) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Function) {
+            self.advance();
+            is_async = true;
+        }
+
+        if is_async || is_sync || self.match_token(&[TokenType::Function]) {
+            if is_async || is_sync {
+                self.consume(TokenType::Function, "Expected 'fn' or 'function'.")?;
             }
             let name = if self.check_ident() {
                 Some(self.consume_ident("Expected function name.")?)
@@ -70,7 +73,7 @@ impl Parser {
                 Stmt::Block(stmts)
             };
             self.pop_scope();
-            return Ok(Expr::Function(params, return_type, Box::new(body), is_async));
+            return Ok(Expr::Function(params, return_type, Box::new(body), is_async, is_sync));
         }
 
         if self.match_token(&[TokenType::False]) {
@@ -130,7 +133,7 @@ impl Parser {
                 };
                 self.pop_scope();
                 let params = vec![FnParam { name, ty: None }];
-                return Ok(Expr::Function(params, None, Box::new(body), is_async_single));
+                return Ok(Expr::Function(params, None, Box::new(body), is_async_single, false));
             }
             let is_capitalized = name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
             let next_is_prop = self.check(&TokenType::LeftBrace)
@@ -238,7 +241,7 @@ impl Parser {
                     other => other,
                 };
                 self.pop_scope();
-                return Ok(Expr::Function(params, return_type, Box::new(body), is_async_paren));
+                return Ok(Expr::Function(params, return_type, Box::new(body), is_async_paren, false));
             } else {
                 self.current = save_pos;
             }
@@ -270,7 +273,7 @@ impl Parser {
                     Expr::Variable(name, _) => vec![FnParam { name, ty: None }],
                     _ => vec![],
                 };
-                return Ok(Expr::Function(params, return_type, Box::new(body), is_async_paren));
+                return Ok(Expr::Function(params, return_type, Box::new(body), is_async_paren, false));
             }
 
             if is_async_paren {

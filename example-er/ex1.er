@@ -1,0 +1,8 @@
+@sync fn calculateTax(price) {
+    let rate = fetch("https://tax-rates.internal/api")
+    return price * rate
+}
+
+let result = calculateTax(100)
+print(result)
+

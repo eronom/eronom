@@ -84,6 +84,8 @@ pub enum TokenType {
     Await,
     New,
     Underscore,
+    Sync,
+    At,
     Eof,
 }
 

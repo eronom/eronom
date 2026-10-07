@@ -97,6 +97,7 @@ impl<'a> Lexer<'a> {
             ']' => TokenType::RightBracket,
             ',' => TokenType::Comma,
             ':' => TokenType::Colon,
+            '@' => TokenType::At,
             '-' => {
                 if self.match_char('-') {
                     TokenType::MinusMinus
@@ -343,6 +344,7 @@ impl<'a> Lexer<'a> {
                     "is" => TokenType::Is,
                     "enum" => TokenType::Enum,
                     "async" => TokenType::Async,
+                    "sync" => TokenType::Sync,
                     "await" => TokenType::Await,
                     "new" => TokenType::New,
                     "_" => TokenType::Underscore,

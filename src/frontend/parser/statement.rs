@@ -204,6 +204,9 @@ impl Parser {
         } else if self.match_token(&[TokenType::Concurrent]) {
             let body = Box::new(self.statement()?);
             Ok(Stmt::Concurrent(body))
+        } else if self.match_token(&[TokenType::Sync]) {
+            let body = Box::new(self.statement()?);
+            Ok(Stmt::Sync(body))
         } else {
             Ok(Stmt::Expr(self.expression()?))
         }

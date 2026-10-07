@@ -26,6 +26,15 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         Err(e) => anyhow::bail!("Compile/Import error: {}", e),
     };
 
+    let fe = frontend::infer_effects(&stmts);
+    if let Err(effect_errors) = frontend::check_sync_constraints(&stmts, &fe) {
+        let mut err_msg = String::from("Compile error: synchronous constraint violation:\n");
+        for err in effect_errors {
+            err_msg.push_str(&format!("  - {}\n", err));
+        }
+        anyhow::bail!("{}", err_msg);
+    }
+
     if has_http_import(&stmts) {
         let mut port = find_listen_port(&stmts);
         if port.is_none() {

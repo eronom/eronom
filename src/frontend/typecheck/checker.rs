@@ -190,7 +190,7 @@ impl TypeChecker {
             Stmt::Export(inner) => {
                 self.check_stmt(inner);
             }
-            Stmt::Concurrent(body) => {
+            Stmt::Concurrent(body) | Stmt::Sync(body) => {
                 self.check_stmt(body);
             }
             _ => {}
@@ -337,7 +337,7 @@ impl TypeChecker {
                 }
                 TypeNode::Object(props)
             }
-            Expr::Function(params, return_type, body, _) => {
+            Expr::Function(params, return_type, body, _, _) => {
                 self.env.push_scope();
                 let prev_ret = self.env.current_return_type.take();
                 self.env.current_return_type = return_type.clone();

@@ -240,8 +240,26 @@ impl Parser {
             };
             self.declare_variable(name.clone());
             Ok(Stmt::VarDecl(name, type_annotation, is_const, initializer, loc))
-        } else if self.check(&TokenType::Function) || (self.check(&TokenType::Async) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Function)) {
-            let is_async = self.match_token(&[TokenType::Async]);
+        } else if self.check(&TokenType::Function)
+            || (self.check(&TokenType::Async) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Function))
+            || (self.check(&TokenType::Sync) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Function))
+            || (self.check(&TokenType::At) && self.tokens.get(self.current + 1).map_or(false, |t| t.ty == TokenType::Sync || matches!(&t.ty, TokenType::Identifier(s) if s == "sync")) && self.tokens.get(self.current + 2).map_or(false, |t| t.ty == TokenType::Function)) {
+            let mut is_sync = false;
+            let mut is_async = false;
+            if self.match_token(&[TokenType::At]) {
+                if self.match_token(&[TokenType::Sync]) {
+                    is_sync = true;
+                } else if self.check_ident() {
+                    let name = self.consume_ident("Expected annotation name.")?;
+                    if name == "sync" {
+                        is_sync = true;
+                    }
+                }
+            } else if self.match_token(&[TokenType::Sync]) {
+                is_sync = true;
+            } else if self.match_token(&[TokenType::Async]) {
+                is_async = true;
+            }
             self.consume(TokenType::Function, "Expected 'fn' or 'function'.")?;
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected function name.")?;
@@ -293,7 +311,7 @@ impl Parser {
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, return_type, Box::new(body), is_async), loc))
+            Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, return_type, Box::new(body), is_async, is_sync), loc))
         } else if self.check_ident() && {
             // Check for assignment or short variable declaration: ident = expr
             self.current + 1 < self.tokens.len()
