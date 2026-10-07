@@ -196,7 +196,9 @@ impl VM {
                         let result = native(args);
                         reload_stack!();
                         if self.stack.is_empty() {
-                            frame.ip = ip_out - 1;
+                            if !self.frames.is_empty() {
+                                frame.ip = ip_out - 1;
+                            }
                             return Ok(Value::null());
                         }
                         *frame_slots.add(dest_reg_out) = result;
@@ -307,7 +309,9 @@ impl VM {
                     ip_val = ip_out;
                 } else if status == 3 {
                     // YieldSuspend: an async Await or native function suspended the VM during JIT execution.
-                    frame.ip = ip_out;
+                    if !self.frames.is_empty() {
+                        frame.ip = ip_out;
+                    }
                     if !self.stack.is_empty() && func_reg_out < self.stack.len() {
                         let await_val = *frame_slots.add(func_reg_out);
                         if await_val.is_promise() {

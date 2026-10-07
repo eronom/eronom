@@ -272,4 +272,18 @@ impl VM {
             fiber.status = FiberStatus::Running;
         }
     }
+
+    pub fn run_fiber_finalizers(&mut self, fiber_id: u64) {
+        let finalizers = if let Some(f) = self.scheduler.fibers.get_mut(&fiber_id) {
+            std::mem::take(&mut f.finalizers)
+        } else {
+            Vec::new()
+        };
+
+        for fin in finalizers.into_iter().rev() {
+            if let Err(e) = self.call_function_reentrant(fin, Vec::new()) {
+                eprintln!("[Finalizer Error]: {}", e);
+            }
+        }
+    }
 }

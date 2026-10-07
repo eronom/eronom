@@ -233,6 +233,12 @@ impl VM {
                         if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() && raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold) {
                             crate::jit::compile_function(self, raw_fn_ptr);
                         }
+                        let current_fid = self.scheduler.current_fiber_id;
+                        if let Some(fiber) = self.scheduler.fibers.get(&current_fid) {
+                            if fiber.interrupted && fiber.interruption_masks == 0 {
+                                return Err("FiberInterrupted".to_string());
+                            }
+                        }
                         ip = ip.sub(instruction.operand as usize);
                     }
                     OpCode::MakeArray => {

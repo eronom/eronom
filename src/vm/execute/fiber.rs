@@ -198,23 +198,14 @@ pub fn register_fiber_natives(vm: &mut super::types::VM) {
     vm.register_global("Eronom_fiberYield", Value::native_function(native_fiber_yield));
     vm.register_global("Eronom_fiberCurrentId", Value::native_function(native_fiber_current_id));
     vm.register_global("Eronom_fiberStatus", Value::native_function(native_fiber_status));
+    vm.register_global("Eronom_fiberInterrupt", Value::native_function(native_fiber_interrupt));
+    vm.register_global("Eronom_fiberMask", Value::native_function(native_fiber_mask));
+    vm.register_global("Eronom_fiberAddFinalizer", Value::native_function(native_fiber_add_finalizer));
+    vm.register_global("Eronom_bracket", Value::native_function(native_bracket));
 }
 
-pub fn native_fiber_current_id(_args: Vec<Value>) -> Value {
-    let vm_ptr = crate::vm::er_http::ACTIVE_VM.with(|active| active.get());
-    if vm_ptr.is_null() {
-        return Value::number(0.0);
-    }
-    let vm = unsafe { &mut *vm_ptr };
-    Value::number(vm.scheduler.current_fiber_id as f64)
-}
-
-pub fn native_fiber_status(args: Vec<Value>) -> Value {
-    if args.is_empty() {
-        return Value::null();
-    }
-    let target = args[0];
-    let fiber_id = if target.is_number() {
+pub fn extract_fiber_id(target: Value) -> u64 {
+    if target.is_number() {
         target.as_number() as u64
     } else if target.is_object() {
         unsafe {
@@ -230,7 +221,23 @@ pub fn native_fiber_status(args: Vec<Value>) -> Value {
         }
     } else {
         0
-    };
+    }
+}
+
+pub fn native_fiber_current_id(_args: Vec<Value>) -> Value {
+    let vm_ptr = crate::vm::er_http::ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::number(0.0);
+    }
+    let vm = unsafe { &mut *vm_ptr };
+    Value::number(vm.scheduler.current_fiber_id as f64)
+}
+
+pub fn native_fiber_status(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let fiber_id = extract_fiber_id(args[0]);
 
     let vm_ptr = crate::vm::er_http::ACTIVE_VM.with(|active| active.get());
     if vm_ptr.is_null() || fiber_id == 0 {
@@ -243,5 +250,135 @@ pub fn native_fiber_status(args: Vec<Value>) -> Value {
         Value::string(ptr)
     } else {
         Value::null()
+    }
+}
+
+pub fn native_fiber_interrupt(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let fiber_id = extract_fiber_id(args[0]);
+    let vm_ptr = crate::vm::er_http::ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() || fiber_id == 0 {
+        return Value::boolean(false);
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    if let Some(fiber) = vm.scheduler.fibers.get_mut(&fiber_id) {
+        fiber.interrupted = true;
+        if fiber.status == FiberStatus::Suspended && fiber.interruption_masks == 0 {
+            fiber.status = FiberStatus::Ready;
+            vm.scheduler.ready_queue.push_back(fiber_id);
+        }
+        Value::boolean(true)
+    } else {
+        Value::boolean(false)
+    }
+}
+
+pub fn native_fiber_mask(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let closure = args[0];
+    let vm_ptr = crate::vm::er_http::ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+    let cid = vm.scheduler.current_fiber_id;
+
+    if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+        f.interruption_masks += 1;
+    }
+
+    let res = vm.call_function_reentrant(closure, Vec::new());
+
+    if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+        f.interruption_masks = f.interruption_masks.saturating_sub(1);
+    }
+
+    match res {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[FiberMask] Error: {}", e);
+            Value::null()
+        }
+    }
+}
+
+pub fn native_fiber_add_finalizer(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let finalizer = args[0];
+    let vm_ptr = crate::vm::er_http::ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+    let cid = vm.scheduler.current_fiber_id;
+    if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+        f.finalizers.push(finalizer);
+    }
+    Value::null()
+}
+
+pub fn native_bracket(args: Vec<Value>) -> Value {
+    if args.len() < 3 {
+        return Value::null();
+    }
+    let acquire = args[0];
+    let use_fn = args[1];
+    let release = args[2];
+
+    let vm_ptr = crate::vm::er_http::ACTIVE_VM.with(|active| active.get());
+    if vm_ptr.is_null() {
+        return Value::null();
+    }
+    let vm = unsafe { &mut *vm_ptr };
+
+    // 1. Mask interruption during acquire
+    let cid = vm.scheduler.current_fiber_id;
+    if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+        f.interruption_masks += 1;
+    }
+
+    let resource = match vm.call_function_reentrant(acquire, Vec::new()) {
+        Ok(res) => res,
+        Err(e) => {
+            if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+                f.interruption_masks = f.interruption_masks.saturating_sub(1);
+            }
+            eprintln!("[Bracket] Acquire error: {}", e);
+            return Value::null();
+        }
+    };
+
+    // 2. Unmask interruption for use
+    if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+        f.interruption_masks = f.interruption_masks.saturating_sub(1);
+    }
+
+    // 3. Execute use_fn
+    let use_res = vm.call_function_reentrant(use_fn, vec![resource]);
+
+    // 4. Mask interruption during release
+    if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+        f.interruption_masks += 1;
+    }
+
+    let _ = vm.call_function_reentrant(release, vec![resource]);
+
+    if let Some(f) = vm.scheduler.fibers.get_mut(&cid) {
+        f.interruption_masks = f.interruption_masks.saturating_sub(1);
+    }
+
+    match use_res {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[Bracket] Use error: {}", e);
+            Value::null()
+        }
     }
 }

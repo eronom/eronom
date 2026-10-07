@@ -202,11 +202,26 @@ impl VM {
 
             // 3. Process any ready fibers scheduled in ready_queue
             while let Some(next_fid) = self.scheduler.ready_queue.pop_front() {
+                let is_cancelled = if let Some(f) = self.scheduler.fibers.get(&next_fid) {
+                    f.interrupted && f.interruption_masks == 0
+                } else {
+                    false
+                };
+
+                if is_cancelled {
+                    if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
+                        f.status = crate::vm::execute::fiber::FiberStatus::Cancelled;
+                    }
+                    self.run_fiber_finalizers(next_fid);
+                    continue;
+                }
+
                 self.save_active_fiber();
                 self.load_fiber(next_fid);
-                match self.execute_loop_interpreter(0) {
+                let exec_res = self.execute_loop_interpreter(0);
+                match exec_res {
                     Ok(val) => {
-                        if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
+                        let completed = if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
                             if f.status == crate::vm::execute::fiber::FiberStatus::Running
                                 && self.frames.is_empty()
                                 && f.frames.is_empty()
@@ -216,14 +231,30 @@ impl VM {
                                 if !comp_prom.is_null() {
                                     self.scheduler.wake_promise(comp_prom, val);
                                 }
+                                true
+                            } else {
+                                false
                             }
+                        } else {
+                            false
+                        };
+                        if completed {
+                            self.run_fiber_finalizers(next_fid);
                         }
                     }
                     Err(e) => {
+                        let is_interrupted = e == "FiberInterrupted";
                         if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
-                            f.fail(e.clone());
+                            if is_interrupted {
+                                f.status = crate::vm::execute::fiber::FiberStatus::Cancelled;
+                            } else {
+                                f.fail(e.clone());
+                            }
                         }
-                        return Err(e);
+                        self.run_fiber_finalizers(next_fid);
+                        if !is_interrupted {
+                            return Err(e);
+                        }
                     }
                 }
                 self.save_active_fiber();

@@ -10,7 +10,6 @@ fn run_script(source: &str) -> VM {
     let stmts = parser.parse().unwrap();
     let compiler = Compiler::new();
     let function = compiler.compile(&stmts).unwrap();
-
     let mut vm = VM::new();
     crate::vm::execute::fiber::register_fiber_natives(&mut vm);
     vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
@@ -128,3 +127,89 @@ fn test_fiber_join_and_result() {
     let vm = run_script(src);
     assert_eq!(vm.get_global("result").unwrap().as_number(), 100.0);
 }
+
+#[test]
+fn test_fiber_cancellation_and_finalizer() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    gc_free_all();
+    let src = r#"
+        let cleaned = 0
+        const worker = fn() {
+            Eronom_fiberAddFinalizer(fn() {
+                cleaned = 1
+            })
+            for i in 0..1000000 {
+                if (i == 1) {
+                    Eronom_fiberYield()
+                }
+            }
+        }
+        let f = Eronom_fiberSpawn(worker)
+        Eronom_fiberYield()
+        Eronom_fiberInterrupt(f)
+    "#;
+    let vm = run_script(src);
+    assert_eq!(vm.get_global("cleaned").unwrap().as_number(), 1.0);
+    let f_val = vm.get_global("f").unwrap();
+    let f_id = crate::vm::execute::fiber::extract_fiber_id(*f_val);
+    let status_str = vm.scheduler.fibers.get(&f_id).map(|fib| fib.status.to_string()).unwrap();
+    assert_eq!(status_str, "cancelled");
+}
+
+#[test]
+fn test_finalizer_lifo_order() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    gc_free_all();
+    let src = r#"
+        let order = []
+        const worker = fn() {
+            Eronom_fiberAddFinalizer(fn() { order.push(1) })
+            Eronom_fiberAddFinalizer(fn() { order.push(2) })
+            Eronom_fiberAddFinalizer(fn() { order.push(3) })
+            return "done"
+        }
+        Eronom_fiberSpawn(worker)
+    "#;
+    let vm = run_script(src);
+    let order_val = vm.get_global("order").unwrap();
+    unsafe {
+        match &(*order_val.as_gc_ptr()).data {
+            crate::vm::gc::GcData::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0].as_number(), 3.0);
+                assert_eq!(arr[1].as_number(), 2.0);
+                assert_eq!(arr[2].as_number(), 1.0);
+            }
+            _ => panic!("Expected order to be array"),
+        }
+    }
+}
+
+#[test]
+fn test_bracket_resource_cleanup() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    gc_free_all();
+    let src = r#"
+        let acquired = 0
+        let released = 0
+        let result = 0
+
+        let acquire = fn() {
+            acquired = 1
+            return 42
+        }
+        let use_fn = fn(res) {
+            return res * 2
+        }
+        let release = fn(res) {
+            released = 1
+        }
+
+        result = Eronom_bracket(acquire, use_fn, release)
+    "#;
+    let vm = run_script(src);
+    assert_eq!(vm.get_global("acquired").unwrap().as_number(), 1.0);
+    assert_eq!(vm.get_global("released").unwrap().as_number(), 1.0);
+    assert_eq!(vm.get_global("result").unwrap().as_number(), 84.0);
+}
+
