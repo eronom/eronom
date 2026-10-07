@@ -349,7 +349,7 @@ impl Compiler {
                     pairs.len() as u32,
                 );
             }
-            Expr::Function(params, return_type, body, is_async, _) => {
+            Expr::Function(params, return_type, body, is_async, is_sync) => {
                 let mut compiler = Compiler::new();
                 compiler.parent = Some(self as *mut Compiler);
                 compiler.const_globals = self.const_globals.clone();
@@ -359,8 +359,14 @@ impl Compiler {
                 compiler.global_types = self.global_types.clone();
                 compiler.current_struct = self.current_struct.clone();
                 compiler.current_return_type = return_type.as_ref().map(|t| t.to_string());
+                compiler.effects = self.effects.clone();
                 compiler.function.arity = params.len();
                 compiler.function.is_async = *is_async;
+
+                let rung = crate::frontend::infer_stmt_effect(body, &self.effects.borrow());
+                compiler.function.is_pure = *is_sync || (rung == crate::frontend::EffectRung::Pure);
+                compiler.function.can_suspend = !*is_sync && (*is_async || (rung == crate::frontend::EffectRung::Suspends));
+
                 compiler.next_reg = params.len();
                 compiler.begin_scope();
                 for param in params {

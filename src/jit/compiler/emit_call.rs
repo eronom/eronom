@@ -29,16 +29,18 @@ pub fn emit_call_and_control(
         }
         OpCode::Loop => {
             let target = (idx as i32 + 1 - instruction.operand as i32) as usize;
-            mir.push_str("          add loop_counter, loop_counter, 1\n");
-            mir.push_str("          and tmp, loop_counter, 127\n");
-            mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
-            mir.push_str("          mov tmp1, er_gc_needs_step\n");
-            mir.push_str("          mov status, u8:0(tmp1)\n");
-            mir.push_str(&format!("          beq no_yield_gc_{}, status, 0\n", idx));
-            save_all_registers(mir, idx);
-            mir.push_str(&format!("          mov i64:(ip_out), {}\n", target));
-            mir.push_str("          ret 2\n");
-            mir.push_str(&format!("no_yield_gc_{}:\n", idx));
+            if !func.is_pure {
+                mir.push_str("          add loop_counter, loop_counter, 1\n");
+                mir.push_str("          and tmp, loop_counter, 127\n");
+                mir.push_str(&format!("          bne no_yield_gc_{}, tmp, 0\n", idx));
+                mir.push_str("          mov tmp1, er_gc_needs_step\n");
+                mir.push_str("          mov status, u8:0(tmp1)\n");
+                mir.push_str(&format!("          beq no_yield_gc_{}, status, 0\n", idx));
+                save_all_registers(mir, idx);
+                mir.push_str(&format!("          mov i64:(ip_out), {}\n", target));
+                mir.push_str("          ret 2\n");
+                mir.push_str(&format!("no_yield_gc_{}:\n", idx));
+            }
             sync_edge(mir, idx, target);
             mir.push_str(&format!("          jmp inst_{}\n", target));
         }
@@ -187,8 +189,10 @@ pub fn emit_call_and_control(
                 }
                 mir.push_str(&format!("          jmp done_call_{}\n", idx));
                 mir.push_str(&format!("not_normal_ret_{}:\n", idx));
-                mir.push_str(&format!("          beq suspend_label_{}, status, 3\n", idx));
-                mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+                if func.can_suspend {
+                    mir.push_str(&format!("          beq suspend_label_{}, status, 3\n", idx));
+                    mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+                }
                 mir.push_str("          blt err_label, status, 0\n");
                 mir.push_str(&format!("          jmp done_call_{}\n", idx));
                 mir.push_str(&format!("not_self_call_{}:\n", idx));
@@ -197,7 +201,9 @@ pub fn emit_call_and_control(
             mir.push_str(&format!("          add dest_ptr, frame_slots, {}\n", ra * 8));
             mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", (rb + 1) * 8));
             mir.push_str(&format!("          call p_call_fast, er_jit_call_fast, status, vm, r{}, start_ptr, dest_ptr, {}, {}\n", rb, idx, ra));
-            mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+            if func.can_suspend {
+                mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+            }
             mir.push_str("          blt err_label, status, -1\n");
             mir.push_str(&format!("          bne not_fast_call_{}, status, 0\n", idx));
             mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
@@ -207,7 +213,9 @@ pub fn emit_call_and_control(
 
             mir.push_str(&format!("          call p_call_non_vm, er_jit_call_non_vm, status, vm, dest_ptr, r{}, {}, {}, frame_slots, {}, {}\n", rb, rb, arg_count, idx, ra));
             mir.push_str(&format!("          beq call_vm_label_{}, status, -1\n", idx));
-            mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+            if func.can_suspend {
+                mir.push_str(&format!("          beq suspend_label_{}, status, -3\n", idx));
+            }
             mir.push_str("          blt err_label, status, 0\n");
             mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", ra, ra * 8));
             mir.push_str(&format!("          dmov d{}, d:{}(frame_slots)\n", ra, ra * 8));

@@ -54,8 +54,17 @@ impl FunctionEffects {
         fe.functions.insert("spawnTask".to_string(), EffectRung::Suspends);
         fe.functions.insert("wait".to_string(), EffectRung::Suspends);
         fe.functions.insert("await".to_string(), EffectRung::Suspends);
+        fe.functions.insert("Eronom_fiberYield".to_string(), EffectRung::Suspends);
+        fe.functions.insert("Eronom_fiberJoin".to_string(), EffectRung::Suspends);
+        fe.functions.insert("Eronom_bracket".to_string(), EffectRung::Suspends);
+        fe.functions.insert("Eronom_maskInterrupts".to_string(), EffectRung::Suspends);
+        fe.functions.insert("Eronom_unmaskInterrupts".to_string(), EffectRung::Suspends);
+        fe.functions.insert("yield".to_string(), EffectRung::Suspends);
 
         // Seed known impure functions (side-effects without pausing)
+        fe.functions.insert("Eronom_fiberSpawn".to_string(), EffectRung::Impure);
+        fe.functions.insert("Eronom_fiberInterrupt".to_string(), EffectRung::Impure);
+        fe.functions.insert("Eronom_fiberAddFinalizer".to_string(), EffectRung::Impure);
         fe.functions.insert("print".to_string(), EffectRung::Impure);
         fe.functions.insert("println".to_string(), EffectRung::Impure);
         fe.functions.insert("write".to_string(), EffectRung::Impure);
@@ -152,14 +161,17 @@ pub fn infer_expr_effect(expr: &Expr, fe: &FunctionEffects) -> EffectRung {
                     callee_rung = callee_rung.combine(fe.get_function_rung(name));
                 }
                 Expr::Get(target, method) => {
-                    if method == "join" || method == "wait" {
+                    if method == "join" || method == "wait" || method == "yield" {
                         callee_rung = callee_rung.combine(EffectRung::Suspends);
                     }
                     if let Expr::Variable(target_name, _) = target.as_ref() {
                         if target_name == "Io" && method == "wait" {
                             callee_rung = callee_rung.combine(EffectRung::Suspends);
                         }
-                        if target_name == "Task" && (method == "race" || method == "timeout" || method == "forEach" || method == "scope") {
+                        if target_name == "Task" && (method == "race" || method == "timeout" || method == "forEach" || method == "scope" || method == "yield" || method == "join") {
+                            callee_rung = callee_rung.combine(EffectRung::Suspends);
+                        }
+                        if target_name == "Clock" && (method == "run" || method == "advance" || method == "schedule") {
                             callee_rung = callee_rung.combine(EffectRung::Suspends);
                         }
                     }

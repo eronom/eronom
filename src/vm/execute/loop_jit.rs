@@ -27,15 +27,13 @@ impl VM {
 
             #[inline(always)]
             unsafe fn get_raw_func<'a>(mut p: *mut GcObject) -> &'a Function { unsafe {
-                if let GcData::BoundMethod(bm) = &(*p).data {
-                    p = bm.function;
-                }
-                if let GcData::Closure(c) = &(*p).data {
-                    p = c.function;
-                }
-                match &(*p).data {
-                    GcData::Function(func) => func,
-                    _ => unreachable!(),
+                loop {
+                    match &(*p).data {
+                        GcData::BoundMethod(bm) => p = bm.function,
+                        GcData::Closure(c) => p = c.function,
+                        GcData::Function(func) => return func,
+                        _ => unreachable!(),
+                    }
                 }
             }}
 
@@ -353,6 +351,9 @@ impl VM {
                         Value::string(ptr)
                     };
 
+                    if self.frames.is_empty() {
+                        return Err(thrown.to_string());
+                    }
                     let initial_frame_idx = self.frames.len() - 1;
                     while !self.frames.is_empty() {
                         let frame_idx = self.frames.len() - 1;

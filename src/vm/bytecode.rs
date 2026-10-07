@@ -12,7 +12,7 @@ pub struct UpvalueDescriptor {
     pub index: u8,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Function {
     pub name: Option<String>,
     pub chunk: Chunk,
@@ -22,6 +22,25 @@ pub struct Function {
     pub is_async: bool,
     pub has_loop: bool,
     pub upvalues: Vec<UpvalueDescriptor>,
+    pub is_pure: bool,
+    pub can_suspend: bool,
+}
+
+impl Default for Function {
+    fn default() -> Self {
+        Self {
+            name: None,
+            chunk: Chunk::default(),
+            arity: 0,
+            jit_ptr: std::cell::Cell::new(None),
+            invocation_count: std::cell::Cell::new(0),
+            is_async: false,
+            has_loop: false,
+            upvalues: Vec::new(),
+            is_pure: false,
+            can_suspend: true,
+        }
+    }
 }
 
 #[repr(u8)]

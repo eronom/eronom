@@ -78,7 +78,9 @@ pub fn emit_prologue(
 
     mir.push_str("          alloca cast_ptr, 192\n");
     mir.push_str("          mov loop_counter, 0\n");
-    mir.push_str("          bne resume_dispatch, start_ip, 0\n");
+    if !func.is_pure {
+        mir.push_str("          bne resume_dispatch, start_ip, 0\n");
+    }
     for i in 0..func.arity.min(num_regs) {
         mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
         if param_is_double[i] {
@@ -93,16 +95,18 @@ pub fn emit_prologue(
     mir.push_str("          mov i64:(ip_out), 0\n");
     mir.push_str("          ret 4\n");
 
-    mir.push_str("resume_dispatch:\n");
-    for i in 0..num_regs {
-        mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
-    }
-    for ip_target in 1..func.chunk.code.len() {
-        if is_resume_target[ip_target] {
-            mir.push_str(&format!("          beq entry_{}, start_ip, {}\n", ip_target, ip_target));
+    if !func.is_pure {
+        mir.push_str("resume_dispatch:\n");
+        for i in 0..num_regs {
+            mir.push_str(&format!("          mov r{}, i64:{}(frame_slots)\n", i, i * 8));
         }
+        for ip_target in 1..func.chunk.code.len() {
+            if is_resume_target[ip_target] {
+                mir.push_str(&format!("          beq entry_{}, start_ip, {}\n", ip_target, ip_target));
+            }
+        }
+        mir.push_str("          jmp err_label\n");
     }
-    mir.push_str("          jmp err_label\n");
 }
 
 pub fn calculate_max_regs(func: &Function) -> usize {
@@ -160,6 +164,9 @@ pub fn calculate_param_doubles(func: &Function) -> Vec<bool> {
 pub fn calculate_resume_targets(func: &Function) -> Vec<bool> {
     let mut is_resume_target = vec![false; func.chunk.code.len()];
     is_resume_target[0] = true;
+    if func.is_pure {
+        return is_resume_target;
+    }
     for (i, inst) in func.chunk.code.iter().enumerate() {
         if inst.op == OpCode::Loop {
             let target = (i as i32 + 1 - inst.operand as i32) as usize;

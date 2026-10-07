@@ -6,6 +6,7 @@ use super::test_basics::run_code;
 
 #[test]
 fn test_imports_exports() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use std::fs;
     let dir = std::env::current_dir().unwrap().join("target").join("test_imports_exports");
     fs::create_dir_all(&dir).unwrap();
@@ -296,6 +297,7 @@ fn test_websocket_pubsub_api() {
 
 #[test]
 fn test_extract_bytes_from_value() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     // 1. Test string extraction
     let s_ptr = crate::vm::gc::gc_alloc_string("hello");
