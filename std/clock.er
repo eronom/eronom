@@ -1,0 +1,71 @@
+// Standard Virtual Test Clock for deterministic time testing in Eronom
+
+let virtualTime = 0
+let isVirtual = false
+let scheduledEvents = []
+
+export const Clock = {
+  // Returns current virtual time if active, or real time via now()
+  now: () => {
+    if (isVirtual) {
+      return virtualTime
+    }
+    return now()
+  },
+
+  // Returns true if running under a virtual clock
+  isVirtual: () => {
+    return isVirtual
+  },
+
+  // Advance virtual time by `ms` and execute any triggered virtual events
+  advance: (ms) => {
+    if (!isVirtual) {
+      return 0
+    }
+    virtualTime = virtualTime + ms
+    let remaining = []
+    for ev in scheduledEvents {
+      if (ev.dueTime <= virtualTime) {
+        ev.callback()
+      } else {
+        remaining.push(ev)
+      }
+    }
+    scheduledEvents = remaining
+    Eronom_fiberYield()
+    return virtualTime
+  },
+
+  // Schedule an event at `delayMs` in virtual or real time
+  schedule: (delayMs, callback) => {
+    if (isVirtual) {
+      let due = virtualTime + delayMs
+      scheduledEvents.push({ dueTime: due, callback: callback })
+    } else {
+      setTimeout(callback, delayMs)
+    }
+  },
+
+  // Run a test closure within an isolated virtual clock context
+  run: (testFn) => {
+    let prevVirtual = isVirtual
+    let prevTime = virtualTime
+    let prevEvents = scheduledEvents
+    isVirtual = true
+    virtualTime = 0
+    scheduledEvents = []
+    try {
+      let res = testFn()
+      isVirtual = prevVirtual
+      virtualTime = prevTime
+      scheduledEvents = prevEvents
+      return res
+    } catch (e) {
+      isVirtual = prevVirtual
+      virtualTime = prevTime
+      scheduledEvents = prevEvents
+      throw e
+    }
+  }
+}

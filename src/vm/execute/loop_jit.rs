@@ -114,7 +114,6 @@ impl VM {
                 let mut func_reg_out: usize = 0;
                 let mut arg_count_out: usize = 0;
                 let mut ret_val_out: Value = Value::null();
-
                 let status = jit_fn(
                     self as *mut VM,
                     frame_slots,
@@ -126,6 +125,9 @@ impl VM {
                     &mut arg_count_out,
                     &mut ret_val_out,
                 );
+                if !self.stack.is_empty() {
+                    reload_stack!();
+                }
 
                 if status == 0 {
                     // YieldCall: a Call instruction yielded to the JIT orchestrator.

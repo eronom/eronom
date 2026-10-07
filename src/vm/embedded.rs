@@ -318,6 +318,15 @@ pub fn collect_std_library_files() -> HashMap<String, Vec<u8>> {
     if !files.contains_key("std/erm.er") {
         files.insert("std/erm.er".to_string(), include_bytes!("../../std/erm.er").to_vec());
     }
+    if !files.contains_key("std/task.er") {
+        files.insert("std/task.er".to_string(), include_bytes!("../../std/task.er").to_vec());
+    }
+    if !files.contains_key("std/schedule.er") {
+        files.insert("std/schedule.er".to_string(), include_bytes!("../../std/schedule.er").to_vec());
+    }
+    if !files.contains_key("std/clock.er") {
+        files.insert("std/clock.er".to_string(), include_bytes!("../../std/clock.er").to_vec());
+    }
 
     // Built-in ERM client reactive runtime files
     if !files.contains_key("modules/erm/runtime.js") {

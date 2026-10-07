@@ -200,8 +200,13 @@ impl VM {
                 }
             }
 
-            // 3. Process any ready fibers scheduled in ready_queue
-            while let Some(next_fid) = self.scheduler.ready_queue.pop_front() {
+            // 3. Process any ready fibers scheduled in ready_queue (bounded tick to prevent starvation)
+            let fibers_to_run = self.scheduler.ready_queue.len();
+            for _ in 0..fibers_to_run {
+                let next_fid = match self.scheduler.ready_queue.pop_front() {
+                    Some(fid) => fid,
+                    None => break,
+                };
                 let is_cancelled = if let Some(f) = self.scheduler.fibers.get(&next_fid) {
                     f.interrupted && f.interruption_masks == 0
                 } else {
@@ -274,7 +279,7 @@ impl VM {
             }
 
             let queue = self.event_loop_queue.lock().unwrap();
-            if queue.is_empty() {
+            if queue.is_empty() && !has_ready_fibers {
                 let now = Instant::now();
                 let wait_timeout = {
                     let timers = self.timers.lock().unwrap();

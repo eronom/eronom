@@ -1,0 +1,71 @@
+// Standard Schedule, Exponential Backoff, and Retry Library for Eronom
+
+export const Schedule = {
+  // Fixed interval retry policy
+  fixed: (intervalMs) => {
+    let _maxRetries = 3
+    let inst = {}
+    inst.maxRetries = (n) => {
+      _maxRetries = n
+      return inst
+    }
+    inst.retry = (taskFn) => {
+      let attempts = 0
+      while (attempts <= _maxRetries) {
+        attempts = attempts + 1
+        try {
+          return taskFn()
+        } catch (err) {
+          if (attempts > _maxRetries) {
+            throw err
+          }
+          if (intervalMs > 0) {
+            futureAwait(sleep(intervalMs))
+          }
+        }
+      }
+    }
+    return inst
+  },
+
+  // Exponential backoff retry policy with jitter/saturation ceiling
+  exponential: (initialMs, factor) => {
+    let _maxDuration = 30000
+    let _maxRetries = 5
+    let fact = factor
+    if (!fact || fact <= 1.0) {
+      fact = 2.0
+    }
+    let inst = {}
+    inst.upTo = (maxMs) => {
+      _maxDuration = maxMs
+      return inst
+    }
+    inst.maxRetries = (n) => {
+      _maxRetries = n
+      return inst
+    }
+    inst.retry = (taskFn) => {
+      let attempts = 0
+      let currentDelay = initialMs
+      while (attempts <= _maxRetries) {
+        attempts = attempts + 1
+        try {
+          return taskFn()
+        } catch (err) {
+          if (attempts > _maxRetries) {
+            throw err
+          }
+          if (currentDelay > 0) {
+            futureAwait(sleep(currentDelay))
+          }
+          currentDelay = currentDelay * fact
+          if (currentDelay > _maxDuration) {
+            currentDelay = _maxDuration
+          }
+        }
+      }
+    }
+    return inst
+  }
+}
