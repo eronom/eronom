@@ -7,7 +7,6 @@
 #include <atomic>
 #include <cstdint>
 #include <vector>
-#include <strings.h>
 
 extern "C" {
     // Legacy callbacks
@@ -127,6 +126,35 @@ struct ErReqView {
     std::string saved_url;
     std::string saved_query;
     std::string saved_method;
+};
+
+struct RouteBodyCtx {
+    HttpResponseToken* token;
+    std::string url;
+    std::string body;
+    ErReqView view;
+    explicit RouteBodyCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
+    ~RouteBodyCtx() { if (token) token->release(); }
+};
+
+struct FallbackDevCtx {
+    HttpResponseToken* token;
+    std::string method;
+    std::string url;
+    std::string headers;
+    std::string body;
+    explicit FallbackDevCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
+    ~FallbackDevCtx() { if (token) token->release(); }
+};
+
+struct FallbackCtx {
+    HttpResponseToken* token;
+    std::string method;
+    std::string url;
+    std::string body;
+    ErReqView view;
+    explicit FallbackCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
+    ~FallbackCtx() { if (token) token->release(); }
 };
 
 // ─── Zero-Copy Request Inspection APIs ───────────────────────────────────────
@@ -303,15 +331,7 @@ void er_server_register_route(void* server_ptr, const char* method, const char* 
                 res->onAborted(AbortHandler(token));
                 std::string full_url(req->getFullUrl());
 
-                struct BodyCtx {
-                    HttpResponseToken* token;
-                    std::string url;
-                    std::string body;
-                    ErReqView view;
-                    BodyCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
-                    ~BodyCtx() { if (token) token->release(); }
-                };
-                auto ctx = std::make_shared<BodyCtx>(token);
+                auto ctx = std::make_shared<RouteBodyCtx>(token);
                 ctx->url = std::move(full_url);
                 ctx->view.is_live = false;
                 ctx->view.saved_url = ctx->url;
@@ -418,16 +438,6 @@ static void register_fallback_internal(ErServer* server) {
                               full_url.data(), full_url.length(),
                               headers_str.data(), headers_str.length(),
                               nullptr, 0);
-            } else {
-                struct FallbackDevCtx {
-                    HttpResponseToken* token;
-                    std::string method;
-                    std::string url;
-                    std::string headers;
-                    std::string body;
-                    FallbackDevCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
-                    ~FallbackDevCtx() { if (token) token->release(); }
-                };
                 auto ctx = std::make_shared<FallbackDevCtx>(token);
                 ctx->method = std::move(method_str);
                 ctx->url = std::move(full_url);
@@ -456,15 +466,6 @@ static void register_fallback_internal(ErServer* server) {
                                 full_url.data(), full_url.length(),
                                 nullptr, 0);
         } else {
-            struct FallbackCtx {
-                HttpResponseToken* token;
-                std::string method;
-                std::string url;
-                std::string body;
-                ErReqView view;
-                FallbackCtx(HttpResponseToken* t) : token(t) { if (token) token->add_ref(); }
-                ~FallbackCtx() { if (token) token->release(); }
-            };
             auto ctx = std::make_shared<FallbackCtx>(token);
             ctx->method = std::move(method_str);
             ctx->url = std::move(full_url);
