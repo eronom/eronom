@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
-#[command(name = "eronom", version = "0.1.0")]
+#[command(name = "eronom", version)]
 #[command(about = "Eronom: A web framework and runtime", long_about = None)]
 pub struct Cli {
     /// The script file to run (e.g. main.er)

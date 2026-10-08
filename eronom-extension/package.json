@@ -2,7 +2,7 @@
   "name": "eronom-extension",
   "displayName": "Eronom",
   "description": "Language support for the Eronom framework including syntax highlighting, snippets, and commands for .er and .erm files.",
-  "version": "0.9.0",
+  "version": "0.9.4",
   "publisher": "eronom",
   "icon": "icon.png",
   "license": "MIT",
