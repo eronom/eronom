@@ -22,3 +22,6 @@ Ensure all code changes adhere strictly to the following architectural constrain
   - Interpolation: `{expression}`
   - Conditionals: `{#if condition} ... {/#if}` or `{#if condition} ... {:else} ... {/#if}`
   - Loops: `{#for item in list} ... {/#for}`
+
+## 4. Eronom Independence & Naming Rules
+- **No External Runtime or Tool Names**: Never reference third-party runtimes, frameworks, or tools (e.g. Bun, Node, Deno, Hono, Express) in code comments, function names, variable names, error messages, or documentation within the Eronom codebase. Eronom is its own independent language and runtime; always use Eronom-native terminology (e.g., `serve()` primitive, `router()`, `std/http`, `Response`).

@@ -97,6 +97,7 @@ impl<'a> Lexer<'a> {
             ']' => TokenType::RightBracket,
             ',' => TokenType::Comma,
             ':' => TokenType::Colon,
+            '@' => TokenType::At,
             '-' => {
                 if self.match_char('-') {
                     TokenType::MinusMinus
@@ -136,8 +137,20 @@ impl<'a> Lexer<'a> {
                     TokenType::Percent
                 }
             }
-            '&' => TokenType::Ampersand,
-            '|' => TokenType::Pipe,
+            '&' => {
+                if self.match_char('&') {
+                    TokenType::And
+                } else {
+                    TokenType::Ampersand
+                }
+            }
+            '|' => {
+                if self.match_char('|') {
+                    TokenType::Or
+                } else {
+                    TokenType::Pipe
+                }
+            }
             '^' => TokenType::Caret,
             '~' => TokenType::Tilde,
             '?' => TokenType::Question,
@@ -307,6 +320,7 @@ impl<'a> Lexer<'a> {
                     "export" => TokenType::Export,
                     "from" => TokenType::From,
                     "fn" => TokenType::Function,
+                    "function" => TokenType::Function,
                     "struct" => TokenType::Struct,
                     "embed" => TokenType::Embed,
                     "interface" => TokenType::Interface,
@@ -329,6 +343,10 @@ impl<'a> Lexer<'a> {
                     "as" => TokenType::As,
                     "is" => TokenType::Is,
                     "enum" => TokenType::Enum,
+                    "async" => TokenType::Async,
+                    "sync" => TokenType::Sync,
+                    "await" => TokenType::Await,
+                    "new" => TokenType::New,
                     "_" => TokenType::Underscore,
                     _ => TokenType::Identifier(ident),
                 }

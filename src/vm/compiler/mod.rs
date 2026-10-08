@@ -50,6 +50,7 @@ pub struct Compiler {
     pub(crate) current_struct: Option<String>,
     pub(crate) concurrent_scopes: Vec<usize>,
     pub(crate) loop_stack: Vec<LoopContext>,
+    pub(crate) effects: Rc<RefCell<crate::frontend::FunctionEffects>>,
 }
 
 impl Default for Compiler {
@@ -62,16 +63,7 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             parent: None,
-            function: Function {
-                name: None,
-                chunk: Chunk::default(),
-                arity: 0,
-                jit_ptr: std::cell::Cell::new(None),
-                invocation_count: std::cell::Cell::new(0),
-                is_async: false,
-                has_loop: false,
-                upvalues: Vec::new(),
-            },
+            function: Function::default(),
             locals: Vec::new(),
             upvalues: Vec::new(),
             upvalue_names: Vec::new(),
@@ -86,6 +78,7 @@ impl Compiler {
             current_struct: None,
             concurrent_scopes: Vec::new(),
             loop_stack: Vec::new(),
+            effects: Rc::new(RefCell::new(crate::frontend::FunctionEffects::default())),
         }
     }
 
@@ -94,6 +87,15 @@ impl Compiler {
     }
 
     pub fn compile(mut self, stmts: &[Stmt]) -> Result<Function, String> {
+        let fe = crate::frontend::infer_effects(stmts);
+        self.effects = Rc::new(RefCell::new(fe));
+
+        let top_rung = stmts.iter().fold(crate::frontend::EffectRung::Pure, |acc, s| {
+            acc.combine(crate::frontend::infer_stmt_effect(s, &self.effects.borrow()))
+        });
+        self.function.is_pure = top_rung == crate::frontend::EffectRung::Pure;
+        self.function.can_suspend = top_rung == crate::frontend::EffectRung::Suspends;
+
         let mut raw_structs = HashMap::new();
         collect_structs(stmts, &mut raw_structs);
 

@@ -6,6 +6,7 @@ use super::test_basics::run_code;
 
 #[test]
 fn test_imports_exports() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use std::fs;
     let dir = std::env::current_dir().unwrap().join("target").join("test_imports_exports");
     fs::create_dir_all(&dir).unwrap();
@@ -36,6 +37,7 @@ fn test_imports_exports() {
 
 #[test]
 fn test_async_await_event_loop() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     let source = "
         let result = 0
@@ -71,6 +73,7 @@ fn test_async_await_event_loop() {
 
 #[test]
 fn test_concurrent_structured_syntax() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     let source = "
         let counter = 0
@@ -85,12 +88,6 @@ fn test_concurrent_structured_syntax() {
             taskB()
         }
     ";
-    let tokens = crate::frontend::lex(source);
-    let mut parser = crate::frontend::Parser::new(tokens);
-    let stmts = parser.parse().unwrap();
-    let compiler = Compiler::new();
-    let function = compiler.compile(&stmts).unwrap();
-
     let mut vm = VM::new();
     vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
     vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
@@ -100,6 +97,12 @@ fn test_concurrent_structured_syntax() {
     vm.register_global("setIoMode", Value::native_function(crate::vm::er_http::native_set_io_mode));
     vm.register_global("getIoMode", Value::native_function(crate::vm::er_http::native_get_io_mode));
     crate::vm::er_http::register_eronom_file_api(&mut vm).unwrap();
+
+    let tokens = crate::frontend::lex(source);
+    let mut parser = crate::frontend::Parser::new(tokens);
+    let stmts = parser.parse().unwrap();
+    let compiler = Compiler::new();
+    let function = compiler.compile(&stmts).unwrap();
     vm.use_jit = true;
     vm.run(function).unwrap();
     vm.run_event_loop().unwrap();
@@ -109,6 +112,7 @@ fn test_concurrent_structured_syntax() {
 
 #[test]
 fn test_set_timeout_scale_and_ordering() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     let source = "
         let order = []
@@ -152,6 +156,7 @@ fn test_set_timeout_scale_and_ordering() {
 
 #[test]
 fn test_clear_timeout_functionality() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     let source = "
         let fired = []
@@ -199,6 +204,7 @@ fn test_http_response_aborted_safety() {
 
 #[test]
 fn test_websocket_pubsub_api() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     let source = "
         let app = router()
@@ -291,6 +297,7 @@ fn test_websocket_pubsub_api() {
 
 #[test]
 fn test_extract_bytes_from_value() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     // 1. Test string extraction
     let s_ptr = crate::vm::gc::gc_alloc_string("hello");

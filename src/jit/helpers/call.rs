@@ -90,7 +90,9 @@ pub extern "C" fn er_jit_call_fast(
 
         if res == 1 {
             if !(*vm).stack.is_empty() {
-                (*vm).close_upvalues(slots_offset);
+                if !func.is_pure {
+                    (*vm).close_upvalues(slots_offset);
+                }
                 (*vm).frames.pop();
             }
             *dest = ret_val_out;

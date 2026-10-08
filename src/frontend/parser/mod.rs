@@ -81,6 +81,16 @@ impl Parser {
         &self.peek().ty == ty
     }
 
+    pub(crate) fn is_async_function_or_arrow(&self) -> bool {
+        if self.peek().ty != TokenType::Async {
+            return false;
+        }
+        let next_ty = self.tokens.get(self.current + 1).map(|t| &t.ty);
+        let next_next_ty = self.tokens.get(self.current + 2).map(|t| &t.ty);
+        matches!(next_ty, Some(TokenType::Function) | Some(TokenType::LeftParen))
+            || (matches!(next_ty, Some(TokenType::Identifier(_))) && matches!(next_next_ty, Some(TokenType::Arrow)))
+    }
+
     pub(crate) fn check_ident(&self) -> bool {
         if self.is_at_end() {
             return false;
@@ -93,6 +103,7 @@ impl Parser {
             || self.peek().ty == TokenType::From
             || self.peek().ty == TokenType::Default
             || self.peek().ty == TokenType::Typeof
+            || (self.peek().ty == TokenType::Async && !self.is_async_function_or_arrow())
     }
 
     pub(crate) fn match_token(&mut self, types: &[TokenType]) -> bool {
@@ -125,10 +136,28 @@ impl Parser {
                 TokenType::From => return Ok("from".to_string()),
                 TokenType::Default => return Ok("default".to_string()),
                 TokenType::Typeof => return Ok("typeof".to_string()),
+                TokenType::Async => return Ok("async".to_string()),
                 _ => {}
             }
         }
         Err(format!("Error at line {}: {}", self.peek().line, msg))
+    }
+
+    pub(crate) fn consume_prop_key(&mut self, msg: &str) -> Result<String, String> {
+        if let TokenType::String(s) = &self.peek().ty {
+            let s_clone = s.clone();
+            self.advance();
+            return Ok(s_clone);
+        }
+        if self.peek().ty == TokenType::Await {
+            self.advance();
+            return Ok("await".to_string());
+        }
+        if self.peek().ty == TokenType::New {
+            self.advance();
+            return Ok("new".to_string());
+        }
+        self.consume_ident(msg)
     }
 
     pub fn parse(&mut self) -> Result<Vec<Stmt>, String> {

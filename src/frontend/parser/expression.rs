@@ -199,6 +199,10 @@ impl Parser {
     }
 
     pub(crate) fn unary(&mut self) -> Result<Expr, String> {
+        if self.match_token(&[TokenType::Await]) {
+            let expr = self.unary()?;
+            return Ok(Expr::Await(Box::new(expr)));
+        }
         if self.match_token(&[TokenType::Bang, TokenType::Minus, TokenType::Tilde, TokenType::Typeof]) {
             let operator = self.previous().ty.clone();
             let expr = self.unary()?;
@@ -217,7 +221,9 @@ impl Parser {
     }
 
     pub(crate) fn call(&mut self) -> Result<Expr, String> {
+        let is_new = self.match_token(&[TokenType::New]);
         let mut expr = self.primary()?;
+        let mut had_call = false;
         loop {
             if self.match_token(&[TokenType::LeftParen]) {
                 let mut arguments = Vec::new();
@@ -231,9 +237,19 @@ impl Parser {
                 }
                 self.consume(TokenType::RightParen, "Expected ')' after arguments.")?;
                 expr = Expr::Call(Box::new(expr), arguments);
+                if is_new && !had_call {
+                    expr = Expr::New(Box::new(expr));
+                    had_call = true;
+                }
             } else if self.match_token(&[TokenType::Dot]) {
                 let name = if self.check_ident() {
                     self.consume_ident("Expected property name.")?
+                } else if self.check(&TokenType::Await) {
+                    self.advance();
+                    "await".to_string()
+                } else if self.check(&TokenType::New) {
+                    self.advance();
+                    "new".to_string()
                 } else if let TokenType::Number(n) = self.peek().ty.clone() {
                     self.advance();
                     n.to_string()
@@ -254,6 +270,9 @@ impl Parser {
             } else {
                 break;
             }
+        }
+        if is_new && !had_call {
+            expr = Expr::New(Box::new(expr));
         }
         Ok(expr)
     }

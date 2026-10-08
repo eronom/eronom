@@ -1,0 +1,524 @@
+<script>
+    // --- Reactive State Management (Exported for Component Sharing) ---
+    export let cartItems = useState([]);
+    export let cartCount = useState(0);
+    export let cartSubtotal = useState(0);
+    export let cartTax = useState(0);
+    export let cartShipping = useState("FREE");
+    export let cartTotal = useState(0);
+    
+    export let isCartOpen = useState(false);
+    export let activeCategory = useState("All");
+    export let toastMessage = useState("");
+    export let orderSuccess = useState(false);
+
+    // --- Reactive Deal of the Day State (Shared with <DealBanner>) ---
+    export let dealTitle = useState("Apex Pro 75 Mechanical Keyboard (Special Edition)");
+    export let dealDiscount = useState(30);
+    export let dealPrice = useState(189);
+    export let dealOriginalPrice = useState(269);
+    export let dealEmoji = useState("⌨️");
+    export let dealCategory = useState("Keyboards");
+    export let isDealLoading = useState(true);
+
+    function recalculate(items) {
+        let count = 0;
+        let subtotal = 0;
+        for (let i = 0; i < items.length; i++) {
+            count = count + items[i].qty;
+            subtotal = subtotal + (items[i].price * items[i].qty);
+        }
+        cartCount.value = count;
+        cartSubtotal.value = subtotal;
+        let tax = Math.round(subtotal * 0.08);
+        cartTax.value = tax;
+        let shippingVal = (subtotal > 150 || subtotal === 0) ? 0 : 15;
+        cartShipping.value = shippingVal === 0 ? "FREE" : "$" + shippingVal;
+        cartTotal.value = subtotal + tax + shippingVal;
+    }
+
+    function addToCart(id, name, price, emoji, category) {
+        let current = cartItems.value;
+        let items = [];
+        if (current && current.length) {
+            for (let i = 0; i < current.length; i++) {
+                items.push({
+                    id: current[i].id,
+                    name: current[i].name,
+                    price: current[i].price,
+                    emoji: current[i].emoji,
+                    category: current[i].category,
+                    qty: current[i].qty
+                });
+            }
+        }
+        let found = false;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].id === id) {
+                items[i].qty = items[i].qty + 1;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            items.push({ id: id, name: name, price: price, emoji: emoji, category: category, qty: 1 });
+        }
+        cartItems.value = items;
+        recalculate(items);
+        toastMessage.value = "Added " + name + " to cart!";
+    }
+
+    if (typeof window !== "undefined") {
+        window.addToCart = addToCart;
+    }
+
+    function openCart() {
+        isCartOpen.value = true;
+    }
+
+    function closeCart() {
+        isCartOpen.value = false;
+    }
+
+    function setCategory(cat) {
+        activeCategory.value = cat;
+        const cats = ["All", "Keyboards", "Audio", "Accessories", "Displays"];
+        for (let i = 0; i < cats.length; i++) {
+            let btn = document.getElementById("cat-btn-" + cats[i]);
+            if (btn) {
+                if (cats[i] === cat) {
+                    btn.classList.add("active");
+                } else {
+                    btn.classList.remove("active");
+                }
+            }
+        }
+    }
+
+    // Declarative API Fetch for Deal of the Day (Svelte-style reactive signal update)
+    useEffect(() => {
+        fetch("/api/deal")
+            .then((res) => {
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return res.json();
+            })
+            .then((data) => {
+                if (data) {
+                    if (data.title) dealTitle.value = data.title;
+                    if (data.discount) dealDiscount.value = data.discount;
+                    if (data.price) dealPrice.value = data.price;
+                    if (data.originalPrice) dealOriginalPrice.value = data.originalPrice;
+                    if (data.emoji) dealEmoji.value = data.emoji;
+                    if (data.category) dealCategory.value = data.category;
+                    isDealLoading.value = false;
+                }
+            })
+            .catch((err) => {
+                console.error("Server deal fetch error:", err);
+                isDealLoading.value = false;
+            });
+    }, []);
+</script>
+
+<style>
+    /* Estore Custom Luxury Styling */
+    .estore-container {
+        width: 100%;
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 0 24px;
+    }
+
+    .deal-section-wrap {
+        margin: 24px auto 16px;
+        max-width: 960px;
+        width: 100%;
+    }
+
+    /* Ambient Background Glow */
+    .ambient-glow {
+        position: fixed;
+        top: -150px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 800px;
+        height: 450px;
+        background: radial-gradient(circle, rgba(59, 130, 246, 0.12) 0%, rgba(99, 102, 241, 0.05) 50%, transparent 80%);
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    /* Hero Section */
+    .hero-banner {
+        position: relative;
+        padding: 60px 0 40px;
+        text-align: center;
+    }
+
+    .hero-title {
+        font-size: clamp(2.2rem, 5vw, 3.8rem);
+        font-weight: 800;
+        letter-spacing: -1.5px;
+        line-height: 1.15;
+        background: linear-gradient(180deg, #ffffff 40%, rgba(255, 255, 255, 0.6) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 16px;
+    }
+
+    .hero-subtitle {
+        font-size: 1.15rem;
+        color: #94a3b8;
+        max-width: 650px;
+        margin: 0 auto 32px;
+        line-height: 1.6;
+    }
+
+    .stats-row {
+        display: flex;
+        justify-content: center;
+        gap: 32px;
+        flex-wrap: wrap;
+        margin-top: 24px;
+    }
+
+    .stat-pill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 0.85rem;
+        color: #cbd5e1;
+    }
+
+    .stat-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #10b981;
+        box-shadow: 0 0 8px #10b981;
+    }
+
+    /* Category Filter Tabs */
+    .filter-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 40px 0 32px;
+    }
+
+    .filter-tab {
+        padding: 9px 20px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: #94a3b8;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .filter-tab:hover {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .filter-tab.active {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #ffffff;
+        font-weight: 600;
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
+    }
+
+    /* Product Grid */
+    .product-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 28px;
+        margin-bottom: 80px;
+    }
+
+    .product-card-wrap {
+        display: flex;
+        flex-direction: column;
+        background: rgba(18, 18, 26, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 20px;
+        padding: 24px;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .product-card-wrap:hover {
+        transform: translateY(-6px);
+        border-color: rgba(99, 102, 241, 0.4);
+        box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6), 0 0 30px rgba(59, 130, 246, 0.15);
+    }
+
+    .product-visual {
+        height: 180px;
+        border-radius: 14px;
+        background: radial-gradient(circle at center, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 4.5rem;
+        margin-bottom: 20px;
+        position: relative;
+    }
+
+    .product-badge-tag {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #38bdf8;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+    }
+
+    .product-rating {
+        font-size: 0.85rem;
+        color: #fbbf24;
+        margin-bottom: 8px;
+    }
+
+    .product-name {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: #f8fafc;
+        margin-bottom: 8px;
+        line-height: 1.3;
+    }
+
+    .product-desc {
+        font-size: 0.88rem;
+        color: #94a3b8;
+        line-height: 1.5;
+        margin-bottom: 20px;
+        flex-grow: 1;
+    }
+
+    .product-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: auto;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .product-price {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: #ffffff;
+    }
+
+    .add-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        border: none;
+        color: #ffffff;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+    }
+
+    .add-btn:hover {
+        background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+        transform: scale(1.03);
+        box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
+    }
+</style>
+
+<div class="ambient-glow"></div>
+
+<!-- Sticky Navbar Component -->
+<Navbar />
+
+<main class="estore-container">
+    <!-- Hero Banner -->
+    <section class="hero-banner">
+        <Badge status="info">Fine-Grained Signal Reactivity</Badge>
+        <h1 class="hero-title">High-Performance Hardware<br />Engineered for Creators</h1>
+        <p class="hero-subtitle">
+            Experience lightning-fast e-commerce powered by Eronom, the ERM component compiler, and reactive signal state management.
+        </p>
+
+        <div class="stats-row">
+            <div class="stat-pill">
+                <div class="stat-dot"></div>
+                <span>Zero Virtual DOM Overhead</span>
+            </div>
+            <div class="stat-pill">
+                <div class="stat-dot"></div>
+                <span>Fine-Grained Signal Stores</span>
+            </div>
+            <div class="stat-pill">
+                <div class="stat-dot"></div>
+                <span>Native uWebSockets Server</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Reactive Deal of the Day (Declarative Eronom Component via /api/deal) -->
+    <div class="deal-section-wrap">
+        <DealBanner />
+    </div>
+
+    <!-- Category Filter Tabs -->
+    <div class="filter-bar">
+        <button id="cat-btn-All" class="filter-tab active" onclick={() => setCategory("All")}>All Gear</button>
+        <button id="cat-btn-Keyboards" class="filter-tab" onclick={() => setCategory("Keyboards")}>Keyboards</button>
+        <button id="cat-btn-Audio" class="filter-tab" onclick={() => setCategory("Audio")}>Audio</button>
+        <button id="cat-btn-Accessories" class="filter-tab" onclick={() => setCategory("Accessories")}>Accessories</button>
+        <button id="cat-btn-Displays" class="filter-tab" onclick={() => setCategory("Displays")}>Displays</button>
+    </div>
+
+    <!-- Product Grid -->
+    <div class="product-grid">
+        <!-- Product 1: Apex Pro 75 Keyboard -->
+        if activeCategory == "All" || activeCategory == "Keyboards" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Bestseller</span>
+                    ⌨️
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (142 reviews)</div>
+                <h3 class="product-name">Apex Pro 75 Mechanical Keyboard</h3>
+                <p class="product-desc">CNC anodized aluminum body, hot-swappable tactile switches, and doubleshot PBT keycaps with sound-dampening silicone gasket.</p>
+                <div class="product-footer">
+                    <span class="product-price">$189</span>
+                    <button class="add-btn" onclick={() => addToCart(1, "Apex Pro 75 Keyboard", 189, "⌨️", "Keyboards")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 2: Aura Studio ANC Headphones -->
+        if activeCategory == "All" || activeCategory == "Audio" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Trending</span>
+                    🎧
+                </div>
+                <div class="product-rating">★★★★★ 4.8 (98 reviews)</div>
+                <h3 class="product-name">Aura Studio Planar Headphones</h3>
+                <p class="product-desc">Planar magnetic drivers delivering lossless 24-bit audio, active noise cancellation, and up to 45 hours of ultra-low latency playback.</p>
+                <div class="product-footer">
+                    <span class="product-price">$299</span>
+                    <button class="add-btn" onclick={() => addToCart(2, "Aura Studio Headphones", 299, "🎧", "Audio")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 3: Precision Magnetic Mouse -->
+        if activeCategory == "All" || activeCategory == "Accessories" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Popular</span>
+                    🖱️
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (84 reviews)</div>
+                <h3 class="product-name">MagFlow Wireless Gaming Mouse</h3>
+                <p class="product-desc">Ultra-lightweight magnesium alloy chassis, 4,000Hz polling rate, optical micro-switches, and zero-latency wireless connectivity.</p>
+                <div class="product-footer">
+                    <span class="product-price">$89</span>
+                    <button class="add-btn" onclick={() => addToCart(3, "MagFlow Wireless Mouse", 89, "🖱️", "Accessories")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 4: Ultrawide QD-OLED Monitor -->
+        if activeCategory == "All" || activeCategory == "Displays" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Flagship</span>
+                    🖥️
+                </div>
+                <div class="product-rating">★★★★★ 5.0 (61 reviews)</div>
+                <h3 class="product-name">Ultrawide 34-Inch QD-OLED Display</h3>
+                <p class="product-desc">1800R curved quantum dot OLED panel, 175Hz refresh rate, 0.03ms pixel response time, and 99.3% DCI-P3 cinematic color gamut.</p>
+                <div class="product-footer">
+                    <span class="product-price">$799</span>
+                    <button class="add-btn" onclick={() => addToCart(4, "34-Inch QD-OLED Display", 799, "🖥️", "Displays")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 5: Dark Grid Deskmat -->
+        if activeCategory == "All" || activeCategory == "Accessories" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Essential</span>
+                    ⚡
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (218 reviews)</div>
+                <h3 class="product-name">Eronom Stealth Deskmat</h3>
+                <p class="product-desc">900x400mm waterproof textured microfiber surface with anti-fray stitched perimeter and anti-slip natural rubber foundation.</p>
+                <div class="product-footer">
+                    <span class="product-price">$35</span>
+                    <button class="add-btn" onclick={() => addToCart(5, "Eronom Stealth Deskmat", 35, "⚡", "Accessories")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Product 6: Audiophile Dual DAC -->
+        if activeCategory == "All" || activeCategory == "Audio" {
+            <div class="product-card-wrap">
+                <div class="product-visual">
+                    <span class="product-badge-tag">Hi-Res</span>
+                    🎚️
+                </div>
+                <div class="product-rating">★★★★★ 4.9 (73 reviews)</div>
+                <h3 class="product-name">AeroDAC Hi-Res Audio Decoder</h3>
+                <p class="product-desc">Dual flagship DAC architecture supporting 32-bit/384kHz PCM & DSD256 decoding with 4.4mm balanced and 3.5mm headphone jacks.</p>
+                <div class="product-footer">
+                    <span class="product-price">$129</span>
+                    <button class="add-btn" onclick={() => addToCart(6, "AeroDAC Audio Decoder", 129, "🎚️", "Audio")}>
+                        Add to Cart +
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+</main>
+
+<!-- Cart Slide-Over Drawer Component -->
+<CartDrawer />
+
+<!-- Floating Toast Notification Component -->
+<Toast />
+
+<!-- Footer Component -->
+<Footer />

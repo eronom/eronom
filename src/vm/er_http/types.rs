@@ -11,6 +11,7 @@ pub struct Route {
     pub method: String,
     pub path: String,
     pub callback: Value,
+    pub param_names: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -53,13 +54,41 @@ impl ResponseState {
     }
 }
 
+pub struct ErServerInstance {
+    pub raw_server: *mut c_void,
+    pub routes: Vec<Route>,
+    pub ws_routes: Vec<WsRoute>,
+    pub middlewares: Vec<Value>,
+    pub static_mounts: Vec<(String, String)>,
+    pub listen_callback: Option<Value>,
+    pub vm: *mut VM,
+    pub port: i32,
+    pub is_ssl: bool,
+}
+
+#[derive(Clone)]
+pub struct ServerState {
+    pub raw: *mut c_void,
+    pub port: i32,
+    pub hostname: String,
+    pub fetch: Value,
+    pub websocket: Option<WsRoute>,
+    pub error: Option<Value>,
+    pub is_running: bool,
+    pub server_val: Option<Value>,
+}
+
 thread_local! {
+    pub static ACTIVE_SERVERS: RefCell<HashMap<i32, ServerState>> = RefCell::new(HashMap::new());
     pub static ROUTER: RefCell<RadixRouter> = RefCell::new(RadixRouter::new());
     pub static ROUTES: RefCell<Vec<Route>> = const { RefCell::new(Vec::new()) };
     pub static WS_ROUTES: RefCell<Vec<WsRoute>> = const { RefCell::new(Vec::new()) };
     pub static STATIC_MOUNTS: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
     pub static MIDDLEWARES: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     pub static ACTIVE_VM: Cell<*mut VM> = const { Cell::new(std::ptr::null_mut()) };
+    pub static VM_STACK: RefCell<Vec<*mut VM>> = const { RefCell::new(Vec::new()) };
+    pub static ACTIVE_CURRENT_SERVER: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
+    pub static ACTIVE_REQ_HANDLE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_HTTP_RESPONSE: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_WEBSOCKET: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
     pub static ACTIVE_CONNECTIONS: RefCell<HashMap<*mut c_void, Value>> = RefCell::new(HashMap::new());
@@ -71,9 +100,14 @@ thread_local! {
     pub static LISTEN_CALLBACK: RefCell<Option<Value>> = const { RefCell::new(None) };
     pub static SERVER_RUNNING: Cell<bool> = const { Cell::new(false) };
 
+    // Lazy request contexts (populated on demand)
     pub static ACTIVE_REQUEST_HEADERS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     pub static ACTIVE_REQUEST_COOKIES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     pub static ACTIVE_REQUEST_QUERY: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    pub static ACTIVE_REQUEST_PARAMS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     pub static ACTIVE_REQUEST_PATH: RefCell<String> = RefCell::new(String::new());
+    pub static ACTIVE_REQUEST_RAW_QUERY: RefCell<String> = RefCell::new(String::new());
+    pub static ACTIVE_REQUEST_METHOD: RefCell<String> = RefCell::new(String::new());
     pub static ACTIVE_RESPONSE_STATE: RefCell<ResponseState> = RefCell::new(ResponseState::new());
 }
+

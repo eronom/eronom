@@ -98,10 +98,11 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
         }
         Stmt::VarDecl(name, _, is_const, expr, _) => {
             // Check if it's a top-level named function declaration: fn name(...) { ... }
-            if let Expr::Function(params, _, body) = expr {
+            if let Expr::Function(params, _, body, is_async, _) = expr {
                 emit_indent(out, indent);
                 let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
-                out.push_str(&format!("function {}({}) ", name, param_names.join(", ")));
+                let async_prefix = if *is_async { "async " } else { "" };
+                out.push_str(&format!("{}function {}({}) ", async_prefix, name, param_names.join(", ")));
                 emit_stmt_inline(out, body, indent);
                 out.push('\n');
                 return;
@@ -237,7 +238,7 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
             emit_stmt(&mut inner_str, inner, 0);
             out.push_str(inner_str.trim_start());
         }
-        Stmt::Concurrent(body) => {
+        Stmt::Concurrent(body) | Stmt::Sync(body) => {
             emit_stmt(out, body, indent);
         }
     }
@@ -359,11 +360,12 @@ pub fn emit_expr(expr: &Expr) -> String {
                 .join(", ");
             format!("{{ {} }}", pairs_str)
         }
-        Expr::Function(params, _, body) => {
+        Expr::Function(params, _, body, is_async, _) => {
             let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
             let mut body_str = String::new();
             emit_stmt_inline(&mut body_str, body, 0);
-            format!("({}) => {}", param_names.join(", "), body_str)
+            let async_prefix = if *is_async { "async " } else { "" };
+            format!("{}({}) => {}", async_prefix, param_names.join(", "), body_str)
         }
         Expr::GetIndex(obj, idx) => format!("{}[{}]", emit_expr(obj), emit_expr(idx)),
         Expr::SetIndex(obj, idx, val) => {
@@ -379,6 +381,8 @@ pub fn emit_expr(expr: &Expr) -> String {
         }
         Expr::TypeCast(inner, _, _) => emit_expr(inner),
         Expr::Spawn(inner) => format!("Promise.resolve().then(() => {})", emit_expr(inner)),
+        Expr::Await(inner) => format!("await {}", emit_expr(inner)),
+        Expr::New(inner) => format!("new {}", emit_expr(inner)),
     }
 }
 
@@ -463,8 +467,21 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
             )
         }
         Expr::Set(obj, prop, val) => {
+            let new_obj = if prop == "value" {
+                if let Expr::Variable(name, _) = &**obj {
+                    if state_vars.contains(name) {
+                        obj.clone()
+                    } else {
+                        Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
+                    }
+                } else {
+                    Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
+                }
+            } else {
+                Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
+            };
             Expr::Set(
-                Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
+                new_obj,
                 prop.clone(),
                 Box::new(transform_expr_reactivity(val, state_vars, shadowed)),
             )
@@ -480,13 +497,13 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
                     .collect(),
             )
         }
-        Expr::Function(params, ret_type, body) => {
+        Expr::Function(params, ret_type, body, is_async, is_sync) => {
             let mut new_shadowed = shadowed.to_vec();
             for p in params {
                 new_shadowed.push(p.name.clone());
             }
             let new_body = transform_stmt_reactivity(body, state_vars, &new_shadowed);
-            Expr::Function(params.clone(), ret_type.clone(), Box::new(new_body))
+            Expr::Function(params.clone(), ret_type.clone(), Box::new(new_body), *is_async, *is_sync)
         }
         Expr::GetIndex(obj, idx) => {
             Expr::GetIndex(
@@ -520,6 +537,12 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         }
         Expr::Spawn(inner) => {
             Expr::Spawn(Box::new(transform_expr_reactivity(inner, state_vars, shadowed)))
+        }
+        Expr::Await(inner) => {
+            Expr::Await(Box::new(transform_expr_reactivity(inner, state_vars, shadowed)))
+        }
+        Expr::New(inner) => {
+            Expr::New(Box::new(transform_expr_reactivity(inner, state_vars, shadowed)))
         }
     }
 }
@@ -627,6 +650,9 @@ pub fn transform_stmt_reactivity(stmt: &Stmt, state_vars: &[String], shadowed: &
         Stmt::Concurrent(s) => {
             Stmt::Concurrent(Box::new(transform_stmt_reactivity(s, state_vars, shadowed)))
         }
+        Stmt::Sync(s) => {
+            Stmt::Sync(Box::new(transform_stmt_reactivity(s, state_vars, shadowed)))
+        }
         other => other.clone(),
     }
 }
@@ -649,6 +675,9 @@ pub fn transpile_expr_reactivity(expr_str: &str, state_vars: &[String]) -> Optio
 pub fn transform_script_reactivity(script_str: &str, state_vars: &[String]) -> Option<String> {
     let tokens = crate::frontend::lexer::lex(script_str);
     let mut parser = crate::frontend::parser::Parser::new(tokens);
+    for var in state_vars {
+        parser.declare_variable(var.clone());
+    }
     let stmts = parser.parse().ok()?;
     let transformed: Vec<Stmt> = stmts
         .iter()
@@ -779,5 +808,52 @@ mod tests {
         let state_vars = vec!["count".to_string()];
         let res = transpile_expr_reactivity("count.value + 1", &state_vars).unwrap();
         assert_eq!(res, "(count.value + 1)");
+    }
+
+    #[test]
+    fn test_ast_reactivity_no_double_value_set() {
+        let state_vars = vec!["count".to_string()];
+        let res = transpile_expr_reactivity("count.value = 1", &state_vars).unwrap();
+        assert_eq!(res, "(count.value = 1)");
+    }
+
+    #[test]
+    fn test_transpile_function_keyword() {
+        let state_vars = vec!["isCartOpen".to_string()];
+        let res = transform_script_reactivity("function openCart() { isCartOpen = true; }", &state_vars).unwrap();
+        assert!(res.contains("function openCart() {"));
+        assert!(!res.contains("function;"));
+    }
+
+    #[test]
+    fn test_transpile_async_await_reactivity() {
+        let state_vars = vec!["todos".to_string()];
+        let script = r#"
+        async function fetchTodos() {
+            try {
+                const res = await fetch('/api/todo');
+                todos = await res.json();
+            } catch (e) {
+                console.error("Failed to fetch todos:", e);
+            }
+        }
+        "#;
+        let res = transform_script_reactivity(script, &state_vars).unwrap();
+        assert!(res.contains("async function fetchTodos()"));
+        assert!(res.contains("const res = await fetch(\"/api/todo\");"));
+        assert!(res.contains("(todos.value = await res.json());"));
+        assert!(!res.contains("async;"));
+        assert!(!res.contains("const res = await;"));
+    }
+
+    #[test]
+    fn test_transpile_new_expression_reactivity() {
+        let state_vars = vec!["time".to_string()];
+        let script = r#"
+        time = new Date().toLocaleTimeString();
+        "#;
+        let res = transform_script_reactivity(script, &state_vars).unwrap();
+        assert!(res.contains("(time.value = new Date().toLocaleTimeString());"));
+        assert!(!res.contains("time.value = new;"));
     }
 }

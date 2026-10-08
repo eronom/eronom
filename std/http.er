@@ -1,7 +1,7 @@
 // Standard HTTP library for Eronom
 
-// Native router constructor
-export const router = router
+// Native serve primitive (also available globally)
+export const serve = serve
 
 // HTTP Status Codes mapping
 export const status = {
@@ -29,11 +29,358 @@ export const status = {
   SERVICE_UNAVAILABLE: 503
 }
 
-// NodeJS-compatible createServer API
+// Web-Standard-like Response object helper
+export const Response = {
+  json: (data, init) => {
+    let s = 200
+    let h = { "content-type": "application/json" }
+    if (init && init.status) {
+      s = init.status
+    }
+    if (init && init.headers) {
+      for (let k in init.headers) {
+        h[k] = init.headers[k]
+      }
+    }
+    return {
+      _isResponse: true,
+      status: s,
+      headers: h,
+      body: JSON.stringify(data)
+    }
+  },
+  text: (data, init) => {
+    let s = 200
+    let h = { "content-type": "text/plain; charset=utf-8" }
+    if (init && init.status) {
+      s = init.status
+    }
+    if (init && init.headers) {
+      for (let k in init.headers) {
+        h[k] = init.headers[k]
+      }
+    }
+    return {
+      _isResponse: true,
+      status: s,
+      headers: h,
+      body: data == null ? "" : ("" + data)
+    }
+  },
+  html: (data, init) => {
+    let s = 200
+    let h = { "content-type": "text/html; charset=utf-8" }
+    if (init && init.status) {
+      s = init.status
+    }
+    if (init && init.headers) {
+      for (let k in init.headers) {
+        h[k] = init.headers[k]
+      }
+    }
+    return {
+      _isResponse: true,
+      status: s,
+      headers: h,
+      body: data == null ? "" : ("" + data)
+    }
+  },
+  redirect: (url, s) => {
+    let st = 302
+    if (s) {
+      st = s
+    }
+    return {
+      _isResponse: true,
+      status: st,
+      headers: { "location": url },
+      body: ""
+    }
+  },
+  render: (filePath, params, init) => {
+    let s = 200
+    let h = { "content-type": "text/html; charset=utf-8" }
+    if (init && init.status) {
+      s = init.status
+    }
+    if (init && init.headers) {
+      for (let k in init.headers) {
+        h[k] = init.headers[k]
+      }
+    }
+    let p = params || {}
+    let htmlStr = typeof render == "function" ? render(filePath, p) : (typeof Eronom_nativeRender == "function" ? Eronom_nativeRender(filePath, p) : "")
+    return {
+      _isResponse: true,
+      status: s,
+      headers: h,
+      body: htmlStr || ""
+    }
+  },
+  renderString: (templateString, params, init) => {
+    let s = 200
+    let h = { "content-type": "text/html; charset=utf-8" }
+    if (init && init.status) {
+      s = init.status
+    }
+    if (init && init.headers) {
+      for (let k in init.headers) {
+        h[k] = init.headers[k]
+      }
+    }
+    let p = params || {}
+    let htmlStr = typeof renderString == "function" ? renderString(templateString, p) : (typeof Eronom_nativeRenderString == "function" ? Eronom_nativeRenderString(templateString, p) : "")
+    return {
+      _isResponse: true,
+      status: s,
+      headers: h,
+      body: htmlStr || ""
+    }
+  }
+}
+
+// Helper: match route pattern against clean path
+const matchPath = (pattern, path) => {
+  if (pattern == path || pattern == "/*") {
+    return {}
+  }
+  
+  if (pattern.endsWith("/*")) {
+    let prefix = pattern.slice(0, pattern.length - 2)
+    if (path.startsWith(prefix)) {
+      return {}
+    }
+  }
+
+  let patParts = pattern.split("/")
+  let pathParts = path.split("/")
+
+  if (patParts.length != pathParts.length) {
+    return null
+  }
+
+  let params = {}
+  for (i in 0..patParts.length) {
+    let p = patParts[i]
+    let seg = pathParts[i]
+    if (p.startsWith(":")) {
+      let paramName = p.slice(1)
+      params[paramName] = seg
+    } else if (p == "*") {
+      // wildcard matches any single segment
+    } else if (p != seg) {
+      return null
+    }
+  }
+
+  return params
+}
+
+// Script-level Router built on top of native serve()
+export const router = () => {
+  let routes = []
+  let middlewares = []
+  let staticMounts = []
+  let wsConfig = null
+  let serverInstance = null
+
+  let nativeR = null
+  if (typeof Eronom_nativeRoute == "function") {
+    nativeR = Eronom_nativeRoute()
+  }
+
+  let addRoute = (method, path, handler) => {
+    routes.push({ method: method, path: path, handler: handler })
+    if (nativeR) {
+      let m = method.toLowerCase()
+      if (m == "get" && nativeR.get) {
+        nativeR.get(path, handler)
+      } else if (m == "post" && nativeR.post) {
+        nativeR.post(path, handler)
+      } else if (m == "put" && nativeR.put) {
+        nativeR.put(path, handler)
+      } else if (m == "delete" && nativeR.delete) {
+        nativeR.delete(path, handler)
+      } else if (m == "patch" && nativeR.patch) {
+        nativeR.patch(path, handler)
+      } else if (m == "head" && nativeR.head) {
+        nativeR.head(path, handler)
+      } else if (m == "options" && nativeR.options) {
+        nativeR.options(path, handler)
+      } else if (m == "all" && nativeR.all) {
+        nativeR.all(path, handler)
+      }
+    }
+  }
+
+  let app = {
+    get: (path, handler) => { addRoute("GET", path, handler); return app },
+    post: (path, handler) => { addRoute("POST", path, handler); return app },
+    put: (path, handler) => { addRoute("PUT", path, handler); return app },
+    delete: (path, handler) => { addRoute("DELETE", path, handler); return app },
+    del: (path, handler) => { addRoute("DELETE", path, handler); return app },
+    patch: (path, handler) => { addRoute("PATCH", path, handler); return app },
+    head: (path, handler) => { addRoute("HEAD", path, handler); return app },
+    options: (path, handler) => { addRoute("OPTIONS", path, handler); return app },
+    all: (path, handler) => { addRoute("ALL", path, handler); return app },
+    any: (path, handler) => { addRoute("ALL", path, handler); return app },
+
+    use: (arg1, arg2) => {
+      if (typeof arg1 == "function") {
+        middlewares.push(arg1)
+      } else if (typeof arg1 == "string" && typeof arg2 == "function") {
+        let prefix = arg1
+        let mw = arg2
+        middlewares.push((c) => {
+          if (c.req.path.startsWith(prefix)) {
+            return mw(c)
+          }
+        })
+      }
+      return app
+    },
+
+    static: (prefix, dir) => {
+      staticMounts.push({ prefix: prefix, dir: dir })
+      return app
+    },
+    serveStatic: (prefix, dir) => {
+      staticMounts.push({ prefix: prefix, dir: dir })
+      return app
+    },
+
+    ws: (path, handlers) => {
+      wsConfig = handlers
+      return app
+    },
+
+    publish: (topic, message) => {
+      if (serverInstance && serverInstance.publish) {
+        return serverInstance.publish(topic, message)
+      }
+    },
+
+    numSubscribers: (topic) => {
+      if (serverInstance && serverInstance.numSubscribers) {
+        return serverInstance.numSubscribers(topic)
+      }
+      return 0
+    },
+
+    fetch: (c, srv) => {
+      let currentStatus = 200
+      c.status = (code) => {
+        if (code) {
+          currentStatus = code
+        }
+        return currentStatus
+      }
+      c.json = (data, st) => {
+        let s = currentStatus
+        if (st) {
+          s = st
+        }
+        return Response.json(data, { status: s })
+      }
+      c.text = (data, st) => {
+        let s = currentStatus
+        if (st) {
+          s = st
+        }
+        return Response.text(data, { status: s })
+      }
+      c.html = (data, st) => {
+        let s = currentStatus
+        if (st) {
+          s = st
+        }
+        return Response.html(data, { status: s })
+      }
+      c.redirect = (url, st) => {
+        return Response.redirect(url, st)
+      }
+      c.render = (filePath, params, st) => {
+        let s = currentStatus
+        if (st) {
+          s = st
+        }
+        let htmlStr = typeof render == "function" ? render(filePath, params || {}) : (typeof Eronom_nativeRender == "function" ? Eronom_nativeRender(filePath, params || {}) : "")
+        return Response.html(htmlStr, { status: s })
+      }
+      c.renderString = (templateString, params, st) => {
+        let s = currentStatus
+        if (st) {
+          s = st
+        }
+        let htmlStr = typeof renderString == "function" ? renderString(templateString, params || {}) : (typeof Eronom_nativeRenderString == "function" ? Eronom_nativeRenderString(templateString, params || {}) : "")
+        return Response.html(htmlStr, { status: s })
+      }
+
+      // 1. Run global middlewares
+      for (mw in middlewares) {
+        let res = mw(c)
+        if (res != null) {
+          return res
+        }
+      }
+
+      let reqMethod = c.req.method
+      let reqPath = c.req.path
+
+      // 2. Check registered routes
+      for (r in routes) {
+        if (r.method == "ALL" || r.method == reqMethod) {
+          let matchedParams = matchPath(r.path, reqPath)
+          if (matchedParams != null) {
+            c.params = matchedParams
+            c.req.params = matchedParams
+            return r.handler(c)
+          }
+        }
+      }
+
+      // 3. Check static mounts
+      for (sm in staticMounts) {
+        if (reqPath.startsWith(sm.prefix)) {
+          let rel = reqPath.slice(sm.prefix.length)
+          if (rel.startsWith("/")) {
+            rel = rel.slice(1)
+          }
+          let filePath = sm.dir + "/" + rel
+          return c.file(filePath)
+        }
+      }
+
+      // 4. Default 404
+      c.status(404)
+      return c.json({ error: "Not Found", path: reqPath })
+    },
+
+    listen: (port, callback) => {
+      let p = port || 3000
+      serverInstance = serve({
+        port: p,
+        fetch: (c, srv) => {
+          return app.fetch(c, srv)
+        },
+        websocket: wsConfig
+      })
+
+      if (callback) {
+        callback()
+      }
+
+      return serverInstance
+    }
+  }
+
+  return app
+}
+
+// Standard createServer API
 export const createServer = (handler) => {
   let app = router()
-  
-  let dispatch = (c) => {
+  app.all("/*", (c) => {
     let req = {
       url: c.req.url,
       path: c.req.path,
@@ -46,46 +393,31 @@ export const createServer = (handler) => {
       header: (name) => c.req.header(name),
       cookie: (name) => c.req.cookie(name)
     }
-    
     let res = {
       statusCode: 200,
       headers: {},
-      setHeader: (name, val) => {
-        c.res.setHeader(name, val)
+      setHeader: (name, val) => { c.res.setHeader(name, val) },
+      writeHead: (statusCode) => { c.res.status(statusCode) },
+      status: (code) => { c.res.status(code); return res },
+      json: (data, code) => { c.res.json(data, code) },
+      html: (data, code) => { c.res.html(data, code) },
+      render: (filePath, params, code) => {
+        let htmlStr = typeof render == "function" ? render(filePath, params || {}) : (typeof Eronom_nativeRender == "function" ? Eronom_nativeRender(filePath, params || {}) : "")
+        c.res.html(htmlStr, code)
       },
-      writeHead: (statusCode, headers) => {
-        c.res.status(statusCode)
-        if (headers) {
-          // If headers object provided
-        }
+      renderString: (templateString, params, code) => {
+        let htmlStr = typeof renderString == "function" ? renderString(templateString, params || {}) : (typeof Eronom_nativeRenderString == "function" ? Eronom_nativeRenderString(templateString, params || {}) : "")
+        c.res.html(htmlStr, code)
       },
-      status: (code) => {
-        c.res.status(code)
-        return res
-      },
-      json: (data, code) => {
-        c.res.json(data, code)
-      },
-      html: (data, code) => {
-        c.res.html(data, code)
-      },
-      send: (data, code) => {
-        c.res.send(data, code)
-      },
-      end: (data) => {
-        c.res.end(data)
-      }
+      send: (data, code) => { c.res.send(data, code) },
+      end: (data) => { c.res.end(data) }
     }
-    
-    handler(req, res)
-  }
-  
-  // Register wildcard routes to catch all incoming requests
-  app.all("/*", dispatch)
-  
+    return handler(req, res)
+  })
+
   return {
     listen: (port, callback) => {
-      app.listen(port, callback)
+      return app.listen(port, callback)
     }
   }
 }

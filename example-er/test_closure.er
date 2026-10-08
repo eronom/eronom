@@ -1,0 +1,16 @@
+fn makeCounter(initial) {
+    let count = initial
+    fn inc(step) {
+        count = count + step
+        return count
+    }
+            return inc
+        }
+
+        let c1 = makeCounter(10)
+        let res1 = c1(5)
+        let res2 = c1(3)
+
+
+        print(res1);
+ print(res2);

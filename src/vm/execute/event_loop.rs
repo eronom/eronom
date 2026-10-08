@@ -143,11 +143,17 @@ impl VM {
                             }
                         };
 
+                        // 1. Check if any fiber in scheduler was waiting on this promise
+                        let awakened_fibers = self.scheduler.wake_promise(promise_ptr, resolved_value);
+                        if !awakened_fibers.is_empty() {
+                            continue;
+                        }
+
                         if suspended_frames.is_empty() {
                             continue;
                         }
 
-                        // Restore stack and frames
+                        // Restore stack and frames (legacy single-VM suspension fallback)
                         self.stack = suspended_stack;
                         self.frames = suspended_frames;
 
@@ -194,20 +200,86 @@ impl VM {
                 }
             }
 
+            // 3. Process any ready fibers scheduled in ready_queue (bounded tick to prevent starvation)
+            let fibers_to_run = self.scheduler.ready_queue.len();
+            for _ in 0..fibers_to_run {
+                let next_fid = match self.scheduler.ready_queue.pop_front() {
+                    Some(fid) => fid,
+                    None => break,
+                };
+                let is_cancelled = if let Some(f) = self.scheduler.fibers.get(&next_fid) {
+                    f.interrupted && f.interruption_masks == 0
+                } else {
+                    false
+                };
+
+                if is_cancelled {
+                    if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
+                        f.status = crate::vm::execute::fiber::FiberStatus::Cancelled;
+                    }
+                    self.run_fiber_finalizers(next_fid);
+                    continue;
+                }
+
+                self.save_active_fiber();
+                self.load_fiber(next_fid);
+                let exec_res = self.execute_loop_interpreter(0);
+                match exec_res {
+                    Ok(val) => {
+                        let completed = if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
+                            if f.status == crate::vm::execute::fiber::FiberStatus::Running
+                                && self.frames.is_empty()
+                                && f.frames.is_empty()
+                            {
+                                let comp_prom = f.completion_promise;
+                                f.complete(val);
+                                if !comp_prom.is_null() {
+                                    self.scheduler.wake_promise(comp_prom, val);
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if completed {
+                            self.run_fiber_finalizers(next_fid);
+                        }
+                    }
+                    Err(e) => {
+                        let is_interrupted = e == "FiberInterrupted";
+                        if let Some(f) = self.scheduler.fibers.get_mut(&next_fid) {
+                            if is_interrupted {
+                                f.status = crate::vm::execute::fiber::FiberStatus::Cancelled;
+                            } else {
+                                f.fail(e.clone());
+                            }
+                        }
+                        self.run_fiber_finalizers(next_fid);
+                        if !is_interrupted {
+                            return Err(e);
+                        }
+                    }
+                }
+                self.save_active_fiber();
+            }
+
+            let has_ready_fibers = !self.scheduler.ready_queue.is_empty();
             let active = self.active_async_tasks.load(Ordering::SeqCst);
-            if active == 0 || !wait_for_active {
+            if (active == 0 && !has_ready_fibers) || !wait_for_active {
                 let queue_empty = self.event_loop_queue.lock().unwrap().is_empty();
                 let has_due_timers = {
                     let timers = self.timers.lock().unwrap();
                     timers.peek().map_or(false, |t| t.due_time <= Instant::now())
                 };
-                if queue_empty && !has_due_timers {
+                if queue_empty && !has_due_timers && !has_ready_fibers {
                     break;
                 }
             }
 
             let queue = self.event_loop_queue.lock().unwrap();
-            if queue.is_empty() {
+            if queue.is_empty() && !has_ready_fibers {
                 let now = Instant::now();
                 let wait_timeout = {
                     let timers = self.timers.lock().unwrap();

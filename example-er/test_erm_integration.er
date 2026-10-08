@@ -1,0 +1,41 @@
+import { Erm, render, renderString } from "std/erm.er"
+import { Response } from "std/http.er"
+
+print("--- Testing ERM Hybrid Integration ---")
+
+// 1. Test renderString via Erm object
+let template = "<h1>Hello \{name\}!</h1>"
+let html1 = Erm.renderString(template, { name: "Eronom" })
+if (stringIncludes(html1, "Hello") && stringIncludes(html1, "Eronom")) {
+    print("Rendered 1: PASS")
+} else {
+    print("Rendered 1: FAIL")
+}
+
+// 2. Test direct renderString function import
+let html2 = renderString("<div>Count: \{count\}</div>", { count: 42 })
+if (stringIncludes(html2, "Count:") && stringIncludes(html2, "42")) {
+    print("Rendered 2: PASS")
+} else {
+    print("Rendered 2: FAIL")
+}
+
+// 3. Test Response.renderString from std/http.er
+let res = Response.renderString("<p>Welcome to \{site\}</p>", { site: "Eronom Web" })
+if (res.status == 200) {
+    print("Response Status: PASS")
+} else {
+    print("Response Status: FAIL")
+}
+if (res.headers["content-type"] == "text/html; charset=utf-8") {
+    print("Response Header: PASS")
+} else {
+    print("Response Header: FAIL")
+}
+if (stringIncludes(res.body, "Eronom Web")) {
+    print("Response Body: PASS")
+} else {
+    print("Response Body: FAIL")
+}
+
+print("--- All ERM Hybrid tests completed successfully! ---")

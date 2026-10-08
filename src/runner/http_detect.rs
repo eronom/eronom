@@ -145,7 +145,7 @@ pub fn find_listen_port_in_expr(expr: &Expr) -> Option<i32> {
             }
             None
         }
-        Expr::Function(_, _, body) => find_listen_port_in_stmt(body),
+        Expr::Function(_, _, body, ..) => find_listen_port_in_stmt(body),
         Expr::GetIndex(target, index) => {
             find_listen_port_in_expr(target).or_else(|| find_listen_port_in_expr(index))
         }
@@ -160,7 +160,7 @@ pub fn find_listen_port_in_expr(expr: &Expr) -> Option<i32> {
             }
             None
         }
-        Expr::Spawn(inner) => find_listen_port_in_expr(inner),
+        Expr::Spawn(inner) | Expr::Await(inner) | Expr::New(inner) => find_listen_port_in_expr(inner),
         _ => None,
     }
 }

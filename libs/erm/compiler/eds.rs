@@ -140,6 +140,22 @@ pub fn reset_eds_engine() {
     });
 }
 
+pub fn mark_eds_roots() {
+    THREAD_EDS_ENGINE.with(|cell| {
+        if let Ok(borrow) = cell.try_borrow() {
+            if let Some(engine) = borrow.as_ref() {
+                engine.vm.mark_roots_only();
+                crate::vm::gc::mark_value(&engine.generate_css_fn);
+                crate::vm::gc::mark_value(&engine.validate_tag_fn);
+                crate::vm::gc::mark_value(&engine.transform_primitive_fn);
+                if let Some(v) = &engine.is_primitive_fn {
+                    crate::vm::gc::mark_value(v);
+                }
+            }
+        }
+    });
+}
+
 fn with_eds_engine<R>(f: impl FnOnce(&mut EdsEngine) -> Result<R>) -> Result<R> {
     THREAD_EDS_ENGINE.with(|cell| {
         let mut borrow = cell.borrow_mut();

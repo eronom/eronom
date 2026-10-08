@@ -146,12 +146,14 @@ pub enum Expr {
     Set(Box<Expr>, String, Box<Expr>),
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
-    Function(Vec<FnParam>, Option<TypeNode>, Box<Stmt>), // params, return_type, body
+    Function(Vec<FnParam>, Option<TypeNode>, Box<Stmt>, bool, bool), // params, return_type, body, is_async, is_sync
     GetIndex(Box<Expr>, Box<Expr>),
     SetIndex(Box<Expr>, Box<Expr>, Box<Expr>),
     StructInst(String, Vec<(String, Expr)>, SourceLocation),
     Spawn(Box<Expr>),
     TypeCast(Box<Expr>, TypeNode, SourceLocation),
+    Await(Box<Expr>),
+    New(Box<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +191,7 @@ pub enum Stmt {
     Struct(String, Vec<String>, Vec<(String, String)>, Vec<(String, Vec<String>, Stmt)>, SourceLocation), // name, composed, fields (name, type), methods (name, params, body), location
     Interface(String, Vec<(String, String)>, Vec<(String, Vec<String>)>, SourceLocation), // name, fields (name, type), methods (name, params), location
     Concurrent(Box<Stmt>),
+    Sync(Box<Stmt>),
     TypeAlias(String, Vec<String>, TypeNode, SourceLocation), // name, type_params, type_node, location
     Enum(String, Vec<(String, Option<LiteralValue>)>, SourceLocation), // name, variants (name, value), location
 }

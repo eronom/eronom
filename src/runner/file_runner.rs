@@ -26,6 +26,15 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         Err(e) => anyhow::bail!("Compile/Import error: {}", e),
     };
 
+    let fe = frontend::infer_effects(&stmts);
+    if let Err(effect_errors) = frontend::check_sync_constraints(&stmts, &fe) {
+        let mut err_msg = String::from("Compile error: synchronous constraint violation:\n");
+        for err in effect_errors {
+            err_msg.push_str(&format!("  - {}\n", err));
+        }
+        anyhow::bail!("{}", err_msg);
+    }
+
     if has_http_import(&stmts) {
         let mut port = find_listen_port(&stmts);
         if port.is_none() {
@@ -58,19 +67,15 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         backend::er_http::LISTEN_PORT.with(|p| p.set(Some(final_port)));
     }
 
-    let compiler = Compiler::new();
-    let function = match compiler.compile(&stmts) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
     let mut vm = VM::new();
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("router", Value::native_function(backend::er_http::native_route));
+    vm.register_global("Eronom_nativeRoute", Value::native_function(backend::er_http::native_route));
+    vm.register_global("serve", Value::native_function(backend::er_http::native_serve));
     vm.register_global("render", Value::native_function(native_render));
+    vm.register_global("renderString", Value::native_function(native_render_string));
+    vm.register_global("Eronom_nativeRender", Value::native_function(native_render));
+    vm.register_global("Eronom_nativeRenderString", Value::native_function(native_render_string));
     vm.register_global("fetch", Value::native_function(backend::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(backend::er_http::native_set_timeout));
     vm.register_global("clearTimeout", Value::native_function(backend::er_http::native_clear_timeout));
@@ -85,6 +90,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     vm.register_global("getIoMode", Value::native_function(backend::er_http::native_get_io_mode));
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
+    backend::execute::fiber::register_fiber_natives(&mut vm);
     backend::er_http::register_eronom_file_api(&mut vm).unwrap();
     backend::std_fs::register_fs_natives(&mut vm);
     backend::std_path::register_path_natives(&mut vm);
@@ -119,7 +125,22 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         }
     }
 
-    if let Err(e) = vm.run(function) {
+    let compiler = Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let func_ptr = backend::gc::gc_allocate(backend::gc::GcData::Function(Box::new(function)));
+    let func_val = Value::function(func_ptr);
+    backend::gc::gc_push_temp_slice(&func_val, 1);
+    let run_res = vm.run_function_ptr(func_ptr);
+    backend::gc::gc_pop_temp_slice();
+
+    if let Err(e) = run_res {
         anyhow::bail!("VM Runtime error: {}", e);
     }
 

@@ -8,17 +8,18 @@ use crate::jit::profile::{JIT_PROFILING, JIT_PROFILER};
 
 #[derive(Clone, Copy)]
 pub struct GlobalIcEntry {
+    pub vm: *mut VM,
     pub key: u64,
     pub val: Value,
 }
 
 thread_local! {
-    static GLOBAL_IC: std::cell::UnsafeCell<[GlobalIcEntry; 64]> = const { std::cell::UnsafeCell::new([GlobalIcEntry { key: 0, val: Value::null() }; 64]) };
+    static GLOBAL_IC: std::cell::UnsafeCell<[GlobalIcEntry; 64]> = const { std::cell::UnsafeCell::new([GlobalIcEntry { vm: std::ptr::null_mut(), key: 0, val: Value::null() }; 64]) };
 }
 
 pub fn reset_global_ic() {
     GLOBAL_IC.with(|c| unsafe {
-        *c.get() = [GlobalIcEntry { key: 0, val: Value::null() }; 64];
+        *c.get() = [GlobalIcEntry { vm: std::ptr::null_mut(), key: 0, val: Value::null() }; 64];
     });
 }
 
@@ -30,6 +31,7 @@ pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: Value, val: Value)
         let key = name_val.0;
         let slot = (key ^ (key >> 6)) as usize & 63;
         let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
+        ic.vm = vm;
         ic.key = key;
         ic.val = val;
         (*vm).globals.insert(name, val);
@@ -43,12 +45,13 @@ pub extern "C" fn er_jit_get_global(vm: *mut VM, name_val: Value) -> Value {
         let key = name_val.0;
         let slot = (key ^ (key >> 6)) as usize & 63;
         let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
-        if ic.key == key {
+        if ic.vm == vm && ic.key == key {
             return ic.val;
         }
 
         let name = name_val.as_str().unwrap_or("");
         if let Some(val) = (*vm).globals.get(name) {
+            ic.vm = vm;
             ic.key = key;
             ic.val = *val;
             *val
@@ -68,6 +71,7 @@ pub extern "C" fn er_jit_set_global(vm: *mut VM, val: Value, name_val: Value) ->
                 let key = name_val.0;
                 let slot = (key ^ (key >> 6)) as usize & 63;
                 let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
+                ic.vm = vm;
                 ic.key = key;
                 ic.val = val;
                 *entry = val;

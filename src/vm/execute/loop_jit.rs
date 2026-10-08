@@ -27,15 +27,13 @@ impl VM {
 
             #[inline(always)]
             unsafe fn get_raw_func<'a>(mut p: *mut GcObject) -> &'a Function { unsafe {
-                if let GcData::BoundMethod(bm) = &(*p).data {
-                    p = bm.function;
-                }
-                if let GcData::Closure(c) = &(*p).data {
-                    p = c.function;
-                }
-                match &(*p).data {
-                    GcData::Function(func) => func,
-                    _ => unreachable!(),
+                loop {
+                    match &(*p).data {
+                        GcData::BoundMethod(bm) => p = bm.function,
+                        GcData::Closure(c) => p = c.function,
+                        GcData::Function(func) => return func,
+                        _ => unreachable!(),
+                    }
                 }
             }}
 
@@ -114,7 +112,6 @@ impl VM {
                 let mut func_reg_out: usize = 0;
                 let mut arg_count_out: usize = 0;
                 let mut ret_val_out: Value = Value::null();
-
                 let status = jit_fn(
                     self as *mut VM,
                     frame_slots,
@@ -126,6 +123,9 @@ impl VM {
                     &mut arg_count_out,
                     &mut ret_val_out,
                 );
+                if !self.stack.is_empty() {
+                    reload_stack!();
+                }
 
                 if status == 0 {
                     // YieldCall: a Call instruction yielded to the JIT orchestrator.
@@ -196,7 +196,9 @@ impl VM {
                         let result = native(args);
                         reload_stack!();
                         if self.stack.is_empty() {
-                            frame.ip = ip_out - 1;
+                            if !self.frames.is_empty() {
+                                frame.ip = ip_out - 1;
+                            }
                             return Ok(Value::null());
                         }
                         *frame_slots.add(dest_reg_out) = result;
@@ -277,7 +279,7 @@ impl VM {
                         frame.ip = ip_out + 1;
                         ip_val = frame.ip;
                     } else {
-                        return Err(format!("[JIT] Can only call functions (callee: 0x{:x})", callee.0).into());
+                        return Err(format!("[JIT] Can only call functions (callee: 0x{:x}, func_reg: {}, dest_reg: {}, ip: {})", callee.0, func_reg_out, dest_reg_out, ip_out).into());
                     }
                 } else if status == 1 {
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.
@@ -307,7 +309,9 @@ impl VM {
                     ip_val = ip_out;
                 } else if status == 3 {
                     // YieldSuspend: an async Await or native function suspended the VM during JIT execution.
-                    frame.ip = ip_out;
+                    if !self.frames.is_empty() {
+                        frame.ip = ip_out;
+                    }
                     if !self.stack.is_empty() && func_reg_out < self.stack.len() {
                         let await_val = *frame_slots.add(func_reg_out);
                         if await_val.is_promise() {
@@ -347,6 +351,9 @@ impl VM {
                         Value::string(ptr)
                     };
 
+                    if self.frames.is_empty() {
+                        return Err(thrown.to_string());
+                    }
                     let initial_frame_idx = self.frames.len() - 1;
                     while !self.frames.is_empty() {
                         let frame_idx = self.frames.len() - 1;

@@ -4,6 +4,28 @@ use super::utils::*;
 use super::transform::{is_function_template, preprocess_function_template};
 use super::tree::{process_component_tree, ProcessResult};
 
+fn is_valid_js_identifier(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    const RESERVED: &[&str] = &[
+        "break", "case", "catch", "class", "const", "continue", "debugger", "default",
+        "delete", "do", "else", "export", "extends", "finally", "for", "function",
+        "if", "import", "in", "instanceof", "new", "return", "super", "switch",
+        "this", "throw", "try", "typeof", "var", "void", "while", "with", "yield",
+        "let", "static", "enum", "await", "null", "true", "false",
+    ];
+    if RESERVED.contains(&name) {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
 pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
     let preprocessed;
     let content = if is_function_template(content) {
@@ -179,11 +201,13 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();
     for (k, v) in params {
-        if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
-            params_map.insert(k.clone(), parsed_val);
+        let parsed = if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
+            parsed_val
         } else {
-            params_map.insert(k.clone(), eval::Value::String(v.clone()));
-        }
+            eval::Value::String(v.clone())
+        };
+        ev.set(k, parsed.clone());
+        params_map.insert(k.clone(), parsed);
     }
     ev.set("__erm_params", eval::Value::Map(params_map));
 
@@ -275,27 +299,41 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         if is_json_literal {
             params_js.push_str(&format!("{}: {},", k, v));
         } else {
-            params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+            params_js.push_str(&format!("{}: {},", k, serde_json::to_string(v).unwrap_or_else(|_| format!("\"{}\"", v.replace('"', "\\\"")))));
         }
     }
-    params_js.push_str("};");
-    
-    let mut scripts_to_inject = result.scripts.clone();
-    scripts_to_inject.insert(0, params_js);
+    params_js.push_str("};\nif (typeof setParams === 'function') setParams(window.__erm_params);");
 
-    let combined_scripts = scripts_to_inject.join("\n");
+    let combined_scripts = result.scripts.join("\n");
     let mut declarations = String::from("let anchorId = \"\";\n");
+
+    for (k, _) in params {
+        if is_valid_js_identifier(k) {
+            if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(k))) {
+                if !re_decl.is_match(&combined_scripts) && !result.state_vars.contains(k) {
+                    declarations.push_str(&format!("let {} = window.__erm_params[\"{}\"];\n", k, k));
+                }
+            }
+        }
+    }
+
     for v in &result.state_vars {
-        if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+{}\b"#, v)) {
+        if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(v))) {
             if !re_decl.is_match(&combined_scripts) {
                 let fallback_val = match v.as_str() {
-                    "activeTheme" => "'light'",
-                    "count" => "0",
-                    "timer" => "0",
-                    "todos" => "[]",
-                    "showExtraContent" => "true",
-                    "submitted" => "false",
-                    _ => "null",
+                    "activeTheme" => "'light'".to_string(),
+                    "count" => "0".to_string(),
+                    "timer" => "0".to_string(),
+                    "todos" => "[]".to_string(),
+                    "showExtraContent" => "true".to_string(),
+                    "submitted" => "false".to_string(),
+                    _ => {
+                        if params.contains_key(v) {
+                            format!("window.__erm_params[\"{}\"]", v)
+                        } else {
+                            "null".to_string()
+                        }
+                    }
                 };
                 let scoped_name = if let Some(source_file) = state_var_sources.get(v) {
                     let rel_path = if let Ok(cwd) = std::env::current_dir() {
@@ -322,9 +360,13 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             }
         }
     }
+
+    let mut scripts_to_inject = Vec::new();
+    scripts_to_inject.push(params_js);
     if !declarations.is_empty() {
-        scripts_to_inject.insert(0, declarations);
+        scripts_to_inject.push(declarations);
     }
+    scripts_to_inject.extend(result.scripts);
 
     let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
@@ -332,7 +374,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         script_assets.push_str("import {\n");
         script_assets.push_str("  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n");
         script_assets.push_str("  onMount, onCleanup, batch, untrack,\n");
-        script_assets.push_str("  useState, useEffect, useParams, effect,\n");
+        script_assets.push_str("  useState, useEffect, useParams, setParams, effect,\n");
         script_assets.push_str("  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n");
         script_assets.push_str("  Show, For, setCurrentPageDispose\n");
         script_assets.push_str("} from '/modules/erm/runtime.js';\n");

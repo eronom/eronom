@@ -1,0 +1,294 @@
+<script>
+    import { isDealLoading, dealTitle, dealDiscount, dealPrice, dealOriginalPrice, dealEmoji, dealCategory } from "@pages/index.erm";
+
+    function claimDeal() {
+        if (typeof window !== "undefined" && typeof window.addToCart === "function") {
+            window.addToCart(101, dealTitle.value, dealPrice.value, dealEmoji.value, dealCategory.value || "Keyboards");
+        } else if (typeof addToCart === "function") {
+            addToCart(101, dealTitle.value, dealPrice.value, dealEmoji.value, dealCategory.value || "Keyboards");
+        }
+    }
+</script>
+
+if isDealLoading {
+    <div class="deal-banner-card deal-skeleton">
+        <div class="deal-badge-row">
+            <span class="deal-pill skeleton-glow">⚡ FLASH DEAL OF THE DAY</span>
+            <span class="deal-discount skeleton-pill">Fetching deal...</span>
+        </div>
+        <div class="deal-content">
+            <div class="deal-visual skeleton-shimmer">
+                <span class="deal-emoji">⚡</span>
+            </div>
+            <div class="deal-info">
+                <div class="skeleton-line skeleton-title-bar"></div>
+                <div class="skeleton-line skeleton-desc-bar"></div>
+                <div class="skeleton-pricing-row">
+                    <div class="skeleton-line skeleton-price-bar"></div>
+                    <div class="skeleton-line skeleton-tag-bar"></div>
+                </div>
+            </div>
+        </div>
+        <div class="deal-footer">
+            <span class="deal-timer">⏳ Fetching live deal from Eronom server API...</span>
+            <span class="deal-tag">API: /api/deal</span>
+        </div>
+    </div>
+} else {
+    <div class="deal-banner-card">
+        <div class="deal-badge-row">
+            <span class="deal-pill">⚡ FLASH DEAL OF THE DAY</span>
+            <span class="deal-discount">-{dealDiscount}% OFF</span>
+        </div>
+
+        <div class="deal-content">
+            <div class="deal-visual">
+                <span class="deal-emoji">{dealEmoji}</span>
+            </div>
+            <div class="deal-info">
+                <h3 class="deal-title">{dealTitle}</h3>
+                <p class="deal-desc">Precision-tuned enthusiast hardware compiled with native MIR JIT speed.</p>
+                <div class="deal-pricing">
+                    <span class="deal-price-current">${dealPrice}</span>
+                    <span class="deal-price-old">${dealOriginalPrice}</span>
+                    <span class="deal-shipping-badge">✓ Free Express Delivery</span>
+                </div>
+            </div>
+            <div class="deal-action">
+                <button class="deal-claim-btn" onclick={claimDeal}>
+                    Claim Flash Deal +
+                </button>
+            </div>
+        </div>
+
+        <div class="deal-footer">
+            <span class="deal-timer">⏳ Limited inventory remaining today</span>
+            <span class="deal-tag">⚡ Reactive Signal Component</span>
+        </div>
+    </div>
+}
+
+<style>
+    .deal-banner-card {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 20px;
+        padding: 24px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4), 0 0 24px rgba(59, 130, 246, 0.15);
+        color: #ffffff;
+        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+        margin: 20px 0;
+        transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .deal-banner-card:hover {
+        border-color: rgba(99, 102, 241, 0.5);
+        transform: translateY(-2px);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), 0 0 30px rgba(99, 102, 241, 0.25);
+    }
+
+    .deal-badge-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .deal-pill {
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        color: #60a5fa;
+        text-transform: uppercase;
+        background: rgba(59, 130, 246, 0.15);
+        padding: 4px 12px;
+        border-radius: 9999px;
+        border: 1px solid rgba(59, 130, 246, 0.25);
+    }
+
+    .deal-discount {
+        font-size: 0.85rem;
+        font-weight: 800;
+        color: #10b981;
+        background: rgba(16, 185, 129, 0.12);
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+
+    .deal-content {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+    }
+
+    .deal-visual {
+        width: 80px;
+        height: 80px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2.8rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        flex-shrink: 0;
+    }
+
+    .deal-info {
+        flex: 1;
+    }
+
+    .deal-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin: 0 0 6px 0;
+        color: #f8fafc;
+    }
+
+    .deal-desc {
+        font-size: 0.88rem;
+        color: #94a3b8;
+        margin: 0 0 12px 0;
+        line-height: 1.4;
+    }
+
+    .deal-pricing {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .deal-price-current {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #ffffff;
+    }
+
+    .deal-price-old {
+        font-size: 0.95rem;
+        color: #64748b;
+        text-decoration: line-through;
+    }
+
+    .deal-shipping-badge {
+        font-size: 0.8rem;
+        color: #38bdf8;
+        font-weight: 500;
+    }
+
+    .deal-action {
+        flex-shrink: 0;
+    }
+
+    .deal-claim-btn {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 12px 20px;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 4px 16px rgba(37, 99, 235, 0.4);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .deal-claim-btn:hover {
+        background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+        transform: translateY(-1px) scale(1.02);
+        box-shadow: 0 8px 24px rgba(59, 130, 246, 0.6);
+    }
+
+    .deal-claim-btn:active {
+        transform: scale(0.98);
+    }
+
+    .deal-footer {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.78rem;
+        color: #64748b;
+    }
+
+    .deal-timer {
+        color: #cbd5e1;
+    }
+
+    .deal-tag {
+        font-family: 'JetBrains Mono', monospace;
+        color: #818cf8;
+        background: rgba(129, 140, 248, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
+
+    /* Skeleton Loading State Styles */
+    .deal-skeleton {
+        opacity: 0.85;
+    }
+
+    .skeleton-glow {
+        animation: pulseGlow 1.5s infinite alternate;
+    }
+
+    @keyframes pulseGlow {
+        0% { opacity: 0.6; }
+        100% { opacity: 1; }
+    }
+
+    .skeleton-shimmer {
+        animation: shimmer 1.8s infinite ease-in-out;
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.03) 100%);
+        background-size: 200% 100%;
+    }
+
+    @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+
+    .skeleton-line {
+        height: 14px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.06);
+        margin-bottom: 8px;
+        animation: shimmer 1.8s infinite ease-in-out;
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.04) 100%);
+        background-size: 200% 100%;
+    }
+
+    .skeleton-title-bar {
+        width: 60%;
+        height: 20px;
+    }
+
+    .skeleton-desc-bar {
+        width: 85%;
+        height: 12px;
+    }
+
+    .skeleton-pricing-row {
+        display: flex;
+        gap: 12px;
+        margin-top: 10px;
+    }
+
+    .skeleton-price-bar {
+        width: 80px;
+        height: 22px;
+    }
+
+    .skeleton-tag-bar {
+        width: 120px;
+        height: 18px;
+    }
+</style>

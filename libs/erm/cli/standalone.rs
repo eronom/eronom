@@ -131,8 +131,14 @@ pub fn build_standalone(
         bundle.add_file(&path, data);
     }
 
+    let bin_name = if is_windows_target {
+        format!("{}.exe", default_stem)
+    } else {
+        default_stem.clone()
+    };
+
     // Determine output path
-    let output_path = if let Some(out_str) = output_opt {
+    let mut output_path = if let Some(out_str) = output_opt {
         let mut p = PathBuf::from(out_str);
         if is_windows_target && p.extension().map_or(true, |e| e != "exe") {
             p.set_extension("exe");
@@ -140,13 +146,20 @@ pub fn build_standalone(
         p
     } else {
         let dist_dir = PathBuf::from("dist");
-        let bin_name = if is_windows_target {
-            format!("{}.exe", default_stem)
-        } else {
-            default_stem
-        };
-        dist_dir.join(bin_name)
+        dist_dir.join(&bin_name)
     };
+
+    if output_path.is_dir() {
+        if output_path == Path::new("app") || output_path.join("pages").exists() {
+            anyhow::bail!(
+                "Output path '{}' is an existing directory (project source folder). Cannot write an executable file with the same name as a directory. Please specify a file path such as '-o dist/{}' or '-o ./{}-bin'.",
+                output_path.display(),
+                default_stem,
+                default_stem
+            );
+        }
+        output_path = output_path.join(&bin_name);
+    }
 
     // Obtain runner stub binary
     let runner_bytes = if let Some(stub_path) = runner_stub_opt {

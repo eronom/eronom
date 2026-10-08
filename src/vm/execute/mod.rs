@@ -1,4 +1,6 @@
 pub mod types;
+pub mod fiber;
+pub mod scheduler;
 pub mod gc_integration;
 pub mod upvalues;
 pub mod struct_lookup;
@@ -14,6 +16,8 @@ pub mod loop_impl;
 pub mod tests;
 
 pub use types::{VM, CallFrame, AsyncResult, EventLoopTask, VmTimer, VmTimerAction, PendingAsync, format_undeclared_var_error};
+pub use fiber::{Fiber, FiberStatus};
+pub use scheduler::FiberScheduler;
 pub use gc_integration::{GC_TIME, GC_COUNT, er_gc_reset_stats, er_gc_print_stats};
 pub use builtins::{get_string_builtin_method_id, get_array_builtin_method_id, get_object_builtin_method_id};
 
@@ -44,6 +48,7 @@ impl VM {
             20
         };
         crate::vm::alloc::init_allocator_options();
+        crate::jit::helpers::reset_global_ic();
         Self {
             has_error_flag: 0,
             frames: Vec::new(),
@@ -68,6 +73,7 @@ impl VM {
             pending_callbacks: Arc::new(Mutex::new(Vec::new())),
             timers: Arc::new(Mutex::new(BinaryHeap::new())),
             next_timer_id: Arc::new(AtomicU64::new(1)),
+            scheduler: FiberScheduler::new(),
         }
     }
 
@@ -89,6 +95,7 @@ impl VM {
     }
 
     pub fn run_function_ptr(&mut self, func_ptr: *mut GcObject) -> Result<Value, String> {
+        crate::vm::er_http::types::VM_STACK.with(|s| s.borrow_mut().push(self as *mut VM));
         let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
         self.frames.push(CallFrame {
             function: func_ptr,
@@ -99,6 +106,12 @@ impl VM {
 
         let res = self.execute();
         crate::vm::er_http::ACTIVE_VM.with(|active| active.set(prev_vm));
+        crate::vm::er_http::types::VM_STACK.with(|s| {
+            let mut stack = s.borrow_mut();
+            if let Some(pos) = stack.iter().rposition(|&p| p == (self as *mut VM)) {
+                stack.remove(pos);
+            }
+        });
         res
     }
 
@@ -175,6 +188,9 @@ impl VM {
             final_args.truncate(raw_func.arity);
         }
 
+        crate::vm::er_http::types::VM_STACK.with(|s| s.borrow_mut().push(self as *mut VM));
+        let prev_vm = crate::vm::er_http::ACTIVE_VM.with(|active| active.replace(self as *mut VM));
+
         let old_frames = std::mem::take(&mut self.frames);
         let old_stack_len = self.stack.len();
         
@@ -207,6 +223,14 @@ impl VM {
         
         self.frames = old_frames;
         self.stack.truncate(old_stack_len);
+
+        crate::vm::er_http::ACTIVE_VM.with(|active| active.set(prev_vm));
+        crate::vm::er_http::types::VM_STACK.with(|s| {
+            let mut stack = s.borrow_mut();
+            if let Some(pos) = stack.iter().rposition(|&p| p == (self as *mut VM)) {
+                stack.remove(pos);
+            }
+        });
         
         res
     }
@@ -226,5 +250,40 @@ impl VM {
         
         self.stack.truncate(original_len);
         res
+    }
+
+    pub fn save_active_fiber(&mut self) {
+        let cid = self.scheduler.current_fiber_id;
+        if let Some(fiber) = self.scheduler.fibers.get_mut(&cid) {
+            if !self.frames.is_empty() {
+                fiber.stack = std::mem::take(&mut self.stack);
+                fiber.frames = std::mem::take(&mut self.frames);
+                fiber.open_upvalues = std::mem::take(&mut self.open_upvalues);
+            }
+        }
+    }
+
+    pub fn load_fiber(&mut self, fiber_id: u64) {
+        if let Some(fiber) = self.scheduler.fibers.get_mut(&fiber_id) {
+            self.stack = std::mem::take(&mut fiber.stack);
+            self.frames = std::mem::take(&mut fiber.frames);
+            self.open_upvalues = std::mem::take(&mut fiber.open_upvalues);
+            self.scheduler.current_fiber_id = fiber_id;
+            fiber.status = FiberStatus::Running;
+        }
+    }
+
+    pub fn run_fiber_finalizers(&mut self, fiber_id: u64) {
+        let finalizers = if let Some(f) = self.scheduler.fibers.get_mut(&fiber_id) {
+            std::mem::take(&mut f.finalizers)
+        } else {
+            Vec::new()
+        };
+
+        for fin in finalizers.into_iter().rev() {
+            if let Err(e) = self.call_function_reentrant(fin, Vec::new()) {
+                eprintln!("[Finalizer Error]: {}", e);
+            }
+        }
     }
 }

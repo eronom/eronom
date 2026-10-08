@@ -111,7 +111,10 @@ impl VM {
             if name == "json" || name == "text" {
                 let body_key = get_or_create_string("_body");
                 let is_response = match &(*ptr).data {
-                    GcData::Object(map) => map.contains_key(&MapKey(Value::string(body_key))),
+                    GcData::Object(map) => {
+                        let req_key = get_or_create_string("req");
+                        !map.contains_key(&MapKey(Value::string(req_key))) && map.contains_key(&MapKey(Value::string(body_key)))
+                    }
                     GcData::Struct(s) => s.get_field_by_name("_body").is_some(),
                     _ => false,
                 };

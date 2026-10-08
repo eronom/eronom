@@ -315,6 +315,18 @@ pub fn collect_std_library_files() -> HashMap<String, Vec<u8>> {
     if !files.contains_key("std/test.er") {
         files.insert("std/test.er".to_string(), include_bytes!("../../std/test.er").to_vec());
     }
+    if !files.contains_key("std/erm.er") {
+        files.insert("std/erm.er".to_string(), include_bytes!("../../std/erm.er").to_vec());
+    }
+    if !files.contains_key("std/task.er") {
+        files.insert("std/task.er".to_string(), include_bytes!("../../std/task.er").to_vec());
+    }
+    if !files.contains_key("std/schedule.er") {
+        files.insert("std/schedule.er".to_string(), include_bytes!("../../std/schedule.er").to_vec());
+    }
+    if !files.contains_key("std/clock.er") {
+        files.insert("std/clock.er".to_string(), include_bytes!("../../std/clock.er").to_vec());
+    }
 
     // Built-in ERM client reactive runtime files
     if !files.contains_key("modules/erm/runtime.js") {
@@ -351,6 +363,10 @@ pub fn build_standalone_executable(
     let clean_runner = strip_existing_payload(runner_stub_bytes);
     let serialized_payload = bundle.serialize();
     let payload_len = serialized_payload.len() as u64;
+
+    if output_path.is_dir() {
+        anyhow::bail!("Cannot write executable to '{}' because it is a directory.", output_path.display());
+    }
 
     if let Some(parent) = output_path.parent() {
         if !parent.exists() {

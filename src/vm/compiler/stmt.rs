@@ -240,6 +240,9 @@ impl Compiler {
                 self.compile_await_handles(handles_reg)?;
                 self.end_scope();
             }
+            Stmt::Sync(body) => {
+                self.compile_stmt(body)?;
+            }
         }
         Ok(())
     }

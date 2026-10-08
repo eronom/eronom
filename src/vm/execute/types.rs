@@ -69,6 +69,7 @@ pub struct PendingAsync {
 
 unsafe impl Send for PendingAsync {}
 
+#[derive(Debug, Clone, Copy)]
 pub struct CallFrame {
     pub function: *mut GcObject,
     pub ip: usize,
@@ -107,10 +108,12 @@ pub struct VM {
     pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
     pub timers: Arc<Mutex<BinaryHeap<VmTimer>>>,
     pub next_timer_id: Arc<AtomicU64>,
+    pub scheduler: super::scheduler::FiberScheduler,
 }
 
 impl Drop for VM {
     fn drop(&mut self) {
+        crate::jit::helpers::reset_global_ic();
         if let Some(ctx) = self.mir_ctx {
             crate::jit::cleanup_jit(ctx);
         }

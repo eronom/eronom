@@ -1,0 +1,191 @@
+// Standard Task & Concurrency Library for Eronom
+
+export const Task = {
+  // Spawn a new concurrent fiber running `func`
+  spawn: (func, args) => {
+    return Eronom_fiberSpawn(func, args)
+  },
+
+  // Cooperatively yield current fiber's timeslice
+  yield: () => {
+    return Eronom_fiberYield()
+  },
+
+  // Get current fiber ID
+  currentId: () => {
+    return Eronom_fiberCurrentId()
+  },
+
+  // Get status of a task/fiber ("ready", "running", "suspended", "completed", "failed", "cancelled")
+  status: (taskHandle) => {
+    return Eronom_fiberStatus(taskHandle)
+  },
+
+  // Promptly interrupt / cancel a running or suspended task
+  cancel: (taskHandle) => {
+    return Eronom_fiberInterrupt(taskHandle)
+  },
+
+  // Await completion of a task handle and return its result
+  join: (taskHandle) => {
+    if (taskHandle && taskHandle._promise) {
+      return futureAwait(taskHandle._promise)
+    }
+    return null
+  },
+
+  // Register a LIFO finalizer on the current fiber
+  addFinalizer: (finalizerFn) => {
+    return Eronom_fiberAddFinalizer(finalizerFn)
+  },
+
+  // Mask interruption during execution of `action`
+  mask: (action) => {
+    return Eronom_fiberMask(action)
+  },
+
+  // Safe resource bracket: guarantees `release(res)` executes even on cancellation or error
+  bracket: (acquireFn, useFn, releaseFn) => {
+    return Eronom_bracket(acquireFn, useFn, releaseFn)
+  },
+
+  // Structured concurrency scope: any child tasks spawned via scope that are still running when scope exits are cancelled
+  scope: (scopeFn) => {
+    let children = []
+    let scopeObj = {
+      spawn: (action, args) => {
+        let child = Eronom_fiberSpawn(action, args)
+        children.push(child)
+        return child
+      }
+    }
+    try {
+      let res = scopeFn(scopeObj)
+      return res
+    } catch (err) {
+      for child in children {
+        Eronom_fiberInterrupt(child)
+      }
+      throw err
+    } finally {
+      for child in children {
+        let st = Eronom_fiberStatus(child)
+        if (st == "running" || st == "ready" || st == "suspended") {
+          Eronom_fiberInterrupt(child)
+        }
+      }
+    }
+  },
+
+  // Race: first task to complete wins, all remaining tasks are promptly cancelled
+  race: (tasks) => {
+    let pair = createPromisePair()
+    let hasWinner = false
+    let handles = []
+
+    let runner = (target) => {
+      let res = target()
+      if (!hasWinner) {
+        hasWinner = true
+        pair.resolve(res)
+      }
+    }
+
+    for taskFn in tasks {
+      let h = Eronom_fiberSpawn(runner, [taskFn])
+      handles.push(h)
+    }
+
+    let winner = futureAwait(pair.promise)
+    for h in handles {
+      Eronom_fiberInterrupt(h)
+    }
+    return winner
+  },
+
+  // All: runs tasks concurrently, joins all results into an array
+  all: (tasks) => {
+    let handles = []
+    for taskFn in tasks {
+      handles.push(Eronom_fiberSpawn(taskFn))
+    }
+    let results = []
+    for h in handles {
+      if (h._promise) {
+        results.push(futureAwait(h._promise))
+      } else {
+        results.push(null)
+      }
+    }
+    return results
+  },
+
+  // Timeout: cancel task if durationMs expires before completion
+  timeout: (durationMs, taskFn) => {
+    let pair = createPromisePair()
+    let isDone = false
+    let taskHandle = null
+
+    let timerHandle = setTimeout(() => {
+      if (!isDone) {
+        isDone = true
+        if (taskHandle != null) {
+          Eronom_fiberInterrupt(taskHandle)
+        }
+        pair.resolve({ timedOut: true })
+      }
+    }, durationMs)
+
+    taskHandle = Eronom_fiberSpawn(() => {
+      let res = taskFn()
+      if (!isDone) {
+        isDone = true
+        clearTimeout(timerHandle)
+        pair.resolve({ timedOut: false, value: res })
+      }
+    })
+
+    let outcome = futureAwait(pair.promise)
+    if (outcome.timedOut) {
+      throw "TimeoutError: task exceeded timeout duration of " + durationMs + "ms"
+    }
+    return outcome.value
+  },
+
+  // Bounded worker concurrency pool: processes items with at most `concurrencyLimit` concurrent fibers
+  forEach: (items, concurrencyLimit, workerFn) => {
+    let count = arrayLen(items)
+    if (count == 0) {
+      return []
+    }
+    let limit = concurrencyLimit
+    if (limit <= 0 || limit > count) {
+      limit = count
+    }
+
+    let nextIdx = 0
+    let results = []
+    for i in 0..count {
+      results.push(null)
+    }
+
+    let poolWorker = () => {
+      while (nextIdx < count) {
+        let cur = nextIdx
+        nextIdx = nextIdx + 1
+        results[cur] = workerFn(items[cur], cur)
+      }
+    }
+
+    let workers = []
+    for w in 0..limit {
+      workers.push(Eronom_fiberSpawn(poolWorker))
+    }
+    for w in workers {
+      if (w._promise) {
+        futureAwait(w._promise)
+      }
+    }
+    return results
+  }
+}

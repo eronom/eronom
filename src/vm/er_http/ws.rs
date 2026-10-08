@@ -3,7 +3,6 @@ use crate::vm::value::Value;
 use crate::vm::gc::{gc_allocate, get_or_create_string, GcData};
 use super::ffi::*;
 use super::types::*;
-use super::hmr::check_and_reload_script_if_needed;
 
 pub fn extract_bytes_from_value(val: Value, force_binary: bool) -> (Vec<u8>, bool) {
     if val.is_array() {
@@ -228,11 +227,6 @@ pub extern "C" fn er_ws_on_open(
     path_ptr: *const c_char,
     path_len: usize,
 ) {
-    let vm_ptr = ACTIVE_VM.with(|active| active.get());
-    if !vm_ptr.is_null() {
-        let vm = unsafe { &mut *vm_ptr };
-        check_and_reload_script_if_needed(vm);
-    }
 
     let path = unsafe {
         if path_ptr.is_null() || path_len == 0 {
@@ -289,11 +283,6 @@ pub extern "C" fn er_ws_on_message(
     message_len: usize,
     is_binary: i32,
 ) {
-    let vm_ptr = ACTIVE_VM.with(|active| active.get());
-    if !vm_ptr.is_null() {
-        let vm = unsafe { &mut *vm_ptr };
-        check_and_reload_script_if_needed(vm);
-    }
 
     let path = unsafe {
         if path_ptr.is_null() || path_len == 0 {
@@ -373,11 +362,6 @@ pub extern "C" fn er_ws_on_close(
     message_ptr: *const c_char,
     message_len: usize,
 ) {
-    let vm_ptr = ACTIVE_VM.with(|active| active.get());
-    if !vm_ptr.is_null() {
-        let vm = unsafe { &mut *vm_ptr };
-        check_and_reload_script_if_needed(vm);
-    }
 
     let path = unsafe {
         if path_ptr.is_null() || path_len == 0 {
@@ -428,6 +412,181 @@ pub extern "C" fn er_ws_on_close(
             }
         });
         
+        ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
+    }
+}
+
+// ─── Instance WebSocket Callbacks (O(1) Route ID Dispatch) ──────────────────
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_ws_on_open_instance(
+    _rust_server: *mut c_void,
+    route_id: u32,
+    ws: *mut c_void,
+    _path_ptr: *const c_char,
+    _path_len: usize,
+) {
+    let port = _rust_server as usize as i32;
+    let serve_ws = if port > 0 {
+        ACTIVE_SERVERS.with(|s| s.borrow().get(&port).and_then(|st| st.websocket.clone()))
+    } else {
+        None
+    };
+    let open_cb = if let Some(ws_cfg) = &serve_ws {
+        ws_cfg.open
+    } else {
+        WS_ROUTES.with(|routes| {
+            routes.borrow().get(route_id as usize).and_then(|r| r.open)
+        })
+    };
+
+    let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
+        let mut cache = conns.borrow_mut();
+        if let Some(&cached) = cache.get(&ws) {
+            cached
+        } else {
+            let obj = create_ws_object(ws);
+            cache.insert(ws, obj);
+            obj
+        }
+    });
+
+    if let Some(callback) = open_cb {
+        ACTIVE_WEBSOCKET.with(|active| active.set(ws));
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj]) {
+                    eprintln!("[WS] Error executing open callback: {}", e);
+                }
+            }
+        });
+        ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_ws_on_message_instance(
+    _rust_server: *mut c_void,
+    route_id: u32,
+    ws: *mut c_void,
+    _path_ptr: *const c_char,
+    _path_len: usize,
+    message_ptr: *const c_char,
+    message_len: usize,
+    is_binary: i32,
+) {
+    let msg_val = unsafe {
+        if message_ptr.is_null() || message_len == 0 {
+            Value::string(get_or_create_string(""))
+        } else if is_binary != 0 {
+            let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
+            let byte_vals: Vec<Value> = slice.iter().map(|&b| Value::number(b as f64)).collect();
+            let arr_ptr = gc_allocate(GcData::Array(byte_vals));
+            Value::array(arr_ptr)
+        } else {
+            let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
+            let s = std::str::from_utf8(slice).unwrap_or("");
+            Value::string(get_or_create_string(s))
+        }
+    };
+
+    let port = _rust_server as usize as i32;
+    let serve_ws = if port > 0 {
+        ACTIVE_SERVERS.with(|s| s.borrow().get(&port).and_then(|st| st.websocket.clone()))
+    } else {
+        None
+    };
+    let msg_cb = if let Some(ws_cfg) = &serve_ws {
+        ws_cfg.message
+    } else {
+        WS_ROUTES.with(|routes| {
+            routes.borrow().get(route_id as usize).and_then(|r| r.message)
+        })
+    };
+
+    let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
+        let mut cache = conns.borrow_mut();
+        if let Some(&cached) = cache.get(&ws) {
+            cached
+        } else {
+            let obj = create_ws_object(ws);
+            cache.insert(ws, obj);
+            obj
+        }
+    });
+
+    if let Some(callback) = msg_cb {
+        ACTIVE_WEBSOCKET.with(|active| active.set(ws));
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj, msg_val]) {
+                    eprintln!("[WS] Error executing message callback: {}", e);
+                }
+            }
+        });
+        ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn er_ws_on_close_instance(
+    _rust_server: *mut c_void,
+    route_id: u32,
+    ws: *mut c_void,
+    _path_ptr: *const c_char,
+    _path_len: usize,
+    code: i32,
+    message_ptr: *const c_char,
+    message_len: usize,
+) {
+    let msg = unsafe {
+        if message_ptr.is_null() || message_len == 0 {
+            ""
+        } else {
+            let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
+            std::str::from_utf8(slice).unwrap_or("")
+        }
+    };
+
+    let port = _rust_server as usize as i32;
+    let serve_ws = if port > 0 {
+        ACTIVE_SERVERS.with(|s| s.borrow().get(&port).and_then(|st| st.websocket.clone()))
+    } else {
+        None
+    };
+    let close_cb = if let Some(ws_cfg) = &serve_ws {
+        ws_cfg.close
+    } else {
+        WS_ROUTES.with(|routes| {
+            routes.borrow().get(route_id as usize).and_then(|r| r.close)
+        })
+    };
+
+
+    let ws_obj = ACTIVE_CONNECTIONS.with(|conns| {
+        let mut cache = conns.borrow_mut();
+        cache.remove(&ws).unwrap_or_else(|| create_ws_object(ws))
+    });
+
+    if let Some(callback) = close_cb {
+        ACTIVE_WEBSOCKET.with(|active| active.set(ws));
+        ACTIVE_VM.with(|active| {
+            let vm_ptr = active.get();
+            if !vm_ptr.is_null() {
+                let vm = unsafe { &mut *vm_ptr };
+                let code_val = Value::number(code as f64);
+                let msg_str = get_or_create_string(msg);
+                let msg_val = Value::string(msg_str);
+
+                if let Err(e) = vm.call_function_reentrant(callback, vec![ws_obj, code_val, msg_val]) {
+                    eprintln!("[WS] Error executing close callback: {}", e);
+                }
+            }
+        });
         ACTIVE_WEBSOCKET.with(|active| active.set(std::ptr::null_mut()));
     }
 }

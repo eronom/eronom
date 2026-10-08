@@ -44,16 +44,16 @@ pub fn value_to_string_for_render(v: Value) -> String {
 }
 
 pub fn native_render(args: Vec<Value>) -> Value {
-    if args.len() < 2 {
+    if args.is_empty() {
         return Value::null();
     }
     let file_path_val = args[0];
-    let params_val = args[1];
-    
     let file_path = match file_path_val.as_str() {
         Some(s) => s,
         None => return Value::null(),
     };
+    let params_val = if args.len() > 1 { args[1] } else { Value::null() };
+    let is_prod = if args.len() > 2 { args[2].as_boolean() } else { *IS_PROD.lock().unwrap() };
     
     let mut params_map = std::collections::HashMap::new();
     if params_val.is_object() {
@@ -93,10 +93,30 @@ pub fn native_render(args: Vec<Value>) -> Value {
         }
     }
     if !path.exists() {
-        return Value::null();
+        if Path::new(file_path).exists() {
+            path = Path::new(file_path).to_path_buf();
+        } else if let Some(target_script) = crate::vm::er_http::get_target_script_path() {
+            let mut curr = Path::new(&target_script).parent();
+            let mut found = false;
+            while let Some(dir) = curr {
+                let candidate = dir.join(file_path);
+                if candidate.exists() {
+                    path = candidate;
+                    found = true;
+                    break;
+                }
+                curr = dir.parent();
+            }
+            if !found {
+                eprintln!("[render] File not found: {} (tried: {:?})", file_path, path);
+                return Value::null();
+            }
+        } else {
+            eprintln!("[render] File not found: {} (tried: {:?})", file_path, path);
+            return Value::null();
+        }
     }
     
-    let is_prod = *IS_PROD.lock().unwrap();
     let is_html = path.extension().map_or(false, |ext| ext == "html");
 
     if is_html {
@@ -138,7 +158,59 @@ pub fn native_render(args: Vec<Value>) -> Value {
                     }
                 }
             }
-            Err(_) => Value::null(),
+            Err(e) => {
+                eprintln!("[render] Read error for {:?}: {:?}", path, e);
+                Value::null()
+            }
+        }
+    }
+}
+
+pub fn native_render_string(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let content_val = args[0];
+    let content = match content_val.as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let params_val = if args.len() > 1 { args[1] } else { Value::null() };
+    let is_prod = if args.len() > 2 { args[2].as_boolean() } else { *IS_PROD.lock().unwrap() };
+    
+    let mut params_map = std::collections::HashMap::new();
+    if params_val.is_object() {
+        unsafe {
+            match &(*params_val.as_gc_ptr()).data {
+                crate::vm::gc::GcData::Object(map) => {
+                    for (k, v) in map {
+                        if let Some(key_str) = k.0.as_str() {
+                            let val_str = value_to_string_for_render(*v);
+                            params_map.insert(key_str.to_string(), val_str);
+                        }
+                    }
+                }
+                crate::vm::gc::GcData::Struct(s) => {
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        if let Some(key_str) = map_key.0.as_str() {
+                            let val_str = value_to_string_for_render(s.fields[idx]);
+                            params_map.insert(key_str.to_string(), val_str);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    match compiler::process_erm_component("<inline.erm>", content, is_prod, &params_map) {
+        Ok(html) => {
+            let ptr = crate::vm::gc::get_or_create_string(&html);
+            Value::string(ptr)
+        }
+        Err(e) => {
+            eprintln!("[renderString] Compiler error: {:?}", e);
+            Value::null()
         }
     }
 }
@@ -166,16 +238,7 @@ pub fn execute_api_route(
         prefix = String::new();
     }
 
-    let stmts = match crate::frontend::parse_and_resolve_imports(file_path) {
-        Ok(s) => s,
-        Err(e) => anyhow::bail!("Compile/Import error: {}", e),
-    };
-
-    let compiler = crate::vm::compiler::Compiler::new();
-    let function = match compiler.compile(&stmts) {
-        Ok(f) => f,
-        Err(e) => anyhow::bail!("Compile error: {}", e),
-    };
+    let _guard = GcGuard;
 
     crate::vm::er_http::ROUTER.with(|r| r.borrow_mut().clear());
     crate::vm::er_http::ROUTES.with(|r| r.borrow_mut().clear());
@@ -190,13 +253,20 @@ pub fn execute_api_route(
     let mut vm = crate::vm::execute::VM::new();
     vm.register_global("print", Value::native_function(native_print));
     vm.register_global("router", Value::native_function(crate::vm::er_http::native_route));
+    vm.register_global("Eronom_nativeRoute", Value::native_function(crate::vm::er_http::native_route));
+    vm.register_global("serve", Value::native_function(crate::vm::er_http::native_serve));
     vm.register_global("render", Value::native_function(native_render));
+    vm.register_global("renderString", Value::native_function(native_render_string));
+    vm.register_global("Eronom_nativeRender", Value::native_function(native_render));
+    vm.register_global("Eronom_nativeRenderString", Value::native_function(native_render_string));
     vm.register_global("fetch", Value::native_function(crate::vm::er_http::native_fetch));
     vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+    vm.register_global("clearTimeout", Value::native_function(crate::vm::er_http::native_clear_timeout));
     vm.register_global("fetchSync", Value::native_function(crate::vm::er_http::native_fetch_sync));
     vm.register_global("fetchEvented", Value::native_function(crate::vm::er_http::native_fetch_evented));
     vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
     vm.register_global("arrayLen", Value::native_function(crate::vm::er_http::native_array_len));
+    vm.register_global("arrayPush", Value::native_function(crate::vm::er_http::native_array_push));
     vm.register_global("sleep", Value::native_function(crate::vm::er_http::native_sleep));
     vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
     vm.register_global("setIoMode", Value::native_function(crate::vm::er_http::native_set_io_mode));
@@ -210,8 +280,6 @@ pub fn execute_api_route(
     crate::vm::std_json::register_json_natives(&mut vm);
     crate::vm::std_system::register_system_natives(&mut vm);
     crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
-
-    let _guard = GcGuard;
     
     // Load config from eronom.toml if it exists
     if let Some(parent_dir) = file_path.parent() {
@@ -228,7 +296,24 @@ pub fn execute_api_route(
         }
     }
 
-    if let Err(e) = vm.run(function) {
+    let stmts = match crate::frontend::parse_and_resolve_imports(file_path) {
+        Ok(s) => s,
+        Err(e) => anyhow::bail!("Compile/Import error: {}", e),
+    };
+
+    let compiler = crate::vm::compiler::Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => anyhow::bail!("Compile error: {}", e),
+    };
+
+    let func_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Function(Box::new(function)));
+    let func_val = Value::function(func_ptr);
+    crate::vm::gc::gc_push_temp_slice(&func_val, 1);
+    let run_res = vm.run_function_ptr(func_ptr);
+    crate::vm::gc::gc_pop_temp_slice();
+
+    if let Err(e) = run_res {
         anyhow::bail!("VM Runtime error: {}", e);
     }
     if let Err(e) = vm.run_event_loop() {

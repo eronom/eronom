@@ -129,18 +129,7 @@ pub fn value_to_json(val: Value) -> String {
     }
 }
 
-pub fn native_render(args: Vec<Value>) -> Value {
-    if args.len() < 2 {
-        return Value::null();
-    }
-    let file_path_val = args[0];
-    let params_val = args[1];
-    
-    let file_path = match file_path_val.as_str() {
-        Some(s) => s,
-        None => return Value::null(),
-    };
-    
+pub fn extract_params_map(params_val: Value) -> std::collections::HashMap<String, String> {
     let mut params_map = std::collections::HashMap::new();
     if params_val.is_object() {
         unsafe {
@@ -177,12 +166,34 @@ pub fn native_render(args: Vec<Value>) -> Value {
             }
         }
     }
+    params_map
+}
+
+pub fn native_render(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let file_path_val = args[0];
+    let file_path = match file_path_val.as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let params_val = if args.len() > 1 { args[1] } else { Value::null() };
+    let is_prod = if args.len() > 2 { args[2].as_boolean() } else { true };
+    let params_map = extract_params_map(params_val);
     
     let path = std::path::Path::new(file_path);
-    let mut resolved_path = if path.is_relative() {
+    let mut resolved_path = if path.exists() {
+        path.to_path_buf()
+    } else if path.is_relative() {
         if let Some(script_path) = backend::er_http::get_target_script_path() {
             if let Some(parent) = std::path::Path::new(&script_path).parent() {
-                parent.join(path)
+                let candidate = parent.join(path);
+                if candidate.exists() {
+                    candidate
+                } else {
+                    path.to_path_buf()
+                }
             } else {
                 path.to_path_buf()
             }
@@ -253,13 +264,38 @@ pub fn native_render(args: Vec<Value>) -> Value {
         return Value::string(ptr);
     }
     
-    match eronom::compiler::process_erm_component(&comp_path, &content, true, &params_map) {
+    match eronom::compiler::process_erm_component(&comp_path, &content, is_prod, &params_map) {
         Ok(html) => {
             let ptr = backend::gc::gc_alloc_string(&html);
             Value::string(ptr)
         }
         Err(e) => {
             eprintln!("[render] Compiler error: {:?}", e);
+            Value::null()
+        }
+    }
+}
+
+pub fn native_render_string(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let content_val = args[0];
+    let content = match content_val.as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let params_val = if args.len() > 1 { args[1] } else { Value::null() };
+    let is_prod = if args.len() > 2 { args[2].as_boolean() } else { true };
+    let params_map = extract_params_map(params_val);
+
+    match eronom::compiler::process_erm_component("<inline.erm>", content, is_prod, &params_map) {
+        Ok(html) => {
+            let ptr = backend::gc::gc_alloc_string(&html);
+            Value::string(ptr)
+        }
+        Err(e) => {
+            eprintln!("[renderString] Compiler error: {:?}", e);
             Value::null()
         }
     }

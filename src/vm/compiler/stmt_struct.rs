@@ -39,9 +39,18 @@ impl Compiler {
             compiler.structs = self.structs.clone();
             compiler.interfaces = self.interfaces.clone();
             compiler.global_types = self.global_types.clone();
+            compiler.effects = self.effects.clone();
             compiler.current_struct = Some(name.to_string());
             compiler.function.arity = method_params.len();
             compiler.function.is_async = false;
+
+            let m_key = format!("{}.{}", name, m_name);
+            let rung = self.effects.borrow().methods.get(&m_key).copied().unwrap_or_else(|| {
+                crate::frontend::infer_stmt_effect(m_body, &self.effects.borrow())
+            });
+            compiler.function.is_pure = rung == crate::frontend::EffectRung::Pure;
+            compiler.function.can_suspend = rung == crate::frontend::EffectRung::Suspends;
+
             compiler.next_reg = method_params.len();
             compiler.begin_scope();
             for param in &method_params {

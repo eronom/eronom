@@ -59,11 +59,13 @@ pub fn process_component_tree(
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();
     for (k, v) in params {
-        if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
-            params_map.insert(k.clone(), parsed_val);
+        let parsed = if let Ok((Some(parsed_val), _)) = eval::parse_js_value(v, None) {
+            parsed_val
         } else {
-            params_map.insert(k.clone(), eval::Value::String(v.clone()));
-        }
+            eval::Value::String(v.clone())
+        };
+        ev.set(k, parsed.clone());
+        params_map.insert(k.clone(), parsed);
     }
     ev.set("__erm_params", eval::Value::Map(params_map));
 

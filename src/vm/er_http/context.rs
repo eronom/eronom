@@ -116,6 +116,75 @@ pub fn native_context_html(args: Vec<Value>) -> Value {
     Value::null()
 }
 
+pub fn native_context_render(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    for arg in &args[1..] {
+        if arg.is_number() {
+            ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(arg.as_number() as u16));
+            break;
+        }
+    }
+    let mut render_args = vec![args[0]];
+    if args.len() > 1 && (args[1].is_object() || args[1].is_null()) {
+        render_args.push(args[1]);
+    } else {
+        render_args.push(Value::null());
+    }
+    let html_val = crate::server::render::native_render(render_args);
+    if html_val.is_null() {
+        flush_response(res_ptr, Some(b"404 Not Found"), Some("text/plain"), 404);
+        return Value::null();
+    }
+    let html_str = if let Some(s) = html_val.as_str() {
+        s.to_string()
+    } else {
+        html_val.to_string()
+    };
+    flush_response(res_ptr, Some(html_str.as_bytes()), Some("text/html; charset=utf-8"), 200);
+    Value::null()
+}
+
+pub fn native_context_render_string(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let res_ptr = ACTIVE_HTTP_RESPONSE.with(|resp| resp.get());
+    if res_ptr.is_null() {
+        return Value::null();
+    }
+    for arg in &args[1..] {
+        if arg.is_number() {
+            ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(arg.as_number() as u16));
+            break;
+        }
+    }
+    let mut render_args = vec![args[0]];
+    if args.len() > 1 && (args[1].is_object() || args[1].is_null()) {
+        render_args.push(args[1]);
+    } else {
+        render_args.push(Value::null());
+    }
+    let html_val = crate::server::render::native_render_string(render_args);
+    if html_val.is_null() {
+        flush_response(res_ptr, Some(b"500 Internal Server Error"), Some("text/plain"), 500);
+        return Value::null();
+    }
+    let html_str = if let Some(s) = html_val.as_str() {
+        s.to_string()
+    } else {
+        html_val.to_string()
+    };
+    flush_response(res_ptr, Some(html_str.as_bytes()), Some("text/html; charset=utf-8"), 200);
+    Value::null()
+}
+
+
 pub fn native_context_text(args: Vec<Value>) -> Value {
     if args.is_empty() {
         return Value::null();
@@ -154,6 +223,25 @@ pub fn native_context_header(args: Vec<Value>) -> Value {
             Some(s) => s.to_ascii_lowercase(),
             None => return Value::null(),
         };
+
+        // 1. Fast zero-copy lookup directly from active uWS request handle
+        let req_ptr = ACTIVE_REQ_HANDLE.get();
+        if !req_ptr.is_null() {
+            let mut out_val: *const c_char = std::ptr::null();
+            let mut out_len: usize = 0;
+            let found = unsafe {
+                er_http_req_get_header(req_ptr, name.as_ptr() as *const c_char, name.len(), &mut out_val, &mut out_len)
+            };
+            if found && !out_val.is_null() {
+                let slice = unsafe { std::slice::from_raw_parts(out_val as *const u8, out_len) };
+                if let Ok(val) = std::str::from_utf8(slice) {
+                    let ptr = get_or_create_string(val);
+                    return Value::string(ptr);
+                }
+            }
+        }
+
+        // 2. Fallback to active headers map
         let val_opt = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().get(&name).cloned());
         if let Some(val) = val_opt {
             let ptr = get_or_create_string(&val);
@@ -187,6 +275,25 @@ pub fn native_req_header(args: Vec<Value>) -> Value {
         Some(s) => s.to_ascii_lowercase(),
         None => return Value::null(),
     };
+
+    // 1. Fast zero-copy lookup directly from active uWS request handle
+    let req_ptr = ACTIVE_REQ_HANDLE.get();
+    if !req_ptr.is_null() {
+        let mut out_val: *const c_char = std::ptr::null();
+        let mut out_len: usize = 0;
+        let found = unsafe {
+            er_http_req_get_header(req_ptr, name.as_ptr() as *const c_char, name.len(), &mut out_val, &mut out_len)
+        };
+        if found && !out_val.is_null() {
+            let slice = unsafe { std::slice::from_raw_parts(out_val as *const u8, out_len) };
+            if let Ok(val) = std::str::from_utf8(slice) {
+                let ptr = get_or_create_string(val);
+                return Value::string(ptr);
+            }
+        }
+    }
+
+    // 2. Fallback to active headers map
     let val_opt = ACTIVE_REQUEST_HEADERS.with(|h| h.borrow().get(&name).cloned());
     if let Some(val) = val_opt {
         let ptr = get_or_create_string(&val);
@@ -204,6 +311,33 @@ pub fn native_req_cookie(args: Vec<Value>) -> Value {
         Some(s) => s,
         None => return Value::null(),
     };
+
+    // 1. Fast zero-copy lookup directly from active Cookie header
+    let req_ptr = ACTIVE_REQ_HANDLE.get();
+    if !req_ptr.is_null() {
+        let mut out_val: *const c_char = std::ptr::null();
+        let mut out_len: usize = 0;
+        let found = unsafe {
+            er_http_req_get_header(req_ptr, "cookie".as_ptr() as *const c_char, 6, &mut out_val, &mut out_len)
+        };
+        if found && !out_val.is_null() && out_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(out_val as *const u8, out_len) };
+            if let Ok(cookie_str) = std::str::from_utf8(slice) {
+                for item in cookie_str.split(';') {
+                    let item = item.trim();
+                    if let Some(pos) = item.find('=') {
+                        if item[..pos].trim() == name {
+                            let val = item[pos + 1..].trim();
+                            let ptr = get_or_create_string(val);
+                            return Value::string(ptr);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback to active cookies map
     let val_opt = ACTIVE_REQUEST_COOKIES.with(|c| c.borrow().get(name).cloned());
     if let Some(val) = val_opt {
         let ptr = get_or_create_string(&val);
@@ -221,6 +355,26 @@ pub fn native_req_query(args: Vec<Value>) -> Value {
         Some(s) => s,
         None => return Value::null(),
     };
+
+    // 1. Direct slice scan from raw query string (zero allocation)
+    let raw_query = ACTIVE_REQUEST_RAW_QUERY.with(|q| q.borrow().clone());
+    if !raw_query.is_empty() {
+        for part in raw_query.split('&') {
+            if let Some(pos) = part.find('=') {
+                if &part[..pos] == name {
+                    let val = &part[pos + 1..];
+                    let decoded = super::utils::percent_decode(val);
+                    let ptr = get_or_create_string(&decoded);
+                    return Value::string(ptr);
+                }
+            } else if part == name {
+                let ptr = get_or_create_string("");
+                return Value::string(ptr);
+            }
+        }
+    }
+
+    // 2. Fallback to active query map
     let val_opt = ACTIVE_REQUEST_QUERY.with(|q| q.borrow().get(name).cloned());
     if let Some(val) = val_opt {
         let ptr = get_or_create_string(&val);
@@ -369,3 +523,119 @@ pub fn native_res_end(args: Vec<Value>) -> Value {
     flush_response(res_ptr, Some(&body_bytes), None, 200);
     Value::null()
 }
+
+pub fn handle_fetch_return_value(res_ptr: *mut c_void, val: Value) {
+    if res_ptr.is_null() {
+        return;
+    }
+    let already_finished = ACTIVE_RESPONSE_STATE.with(|s| s.borrow().finished);
+    if already_finished {
+        return;
+    }
+
+    if val.is_string() {
+        let s = val.as_str().unwrap_or("");
+        flush_response(res_ptr, Some(s.as_bytes()), Some("text/html; charset=utf-8"), 200);
+    } else if val.is_object() {
+        let ptr = val.as_gc_ptr();
+        let mut has_is_response_flag = false;
+        let mut has_body = false;
+        let mut has_status = false;
+        let mut status = 200;
+        let mut headers = Vec::new();
+        let mut body_bytes: Option<Vec<u8>> = None;
+
+        let mut process_kv = |key_str: &str, v: Value| {
+            match key_str {
+                "_isResponse" => {
+                    if v.as_boolean() {
+                        has_is_response_flag = true;
+                    }
+                }
+                "status" => {
+                    if v.is_number() {
+                        status = v.as_number() as u16;
+                        has_status = true;
+                    }
+                }
+                "body" => {
+                    if let Some(s) = v.as_str() {
+                        body_bytes = Some(s.as_bytes().to_vec());
+                        has_body = true;
+                    }
+                }
+                "headers" => {
+                    if v.is_object() {
+                        let h_ptr = v.as_gc_ptr();
+                        unsafe {
+                            match &(*h_ptr).data {
+                                GcData::Object(h_map) => {
+                                    for (hk, hv) in h_map.iter() {
+                                        if let (Some(k), Some(val)) = (hk.0.as_str(), hv.as_str()) {
+                                            headers.push((k.to_string(), val.to_string()));
+                                        }
+                                    }
+                                }
+                                GcData::Struct(hs) => {
+                                    for (map_key, &idx) in &hs.descriptor.field_indices {
+                                        if let (Some(k), Some(val)) = (map_key.0.as_str(), hs.fields[idx].as_str()) {
+                                            headers.push((k.to_string(), val.to_string()));
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        };
+
+        unsafe {
+            match &(*ptr).data {
+                GcData::Object(map) => {
+                    for (k, v) in map.iter() {
+                        if let Some(key_str) = k.0.as_str() {
+                            process_kv(key_str, *v);
+                        }
+                    }
+                }
+                GcData::Struct(s) => {
+                    for (map_key, &idx) in &s.descriptor.field_indices {
+                        if let Some(key_str) = map_key.0.as_str() {
+                            process_kv(key_str, s.fields[idx]);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if has_is_response_flag || (has_body && has_status) {
+            ACTIVE_RESPONSE_STATE.with(|s| {
+                let mut state = s.borrow_mut();
+                state.status = Some(status);
+                for (k, v) in headers {
+                    state.headers.push((k, v));
+                }
+            });
+            let b = body_bytes.as_deref().unwrap_or(b"");
+            flush_response(res_ptr, Some(b), None, status);
+        } else {
+            let json_val = value_to_json(val);
+            let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+            flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
+        }
+    } else if val.is_array() {
+        let json_val = value_to_json(val);
+        let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "[]".to_string());
+        flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
+    } else if val.is_number() || val.is_boolean() {
+        let s = val.to_string();
+        flush_response(res_ptr, Some(s.as_bytes()), Some("text/plain"), 200);
+    } else {
+        flush_response(res_ptr, Some(b""), Some("text/plain"), 200);
+    }
+}
+

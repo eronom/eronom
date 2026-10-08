@@ -1,0 +1,52 @@
+<script>
+    import { toastMessage } from "@pages/index.erm";
+
+    useEffect(() => {
+        let toast = document.getElementById("toast-pill");
+        if (toastMessage.value && toastMessage.value !== "") {
+            if (toast) toast.classList.add("active");
+            let timer = setTimeout(() => {
+                if (toast) toast.classList.remove("active");
+                toastMessage.value = "";
+            }, 3000);
+            return () => clearTimeout(timer);
+        } else {
+            if (toast) toast.classList.remove("active");
+        }
+    }, [toastMessage.value]);
+</script>
+
+<div id="toast-pill" class="toast-pill">
+    <span>⚡</span>
+    <span>{toastMessage}</span>
+</div>
+
+<style>
+    .toast-pill {
+        position: fixed;
+        bottom: 28px;
+        right: 28px;
+        background: #1e293b;
+        border: 1px solid rgba(59, 130, 246, 0.4);
+        padding: 14px 24px;
+        border-radius: 9999px;
+        color: #ffffff;
+        font-size: 0.95rem;
+        font-weight: 600;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(59, 130, 246, 0.3);
+        z-index: 300;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+        pointer-events: none;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .toast-pill.active {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        pointer-events: auto;
+    }
+</style>

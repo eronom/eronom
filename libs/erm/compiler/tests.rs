@@ -602,4 +602,35 @@ fn test_ast_reactivity_in_erm_components() {
     assert!(res.contains("count.value"));
 }
 
+#[test]
+fn test_render_params_ssr_and_client_bindings() {
+    let content = r#"
+    <div class="deal-card">
+        <h3>{title}</h3>
+        <span>${price}</span>
+        <span>${originalPrice}</span>
+        <span>-{discount}% OFF</span>
+    </div>
+    "#;
+    let mut params = std::collections::HashMap::new();
+    params.insert("title".to_string(), "Apex Pro Keyboard".to_string());
+    params.insert("price".to_string(), "189".to_string());
+    params.insert("originalPrice".to_string(), "269".to_string());
+    params.insert("discount".to_string(), "30".to_string());
+
+    let res = process_erm_component(".", content, false, &params).unwrap();
+
+    // 1. SSR spans should be populated with the param values
+    assert!(res.contains("Apex Pro Keyboard"), "Expected SSR HTML to contain title");
+    assert!(res.contains("189"), "Expected SSR HTML to contain price");
+    assert!(res.contains("269"), "Expected SSR HTML to contain originalPrice");
+    assert!(res.contains("30"), "Expected SSR HTML to contain discount");
+
+    // 2. Client script declarations should define each param from window.__erm_params
+    assert!(res.contains("let originalPrice = window.__erm_params[\"originalPrice\"];"));
+    assert!(res.contains("let price = window.__erm_params[\"price\"];"));
+    assert!(res.contains("let title = window.__erm_params[\"title\"];"));
+    assert!(res.contains("let discount = window.__erm_params[\"discount\"];"));
+}
+
 
