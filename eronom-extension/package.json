@@ -31,14 +31,27 @@
     "languages": [
       {
         "id": "eronom",
-        "aliases": ["Eronom", "er"],
-        "extensions": [".er"],
+        "aliases": [
+          "Eronom",
+          "er"
+        ],
+        "extensions": [
+          ".er"
+        ],
         "configuration": "./language-configuration.json"
       },
       {
         "id": "eronom-markup",
-        "aliases": ["Eronom Markup", "erm", "eds", "Eronom Design System"],
-        "extensions": [".erm", ".eds"],
+        "aliases": [
+          "Eronom Markup",
+          "erm",
+          "eds",
+          "Eronom Design System"
+        ],
+        "extensions": [
+          ".erm",
+          ".eds"
+        ],
         "configuration": "./erm-language-configuration.json"
       }
     ],

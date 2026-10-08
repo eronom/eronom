@@ -8,6 +8,11 @@
 #include <cstdint>
 #include <vector>
 
+#ifdef _MSC_VER
+#define strncasecmp _strnicmp
+#define strcasecmp _stricmp
+#endif
+
 extern "C" {
     // Legacy callbacks
     void er_http_on_request(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
