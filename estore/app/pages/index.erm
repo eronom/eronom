@@ -95,7 +95,7 @@
         }
     }
 
-    // Declarative API Fetch for Deal of the Day (Svelte-style reactive signal update)
+    // Declarative API Fetch for Deal of the Day (ERM reactive signal update)
     useEffect(() => {
         fetch("/api/deal")
             .then((res) => {

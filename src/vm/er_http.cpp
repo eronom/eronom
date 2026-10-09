@@ -443,6 +443,7 @@ static void register_fallback_internal(ErServer* server) {
                               full_url.data(), full_url.length(),
                               headers_str.data(), headers_str.length(),
                               nullptr, 0);
+            } else {
                 auto ctx = std::make_shared<FallbackDevCtx>(token);
                 ctx->method = std::move(method_str);
                 ctx->url = std::move(full_url);
@@ -689,6 +690,7 @@ bool er_http_response_write_status(void* token_ptr, const char* status_str, size
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
+    if (token->responded.load(std::memory_order_acquire)) return false;
     auto* http_res = token->res.load(std::memory_order_acquire);
     if (!http_res) return false;
     http_res->writeStatus(std::string_view(status_str, status_len));
@@ -699,6 +701,7 @@ bool er_http_response_write_header(void* token_ptr, const char* key_str, size_t 
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
+    if (token->responded.load(std::memory_order_acquire)) return false;
     auto* http_res = token->res.load(std::memory_order_acquire);
     if (!http_res) return false;
     http_res->writeHeader(std::string_view(key_str, key_len), std::string_view(val_str, val_len));
@@ -723,6 +726,7 @@ bool er_http_response_write(void* token_ptr, const char* data_str, size_t data_l
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return false;
+    if (token->responded.load(std::memory_order_acquire)) return false;
     auto* http_res = token->res.load(std::memory_order_acquire);
     if (!http_res) return false;
     return http_res->write(std::string_view(data_str, data_len));
