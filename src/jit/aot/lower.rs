@@ -58,7 +58,7 @@ pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFuncti
                 }
             }
             OpCode::LoadNull => {
-                instructions.push(EirInst::ConstI64 { dest: ra, val: 0 });
+                instructions.push(EirInst::ConstNull { dest: ra });
             }
             OpCode::LoadBool => {
                 instructions.push(EirInst::ConstBool { dest: ra, val: operand != 0 });
@@ -127,6 +127,51 @@ pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFuncti
                     right: rc,
                 });
             }
+            OpCode::BitAnd => {
+                instructions.push(EirInst::Binary {
+                    dest: ra,
+                    op: EirBinaryOp::BitAnd,
+                    ty: reg_type,
+                    left: rb,
+                    right: rc,
+                });
+            }
+            OpCode::BitOr => {
+                instructions.push(EirInst::Binary {
+                    dest: ra,
+                    op: EirBinaryOp::BitOr,
+                    ty: reg_type,
+                    left: rb,
+                    right: rc,
+                });
+            }
+            OpCode::BitXor => {
+                instructions.push(EirInst::Binary {
+                    dest: ra,
+                    op: EirBinaryOp::BitXor,
+                    ty: reg_type,
+                    left: rb,
+                    right: rc,
+                });
+            }
+            OpCode::ShiftLeft => {
+                instructions.push(EirInst::Binary {
+                    dest: ra,
+                    op: EirBinaryOp::Shl,
+                    ty: reg_type,
+                    left: rb,
+                    right: rc,
+                });
+            }
+            OpCode::ShiftRight => {
+                instructions.push(EirInst::Binary {
+                    dest: ra,
+                    op: EirBinaryOp::Shr,
+                    ty: reg_type,
+                    left: rb,
+                    right: rc,
+                });
+            }
             OpCode::Equal => {
                 instructions.push(EirInst::Binary {
                     dest: ra,
@@ -152,6 +197,37 @@ pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFuncti
                     ty: EirType::Bool,
                     left: rb,
                     right: rc,
+                });
+            }
+            OpCode::DefineGlobal | OpCode::SetGlobal => {
+                let name = func
+                    .chunk
+                    .constants
+                    .get(operand)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                instructions.push(EirInst::DefineGlobal { name, src: ra });
+            }
+            OpCode::GetGlobal => {
+                let name = func
+                    .chunk
+                    .constants
+                    .get(operand)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                instructions.push(EirInst::GetGlobal { dest: ra, name });
+            }
+            OpCode::Call => {
+                let mut args = Vec::with_capacity(operand);
+                for i in 1..=operand {
+                    args.push(rb + i);
+                }
+                instructions.push(EirInst::CallDynamic {
+                    dest: ra,
+                    callee: rb,
+                    args,
                 });
             }
             OpCode::Jump => {

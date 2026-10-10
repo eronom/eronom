@@ -56,6 +56,7 @@ pub enum EirInst {
     ConstF64 { dest: usize, val: f64 },
     ConstBool { dest: usize, val: bool },
     ConstString { dest: usize, val: String },
+    ConstNull { dest: usize },
     Move { dest: usize, src: usize, ty: EirType },
     Binary {
         dest: usize,
@@ -70,11 +71,24 @@ pub enum EirInst {
         ty: EirType,
         src: usize,
     },
+    DefineGlobal {
+        name: String,
+        src: usize,
+    },
+    GetGlobal {
+        dest: usize,
+        name: String,
+    },
     Call {
         dest: usize,
         func_name: String,
         args: Vec<usize>,
         ret_ty: EirType,
+    },
+    CallDynamic {
+        dest: usize,
+        callee: usize,
+        args: Vec<usize>,
     },
     CallNative {
         dest: usize,

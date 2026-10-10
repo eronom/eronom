@@ -139,6 +139,21 @@ fn emit_mir_function(out: &mut String, func: &EirFunction) {
                     out.push_str(&format!("        call p_println_i64, er_println_i64, r{}\n", reg));
                 }
             }
+            EirInst::ConstNull { dest } => {
+                out.push_str(&format!("        mov r{}, 0\n", dest));
+            }
+            EirInst::DefineGlobal { name, src } => {
+                out.push_str(&format!("        # define global {}\n", name));
+                out.push_str(&format!("        mov r{}, r{}\n", src, src));
+            }
+            EirInst::GetGlobal { dest, name } => {
+                out.push_str(&format!("        # get global {}\n", name));
+                out.push_str(&format!("        mov r{}, 0\n", dest));
+            }
+            EirInst::CallDynamic { dest, .. } => {
+                out.push_str(&format!("        # dynamic call\n"));
+                out.push_str(&format!("        mov r{}, 0\n", dest));
+            }
             _ => {
                 out.push_str("        # nop\n");
             }
@@ -161,20 +176,174 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("#include <stdlib.h>\n");
     out.push_str("#include <string.h>\n\n");
 
-    out.push_str("// Eronom standalone runtime helpers\n");
-    out.push_str("static inline void er_runtime_init(void) {}\n");
-    out.push_str("static inline void er_runtime_cleanup(void) {}\n");
-    out.push_str("static inline void er_println_i64(int64_t val) { printf(\"%lld\\n\", (long long)val); }\n");
-    out.push_str("static inline void er_println_f64(double val) { printf(\"%f\\n\", val); }\n");
-    out.push_str("static inline void er_println_bool(bool val) { printf(\"%s\\n\", val ? \"true\" : \"false\"); }\n");
-    out.push_str("static inline void er_print_string(const uint8_t *ptr, size_t len) { if (ptr && len > 0) fwrite(ptr, 1, len, stdout); }\n");
-    out.push_str("static inline void er_println_string(const uint8_t *ptr, size_t len) { if (ptr && len > 0) fwrite(ptr, 1, len, stdout); putchar('\\n'); }\n");
-    out.push_str("static inline void* er_alloc_string(const uint8_t *ptr, size_t len) {\n");
-    out.push_str("    char *s = (char*)malloc(len + 1);\n");
-    out.push_str("    if (ptr && len > 0) memcpy(s, ptr, len);\n");
-    out.push_str("    s[len] = '\\0';\n");
-    out.push_str("    return s;\n");
-    out.push_str("}\n");
+    out.push_str("// Eronom standalone runtime tags and helpers\n");
+    out.push_str("#define ER_TAG_NULL           0xfff1000000000000ULL\n");
+    out.push_str("#define ER_TAG_FALSE          0xfff2000000000000ULL\n");
+    out.push_str("#define ER_TAG_TRUE           0xfff3000000000000ULL\n");
+    out.push_str("#define ER_TAG_STRING         0xfff4000000000000ULL\n");
+    out.push_str("#define ER_TAG_ARRAY          0xfff5000000000000ULL\n");
+    out.push_str("#define ER_TAG_OBJECT         0xfff6000000000000ULL\n");
+    out.push_str("#define ER_TAG_FUNCTION       0xfff7000000000000ULL\n");
+    out.push_str("#define ER_TAG_BUILTIN_PRINT  0xfff8000000000001ULL\n");
+    out.push_str("#define ER_PTR_MASK           0x0000ffffffffffffULL\n\n");
+
+    out.push_str("typedef struct {\n");
+    out.push_str("    char *data;\n");
+    out.push_str("    size_t len;\n");
+    out.push_str("} ErStringObj;\n\n");
+
+    out.push_str("typedef struct {\n");
+    out.push_str("    char key[64];\n");
+    out.push_str("    int64_t value;\n");
+    out.push_str("} ErGlobalEntry;\n\n");
+
+    out.push_str("static ErGlobalEntry er_globals[512];\n");
+    out.push_str("static size_t er_globals_count = 0;\n\n");
+
+    out.push_str("static inline void er_runtime_init(void) {\n");
+    out.push_str("    er_globals_count = 0;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_runtime_cleanup(void) {\n");
+    out.push_str("    er_globals_count = 0;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_println_i64(int64_t val) { printf(\"%lld\\n\", (long long)val); fflush(stdout); }\n");
+    out.push_str("static inline void er_println_f64(double val) { printf(\"%f\\n\", val); fflush(stdout); }\n");
+    out.push_str("static inline void er_println_bool(bool val) { printf(\"%s\\n\", val ? \"true\" : \"false\"); fflush(stdout); }\n");
+    out.push_str("static inline void er_print_string(const uint8_t *ptr, size_t len) { if (ptr && len > 0) fwrite(ptr, 1, len, stdout); fflush(stdout); }\n");
+    out.push_str("static inline void er_println_string(const uint8_t *ptr, size_t len) { if (ptr && len > 0) fwrite(ptr, 1, len, stdout); putchar('\\n'); fflush(stdout); }\n\n");
+
+    out.push_str("static inline int64_t er_alloc_string(const uint8_t *ptr, size_t len) {\n");
+    out.push_str("    ErStringObj *s = (ErStringObj*)malloc(sizeof(ErStringObj));\n");
+    out.push_str("    s->len = len;\n");
+    out.push_str("    s->data = (char*)malloc(len + 1);\n");
+    out.push_str("    if (ptr && len > 0) memcpy(s->data, ptr, len);\n");
+    out.push_str("    s->data[len] = '\\0';\n");
+    out.push_str("    return (int64_t)(ER_TAG_STRING | ((uintptr_t)s & ER_PTR_MASK));\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline bool er_is_string(int64_t val) {\n");
+    out.push_str("    return ((uint64_t)val & ~ER_PTR_MASK) == ER_TAG_STRING;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline ErStringObj* er_as_string_obj(int64_t val) {\n");
+    out.push_str("    return (ErStringObj*)(uintptr_t)((uint64_t)val & ER_PTR_MASK);\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_set_global(const char *name, int64_t val) {\n");
+    out.push_str("    for (size_t i = 0; i < er_globals_count; ++i) {\n");
+    out.push_str("        if (strcmp(er_globals[i].key, name) == 0) {\n");
+    out.push_str("            er_globals[i].value = val;\n");
+    out.push_str("            return;\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    if (er_globals_count < 512) {\n");
+    out.push_str("        strncpy(er_globals[er_globals_count].key, name, 63);\n");
+    out.push_str("        er_globals[er_globals_count].key[63] = '\\0';\n");
+    out.push_str("        er_globals[er_globals_count].value = val;\n");
+    out.push_str("        er_globals_count++;\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline int64_t er_get_global(const char *name) {\n");
+    out.push_str("    if (strcmp(name, \"print\") == 0) {\n");
+    out.push_str("        return (int64_t)ER_TAG_BUILTIN_PRINT;\n");
+    out.push_str("    }\n");
+    out.push_str("    for (size_t i = 0; i < er_globals_count; ++i) {\n");
+    out.push_str("        if (strcmp(er_globals[i].key, name) == 0) {\n");
+    out.push_str("            return er_globals[i].value;\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_print_single_val(int64_t val) {\n");
+    out.push_str("    if (er_is_string(val)) {\n");
+    out.push_str("        ErStringObj *s = er_as_string_obj(val);\n");
+    out.push_str("        if (s && s->data) {\n");
+    out.push_str("            fputs(s->data, stdout);\n");
+    out.push_str("        }\n");
+    out.push_str("    } else if ((uint64_t)val == ER_TAG_NULL) {\n");
+    out.push_str("        fputs(\"null\", stdout);\n");
+    out.push_str("    } else if ((uint64_t)val == ER_TAG_TRUE) {\n");
+    out.push_str("        fputs(\"true\", stdout);\n");
+    out.push_str("    } else if ((uint64_t)val == ER_TAG_FALSE) {\n");
+    out.push_str("        fputs(\"false\", stdout);\n");
+    out.push_str("    } else {\n");
+    out.push_str("        printf(\"%lld\", (long long)val);\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline int64_t er_call(int64_t callee, const int64_t *args, size_t argc) {\n");
+    out.push_str("    if ((uint64_t)callee == ER_TAG_BUILTIN_PRINT) {\n");
+    out.push_str("        for (size_t i = 0; i < argc; ++i) {\n");
+    out.push_str("            if (i > 0) putchar(' ');\n");
+    out.push_str("            er_print_single_val(args[i]);\n");
+    out.push_str("        }\n");
+    out.push_str("        putchar('\\n');\n");
+    out.push_str("        fflush(stdout);\n");
+    out.push_str("        return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("    }\n");
+    out.push_str("    if (callee != 0 && ((uint64_t)callee & 0xffff000000000000ULL) == 0) {\n");
+    out.push_str("        typedef int64_t (*FuncPtr)();\n");
+    out.push_str("        FuncPtr fn = (FuncPtr)(uintptr_t)callee;\n");
+    out.push_str("        if (argc == 0) return fn();\n");
+    out.push_str("        if (argc == 1) return ((int64_t (*)(int64_t))fn)(args[0]);\n");
+    out.push_str("        if (argc == 2) return ((int64_t (*)(int64_t, int64_t))fn)(args[0], args[1]);\n");
+    out.push_str("        if (argc == 3) return ((int64_t (*)(int64_t, int64_t, int64_t))fn)(args[0], args[1], args[2]);\n");
+    out.push_str("        if (argc == 4) return ((int64_t (*)(int64_t, int64_t, int64_t, int64_t))fn)(args[0], args[1], args[2], args[3]);\n");
+    out.push_str("    }\n");
+    out.push_str("    return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline int64_t er_val_add(int64_t a, int64_t b) {\n");
+    out.push_str("    if (er_is_string(a) || er_is_string(b)) {\n");
+    out.push_str("        char buf_a[64];\n");
+    out.push_str("        char buf_b[64];\n");
+    out.push_str("        const char *sa = \"\";\n");
+    out.push_str("        size_t la = 0;\n");
+    out.push_str("        const char *sb = \"\";\n");
+    out.push_str("        size_t lb = 0;\n");
+    out.push_str("        if (er_is_string(a)) {\n");
+    out.push_str("            ErStringObj *obj = er_as_string_obj(a);\n");
+    out.push_str("            if (obj && obj->data) { sa = obj->data; la = obj->len; }\n");
+    out.push_str("        } else if ((uint64_t)a == ER_TAG_NULL) {\n");
+    out.push_str("            sa = \"null\"; la = 4;\n");
+    out.push_str("        } else if ((uint64_t)a == ER_TAG_TRUE) {\n");
+    out.push_str("            sa = \"true\"; la = 4;\n");
+    out.push_str("        } else if ((uint64_t)a == ER_TAG_FALSE) {\n");
+    out.push_str("            sa = \"false\"; la = 5;\n");
+    out.push_str("        } else {\n");
+    out.push_str("            la = snprintf(buf_a, sizeof(buf_a), \"%lld\", (long long)a);\n");
+    out.push_str("            sa = buf_a;\n");
+    out.push_str("        }\n");
+    out.push_str("        if (er_is_string(b)) {\n");
+    out.push_str("            ErStringObj *obj = er_as_string_obj(b);\n");
+    out.push_str("            if (obj && obj->data) { sb = obj->data; lb = obj->len; }\n");
+    out.push_str("        } else if ((uint64_t)b == ER_TAG_NULL) {\n");
+    out.push_str("            sb = \"null\"; lb = 4;\n");
+    out.push_str("        } else if ((uint64_t)b == ER_TAG_TRUE) {\n");
+    out.push_str("            sb = \"true\"; lb = 4;\n");
+    out.push_str("        } else if ((uint64_t)b == ER_TAG_FALSE) {\n");
+    out.push_str("            sb = \"false\"; lb = 5;\n");
+    out.push_str("        } else {\n");
+    out.push_str("            lb = snprintf(buf_b, sizeof(buf_b), \"%lld\", (long long)b);\n");
+    out.push_str("            sb = buf_b;\n");
+    out.push_str("        }\n");
+    out.push_str("        size_t total_len = la + lb;\n");
+    out.push_str("        char *concat = (char*)malloc(total_len + 1);\n");
+    out.push_str("        if (la > 0) memcpy(concat, sa, la);\n");
+    out.push_str("        if (lb > 0) memcpy(concat + la, sb, lb);\n");
+    out.push_str("        concat[total_len] = '\\0';\n");
+    out.push_str("        ErStringObj *res = (ErStringObj*)malloc(sizeof(ErStringObj));\n");
+    out.push_str("        res->data = concat;\n");
+    out.push_str("        res->len = total_len;\n");
+    out.push_str("        return (int64_t)(ER_TAG_STRING | ((uintptr_t)res & ER_PTR_MASK));\n");
+    out.push_str("    }\n");
+    out.push_str("    return a + b;\n");
+    out.push_str("}\n\n");
+
     out.push_str("static inline void* er_alloc_array(size_t cap) { return calloc(cap > 0 ? cap : 4, sizeof(uint64_t)); }\n");
     out.push_str("static inline void* er_alloc_object(void) { return malloc(64); }\n");
     out.push_str("static inline void* er_alloc_struct(const char *name, size_t fields) { (void)name; return calloc(fields > 0 ? fields : 1, sizeof(uint64_t)); }\n");
@@ -182,7 +351,6 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("static inline size_t er_aot_array_len(void *arr) { (void)arr; return 0; }\n");
     out.push_str("static inline uint64_t er_aot_array_get(void *arr, size_t index) { (void)arr; (void)index; return 0; }\n");
     out.push_str("static inline void er_aot_array_set(void *arr, size_t index, uint64_t val) { (void)arr; (void)index; (void)val; }\n\n");
-
 
     for func in &module.functions {
         emit_c_function(&mut out, func);
@@ -206,7 +374,7 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
     out.push_str(&format!("{} {}(void) {{\n", ret_type, func.name));
 
     // Registers
-    let num_regs = func.reg_count.max(32);
+    let num_regs = func.reg_count.max(64);
     out.push_str(&format!("    int64_t r[{}] = {{0}};\n", num_regs));
     out.push_str(&format!("    double d[{}] = {{0.0}};\n\n", num_regs));
 
@@ -224,16 +392,63 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
                 out.push_str(&format!("    d[{}] = {};\n", dest, val));
             }
             EirInst::ConstBool { dest, val } => {
-                out.push_str(&format!("    r[{}] = {};\n", dest, if *val { 1 } else { 0 }));
+                out.push_str(&format!(
+                    "    r[{}] = (int64_t){};\n",
+                    dest,
+                    if *val { "ER_TAG_TRUE" } else { "ER_TAG_FALSE" }
+                ));
+            }
+            EirInst::ConstNull { dest } => {
+                out.push_str(&format!("    r[{}] = (int64_t)ER_TAG_NULL;\n", dest));
             }
             EirInst::ConstString { dest, val } => {
-                out.push_str(&format!("    r[{}] = (int64_t)(uintptr_t)er_alloc_string((const uint8_t*)\"{}\", {});\n", dest, val, val.len()));
+                let mut escaped = String::new();
+                for c in val.chars() {
+                    match c {
+                        '\\' => escaped.push_str("\\\\"),
+                        '"' => escaped.push_str("\\\""),
+                        '\n' => escaped.push_str("\\n"),
+                        '\r' => escaped.push_str("\\r"),
+                        '\t' => escaped.push_str("\\t"),
+                        other => escaped.push(other),
+                    }
+                }
+                out.push_str(&format!(
+                    "    r[{}] = er_alloc_string((const uint8_t*)\"{}\", {});\n",
+                    dest,
+                    escaped,
+                    val.len()
+                ));
             }
             EirInst::Move { dest, src, ty } => {
                 if *ty == EirType::F64 {
                     out.push_str(&format!("    d[{}] = d[{}];\n", dest, src));
                 } else {
                     out.push_str(&format!("    r[{}] = r[{}];\n", dest, src));
+                }
+            }
+            EirInst::DefineGlobal { name, src } => {
+                out.push_str(&format!("    er_set_global(\"{}\", r[{}]);\n", name, src));
+            }
+            EirInst::GetGlobal { dest, name } => {
+                out.push_str(&format!("    r[{}] = er_get_global(\"{}\");\n", dest, name));
+            }
+            EirInst::CallDynamic { dest, callee, args } => {
+                if args.is_empty() {
+                    out.push_str(&format!("    r[{}] = er_call(r[{}], NULL, 0);\n", dest, callee));
+                } else {
+                    let args_str = args
+                        .iter()
+                        .map(|a| format!("r[{}]", a))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(
+                        "    r[{}] = er_call(r[{}], (const int64_t[]){{ {} }}, {});\n",
+                        dest,
+                        callee,
+                        args_str,
+                        args.len()
+                    ));
                 }
             }
             EirInst::Binary { dest, op, ty, left, right } => {
@@ -247,20 +462,56 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
                     };
                     out.push_str(&format!("    d[{}] = d[{}] {} d[{}];\n", dest, left, op_str, right));
                 } else {
-                    let op_str = match op {
-                        EirBinaryOp::Add => "+",
-                        EirBinaryOp::Sub => "-",
-                        EirBinaryOp::Mul => "*",
-                        EirBinaryOp::Div => "/",
-                        EirBinaryOp::Eq => "==",
-                        EirBinaryOp::Ne => "!=",
-                        EirBinaryOp::Lt => "<",
-                        EirBinaryOp::Le => "<=",
-                        EirBinaryOp::Gt => ">",
-                        EirBinaryOp::Ge => ">=",
-                        _ => "+",
-                    };
-                    out.push_str(&format!("    r[{}] = r[{}] {} r[{}];\n", dest, left, op_str, right));
+                    match op {
+                        EirBinaryOp::Add => {
+                            out.push_str(&format!("    r[{}] = er_val_add(r[{}], r[{}]);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Sub => {
+                            out.push_str(&format!("    r[{}] = r[{}] - r[{}];\n", dest, left, right));
+                        }
+                        EirBinaryOp::Mul => {
+                            out.push_str(&format!("    r[{}] = r[{}] * r[{}];\n", dest, left, right));
+                        }
+                        EirBinaryOp::Div => {
+                            out.push_str(&format!("    r[{}] = r[{}] ? (r[{}] / r[{}]) : 0;\n", dest, right, left, right));
+                        }
+                        EirBinaryOp::Mod => {
+                            out.push_str(&format!("    r[{}] = r[{}] ? (r[{}] % r[{}]) : 0;\n", dest, right, left, right));
+                        }
+                        EirBinaryOp::BitAnd => {
+                            out.push_str(&format!("    r[{}] = r[{}] & r[{}];\n", dest, left, right));
+                        }
+                        EirBinaryOp::BitOr => {
+                            out.push_str(&format!("    r[{}] = r[{}] | r[{}];\n", dest, left, right));
+                        }
+                        EirBinaryOp::BitXor => {
+                            out.push_str(&format!("    r[{}] = r[{}] ^ r[{}];\n", dest, left, right));
+                        }
+                        EirBinaryOp::Shl => {
+                            out.push_str(&format!("    r[{}] = r[{}] << (r[{}] & 63);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Shr => {
+                            out.push_str(&format!("    r[{}] = r[{}] >> (r[{}] & 63);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Eq => {
+                            out.push_str(&format!("    r[{}] = (r[{}] == r[{}]);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Ne => {
+                            out.push_str(&format!("    r[{}] = (r[{}] != r[{}]);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Lt => {
+                            out.push_str(&format!("    r[{}] = (r[{}] < r[{}]);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Le => {
+                            out.push_str(&format!("    r[{}] = (r[{}] <= r[{}]);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Gt => {
+                            out.push_str(&format!("    r[{}] = (r[{}] > r[{}]);\n", dest, left, right));
+                        }
+                        EirBinaryOp::Ge => {
+                            out.push_str(&format!("    r[{}] = (r[{}] >= r[{}]);\n", dest, left, right));
+                        }
+                    }
                 }
             }
             EirInst::Unary { dest, op, ty, src } => {
@@ -269,7 +520,10 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
                 } else {
                     match op {
                         EirUnaryOp::Neg => out.push_str(&format!("    r[{}] = -r[{}];\n", dest, src)),
-                        EirUnaryOp::Not => out.push_str(&format!("    r[{}] = !r[{}];\n", dest, src)),
+                        EirUnaryOp::Not => out.push_str(&format!(
+                            "    r[{}] = (!r[{}] || r[{}] == (int64_t)ER_TAG_FALSE || r[{}] == (int64_t)ER_TAG_NULL);\n",
+                            dest, src, src, src
+                        )),
                         EirUnaryOp::BitNot => out.push_str(&format!("    r[{}] = ~r[{}];\n", dest, src)),
                     }
                 }
@@ -278,7 +532,10 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
                 out.push_str(&format!("    goto lbl_{};\n", target));
             }
             EirInst::BranchIfFalse { cond, target } => {
-                out.push_str(&format!("    if (!r[{}]) goto lbl_{};\n", cond, target));
+                out.push_str(&format!(
+                    "    if (!r[{}] || r[{}] == (int64_t)ER_TAG_FALSE || r[{}] == (int64_t)ER_TAG_NULL) goto lbl_{};\n",
+                    cond, cond, cond, target
+                ));
             }
             EirInst::Return { val } => {
                 if is_main {
@@ -291,7 +548,7 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
                         out.push_str(&format!("    return r[{}];\n", r));
                     }
                 } else {
-                    out.push_str("    return;\n");
+                    out.push_str("    return 0;\n");
                 }
             }
             EirInst::Println { reg, ty } => {
@@ -299,6 +556,13 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
                     out.push_str(&format!("    er_println_f64(d[{}]);\n", reg));
                 } else {
                     out.push_str(&format!("    er_println_i64(r[{}]);\n", reg));
+                }
+            }
+            EirInst::Print { reg, ty } => {
+                if *ty == EirType::F64 {
+                    out.push_str(&format!("    printf(\"%f\", d[{}]); fflush(stdout);\n", reg));
+                } else {
+                    out.push_str(&format!("    er_print_single_val(r[{}]); fflush(stdout);\n", reg));
                 }
             }
             _ => {}
