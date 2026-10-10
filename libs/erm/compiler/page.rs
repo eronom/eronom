@@ -354,7 +354,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
                     v.clone()
                 };
                 declarations.push_str(&format!(
-                    "let {} = useState({}, \"{}\");\n",
+                    "let {} = erm.init({}, \"{}\");\n",
                     v, fallback_val, scoped_name
                 ));
             }

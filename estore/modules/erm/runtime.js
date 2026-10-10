@@ -669,7 +669,7 @@ function reconcileNodes(parent, newNodes) {
   });
 }
 
-// --- Backwards-Compatible useState & Signals Wrapper ---
+// --- Eronom Reactive State Primitives ---
 const statesRegistry = new Map();
 
 function createArrayProxy(arr, setter, name) {
@@ -715,62 +715,27 @@ export const erm = {
 
     if (typeof val === 'function') {
       const memo = createMemo(val, undefined, { name });
-      const wrapper = function () { return memo(); };
-      wrapper._get = memo;
-      wrapper._name = name;
-      Object.defineProperty(wrapper, 'value', {
-        get() { return memo(); },
-        enumerable: true,
-        configurable: true
-      });
-      wrapper.toString = () => String(memo());
-      wrapper.valueOf = () => memo();
-      wrapper[Symbol.toPrimitive] = () => memo();
-      if (name) statesRegistry.set(name, wrapper);
-      return wrapper;
+      const signal = {
+        _get: memo,
+        _name: name,
+        _isDerived: true
+      };
+      if (name) statesRegistry.set(name, signal);
+      return signal;
     }
 
     const [get, set] = createSignal(val, { name });
-
-    function signalWrapper(...args) {
-      if (args.length > 0) {
-        if (name) setHmrState(name, args[0]);
-        return set(args[0]);
-      }
-      return get();
-    }
-
-    signalWrapper._get = get;
-    signalWrapper._set = set;
-    signalWrapper._name = name;
-
-    Object.defineProperty(signalWrapper, 'value', {
-      get() {
-        const current = get();
-        if (Array.isArray(current)) {
-          return createArrayProxy(current, set, name);
-        }
-        return current;
-      },
-      set(newVal) {
-        if (name) {
-          setHmrState(name, newVal);
-        }
-        set(newVal);
-      },
-      enumerable: true,
-      configurable: true
-    });
-
-    signalWrapper.toString = () => String(get());
-    signalWrapper.valueOf = () => get();
-    signalWrapper[Symbol.toPrimitive] = () => get();
+    const signal = {
+      _get: get,
+      _set: set,
+      _name: name
+    };
 
     if (name) {
-      statesRegistry.set(name, signalWrapper);
+      statesRegistry.set(name, signal);
     }
 
-    return signalWrapper;
+    return signal;
   },
 
   get(signal) {
@@ -781,12 +746,6 @@ export const erm = {
         return createArrayProxy(current, signal._set, signal._name);
       }
       return current;
-    }
-    if (typeof signal === 'function') {
-      return signal();
-    }
-    if (typeof signal === 'object' && 'value' in signal) {
-      return signal.value;
     }
     return signal;
   },
@@ -800,14 +759,24 @@ export const erm = {
       signal._set(newVal);
       return newVal;
     }
-    if (typeof signal === 'function') {
-      return signal(newVal);
-    }
-    if (typeof signal === 'object' && 'value' in signal) {
-      signal.value = newVal;
-      return newVal;
-    }
     return newVal;
+  },
+
+  update(signal, d = 1) {
+    var value = erm.get(signal);
+    var result = d === 1 ? value++ : value--;
+    erm.set(signal, value);
+    return result;
+  },
+
+  update_pre(signal, d = 1) {
+    var value = erm.get(signal);
+    return erm.set(signal, d === 1 ? ++value : --value);
+  },
+
+  mutate(signal, value) {
+    erm.set(signal, untrack(() => erm.get(signal)));
+    return value;
   }
 };
 

@@ -1,24 +1,20 @@
 <script>
     import { isDealLoading, dealTitle, dealDiscount, dealPrice, dealOriginalPrice, dealEmoji, dealCategory } from "@pages/index.erm";
 
-    function claimDeal() {
-        if (typeof window !== "undefined" && typeof window.addToCart === "function") {
-            window.addToCart(101, dealTitle.value, dealPrice.value, dealEmoji.value, dealCategory.value || "Keyboards");
-        } else if (typeof addToCart === "function") {
-            addToCart(101, dealTitle.value, dealPrice.value, dealEmoji.value, dealCategory.value || "Keyboards");
-        }
+    let deal = erm.init(null);
+
+    async function loadDeal() {
+        const res = await fetch('/api/deal');
+        deal = await res.json();
     }
 
-   let deal = useState(null);
-  async function loadDeal() {
-    const res = await fetch('/api/deal');
-    deal = await res.json(); // Direct assignment (no .value)
-  }
-  function claimDeal() {
-    // In <script>: direct access without .value!
-    console.log(deal.title);
-    addToCart(101, deal.title, deal.price);
-  }
+    function claimDeal() {
+        if (typeof window !== "undefined" && typeof window.addToCart === "function") {
+            window.addToCart(101, dealTitle, dealPrice, dealEmoji, dealCategory || "Keyboards");
+        } else if (typeof addToCart === "function") {
+            addToCart(101, dealTitle, dealPrice, dealEmoji, dealCategory || "Keyboards");
+        }
+    }
     
 </script>
 

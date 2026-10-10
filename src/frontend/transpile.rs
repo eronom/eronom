@@ -439,66 +439,22 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         Expr::Prefix(op, operand) => {
             if let Expr::Variable(name, loc) = &**operand {
                 if state_vars.contains(name) && !shadowed.contains(name) {
-                    let bin_op = match op {
-                        TokenType::PlusPlus => Some(TokenType::Plus),
-                        TokenType::MinusMinus => Some(TokenType::Minus),
+                    let d = match op {
+                        TokenType::PlusPlus => Some(1.0),
+                        TokenType::MinusMinus => Some(-1.0),
                         _ => None,
                     };
-                    if let Some(bo) = bin_op {
+                    if let Some(delta) = d {
                         return Expr::Call(
                             Box::new(Expr::Get(
                                 Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                "set".to_string(),
+                                "update_pre".to_string(),
                             )),
                             vec![
                                 Expr::Variable(name.clone(), loc.clone()),
-                                Expr::Binary(
-                                    Box::new(Expr::Call(
-                                        Box::new(Expr::Get(
-                                            Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                            "get".to_string(),
-                                        )),
-                                        vec![Expr::Variable(name.clone(), loc.clone())],
-                                    )),
-                                    bo,
-                                    Box::new(Expr::Literal(LiteralValue::Number(1.0))),
-                                ),
+                                Expr::Literal(LiteralValue::Number(delta)),
                             ],
                         );
-                    }
-                }
-            } else if let Expr::Get(obj, prop) = &**operand {
-                if prop == "value" {
-                    if let Expr::Variable(name, loc) = &**obj {
-                        if state_vars.contains(name) && !shadowed.contains(name) {
-                            let bin_op = match op {
-                                TokenType::PlusPlus => Some(TokenType::Plus),
-                                TokenType::MinusMinus => Some(TokenType::Minus),
-                                _ => None,
-                            };
-                            if let Some(bo) = bin_op {
-                                return Expr::Call(
-                                    Box::new(Expr::Get(
-                                        Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                        "set".to_string(),
-                                    )),
-                                    vec![
-                                        Expr::Variable(name.clone(), loc.clone()),
-                                        Expr::Binary(
-                                            Box::new(Expr::Call(
-                                                Box::new(Expr::Get(
-                                                    Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                                    "get".to_string(),
-                                                )),
-                                                vec![Expr::Variable(name.clone(), loc.clone())],
-                                            )),
-                                            bo,
-                                            Box::new(Expr::Literal(LiteralValue::Number(1.0))),
-                                        ),
-                                    ],
-                                );
-                            }
-                        }
                     }
                 }
             }
@@ -510,66 +466,22 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         Expr::Postfix(op, operand) => {
             if let Expr::Variable(name, loc) = &**operand {
                 if state_vars.contains(name) && !shadowed.contains(name) {
-                    let bin_op = match op {
-                        TokenType::PlusPlus => Some(TokenType::Plus),
-                        TokenType::MinusMinus => Some(TokenType::Minus),
+                    let d = match op {
+                        TokenType::PlusPlus => Some(1.0),
+                        TokenType::MinusMinus => Some(-1.0),
                         _ => None,
                     };
-                    if let Some(bo) = bin_op {
+                    if let Some(delta) = d {
                         return Expr::Call(
                             Box::new(Expr::Get(
                                 Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                "set".to_string(),
+                                "update".to_string(),
                             )),
                             vec![
                                 Expr::Variable(name.clone(), loc.clone()),
-                                Expr::Binary(
-                                    Box::new(Expr::Call(
-                                        Box::new(Expr::Get(
-                                            Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                            "get".to_string(),
-                                        )),
-                                        vec![Expr::Variable(name.clone(), loc.clone())],
-                                    )),
-                                    bo,
-                                    Box::new(Expr::Literal(LiteralValue::Number(1.0))),
-                                ),
+                                Expr::Literal(LiteralValue::Number(delta)),
                             ],
                         );
-                    }
-                }
-            } else if let Expr::Get(obj, prop) = &**operand {
-                if prop == "value" {
-                    if let Expr::Variable(name, loc) = &**obj {
-                        if state_vars.contains(name) && !shadowed.contains(name) {
-                            let bin_op = match op {
-                                TokenType::PlusPlus => Some(TokenType::Plus),
-                                TokenType::MinusMinus => Some(TokenType::Minus),
-                                _ => None,
-                            };
-                            if let Some(bo) = bin_op {
-                                return Expr::Call(
-                                    Box::new(Expr::Get(
-                                        Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                        "set".to_string(),
-                                    )),
-                                    vec![
-                                        Expr::Variable(name.clone(), loc.clone()),
-                                        Expr::Binary(
-                                            Box::new(Expr::Call(
-                                                Box::new(Expr::Get(
-                                                    Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                                    "get".to_string(),
-                                                )),
-                                                vec![Expr::Variable(name.clone(), loc.clone())],
-                                            )),
-                                            bo,
-                                            Box::new(Expr::Literal(LiteralValue::Number(1.0))),
-                                        ),
-                                    ],
-                                );
-                            }
-                        }
                     }
                 }
             }
@@ -592,19 +504,6 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
             )
         }
         Expr::Get(obj, prop) => {
-            if prop == "value" {
-                if let Expr::Variable(name, loc) = &**obj {
-                    if state_vars.contains(name) && !shadowed.contains(name) {
-                        return Expr::Call(
-                            Box::new(Expr::Get(
-                                Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                "get".to_string(),
-                            )),
-                            vec![Expr::Variable(name.clone(), loc.clone())],
-                        );
-                    }
-                }
-            }
             Expr::Get(
                 Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
                 prop.clone(),
@@ -612,19 +511,6 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         }
         Expr::Set(obj, prop, val) => {
             let new_val = transform_expr_reactivity(val, state_vars, shadowed);
-            if prop == "value" {
-                if let Expr::Variable(name, loc) = &**obj {
-                    if state_vars.contains(name) && !shadowed.contains(name) {
-                        return Expr::Call(
-                            Box::new(Expr::Get(
-                                Box::new(Expr::Variable("erm".to_string(), loc.clone())),
-                                "set".to_string(),
-                            )),
-                            vec![Expr::Variable(name.clone(), loc.clone()), new_val],
-                        );
-                    }
-                }
-            }
             Expr::Set(
                 Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
                 prop.clone(),
@@ -949,17 +835,23 @@ mod tests {
     }
 
     #[test]
-    fn test_ast_reactivity_no_double_value() {
+    fn test_ast_reactivity_update_postfix() {
         let state_vars = vec!["count".to_string()];
-        let res = transpile_expr_reactivity("count.value + 1", &state_vars).unwrap();
-        assert_eq!(res, "(erm.get(count) + 1)");
+        let res = transpile_expr_reactivity("count++", &state_vars).unwrap();
+        assert_eq!(res, "erm.update(count, 1)");
+
+        let res_minus = transpile_expr_reactivity("count--", &state_vars).unwrap();
+        assert_eq!(res_minus, "erm.update(count, -1)");
     }
 
     #[test]
-    fn test_ast_reactivity_no_double_value_set() {
+    fn test_ast_reactivity_update_prefix() {
         let state_vars = vec!["count".to_string()];
-        let res = transpile_expr_reactivity("count.value = 1", &state_vars).unwrap();
-        assert_eq!(res, "erm.set(count, 1)");
+        let res = transpile_expr_reactivity("++count", &state_vars).unwrap();
+        assert_eq!(res, "erm.update_pre(count, 1)");
+
+        let res_minus = transpile_expr_reactivity("--count", &state_vars).unwrap();
+        assert_eq!(res_minus, "erm.update_pre(count, -1)");
     }
 
     #[test]

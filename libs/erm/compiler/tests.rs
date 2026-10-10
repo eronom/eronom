@@ -55,7 +55,7 @@ fn test_use_state_compilation() {
     assert!(res.state_vars.contains(&"count".to_string()));
     let combined = res.scripts.join("\n");
     assert!(combined.contains("useState(0, \"___count\")"));
-    assert!(combined.contains("erm.set(count, (erm.get(count) + 1))") || combined.contains("count.value++"));
+    assert!(combined.contains("erm.update(count, 1)") || combined.contains("erm.set(count, (erm.get(count) + 1))"));
 }
 
 #[test]
