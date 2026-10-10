@@ -44,7 +44,7 @@ pub fn build_aot_binary(script_path: &Path, output_path: &Path) -> anyhow::Resul
     // 6. Write temporary native source and invoke platform linker
     let temp_dir = std::env::temp_dir();
     let temp_c = temp_dir.join(format!("er_aot_{}_{}.c", module_name, std::process::id()));
-    std::fs::write(&temp_c, c_source)?;
+    std::fs::write(&temp_c, &c_source)?;
 
     let status = Command::new("cc")
         .arg("-O2")
@@ -86,6 +86,67 @@ mod tests {
         let _ = std::fs::remove_file(&bin_path);
 
         assert!(output.status.success(), "Compiled binary exited with status {:?}", output.status);
+    }
+
+    #[test]
+    fn test_build_aot_closure_and_functions() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_closure_{}.er", std::process::id()));
+        let bin_path = temp_dir.join(format!("test_closure_bin_{}", std::process::id()));
+
+        let script = r#"
+let num = 5;
+names = "Eronom"
+function test() {
+    print(num)
+}
+test()
+"#;
+        std::fs::write(&script_path, script).unwrap();
+        let res = build_aot_binary(&script_path, &bin_path);
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
+        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let _ = std::fs::remove_file(&bin_path);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "5");
+    }
+
+    #[test]
+    fn test_build_aot_objects_and_arrays() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_obj_arr_{}.er", std::process::id()));
+        let bin_path = temp_dir.join(format!("test_obj_arr_bin_{}", std::process::id()));
+
+        let script = r#"
+let obj = { x: 10, y: 20 };
+print(obj.x);
+print(obj.y);
+let arr = [100, 200];
+print(arr[0]);
+print(arr[1]);
+"#;
+        std::fs::write(&script_path, script).unwrap();
+        let res = build_aot_binary(&script_path, &bin_path);
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
+        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let _ = std::fs::remove_file(&bin_path);
+
+        assert!(
+            output.status.success(),
+            "status: {:?}, stdout: {}, stderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.trim().lines().collect();
+        assert_eq!(lines, vec!["10", "20", "100", "200"]);
     }
 }
 

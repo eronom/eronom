@@ -150,9 +150,29 @@ fn emit_mir_function(out: &mut String, func: &EirFunction) {
                 out.push_str(&format!("        # get global {}\n", name));
                 out.push_str(&format!("        mov r{}, 0\n", dest));
             }
-            EirInst::CallDynamic { dest, .. } => {
-                out.push_str(&format!("        # dynamic call\n"));
+            EirInst::ConstFuncPtr { dest, symbol } => {
+                out.push_str(&format!("        # func ptr {}\n        mov r{}, 0\n", symbol, dest));
+            }
+            EirInst::MakeClosure { dest, symbol, .. } => {
+                out.push_str(&format!("        # closure {}\n        mov r{}, 0\n", symbol, dest));
+            }
+            EirInst::GetUpvalue { dest, .. } => {
                 out.push_str(&format!("        mov r{}, 0\n", dest));
+            }
+            EirInst::SetUpvalue { .. } => {
+                out.push_str("        # set upvalue\n");
+            }
+            EirInst::MakeObject { dest, .. } => {
+                out.push_str(&format!("        # make object\n        mov r{}, 0\n", dest));
+            }
+            EirInst::GetProperty { dest, .. } => {
+                out.push_str(&format!("        # get prop\n        mov r{}, 0\n", dest));
+            }
+            EirInst::SetProperty { .. } => {
+                out.push_str("        # set prop\n");
+            }
+            EirInst::MakeArray { dest, .. } => {
+                out.push_str(&format!("        # make array\n        mov r{}, 0\n", dest));
             }
             _ => {
                 out.push_str("        # nop\n");
@@ -183,6 +203,7 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("#define ER_TAG_STRING         0xfff4000000000000ULL\n");
     out.push_str("#define ER_TAG_ARRAY          0xfff5000000000000ULL\n");
     out.push_str("#define ER_TAG_OBJECT         0xfff6000000000000ULL\n");
+    out.push_str("#define ER_TAG_CLOSURE        0xfff7000000000000ULL\n");
     out.push_str("#define ER_TAG_FUNCTION       0xfff7000000000000ULL\n");
     out.push_str("#define ER_TAG_BUILTIN_PRINT  0xfff8000000000001ULL\n");
     out.push_str("#define ER_PTR_MASK           0x0000ffffffffffffULL\n\n");
@@ -258,12 +279,182 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("    return (int64_t)ER_TAG_NULL;\n");
     out.push_str("}\n\n");
 
+    out.push_str("typedef struct {\n");
+    out.push_str("    char key[64];\n");
+    out.push_str("    int64_t value;\n");
+    out.push_str("} ErProperty;\n\n");
+
+    out.push_str("typedef struct {\n");
+    out.push_str("    ErProperty properties[64];\n");
+    out.push_str("    size_t count;\n");
+    out.push_str("} ErObjectObj;\n\n");
+
+    out.push_str("static inline int64_t er_alloc_object(size_t cap) {\n");
+    out.push_str("    (void)cap;\n");
+    out.push_str("    ErObjectObj *obj = (ErObjectObj*)malloc(sizeof(ErObjectObj));\n");
+    out.push_str("    obj->count = 0;\n");
+    out.push_str("    return (int64_t)(ER_TAG_OBJECT | ((uintptr_t)obj & ER_PTR_MASK));\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline bool er_is_object(int64_t val) {\n");
+    out.push_str("    return ((uint64_t)val & ~ER_PTR_MASK) == ER_TAG_OBJECT;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline ErObjectObj* er_as_object_obj(int64_t val) {\n");
+    out.push_str("    return (ErObjectObj*)(uintptr_t)((uint64_t)val & ER_PTR_MASK);\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_object_set(int64_t obj_val, const char *key, int64_t val) {\n");
+    out.push_str("    if (!er_is_object(obj_val)) return;\n");
+    out.push_str("    ErObjectObj *obj = er_as_object_obj(obj_val);\n");
+    out.push_str("    if (!obj) return;\n");
+    out.push_str("    for (size_t i = 0; i < obj->count; ++i) {\n");
+    out.push_str("        if (strcmp(obj->properties[i].key, key) == 0) {\n");
+    out.push_str("            obj->properties[i].value = val;\n");
+    out.push_str("            return;\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    if (obj->count < 64) {\n");
+    out.push_str("        strncpy(obj->properties[obj->count].key, key, 63);\n");
+    out.push_str("        obj->properties[obj->count].key[63] = '\\0';\n");
+    out.push_str("        obj->properties[obj->count].value = val;\n");
+    out.push_str("        obj->count++;\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_object_set_reg(int64_t obj_val, int64_t key_val, int64_t val) {\n");
+    out.push_str("    if (er_is_string(key_val)) {\n");
+    out.push_str("        ErStringObj *s = er_as_string_obj(key_val);\n");
+    out.push_str("        if (s && s->data) { er_object_set(obj_val, s->data, val); return; }\n");
+    out.push_str("    }\n");
+    out.push_str("    char buf[64];\n");
+    out.push_str("    snprintf(buf, sizeof(buf), \"%lld\", (long long)key_val);\n");
+    out.push_str("    er_object_set(obj_val, buf, val);\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline int64_t er_object_get(int64_t obj_val, const char *key) {\n");
+    out.push_str("    if (!er_is_object(obj_val)) return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("    ErObjectObj *obj = er_as_object_obj(obj_val);\n");
+    out.push_str("    if (!obj) return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("    for (size_t i = 0; i < obj->count; ++i) {\n");
+    out.push_str("        if (strcmp(obj->properties[i].key, key) == 0) {\n");
+    out.push_str("            return obj->properties[i].value;\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("typedef struct {\n");
+    out.push_str("    int64_t *items;\n");
+    out.push_str("    size_t len;\n");
+    out.push_str("    size_t cap;\n");
+    out.push_str("} ErArrayObj;\n\n");
+
+    out.push_str("static inline int64_t er_alloc_array(size_t cap) {\n");
+    out.push_str("    ErArrayObj *arr = (ErArrayObj*)malloc(sizeof(ErArrayObj));\n");
+    out.push_str("    arr->len = 0;\n");
+    out.push_str("    arr->cap = cap > 0 ? cap : 8;\n");
+    out.push_str("    arr->items = (int64_t*)malloc(arr->cap * sizeof(int64_t));\n");
+    out.push_str("    return (int64_t)(ER_TAG_ARRAY | ((uintptr_t)arr & ER_PTR_MASK));\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline bool er_is_array(int64_t val) {\n");
+    out.push_str("    return ((uint64_t)val & ~ER_PTR_MASK) == ER_TAG_ARRAY;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline ErArrayObj* er_as_array_obj(int64_t val) {\n");
+    out.push_str("    return (ErArrayObj*)(uintptr_t)((uint64_t)val & ER_PTR_MASK);\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_array_push(int64_t arr_val, int64_t val) {\n");
+    out.push_str("    if (!er_is_array(arr_val)) return;\n");
+    out.push_str("    ErArrayObj *arr = er_as_array_obj(arr_val);\n");
+    out.push_str("    if (!arr) return;\n");
+    out.push_str("    if (arr->len >= arr->cap) {\n");
+    out.push_str("        arr->cap *= 2;\n");
+    out.push_str("        arr->items = (int64_t*)realloc(arr->items, arr->cap * sizeof(int64_t));\n");
+    out.push_str("    }\n");
+    out.push_str("    arr->items[arr->len++] = val;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline int64_t er_array_get(int64_t arr_val, int64_t index) {\n");
+    out.push_str("    if (!er_is_array(arr_val)) return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("    ErArrayObj *arr = er_as_array_obj(arr_val);\n");
+    out.push_str("    if (!arr || index < 0 || (size_t)index >= arr->len) return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("    return arr->items[(size_t)index];\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline void er_array_set(int64_t arr_val, int64_t index, int64_t val) {\n");
+    out.push_str("    if (!er_is_array(arr_val)) return;\n");
+    out.push_str("    ErArrayObj *arr = er_as_array_obj(arr_val);\n");
+    out.push_str("    if (!arr || index < 0) return;\n");
+    out.push_str("    if ((size_t)index >= arr->cap) {\n");
+    out.push_str("        arr->cap = (size_t)index + 8;\n");
+    out.push_str("        arr->items = (int64_t*)realloc(arr->items, arr->cap * sizeof(int64_t));\n");
+    out.push_str("    }\n");
+    out.push_str("    while (arr->len <= (size_t)index) {\n");
+    out.push_str("        arr->items[arr->len++] = (int64_t)ER_TAG_NULL;\n");
+    out.push_str("    }\n");
+    out.push_str("    arr->items[(size_t)index] = val;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("typedef struct {\n");
+    out.push_str("    void *fn_ptr;\n");
+    out.push_str("    size_t upvalue_count;\n");
+    out.push_str("    int64_t *upvalues[64];\n");
+    out.push_str("} ErClosureObj;\n\n");
+
+    out.push_str("static inline int64_t er_alloc_closure(void *fn_ptr, size_t upval_count) {\n");
+    out.push_str("    ErClosureObj *c = (ErClosureObj*)malloc(sizeof(ErClosureObj));\n");
+    out.push_str("    c->fn_ptr = fn_ptr;\n");
+    out.push_str("    c->upvalue_count = upval_count;\n");
+    out.push_str("    for (size_t i = 0; i < 64; ++i) c->upvalues[i] = NULL;\n");
+    out.push_str("    return (int64_t)(ER_TAG_CLOSURE | ((uintptr_t)c & ER_PTR_MASK));\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline int64_t* er_new_upval_cell(int64_t initial_val) {\n");
+    out.push_str("    int64_t *cell = (int64_t*)malloc(sizeof(int64_t));\n");
+    out.push_str("    *cell = initial_val;\n");
+    out.push_str("    return cell;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline bool er_is_closure(int64_t val) {\n");
+    out.push_str("    return ((uint64_t)val & ~ER_PTR_MASK) == ER_TAG_CLOSURE;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static inline ErClosureObj* er_as_closure_obj(int64_t val) {\n");
+    out.push_str("    return (ErClosureObj*)(uintptr_t)((uint64_t)val & ER_PTR_MASK);\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static __thread ErClosureObj *er_current_closure = NULL;\n\n");
+
     out.push_str("static inline void er_print_single_val(int64_t val) {\n");
     out.push_str("    if (er_is_string(val)) {\n");
     out.push_str("        ErStringObj *s = er_as_string_obj(val);\n");
-    out.push_str("        if (s && s->data) {\n");
-    out.push_str("            fputs(s->data, stdout);\n");
+    out.push_str("        if (s && s->data) { fputs(s->data, stdout); }\n");
+    out.push_str("    } else if (er_is_array(val)) {\n");
+    out.push_str("        ErArrayObj *arr = er_as_array_obj(val);\n");
+    out.push_str("        putchar('[');\n");
+    out.push_str("        if (arr) {\n");
+    out.push_str("            for (size_t i = 0; i < arr->len; ++i) {\n");
+    out.push_str("                if (i > 0) fputs(\", \", stdout);\n");
+    out.push_str("                er_print_single_val(arr->items[i]);\n");
+    out.push_str("            }\n");
     out.push_str("        }\n");
+    out.push_str("        putchar(']');\n");
+    out.push_str("    } else if (er_is_object(val)) {\n");
+    out.push_str("        ErObjectObj *obj = er_as_object_obj(val);\n");
+    out.push_str("        putchar('{');\n");
+    out.push_str("        if (obj) {\n");
+    out.push_str("            for (size_t i = 0; i < obj->count; ++i) {\n");
+    out.push_str("                if (i > 0) fputs(\", \", stdout);\n");
+    out.push_str("                printf(\"%s: \", obj->properties[i].key);\n");
+    out.push_str("                er_print_single_val(obj->properties[i].value);\n");
+    out.push_str("            }\n");
+    out.push_str("        }\n");
+    out.push_str("        putchar('}');\n");
+    out.push_str("    } else if (er_is_closure(val)) {\n");
+    out.push_str("        fputs(\"<function>\", stdout);\n");
     out.push_str("    } else if ((uint64_t)val == ER_TAG_NULL) {\n");
     out.push_str("        fputs(\"null\", stdout);\n");
     out.push_str("    } else if ((uint64_t)val == ER_TAG_TRUE) {\n");
@@ -285,14 +476,40 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("        fflush(stdout);\n");
     out.push_str("        return (int64_t)ER_TAG_NULL;\n");
     out.push_str("    }\n");
-    out.push_str("    if (callee != 0 && ((uint64_t)callee & 0xffff000000000000ULL) == 0) {\n");
-    out.push_str("        typedef int64_t (*FuncPtr)();\n");
-    out.push_str("        FuncPtr fn = (FuncPtr)(uintptr_t)callee;\n");
-    out.push_str("        if (argc == 0) return fn();\n");
-    out.push_str("        if (argc == 1) return ((int64_t (*)(int64_t))fn)(args[0]);\n");
-    out.push_str("        if (argc == 2) return ((int64_t (*)(int64_t, int64_t))fn)(args[0], args[1]);\n");
-    out.push_str("        if (argc == 3) return ((int64_t (*)(int64_t, int64_t, int64_t))fn)(args[0], args[1], args[2]);\n");
-    out.push_str("        if (argc == 4) return ((int64_t (*)(int64_t, int64_t, int64_t, int64_t))fn)(args[0], args[1], args[2], args[3]);\n");
+    out.push_str("    void *fn_to_call = NULL;\n");
+    out.push_str("    ErClosureObj *closure = NULL;\n");
+    out.push_str("    if (er_is_closure(callee)) {\n");
+    out.push_str("        closure = er_as_closure_obj(callee);\n");
+    out.push_str("        if (closure) { fn_to_call = closure->fn_ptr; }\n");
+    out.push_str("    } else if (callee != 0 && ((uint64_t)callee & 0xffff000000000000ULL) == 0) {\n");
+    out.push_str("        fn_to_call = (void*)(uintptr_t)callee;\n");
+    out.push_str("    }\n");
+    out.push_str("    if (fn_to_call) {\n");
+    out.push_str("        ErClosureObj *prev = er_current_closure;\n");
+    out.push_str("        if (closure) er_current_closure = closure;\n");
+    out.push_str("        int64_t ret = (int64_t)ER_TAG_NULL;\n");
+    out.push_str("        typedef int64_t (*Func0)(void);\n");
+    out.push_str("        typedef int64_t (*Func1)(int64_t);\n");
+    out.push_str("        typedef int64_t (*Func2)(int64_t, int64_t);\n");
+    out.push_str("        typedef int64_t (*Func3)(int64_t, int64_t, int64_t);\n");
+    out.push_str("        typedef int64_t (*Func4)(int64_t, int64_t, int64_t, int64_t);\n");
+    out.push_str("        typedef int64_t (*Func5)(int64_t, int64_t, int64_t, int64_t, int64_t);\n");
+    out.push_str("        typedef int64_t (*Func6)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);\n");
+    out.push_str("        typedef int64_t (*Func7)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);\n");
+    out.push_str("        typedef int64_t (*Func8)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);\n");
+    out.push_str("        switch (argc) {\n");
+    out.push_str("            case 0: ret = ((Func0)fn_to_call)(); break;\n");
+    out.push_str("            case 1: ret = ((Func1)fn_to_call)(args[0]); break;\n");
+    out.push_str("            case 2: ret = ((Func2)fn_to_call)(args[0], args[1]); break;\n");
+    out.push_str("            case 3: ret = ((Func3)fn_to_call)(args[0], args[1], args[2]); break;\n");
+    out.push_str("            case 4: ret = ((Func4)fn_to_call)(args[0], args[1], args[2], args[3]); break;\n");
+    out.push_str("            case 5: ret = ((Func5)fn_to_call)(args[0], args[1], args[2], args[3], args[4]); break;\n");
+    out.push_str("            case 6: ret = ((Func6)fn_to_call)(args[0], args[1], args[2], args[3], args[4], args[5]); break;\n");
+    out.push_str("            case 7: ret = ((Func7)fn_to_call)(args[0], args[1], args[2], args[3], args[4], args[5], args[6]); break;\n");
+    out.push_str("            default: ret = ((Func8)fn_to_call)(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]); break;\n");
+    out.push_str("        }\n");
+    out.push_str("        if (closure) er_current_closure = prev;\n");
+    out.push_str("        return ret;\n");
     out.push_str("    }\n");
     out.push_str("    return (int64_t)ER_TAG_NULL;\n");
     out.push_str("}\n\n");
@@ -344,13 +561,18 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("    return a + b;\n");
     out.push_str("}\n\n");
 
-    out.push_str("static inline void* er_alloc_array(size_t cap) { return calloc(cap > 0 ? cap : 4, sizeof(uint64_t)); }\n");
-    out.push_str("static inline void* er_alloc_object(void) { return malloc(64); }\n");
-    out.push_str("static inline void* er_alloc_struct(const char *name, size_t fields) { (void)name; return calloc(fields > 0 ? fields : 1, sizeof(uint64_t)); }\n");
-    out.push_str("static inline void er_aot_array_push(void *arr, uint64_t val) { (void)arr; (void)val; }\n");
-    out.push_str("static inline size_t er_aot_array_len(void *arr) { (void)arr; return 0; }\n");
-    out.push_str("static inline uint64_t er_aot_array_get(void *arr, size_t index) { (void)arr; (void)index; return 0; }\n");
-    out.push_str("static inline void er_aot_array_set(void *arr, size_t index, uint64_t val) { (void)arr; (void)index; (void)val; }\n\n");
+    // Forward declarations for child functions
+    for func in &module.functions {
+        if func.name != "main" {
+            let mut p = Vec::new();
+            for i in 0..func.arity {
+                p.push(format!("int64_t arg{}", i));
+            }
+            let params_str = if p.is_empty() { "void".to_string() } else { p.join(", ") };
+            out.push_str(&format!("static int64_t {}({});\n", func.name, params_str));
+        }
+    }
+    out.push('\n');
 
     for func in &module.functions {
         emit_c_function(&mut out, func);
@@ -371,15 +593,29 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
         }
     };
 
-    out.push_str(&format!("{} {}(void) {{\n", ret_type, func.name));
+    if is_main {
+        out.push_str("int main(void) {\n");
+    } else {
+        let mut p = Vec::new();
+        for i in 0..func.arity {
+            p.push(format!("int64_t arg{}", i));
+        }
+        let params_str = if p.is_empty() { "void".to_string() } else { p.join(", ") };
+        out.push_str(&format!("static {} {}({}) {{\n", ret_type, func.name, params_str));
+    }
 
     // Registers
     let num_regs = func.reg_count.max(64);
     out.push_str(&format!("    int64_t r[{}] = {{0}};\n", num_regs));
-    out.push_str(&format!("    double d[{}] = {{0.0}};\n\n", num_regs));
+    out.push_str(&format!("    double d[{}] = {{0.0}};\n", num_regs));
+    out.push_str("    int64_t *upval_cells[64] = {0};\n\n");
 
     if is_main {
         out.push_str("    er_runtime_init();\n\n");
+    } else {
+        for i in 0..func.arity {
+            out.push_str(&format!("    r[{}] = arg{};\n", i, i));
+        }
     }
 
     for (idx, inst) in func.instructions.iter().enumerate() {
@@ -563,6 +799,80 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
                     out.push_str(&format!("    printf(\"%f\", d[{}]); fflush(stdout);\n", reg));
                 } else {
                     out.push_str(&format!("    er_print_single_val(r[{}]); fflush(stdout);\n", reg));
+                }
+            }
+            EirInst::ConstFuncPtr { dest, symbol } => {
+                out.push_str(&format!("    r[{}] = (int64_t)(uintptr_t)&{};\n", dest, symbol));
+            }
+            EirInst::MakeClosure { dest, symbol, upvalues } => {
+                out.push_str(&format!("    r[{}] = er_alloc_closure((void*)&{}, {});\n", dest, symbol, upvalues.len()));
+                if !upvalues.is_empty() {
+                    out.push_str(&format!("    {{\n        ErClosureObj *cl_{} = er_as_closure_obj(r[{}]);\n", dest, dest));
+                    for (i, (is_local, idx)) in upvalues.iter().enumerate() {
+                        if *is_local {
+                            out.push_str(&format!("        if (cl_{}) {{\n            if (!upval_cells[{}]) upval_cells[{}] = er_new_upval_cell(r[{}]);\n            cl_{}->upvalues[{}] = upval_cells[{}];\n        }}\n", dest, idx, idx, idx, dest, i, idx));
+                        } else {
+                            out.push_str(&format!("        if (cl_{}) cl_{}->upvalues[{}] = er_current_closure ? er_current_closure->upvalues[{}] : NULL;\n", dest, dest, i, idx));
+                        }
+                    }
+                    out.push_str("    }\n");
+                }
+            }
+            EirInst::GetUpvalue { dest, upval_idx } => {
+                out.push_str(&format!(
+                    "    r[{}] = (er_current_closure && er_current_closure->upvalues[{}] != NULL) ? *(er_current_closure->upvalues[{}]) : (int64_t)ER_TAG_NULL;\n",
+                    dest, upval_idx, upval_idx
+                ));
+            }
+            EirInst::SetUpvalue { src, upval_idx } => {
+                out.push_str(&format!(
+                    "    if (er_current_closure && er_current_closure->upvalues[{}] != NULL) {{ *(er_current_closure->upvalues[{}]) = r[{}]; }}\n",
+                    upval_idx, upval_idx, src
+                ));
+            }
+            EirInst::MakeObject { dest, start_reg, pair_count } => {
+                out.push_str(&format!("    {{\n        int64_t tmp_obj_{} = er_alloc_object({});\n", dest, pair_count));
+                for i in 0..*pair_count {
+                    out.push_str(&format!(
+                        "        er_object_set_reg(tmp_obj_{}, r[{}], r[{}]);\n",
+                        dest,
+                        start_reg + i * 2,
+                        start_reg + i * 2 + 1
+                    ));
+                }
+                out.push_str(&format!("        r[{}] = tmp_obj_{};\n    }}\n", dest, dest));
+            }
+            EirInst::GetProperty { dest, obj, key } => {
+                out.push_str(&format!("    r[{}] = er_object_get(r[{}], \"{}\");\n", dest, obj, key));
+            }
+            EirInst::SetProperty { obj, key, val } => {
+                out.push_str(&format!("    er_object_set(r[{}], \"{}\", r[{}]);\n", obj, key, val));
+            }
+            EirInst::MakeArray { dest, start_reg, count } => {
+                out.push_str(&format!("    {{\n        int64_t tmp_arr_{} = er_alloc_array({});\n", dest, count));
+                for i in 0..*count {
+                    out.push_str(&format!("        er_array_push(tmp_arr_{}, r[{}]);\n", dest, start_reg + i));
+                }
+                out.push_str(&format!("        r[{}] = tmp_arr_{};\n    }}\n", dest, dest));
+            }
+            EirInst::ArrayGet { dest, arr, index } => {
+                out.push_str(&format!("    r[{}] = er_array_get(r[{}], r[{}]);\n", dest, arr, index));
+            }
+            EirInst::ArraySet { arr, index, val } => {
+                out.push_str(&format!("    er_array_set(r[{}], r[{}], r[{}]);\n", arr, index, val));
+            }
+            EirInst::AllocArray { dest, cap } => {
+                out.push_str(&format!("    r[{}] = er_alloc_array({});\n", dest, cap));
+            }
+            EirInst::ArrayPush { arr, val } => {
+                out.push_str(&format!("    er_array_push(r[{}], r[{}]);\n", arr, val));
+            }
+            EirInst::Call { dest, func_name, args, .. } => {
+                if args.is_empty() {
+                    out.push_str(&format!("    r[{}] = {}(void);\n", dest, func_name));
+                } else {
+                    let args_str = args.iter().map(|a| format!("r[{}]", a)).collect::<Vec<_>>().join(", ");
+                    out.push_str(&format!("    r[{}] = {}({});\n", dest, func_name, args_str));
                 }
             }
             _ => {}

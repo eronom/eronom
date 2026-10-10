@@ -4,7 +4,11 @@ use crate::jit::compiler::emit_header::calculate_max_regs;
 use super::ir::{EirBinaryOp, EirFunction, EirInst, EirModule, EirType, EirUnaryOp};
 
 /// Lower a bytecode function into a typed E-IR function with unboxed numeric and control-flow operations.
-pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFunction {
+pub fn lower_function_with_symbols(
+    func: &Function,
+    name_override: Option<&str>,
+    child_syms: &[(usize, String)],
+) -> EirFunction {
     let name = name_override
         .map(|s| s.to_string())
         .or_else(|| func.name.clone())
@@ -230,6 +234,90 @@ pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFuncti
                     args,
                 });
             }
+            OpCode::Closure => {
+                if let Some((_, sym)) = child_syms.iter().find(|(idx, _)| *idx == operand) {
+                    let upvalues = if let Some(child_fn) = func.chunk.constants.get(operand).and_then(|v| extract_function(*v)) {
+                        child_fn.upvalues.iter().map(|uv| (uv.is_local, uv.index as usize)).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    instructions.push(EirInst::MakeClosure {
+                        dest: ra,
+                        symbol: sym.clone(),
+                        upvalues,
+                    });
+                } else {
+                    instructions.push(EirInst::ConstNull { dest: ra });
+                }
+            }
+            OpCode::MakeObject => {
+                instructions.push(EirInst::MakeObject {
+                    dest: ra,
+                    start_reg: rb,
+                    pair_count: operand,
+                });
+            }
+            OpCode::GetProperty => {
+                let key = func
+                    .chunk
+                    .constants
+                    .get(operand)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                instructions.push(EirInst::GetProperty {
+                    dest: ra,
+                    obj: rb,
+                    key,
+                });
+            }
+            OpCode::SetProperty => {
+                let key = func
+                    .chunk
+                    .constants
+                    .get(operand)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                instructions.push(EirInst::SetProperty {
+                    obj: ra,
+                    key,
+                    val: rb,
+                });
+            }
+            OpCode::MakeArray => {
+                instructions.push(EirInst::MakeArray {
+                    dest: ra,
+                    start_reg: rb,
+                    count: operand,
+                });
+            }
+            OpCode::GetIndex => {
+                instructions.push(EirInst::ArrayGet {
+                    dest: ra,
+                    arr: rb,
+                    index: rc,
+                });
+            }
+            OpCode::SetIndex => {
+                instructions.push(EirInst::ArraySet {
+                    arr: ra,
+                    index: rb,
+                    val: rc,
+                });
+            }
+            OpCode::GetUpvalue => {
+                instructions.push(EirInst::GetUpvalue {
+                    dest: ra,
+                    upval_idx: operand,
+                });
+            }
+            OpCode::SetUpvalue => {
+                instructions.push(EirInst::SetUpvalue {
+                    src: ra,
+                    upval_idx: operand,
+                });
+            }
             OpCode::Jump => {
                 let target = idx + 1 + operand;
                 instructions.push(EirInst::Jump { target });
@@ -241,15 +329,6 @@ pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFuncti
             OpCode::Loop => {
                 let target = if idx + 1 >= operand { idx + 1 - operand } else { 0 };
                 instructions.push(EirInst::Jump { target });
-            }
-            OpCode::MakeArray => {
-                instructions.push(EirInst::AllocArray { dest: ra, cap: operand });
-            }
-            OpCode::GetIndex => {
-                instructions.push(EirInst::ArrayGet { dest: ra, arr: rb, index: rc });
-            }
-            OpCode::SetIndex => {
-                instructions.push(EirInst::ArraySet { arr: ra, index: rb, val: rc });
             }
             OpCode::Return => {
                 instructions.push(EirInst::Return { val: Some((ra, reg_type)) });
@@ -276,11 +355,65 @@ pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFuncti
     }
 }
 
+fn extract_function(val: crate::vm::Value) -> Option<Function> {
+    if !val.is_function() {
+        return None;
+    }
+    unsafe {
+        let ptr = val.as_gc_ptr();
+        if ptr.is_null() {
+            return None;
+        }
+        match &(*ptr).data {
+            crate::vm::gc::GcData::Function(f) => Some(*f.clone()),
+            crate::vm::gc::GcData::Closure(c) => {
+                if !c.function.is_null() {
+                    if let crate::vm::gc::GcData::Function(f) = &(*c.function).data {
+                        return Some(*f.clone());
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Lower a bytecode function into a typed E-IR function.
+pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFunction {
+    lower_function_with_symbols(func, name_override, &[])
+}
+
 /// Lower a compiled program into an E-IR module ready for ahead-of-time code generation.
 pub fn lower_program(main_func: &Function, module_name: &str) -> EirModule {
     let mut module = EirModule::new(module_name);
-    let main_eir = lower_function(main_func, Some("main"));
-    module.functions.push(main_eir);
+    let mut pending = vec![(main_func.clone(), "main".to_string())];
+    let mut fn_counter = 0usize;
+    let mut lowered = Vec::new();
+
+    while let Some((func, name)) = pending.pop() {
+        let mut child_syms = Vec::new();
+        for (const_idx, &val) in func.chunk.constants.iter().enumerate() {
+            if let Some(child_fn) = extract_function(val) {
+                let sym = child_fn
+                    .name
+                    .as_ref()
+                    .map(|n| format!("er_fn_{}", n))
+                    .unwrap_or_else(|| {
+                        fn_counter += 1;
+                        format!("er_fn_{}", fn_counter)
+                    });
+                child_syms.push((const_idx, sym.clone()));
+                pending.push((child_fn, sym));
+            }
+        }
+        let eir_fn = lower_function_with_symbols(&func, Some(&name), &child_syms);
+        lowered.push(eir_fn);
+    }
+
+    // Order child functions first so that forward declarations and caller functions work cleanly
+    lowered.reverse();
+    module.functions = lowered;
     module
 }
 

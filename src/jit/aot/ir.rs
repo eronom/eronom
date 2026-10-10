@@ -57,6 +57,20 @@ pub enum EirInst {
     ConstBool { dest: usize, val: bool },
     ConstString { dest: usize, val: String },
     ConstNull { dest: usize },
+    ConstFuncPtr { dest: usize, symbol: String },
+    MakeClosure {
+        dest: usize,
+        symbol: String,
+        upvalues: Vec<(bool, usize)>,
+    },
+    GetUpvalue {
+        dest: usize,
+        upval_idx: usize,
+    },
+    SetUpvalue {
+        src: usize,
+        upval_idx: usize,
+    },
     Move { dest: usize, src: usize, ty: EirType },
     Binary {
         dest: usize,
@@ -78,6 +92,26 @@ pub enum EirInst {
     GetGlobal {
         dest: usize,
         name: String,
+    },
+    GetProperty {
+        dest: usize,
+        obj: usize,
+        key: String,
+    },
+    SetProperty {
+        obj: usize,
+        key: String,
+        val: usize,
+    },
+    MakeObject {
+        dest: usize,
+        start_reg: usize,
+        pair_count: usize,
+    },
+    MakeArray {
+        dest: usize,
+        start_reg: usize,
+        count: usize,
     },
     Call {
         dest: usize,
