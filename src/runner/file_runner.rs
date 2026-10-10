@@ -16,8 +16,7 @@ impl Drop for GcGuard {
 pub fn run_file(path: &str) -> anyhow::Result<()> {
     let _guard = GcGuard;
     let path_buf = std::path::PathBuf::from(path);
-    let in_vfs = backend::embedded::has_vfs_file(path);
-    if !path_buf.exists() && !in_vfs {
+    if !path_buf.exists() {
         anyhow::bail!("File not found: {}", path);
     }
 
@@ -42,17 +41,6 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
             if let Some(parent_dir) = main_path.parent() {
                 let toml_path = parent_dir.join("eronom.toml");
                 if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
-                    if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                        if let Some(server) = toml_val.get("server") {
-                            if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
-                                port = Some(p as i32);
-                            }
-                        }
-                    }
-                }
-            }
-            if port.is_none() {
-                if let Some(toml_content) = backend::embedded::get_vfs_text("eronom.toml") {
                     if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
                         if let Some(server) = toml_val.get("server") {
                             if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
@@ -99,7 +87,6 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     backend::std_system::register_system_natives(&mut vm);
     backend::er_http::set_target_script_path(path);
     let main_path = std::path::Path::new(path);
-    let mut config_loaded = false;
     if let Some(parent_dir) = main_path.parent() {
         let toml_path = parent_dir.join("eronom.toml");
         if toml_path.exists() {
@@ -108,18 +95,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
                     if let Ok(json_val) = serde_json::to_value(toml_val) {
                         let config_val = backend::gc::json_to_value(json_val);
                         vm.register_global("config", config_val);
-                        config_loaded = true;
                     }
-                }
-            }
-        }
-    }
-    if !config_loaded {
-        if let Some(toml_content) = backend::embedded::get_vfs_text("eronom.toml") {
-            if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                if let Ok(json_val) = serde_json::to_value(toml_val) {
-                    let config_val = backend::gc::json_to_value(json_val);
-                    vm.register_global("config", config_val);
                 }
             }
         }

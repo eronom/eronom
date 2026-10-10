@@ -75,18 +75,14 @@ fn resolve_imports_recursive(
     visited: &mut HashSet<PathBuf>,
     visited_exports: &mut HashMap<PathBuf, HashSet<String>>,
 ) -> Result<Vec<Stmt>, String> {
-    let path_str = path.to_string_lossy().to_string();
-
     let (canonical, content) = if path.exists() {
         let canonical = path.canonicalize()
             .map_err(|e| format!("Failed to canonicalize path {:?}: {}", path, e))?;
         let content = std::fs::read_to_string(&canonical)
             .map_err(|e| format!("Failed to read file {:?}: {}", canonical, e))?;
         (canonical, content)
-    } else if let Some(vfs_text) = crate::vm::embedded::get_vfs_text(&path_str) {
-        (PathBuf::from(&path_str), vfs_text)
     } else {
-        return Err(format!("File not found on disk or in embedded VFS: {:?}", path));
+        return Err(format!("File not found on disk: {:?}", path));
     };
 
     if visited.contains(&canonical) {
@@ -137,39 +133,15 @@ fn resolve_imports_recursive(
                     }
                 }
 
-                // Check VFS if not on disk
-                let resolved_path_str = resolved_path.to_string_lossy().to_string();
-                let is_in_vfs = !resolved_path.exists() && (
-                    crate::vm::embedded::has_vfs_file(&resolved_path_str) ||
-                    crate::vm::embedded::has_vfs_file(&import_path) ||
-                    (import_path.ends_with(".js") && crate::vm::embedded::has_vfs_file(&import_path.replace(".js", ".er"))) ||
-                    (!import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path))) ||
-                    (is_std_import && !import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path)))
-                );
-
-                if !resolved_path.exists() && !is_in_vfs {
+                if !resolved_path.exists() {
                     return Err(format!(
                         "Imported file not found: {:?} (specified as {})",
                         resolved_path, import_path
                     ));
                 }
 
-                let final_path = if is_in_vfs {
-                    if crate::vm::embedded::has_vfs_file(&resolved_path_str) {
-                        resolved_path
-                    } else if crate::vm::embedded::has_vfs_file(&import_path) {
-                        PathBuf::from(&import_path)
-                    } else if import_path.ends_with(".js") && crate::vm::embedded::has_vfs_file(&import_path.replace(".js", ".er")) {
-                        PathBuf::from(import_path.replace(".js", ".er"))
-                    } else if !import_path.ends_with(".er") && crate::vm::embedded::has_vfs_file(&format!("{}.er", import_path)) {
-                        PathBuf::from(format!("{}.er", import_path))
-                    } else {
-                        resolved_path
-                    }
-                } else {
-                    resolved_path.canonicalize()
-                        .map_err(|e| format!("Failed to canonicalize path {:?}: {}", resolved_path, e))?
-                };
+                let final_path = resolved_path.canonicalize()
+                    .map_err(|e| format!("Failed to canonicalize path {:?}: {}", resolved_path, e))?;
 
                 let sub_stmts = if visited.contains(&final_path) {
                     Vec::new()

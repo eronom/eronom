@@ -28,22 +28,14 @@ pub fn get_re_export() -> &'static regex::Regex {
 }
 
 pub fn file_exists_or_vfs(path: &std::path::Path) -> bool {
-    if path.exists() {
-        return true;
-    }
-    let s = path.to_string_lossy();
-    crate::vm::embedded::has_vfs_file(&s)
+    path.exists()
 }
 
 pub fn read_file_or_vfs(path: &std::path::Path) -> anyhow::Result<String> {
     if path.exists() && path.is_file() {
         return Ok(std::fs::read_to_string(path)?);
     }
-    let s = path.to_string_lossy();
-    if let Some(text) = crate::vm::embedded::get_vfs_text(&s) {
-        return Ok(text);
-    }
-    anyhow::bail!("File not found on disk or in VFS: {}", path.display())
+    anyhow::bail!("File not found on disk: {}", path.display())
 }
 
 pub fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {

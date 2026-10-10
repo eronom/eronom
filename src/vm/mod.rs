@@ -11,7 +11,6 @@ pub mod std_crypto;
 pub mod std_json;
 pub mod std_system;
 pub mod shape;
-pub mod embedded;
 pub mod alloc;
 
 // Re-export key structures to maintain public API compatibility
@@ -25,4 +24,3 @@ pub use gc::{
 };
 pub use compiler::Compiler;
 pub use execute::VM;
-pub use embedded::*;

@@ -162,11 +162,7 @@ pub fn native_fs_exists(args: Vec<Value>) -> Value {
         Some(s) => s,
         None => return Value::boolean(false),
     };
-    if Path::new(path_str).exists() {
-        Value::boolean(true)
-    } else {
-        Value::boolean(crate::vm::embedded::has_vfs_file(path_str))
-    }
+    Value::boolean(Path::new(path_str).exists())
 }
 
 pub fn native_fs_stat(args: Vec<Value>) -> Value {
@@ -226,37 +222,6 @@ pub fn native_fs_stat(args: Vec<Value>) -> Value {
         return Value::object(ptr);
     }
 
-    if let Some(vfs_bytes) = crate::vm::embedded::get_vfs_file(path_str) {
-        let mut obj_map = get_pooled_map(8);
-
-        let size_key = MapKey(Value::string(get_or_create_string("size")));
-        obj_map.insert(size_key, Value::number(vfs_bytes.len() as f64));
-
-        let is_file_key = MapKey(Value::string(get_or_create_string("isFile")));
-        obj_map.insert(is_file_key, Value::boolean(true));
-
-        let is_dir_key = MapKey(Value::string(get_or_create_string("isDirectory")));
-        obj_map.insert(is_dir_key, Value::boolean(false));
-
-        let is_sym_key = MapKey(Value::string(get_or_create_string("isSymlink")));
-        obj_map.insert(is_sym_key, Value::boolean(false));
-
-        let mtime_key = MapKey(Value::string(get_or_create_string("mtime")));
-        obj_map.insert(mtime_key, Value::number(0.0));
-
-        let created_key = MapKey(Value::string(get_or_create_string("created")));
-        obj_map.insert(created_key, Value::number(0.0));
-
-        let readonly_key = MapKey(Value::string(get_or_create_string("readonly")));
-        obj_map.insert(readonly_key, Value::boolean(true));
-
-        let mode_key = MapKey(Value::string(get_or_create_string("mode")));
-        obj_map.insert(mode_key, Value::number(0.0));
-
-        let ptr = gc_allocate(GcData::Object(obj_map));
-        return Value::object(ptr);
-    }
-
     Value::null()
 }
 
@@ -271,11 +236,6 @@ pub fn native_fs_read_text(args: Vec<Value>) -> Value {
 
     if let Ok(content) = fs::read_to_string(Path::new(path_str)) {
         let ptr = gc_alloc_string(&content);
-        return Value::string(ptr);
-    }
-
-    if let Some(vfs_text) = crate::vm::embedded::get_vfs_text(path_str) {
-        let ptr = gc_alloc_string(&vfs_text);
         return Value::string(ptr);
     }
 
@@ -338,15 +298,6 @@ pub fn native_fs_read_binary(args: Vec<Value>) -> Value {
     };
 
     if let Ok(bytes) = fs::read(Path::new(path_str)) {
-        let mut arr = get_pooled_vec(bytes.len());
-        for b in bytes {
-            arr.push(Value::number(b as f64));
-        }
-        let ptr = gc_allocate(GcData::Array(arr));
-        return Value::array(ptr);
-    }
-
-    if let Some(bytes) = crate::vm::embedded::get_vfs_file(path_str) {
         let mut arr = get_pooled_vec(bytes.len());
         for b in bytes {
             arr.push(Value::number(b as f64));

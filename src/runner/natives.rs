@@ -240,12 +240,6 @@ pub fn native_render(args: Vec<Value>) -> Value {
         let is_h = resolved_path.extension().map_or(false, |ext| ext == "html");
         let cp = resolved_path.to_str().unwrap_or(&base_dir).to_string();
         (c, is_h, cp)
-    } else if let Some(vfs_text) = backend::embedded::get_vfs_text(file_path) {
-        let is_h = file_path.ends_with(".html");
-        (vfs_text, is_h, file_path.to_string())
-    } else if let Some(vfs_text) = backend::embedded::get_vfs_text(&resolved_path.to_string_lossy()) {
-        let is_h = resolved_path.extension().map_or(false, |ext| ext == "html");
-        (vfs_text, is_h, resolved_path.to_string_lossy().to_string())
     } else {
         return Value::null();
     };
