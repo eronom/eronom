@@ -703,62 +703,116 @@ function createArrayProxy(arr, setter, name) {
   });
 }
 
-export function useState(val, name) {
-  if (name && statesRegistry.has(name)) {
-    return statesRegistry.get(name);
-  }
-  const hmrVal = name ? getHmrState(name) : undefined;
-  if (hmrVal !== undefined) {
-    val = hmrVal;
-  }
+export const erm = {
+  init(val, name) {
+    if (name && statesRegistry.has(name)) {
+      return statesRegistry.get(name);
+    }
+    const hmrVal = name ? getHmrState(name) : undefined;
+    if (hmrVal !== undefined) {
+      val = hmrVal;
+    }
 
-  if (typeof val === 'function') {
-    const memo = createMemo(val, undefined, { name });
-    const wrapper = function () { return memo(); };
-    Object.defineProperty(wrapper, 'value', {
-      get() { return memo(); },
-      enumerable: true
+    if (typeof val === 'function') {
+      const memo = createMemo(val, undefined, { name });
+      const wrapper = function () { return memo(); };
+      wrapper._get = memo;
+      wrapper._name = name;
+      Object.defineProperty(wrapper, 'value', {
+        get() { return memo(); },
+        enumerable: true,
+        configurable: true
+      });
+      wrapper.toString = () => String(memo());
+      wrapper.valueOf = () => memo();
+      wrapper[Symbol.toPrimitive] = () => memo();
+      if (name) statesRegistry.set(name, wrapper);
+      return wrapper;
+    }
+
+    const [get, set] = createSignal(val, { name });
+
+    function signalWrapper(...args) {
+      if (args.length > 0) {
+        if (name) setHmrState(name, args[0]);
+        return set(args[0]);
+      }
+      return get();
+    }
+
+    signalWrapper._get = get;
+    signalWrapper._set = set;
+    signalWrapper._name = name;
+
+    Object.defineProperty(signalWrapper, 'value', {
+      get() {
+        const current = get();
+        if (Array.isArray(current)) {
+          return createArrayProxy(current, set, name);
+        }
+        return current;
+      },
+      set(newVal) {
+        if (name) {
+          setHmrState(name, newVal);
+        }
+        set(newVal);
+      },
+      enumerable: true,
+      configurable: true
     });
-    wrapper.toString = () => String(memo());
-    wrapper.valueOf = () => memo();
-    wrapper[Symbol.toPrimitive] = () => memo();
-    if (name) statesRegistry.set(name, wrapper);
-    return wrapper;
-  }
 
-  const [get, set] = createSignal(val, { name });
+    signalWrapper.toString = () => String(get());
+    signalWrapper.valueOf = () => get();
+    signalWrapper[Symbol.toPrimitive] = () => get();
 
-  function signalWrapper(...args) {
-    if (args.length > 0) return set(args[0]);
-    return get();
-  }
+    if (name) {
+      statesRegistry.set(name, signalWrapper);
+    }
 
-  Object.defineProperty(signalWrapper, 'value', {
-    get() {
-      const current = get();
-      if (Array.isArray(current)) {
-        return createArrayProxy(current, set, name);
+    return signalWrapper;
+  },
+
+  get(signal) {
+    if (signal === null || signal === undefined) return signal;
+    if (typeof signal._get === 'function') {
+      const current = signal._get();
+      if (Array.isArray(current) && typeof signal._set === 'function') {
+        return createArrayProxy(current, signal._set, signal._name);
       }
       return current;
-    },
-    set(newVal) {
-      if (name) {
-        setHmrState(name, newVal);
+    }
+    if (typeof signal === 'function') {
+      return signal();
+    }
+    if (typeof signal === 'object' && 'value' in signal) {
+      return signal.value;
+    }
+    return signal;
+  },
+
+  set(signal, newVal) {
+    if (signal === null || signal === undefined) return newVal;
+    if (typeof signal._set === 'function') {
+      if (signal._name) {
+        setHmrState(signal._name, newVal);
       }
-      set(newVal);
-    },
-    enumerable: true
-  });
-
-  signalWrapper.toString = () => String(get());
-  signalWrapper.valueOf = () => get();
-  signalWrapper[Symbol.toPrimitive] = () => get();
-
-  if (name) {
-    statesRegistry.set(name, signalWrapper);
+      signal._set(newVal);
+      return newVal;
+    }
+    if (typeof signal === 'function') {
+      return signal(newVal);
+    }
+    if (typeof signal === 'object' && 'value' in signal) {
+      signal.value = newVal;
+      return newVal;
+    }
+    return newVal;
   }
+};
 
-  return signalWrapper;
+export function useState(val, name) {
+  return erm.init(val, name);
 }
 
 export function useEffect(callback, depsFn) {
@@ -1142,6 +1196,7 @@ export async function applyErmHmr(targetPath, timestamp) {
 }
 
 if (typeof window !== 'undefined') {
+  window.erm = erm;
   window.__erm_apply_hmr = applyErmHmr;
 }
 

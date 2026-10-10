@@ -221,8 +221,9 @@ pub fn process_component_tree(
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = script_tag[content_start..script_tag.len() - 9].trim();
 
-            // Find state vars (useState) in script
+            // Find state vars (useState & erm.init) in script
             find_state_variables(script_content, "useState(", &mut state_vars);
+            find_state_variables(script_content, "erm.init(", &mut state_vars);
 
             // Also check imported variables that are lowercased (state imports)
             for line in script_content.lines() {

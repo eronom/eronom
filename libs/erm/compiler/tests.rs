@@ -55,7 +55,7 @@ fn test_use_state_compilation() {
     assert!(res.state_vars.contains(&"count".to_string()));
     let combined = res.scripts.join("\n");
     assert!(combined.contains("useState(0, \"___count\")"));
-    assert!(combined.contains("count.value++"));
+    assert!(combined.contains("erm.set(count, (erm.get(count) + 1))") || combined.contains("count.value++"));
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn test_for_loop_compilation() {
     let res = process_erm_component(".", content, true, &params).unwrap();
     println!("{}", res);
     assert!(res.contains("Item key as 0 : 1"));
-    assert!(res.contains("() => (items.value)"));
+    assert!(res.contains("() => (erm.get(items))") || res.contains("() => (items.value)"));
     assert!(!res.contains("items.value.value"));
 }
 
@@ -598,8 +598,8 @@ fn test_ast_reactivity_in_erm_components() {
     assert!(res.contains("count: 10"));
     assert!(!res.contains("count.value: 10"));
 
-    // 3. State variable reference gets .value
-    assert!(res.contains("count.value"));
+    // 3. State variable reference gets erm.get(count)
+    assert!(res.contains("erm.get(count)"));
 }
 
 #[test]

@@ -8,6 +8,18 @@
             addToCart(101, dealTitle.value, dealPrice.value, dealEmoji.value, dealCategory.value || "Keyboards");
         }
     }
+
+   let deal = useState(null);
+  async function loadDeal() {
+    const res = await fetch('/api/deal');
+    deal = await res.json(); // Direct assignment (no .value)
+  }
+  function claimDeal() {
+    // In <script>: direct access without .value!
+    console.log(deal.title);
+    addToCart(101, deal.title, deal.price);
+  }
+    
 </script>
 
 if isDealLoading {

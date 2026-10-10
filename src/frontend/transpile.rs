@@ -391,7 +391,13 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         Expr::Literal(_) => expr.clone(),
         Expr::Variable(name, loc) => {
             if state_vars.contains(name) && !shadowed.contains(name) {
-                Expr::Get(Box::new(Expr::Variable(name.clone(), loc.clone())), "value".to_string())
+                Expr::Call(
+                    Box::new(Expr::Get(
+                        Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                        "get".to_string(),
+                    )),
+                    vec![Expr::Variable(name.clone(), loc.clone())],
+                )
             } else {
                 expr.clone()
             }
@@ -399,10 +405,12 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         Expr::Assign(name, val, loc) => {
             let new_val = transform_expr_reactivity(val, state_vars, shadowed);
             if state_vars.contains(name) && !shadowed.contains(name) {
-                Expr::Set(
-                    Box::new(Expr::Variable(name.clone(), loc.clone())),
-                    "value".to_string(),
-                    Box::new(new_val),
+                Expr::Call(
+                    Box::new(Expr::Get(
+                        Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                        "set".to_string(),
+                    )),
+                    vec![Expr::Variable(name.clone(), loc.clone()), new_val],
                 )
             } else {
                 Expr::Assign(name.clone(), Box::new(new_val), loc.clone())
@@ -429,12 +437,142 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
             )
         }
         Expr::Prefix(op, operand) => {
+            if let Expr::Variable(name, loc) = &**operand {
+                if state_vars.contains(name) && !shadowed.contains(name) {
+                    let bin_op = match op {
+                        TokenType::PlusPlus => Some(TokenType::Plus),
+                        TokenType::MinusMinus => Some(TokenType::Minus),
+                        _ => None,
+                    };
+                    if let Some(bo) = bin_op {
+                        return Expr::Call(
+                            Box::new(Expr::Get(
+                                Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                "set".to_string(),
+                            )),
+                            vec![
+                                Expr::Variable(name.clone(), loc.clone()),
+                                Expr::Binary(
+                                    Box::new(Expr::Call(
+                                        Box::new(Expr::Get(
+                                            Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                            "get".to_string(),
+                                        )),
+                                        vec![Expr::Variable(name.clone(), loc.clone())],
+                                    )),
+                                    bo,
+                                    Box::new(Expr::Literal(LiteralValue::Number(1.0))),
+                                ),
+                            ],
+                        );
+                    }
+                }
+            } else if let Expr::Get(obj, prop) = &**operand {
+                if prop == "value" {
+                    if let Expr::Variable(name, loc) = &**obj {
+                        if state_vars.contains(name) && !shadowed.contains(name) {
+                            let bin_op = match op {
+                                TokenType::PlusPlus => Some(TokenType::Plus),
+                                TokenType::MinusMinus => Some(TokenType::Minus),
+                                _ => None,
+                            };
+                            if let Some(bo) = bin_op {
+                                return Expr::Call(
+                                    Box::new(Expr::Get(
+                                        Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                        "set".to_string(),
+                                    )),
+                                    vec![
+                                        Expr::Variable(name.clone(), loc.clone()),
+                                        Expr::Binary(
+                                            Box::new(Expr::Call(
+                                                Box::new(Expr::Get(
+                                                    Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                                    "get".to_string(),
+                                                )),
+                                                vec![Expr::Variable(name.clone(), loc.clone())],
+                                            )),
+                                            bo,
+                                            Box::new(Expr::Literal(LiteralValue::Number(1.0))),
+                                        ),
+                                    ],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             Expr::Prefix(
                 op.clone(),
                 Box::new(transform_expr_reactivity(operand, state_vars, shadowed)),
             )
         }
         Expr::Postfix(op, operand) => {
+            if let Expr::Variable(name, loc) = &**operand {
+                if state_vars.contains(name) && !shadowed.contains(name) {
+                    let bin_op = match op {
+                        TokenType::PlusPlus => Some(TokenType::Plus),
+                        TokenType::MinusMinus => Some(TokenType::Minus),
+                        _ => None,
+                    };
+                    if let Some(bo) = bin_op {
+                        return Expr::Call(
+                            Box::new(Expr::Get(
+                                Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                "set".to_string(),
+                            )),
+                            vec![
+                                Expr::Variable(name.clone(), loc.clone()),
+                                Expr::Binary(
+                                    Box::new(Expr::Call(
+                                        Box::new(Expr::Get(
+                                            Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                            "get".to_string(),
+                                        )),
+                                        vec![Expr::Variable(name.clone(), loc.clone())],
+                                    )),
+                                    bo,
+                                    Box::new(Expr::Literal(LiteralValue::Number(1.0))),
+                                ),
+                            ],
+                        );
+                    }
+                }
+            } else if let Expr::Get(obj, prop) = &**operand {
+                if prop == "value" {
+                    if let Expr::Variable(name, loc) = &**obj {
+                        if state_vars.contains(name) && !shadowed.contains(name) {
+                            let bin_op = match op {
+                                TokenType::PlusPlus => Some(TokenType::Plus),
+                                TokenType::MinusMinus => Some(TokenType::Minus),
+                                _ => None,
+                            };
+                            if let Some(bo) = bin_op {
+                                return Expr::Call(
+                                    Box::new(Expr::Get(
+                                        Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                        "set".to_string(),
+                                    )),
+                                    vec![
+                                        Expr::Variable(name.clone(), loc.clone()),
+                                        Expr::Binary(
+                                            Box::new(Expr::Call(
+                                                Box::new(Expr::Get(
+                                                    Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                                    "get".to_string(),
+                                                )),
+                                                vec![Expr::Variable(name.clone(), loc.clone())],
+                                            )),
+                                            bo,
+                                            Box::new(Expr::Literal(LiteralValue::Number(1.0))),
+                                        ),
+                                    ],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             Expr::Postfix(
                 op.clone(),
                 Box::new(transform_expr_reactivity(operand, state_vars, shadowed)),
@@ -455,9 +593,15 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         }
         Expr::Get(obj, prop) => {
             if prop == "value" {
-                if let Expr::Variable(name, _) = &**obj {
-                    if state_vars.contains(name) {
-                        return expr.clone();
+                if let Expr::Variable(name, loc) = &**obj {
+                    if state_vars.contains(name) && !shadowed.contains(name) {
+                        return Expr::Call(
+                            Box::new(Expr::Get(
+                                Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                "get".to_string(),
+                            )),
+                            vec![Expr::Variable(name.clone(), loc.clone())],
+                        );
                     }
                 }
             }
@@ -467,23 +611,24 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
             )
         }
         Expr::Set(obj, prop, val) => {
-            let new_obj = if prop == "value" {
-                if let Expr::Variable(name, _) = &**obj {
-                    if state_vars.contains(name) {
-                        obj.clone()
-                    } else {
-                        Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
+            let new_val = transform_expr_reactivity(val, state_vars, shadowed);
+            if prop == "value" {
+                if let Expr::Variable(name, loc) = &**obj {
+                    if state_vars.contains(name) && !shadowed.contains(name) {
+                        return Expr::Call(
+                            Box::new(Expr::Get(
+                                Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                                "set".to_string(),
+                            )),
+                            vec![Expr::Variable(name.clone(), loc.clone()), new_val],
+                        );
                     }
-                } else {
-                    Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
                 }
-            } else {
-                Box::new(transform_expr_reactivity(obj, state_vars, shadowed))
-            };
+            }
             Expr::Set(
-                new_obj,
+                Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
                 prop.clone(),
-                Box::new(transform_expr_reactivity(val, state_vars, shadowed)),
+                Box::new(new_val),
             )
         }
         Expr::Array(items) => {
@@ -778,21 +923,21 @@ mod tests {
     fn test_ast_reactivity_expr_basic() {
         let state_vars = vec!["count".to_string()];
         let res = transpile_expr_reactivity("count + 1", &state_vars).unwrap();
-        assert_eq!(res, "(count.value + 1)");
+        assert_eq!(res, "(erm.get(count) + 1)");
     }
 
     #[test]
     fn test_ast_reactivity_string_literal_preservation() {
         let state_vars = vec!["count".to_string()];
         let res = transpile_expr_reactivity("\"The count is: \" + count", &state_vars).unwrap();
-        assert_eq!(res, "(\"The count is: \" + count.value)");
+        assert_eq!(res, "(\"The count is: \" + erm.get(count))");
     }
 
     #[test]
     fn test_ast_reactivity_object_key_preservation() {
         let state_vars = vec!["count".to_string()];
         let res = transpile_expr_reactivity("{ count: 10, other: count }", &state_vars).unwrap();
-        assert_eq!(res, "{ count: 10, other: count.value }");
+        assert_eq!(res, "{ count: 10, other: erm.get(count) }");
     }
 
     #[test]
@@ -807,14 +952,14 @@ mod tests {
     fn test_ast_reactivity_no_double_value() {
         let state_vars = vec!["count".to_string()];
         let res = transpile_expr_reactivity("count.value + 1", &state_vars).unwrap();
-        assert_eq!(res, "(count.value + 1)");
+        assert_eq!(res, "(erm.get(count) + 1)");
     }
 
     #[test]
     fn test_ast_reactivity_no_double_value_set() {
         let state_vars = vec!["count".to_string()];
         let res = transpile_expr_reactivity("count.value = 1", &state_vars).unwrap();
-        assert_eq!(res, "(count.value = 1)");
+        assert_eq!(res, "erm.set(count, 1)");
     }
 
     #[test]
@@ -822,6 +967,7 @@ mod tests {
         let state_vars = vec!["isCartOpen".to_string()];
         let res = transform_script_reactivity("function openCart() { isCartOpen = true; }", &state_vars).unwrap();
         assert!(res.contains("function openCart() {"));
+        assert!(res.contains("erm.set(isCartOpen, true)"));
         assert!(!res.contains("function;"));
     }
 
@@ -841,7 +987,7 @@ mod tests {
         let res = transform_script_reactivity(script, &state_vars).unwrap();
         assert!(res.contains("async function fetchTodos()"));
         assert!(res.contains("const res = await fetch(\"/api/todo\");"));
-        assert!(res.contains("(todos.value = await res.json());"));
+        assert!(res.contains("erm.set(todos, await res.json())"));
         assert!(!res.contains("async;"));
         assert!(!res.contains("const res = await;"));
     }
@@ -853,7 +999,17 @@ mod tests {
         time = new Date().toLocaleTimeString();
         "#;
         let res = transform_script_reactivity(script, &state_vars).unwrap();
-        assert!(res.contains("(time.value = new Date().toLocaleTimeString());"));
+        assert!(res.contains("erm.set(time, new Date().toLocaleTimeString())"));
         assert!(!res.contains("time.value = new;"));
+    }
+
+    #[test]
+    fn test_transpile_property_access_and_set() {
+        let state_vars = vec!["deal".to_string()];
+        let res_get = transpile_expr_reactivity("deal.title", &state_vars).unwrap();
+        assert_eq!(res_get, "erm.get(deal).title");
+
+        let res_set = transpile_expr_reactivity("deal = { title: \"New\" }", &state_vars).unwrap();
+        assert!(res_set.contains("erm.set(deal, { title: \"New\" })"));
     }
 }
