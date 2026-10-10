@@ -81,6 +81,10 @@ pub enum Commands {
         /// Build for Partial Prerendering (PPR)
         #[arg(long)]
         ppr: bool,
+
+        /// Compile ahead-of-time (AOT) to a standalone native binary
+        #[arg(long)]
+        aot: bool,
     },
     /// Start the server in production mode
     Start {

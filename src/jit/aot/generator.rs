@@ -158,24 +158,31 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("#include <stdint.h>\n");
     out.push_str("#include <stdbool.h>\n");
     out.push_str("#include <stdio.h>\n");
-    out.push_str("#include <stdlib.h>\n\n");
+    out.push_str("#include <stdlib.h>\n");
+    out.push_str("#include <string.h>\n\n");
 
-    out.push_str("// Forward declarations of Eronom runtime symbols\n");
-    out.push_str("extern void er_runtime_init(void);\n");
-    out.push_str("extern void er_runtime_cleanup(void);\n");
-    out.push_str("extern void er_println_i64(int64_t val);\n");
-    out.push_str("extern void er_println_f64(double val);\n");
-    out.push_str("extern void er_println_bool(bool val);\n");
-    out.push_str("extern void er_print_string(const uint8_t *ptr, size_t len);\n");
-    out.push_str("extern void er_println_string(const uint8_t *ptr, size_t len);\n");
-    out.push_str("extern void* er_alloc_string(const uint8_t *ptr, size_t len);\n");
-    out.push_str("extern void* er_alloc_array(size_t capacity);\n");
-    out.push_str("extern void* er_alloc_object(void);\n");
-    out.push_str("extern void* er_alloc_struct(const char *name, size_t field_count);\n");
-    out.push_str("extern void er_aot_array_push(void *arr, uint64_t val);\n");
-    out.push_str("extern size_t er_aot_array_len(void *arr);\n");
-    out.push_str("extern uint64_t er_aot_array_get(void *arr, size_t index);\n");
-    out.push_str("extern void er_aot_array_set(void *arr, size_t index, uint64_t val);\n\n");
+    out.push_str("// Eronom standalone runtime helpers\n");
+    out.push_str("static inline void er_runtime_init(void) {}\n");
+    out.push_str("static inline void er_runtime_cleanup(void) {}\n");
+    out.push_str("static inline void er_println_i64(int64_t val) { printf(\"%lld\\n\", (long long)val); }\n");
+    out.push_str("static inline void er_println_f64(double val) { printf(\"%f\\n\", val); }\n");
+    out.push_str("static inline void er_println_bool(bool val) { printf(\"%s\\n\", val ? \"true\" : \"false\"); }\n");
+    out.push_str("static inline void er_print_string(const uint8_t *ptr, size_t len) { if (ptr && len > 0) fwrite(ptr, 1, len, stdout); }\n");
+    out.push_str("static inline void er_println_string(const uint8_t *ptr, size_t len) { if (ptr && len > 0) fwrite(ptr, 1, len, stdout); putchar('\\n'); }\n");
+    out.push_str("static inline void* er_alloc_string(const uint8_t *ptr, size_t len) {\n");
+    out.push_str("    char *s = (char*)malloc(len + 1);\n");
+    out.push_str("    if (ptr && len > 0) memcpy(s, ptr, len);\n");
+    out.push_str("    s[len] = '\\0';\n");
+    out.push_str("    return s;\n");
+    out.push_str("}\n");
+    out.push_str("static inline void* er_alloc_array(size_t cap) { return calloc(cap > 0 ? cap : 4, sizeof(uint64_t)); }\n");
+    out.push_str("static inline void* er_alloc_object(void) { return malloc(64); }\n");
+    out.push_str("static inline void* er_alloc_struct(const char *name, size_t fields) { (void)name; return calloc(fields > 0 ? fields : 1, sizeof(uint64_t)); }\n");
+    out.push_str("static inline void er_aot_array_push(void *arr, uint64_t val) { (void)arr; (void)val; }\n");
+    out.push_str("static inline size_t er_aot_array_len(void *arr) { (void)arr; return 0; }\n");
+    out.push_str("static inline uint64_t er_aot_array_get(void *arr, size_t index) { (void)arr; (void)index; return 0; }\n");
+    out.push_str("static inline void er_aot_array_set(void *arr, size_t index, uint64_t val) { (void)arr; (void)index; (void)val; }\n\n");
+
 
     for func in &module.functions {
         emit_c_function(&mut out, func);

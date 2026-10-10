@@ -45,11 +45,25 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             ssr: _,
             ssg,
             ppr,
+            aot,
         } => {
             if dir.starts_with("target=") || dir.starts_with("target:") {
                 let val = dir.split_once('=').or_else(|| dir.split_once(':')).unwrap().1;
                 target = Some(val.trim_matches('"').trim_matches('\'').to_string());
                 dir = ".".to_string();
+            }
+
+            let is_aot = aot || target.as_deref().map_or(false, |t| t.eq_ignore_ascii_case("aot") || t.eq_ignore_ascii_case("native"));
+            if is_aot && dir.ends_with(".er") {
+                let script_path = Path::new(&dir);
+                let out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
+                    let stem = script_path.file_stem().unwrap_or_default();
+                    std::path::PathBuf::from(stem)
+                });
+                println!("Compiling {} into native standalone binary: {}", script_path.display(), out_path.display());
+                crate::jit::aot::build_aot_binary(script_path, &out_path)?;
+                println!("✓ Successfully built native executable: {}", out_path.display());
+                return Ok(());
             }
 
             let mode = if ppr {
