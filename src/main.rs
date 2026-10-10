@@ -10,16 +10,6 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use runner::{run_file, run_test_command};
 
 fn main() {
-    // 1. Check if the currently executing binary is a self-contained embedded executable
-    if let Ok(true) = backend::embedded::check_and_mount_embedded() {
-        let entrypoint = backend::embedded::get_vfs_entrypoint().unwrap_or_else(|| "server.er".to_string());
-        if let Err(e) = run_file(&entrypoint) {
-            eprintln!("Runtime error: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
     use clap::Parser;
     let cli = eronom::cli::Cli::parse();
 
