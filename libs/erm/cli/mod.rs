@@ -55,10 +55,14 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             let wants_binary = aot || output.is_some() || target.is_some() || is_script;
 
             if is_script {
-                let out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
+                let mut out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
                     let stem = path.file_stem().unwrap_or_default();
                     std::path::PathBuf::from(stem)
                 });
+                if out_path.is_dir() {
+                    let stem = path.file_stem().unwrap_or_default();
+                    out_path = out_path.join(stem);
+                }
                 println!("Compiling {} into native standalone binary: {}", path.display(), out_path.display());
                 crate::jit::aot::build_aot_binary(path, &out_path)?;
                 println!("✓ Successfully built native executable: {}", out_path.display());
@@ -88,14 +92,24 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
                     path.join("main.er")
                 };
 
-                let out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
-                    let stem = path.file_name().unwrap_or_default();
+                let mut out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
+                    let stem = path.file_name().unwrap_or_default().to_string_lossy();
                     if stem == "." || stem.is_empty() {
-                        std::path::PathBuf::from("server_bin")
+                        std::path::PathBuf::from("dist/server")
                     } else {
-                        std::path::PathBuf::from(stem)
+                        std::path::PathBuf::from(format!("dist/{}", stem))
                     }
                 });
+
+                if out_path.is_dir() {
+                    let stem = path.file_name().unwrap_or_default().to_string_lossy();
+                    let bin_name = if stem == "." || stem.is_empty() {
+                        "server_bin".to_string()
+                    } else {
+                        format!("{}_bin", stem)
+                    };
+                    out_path = out_path.join(bin_name);
+                }
 
                 println!("Compiling {} into native standalone binary: {}", script_to_compile.display(), out_path.display());
                 crate::jit::aot::build_aot_binary(&script_to_compile, &out_path)?;
