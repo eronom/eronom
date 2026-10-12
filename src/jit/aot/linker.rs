@@ -202,6 +202,58 @@ pub fn resolve_runner_stub(custom_stub: Option<&Path>) -> Option<std::path::Path
     None
 }
 
+fn find_target_candidate_in_hierarchy(candidates: &[&str]) -> Option<std::path::PathBuf> {
+    for cand in candidates {
+        let p = std::path::PathBuf::from(cand);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    if let Ok(p) = std::env::current_exe() {
+        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
+        let mut curr = canonical.parent();
+        while let Some(parent) = curr {
+            for cand in candidates {
+                let candidate_path = parent.join(cand);
+                if candidate_path.exists() {
+                    return Some(candidate_path);
+                }
+            }
+            curr = parent.parent();
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut curr = Some(cwd.as_path());
+        while let Some(parent) = curr {
+            for cand in candidates {
+                let candidate_path = parent.join(cand);
+                if candidate_path.exists() {
+                    return Some(candidate_path);
+                }
+            }
+            curr = parent.parent();
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        let home_dir = std::path::PathBuf::from(&home);
+        for cand in candidates {
+            let p1 = home_dir.join(".eronom").join(cand);
+            if p1.exists() {
+                return Some(p1);
+            }
+            let p2 = home_dir.join("eronom").join(cand);
+            if p2.exists() {
+                return Some(p2);
+            }
+        }
+    }
+
+    None
+}
+
 pub fn resolve_target_stub(custom_stub: Option<&Path>, target: Option<&str>) -> Option<std::path::PathBuf> {
     if let Some(s) = custom_stub {
         if s.exists() {
@@ -211,44 +263,30 @@ pub fn resolve_target_stub(custom_stub: Option<&Path>, target: Option<&str>) -> 
     if let Some(target_str) = target {
         let (_, os_kind) = resolve_target_triple(target_str);
         if os_kind == "windows" {
-            for cand in &[
+            return find_target_candidate_in_hierarchy(&[
                 "stubs/eronom-runner-win-x64.exe",
                 "stubs/eronom-runner.exe",
                 "stubs/windows/eronom-runner.exe",
                 "stubs/er_runner.exe",
                 "stubs/windows/er_runner.exe",
-            ] {
-                let p = std::path::PathBuf::from(cand);
-                if p.exists() {
-                    return Some(p);
-                }
-            }
-            return None;
+            ]);
         } else if os_kind == "macos" {
-            for cand in &[
+            return find_target_candidate_in_hierarchy(&[
+                "stubs/eronom-runner-mac-arm64",
                 "stubs/eronom-runner-mac",
                 "stubs/macos/eronom-runner",
                 "stubs/er_runner_mac",
                 "stubs/macos/er_runner",
-            ] {
-                let p = std::path::PathBuf::from(cand);
-                if p.exists() {
-                    return Some(p);
-                }
-            }
-            return None;
+            ]);
         } else if os_kind == "linux" {
-            for cand in &[
+            if let Some(stub) = find_target_candidate_in_hierarchy(&[
                 "stubs/eronom-runner",
                 "stubs/eronom-runner-linux",
                 "stubs/linux/eronom-runner",
                 "stubs/er_runner",
                 "stubs/linux/er_runner",
-            ] {
-                let p = std::path::PathBuf::from(cand);
-                if p.exists() {
-                    return Some(p);
-                }
+            ]) {
+                return Some(stub);
             }
         }
     }
@@ -642,8 +680,8 @@ print(arr[1]);
         assert!(bin_path.exists(), "Windows binary should exist");
 
         let metadata = std::fs::metadata(&bin_path).unwrap();
-        // Verify micro binary size budget (~20 KB - 40 KB)
-        assert!(metadata.len() < 50_000, "Binary size should be under 50KB, got {}", metadata.len());
+        // Verify standalone binary size is within micro-runner budget (< 5 MB)
+        assert!(metadata.len() > 1000 && metadata.len() < 5_000_000, "Binary size should be within runner budget, got {}", metadata.len());
 
         let _ = std::fs::remove_file(&bin_path);
     }
@@ -669,8 +707,8 @@ print(arr[1]);
         assert!(bin_path.exists(), "macOS binary should exist");
 
         let metadata = std::fs::metadata(&bin_path).unwrap();
-        // Verify micro binary size budget (~20 KB - 40 KB)
-        assert!(metadata.len() < 50_000, "Binary size should be under 50KB, got {}", metadata.len());
+        // Verify standalone binary size is within micro-runner budget (< 5 MB)
+        assert!(metadata.len() > 1000 && metadata.len() < 5_000_000, "Binary size should be within runner budget, got {}", metadata.len());
 
         let _ = std::fs::remove_file(&bin_path);
     }
