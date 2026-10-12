@@ -74,6 +74,8 @@ pub fn resolve_runner_stub(custom_stub: Option<&Path>) -> Option<std::path::Path
             return Some(s.to_path_buf());
         }
     }
+
+    // 1. Direct micro-runner candidates relative to CWD
     for candidate in &[
         "stubs/eronom-runner",
         "stubs/er_runner",
@@ -83,15 +85,84 @@ pub fn resolve_runner_stub(custom_stub: Option<&Path>) -> Option<std::path::Path
         "target/debug/er_runner",
         "stubs/eronom-runner.exe",
         "stubs/er_runner.exe",
-        "target/release/eronom",
-        "target/debug/eronom",
-        "./eronom",
     ] {
         let p = std::path::PathBuf::from(candidate);
         if p.exists() {
             return Some(p);
         }
     }
+
+    // 2. Relative to current_exe and its ancestors
+    if let Ok(p) = std::env::current_exe() {
+        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
+        let name = canonical.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if (name == "eronom-runner" || name == "eronom-runner.exe" || name == "er_runner" || name == "er_runner.exe") && canonical.exists() {
+            return Some(canonical);
+        }
+
+        let mut curr = canonical.parent();
+        while let Some(parent) = curr {
+            let direct0 = parent.join("eronom-runner");
+            if direct0.exists() {
+                return Some(direct0);
+            }
+            let direct1 = parent.join("er_runner");
+            if direct1.exists() {
+                return Some(direct1);
+            }
+            let stub0 = parent.join("stubs/eronom-runner");
+            if stub0.exists() {
+                return Some(stub0);
+            }
+            let stub1 = parent.join("stubs/er_runner");
+            if stub1.exists() {
+                return Some(stub1);
+            }
+            let tr0 = parent.join("target/release/eronom-runner");
+            if tr0.exists() {
+                return Some(tr0);
+            }
+            let td0 = parent.join("target/debug/eronom-runner");
+            if td0.exists() {
+                return Some(td0);
+            }
+            curr = parent.parent();
+        }
+    }
+
+    // 3. Walk ancestors of current_dir
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut curr = Some(cwd.as_path());
+        while let Some(parent) = curr {
+            let direct0 = parent.join("eronom-runner");
+            if direct0.exists() {
+                return Some(direct0);
+            }
+            let direct1 = parent.join("er_runner");
+            if direct1.exists() {
+                return Some(direct1);
+            }
+            let stub0 = parent.join("stubs/eronom-runner");
+            if stub0.exists() {
+                return Some(stub0);
+            }
+            let stub1 = parent.join("stubs/er_runner");
+            if stub1.exists() {
+                return Some(stub1);
+            }
+            let tr0 = parent.join("target/release/eronom-runner");
+            if tr0.exists() {
+                return Some(tr0);
+            }
+            let td0 = parent.join("target/debug/eronom-runner");
+            if td0.exists() {
+                return Some(td0);
+            }
+            curr = parent.parent();
+        }
+    }
+
+    // 4. HOME directory
     if let Ok(home) = std::env::var("HOME") {
         let home_stub1 = std::path::PathBuf::from(&home).join(".eronom/stubs/eronom-runner");
         if home_stub1.exists() {
@@ -101,46 +172,33 @@ pub fn resolve_runner_stub(custom_stub: Option<&Path>) -> Option<std::path::Path
         if home_stub.exists() {
             return Some(home_stub);
         }
-        let home_bin = std::path::PathBuf::from(home).join("eronom/eronom");
-        if home_bin.exists() {
-            return Some(home_bin);
+        let home_bin1 = std::path::PathBuf::from(&home).join("eronom/eronom-runner");
+        if home_bin1.exists() {
+            return Some(home_bin1);
         }
     }
+
+    // 5. Last resort fallback to full CLI only if no micro-runner exists
+    for candidate in &[
+        "target/release/eronom",
+        "target/debug/eronom",
+    ] {
+        let p = std::path::PathBuf::from(candidate);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
     if let Ok(p) = std::env::current_exe() {
         let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
-        let name = canonical.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if (name == "eronom-runner" || name == "eronom-runner.exe" || name == "er_runner" || name == "er_runner.exe") && canonical.exists() {
-            return Some(canonical);
-        }
         if let Some(parent) = canonical.parent() {
-            let candidate_stub0 = parent.join("eronom-runner");
-            if candidate_stub0.exists() {
-                return Some(candidate_stub0);
-            }
-            let candidate_stub = parent.join("er_runner");
-            if candidate_stub.exists() {
-                return Some(candidate_stub);
-            }
             let candidate = parent.join("eronom");
             if candidate.exists() {
                 return Some(candidate);
             }
-            if let Some(grandparent) = parent.parent() {
-                let candidate_stub00 = grandparent.join("stubs/eronom-runner");
-                if candidate_stub00.exists() {
-                    return Some(candidate_stub00);
-                }
-                let candidate_stub2 = grandparent.join("stubs/er_runner");
-                if candidate_stub2.exists() {
-                    return Some(candidate_stub2);
-                }
-                let candidate2 = grandparent.join("eronom");
-                if candidate2.exists() {
-                    return Some(candidate2);
-                }
-            }
         }
     }
+
     None
 }
 
