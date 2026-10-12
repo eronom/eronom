@@ -102,7 +102,7 @@ pub fn is_eds_enabled(base_path: &std::path::Path) -> bool {
     let toml_content_opt = if toml_path.exists() {
         std::fs::read_to_string(&toml_path).ok()
     } else {
-        crate::vm::embedded::get_vfs_text("eronom.toml")
+        None
     };
 
     if let Some(content) = toml_content_opt {

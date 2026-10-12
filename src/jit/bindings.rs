@@ -27,6 +27,8 @@ unsafe extern "C" {
     );
     pub fn MIR_gen_init(ctx: *mut c_void);
     pub fn MIR_gen(ctx: *mut c_void, func_item: *mut c_void) -> *mut c_void;
+    pub fn MIR_get_func_machine_code(func_item: *mut c_void, out_len: *mut usize) -> *const u8;
+    pub fn MIR_item_name(ctx: *mut c_void, item: *mut c_void) -> *const c_char;
     pub fn MIR_gen_finish(ctx: *mut c_void);
     pub fn MIR_get_module_list(ctx: *mut c_void) -> *mut c_void;
     pub fn MIR_set_gen_interface(ctx: *mut c_void, func_item: *mut c_void);

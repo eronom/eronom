@@ -378,6 +378,34 @@ impl<'a> ExprParser<'a> {
             if name == "false" { return Ok(Value::Boolean(false)); }
             if name == "null" || name == "undefined" { return Ok(Value::Null); }
 
+            if name == "erm" && self.pos < self.input.len() && self.input[self.pos..].starts_with(".get(") {
+                self.pos += 5; // skip ".get("
+                let inner_val = self.parse_expr()?;
+                self.skip();
+                if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b')' {
+                    self.pos += 1;
+                }
+                let mut val = if let Value::Map(ref m) = inner_val {
+                    m.get("value").cloned().unwrap_or(inner_val)
+                } else {
+                    inner_val
+                };
+                while self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b'.' {
+                    self.pos += 1;
+                    let p_start = self.pos;
+                    while self.pos < self.input.len() && (self.input.as_bytes()[self.pos].is_ascii_alphanumeric() || self.input.as_bytes()[self.pos] == b'_' || self.input.as_bytes()[self.pos] == b'$') {
+                        self.pos += 1;
+                    }
+                    let prop = &self.input[p_start..self.pos];
+                    if let Value::Map(ref m) = val {
+                        val = m.get(prop).cloned().unwrap_or(Value::Null);
+                    } else {
+                        val = Value::Null;
+                    }
+                }
+                return Ok(val);
+            }
+
             let mut val = self.ev.vars.get(name).cloned().unwrap_or(Value::Null);
             while self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b'.' {
                 self.pos += 1;
@@ -406,7 +434,7 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
     }
     if p >= s.len() { return Ok((None, p)); }
 
-    if s[p..].starts_with("useState(") {
+    if s[p..].starts_with("useState(") || s[p..].starts_with("erm.init(") {
         p += 9;
         let mut depth = 1;
         let start = p;

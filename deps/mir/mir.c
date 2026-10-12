@@ -1417,6 +1417,7 @@ static MIR_item_t new_func_arr (MIR_context_t ctx, const char *name, size_t nres
   func->expr_p = func->jret_p = FALSE;
   func->n_inlines = 0;
   func->machine_code = func->call_addr = NULL;
+  func->machine_code_size = 0;
   func->first_lref = NULL;
   func_regs_init (ctx, func);
   for (size_t i = 0; i < nargs; i++) {
@@ -1591,12 +1592,13 @@ void MIR_finish_func (MIR_context_t ctx) {
       MIR_get_error_func (ctx) (MIR_vararg_func_error, "func %s: mix of RET and JRET insns",
                                 func_name);
     } else if (code == MIR_RET && actual_nops != curr_func->nres) {
+      size_t expected_nres = curr_func->nres;
       curr_func = NULL;
       MIR_get_error_func (
         ctx) (MIR_vararg_func_error,
               "func %s: in instruction '%s': number of operands in return does not "
-              "correspond number of function returns. Expected %d, got %d",
-              func_name, insn_descs[code].name, curr_func->nres, actual_nops);
+              "correspond number of function returns. Expected %zu, got %zu",
+              func_name, insn_descs[code].name, expected_nres, actual_nops);
     } else if (MIR_call_code_p (code)) {
       expr_p = FALSE;
     } else if (code == MIR_BO || code == MIR_UBO || code == MIR_BNO || code == MIR_UBNO) {

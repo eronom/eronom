@@ -111,11 +111,55 @@ pub struct VM {
     pub scheduler: super::scheduler::FiberScheduler,
 }
 
+pub type JitCompileFn = fn(&mut VM, *mut crate::vm::gc::GcObject) -> *const std::ffi::c_void;
+pub type JitResetFn = fn();
+pub type JitCleanupFn = unsafe fn(*mut std::ffi::c_void);
+pub type JitResetIcFn = fn();
+
+pub static mut JIT_COMPILE_HOOK: Option<JitCompileFn> = None;
+pub static mut JIT_RESET_HOOK: Option<JitResetFn> = None;
+pub static mut JIT_CLEANUP_HOOK: Option<JitCleanupFn> = None;
+pub static mut JIT_RESET_IC_HOOK: Option<JitResetIcFn> = None;
+
+pub fn set_jit_hooks(
+    compile: JitCompileFn,
+    reset: JitResetFn,
+    cleanup: JitCleanupFn,
+    reset_ic: JitResetIcFn,
+) {
+    unsafe {
+        JIT_COMPILE_HOOK = Some(compile);
+        JIT_RESET_HOOK = Some(reset);
+        JIT_CLEANUP_HOOK = Some(cleanup);
+        JIT_RESET_IC_HOOK = Some(reset_ic);
+    }
+}
+
+pub fn trigger_jit_reset() {
+    unsafe {
+        if let Some(reset) = JIT_RESET_HOOK {
+            reset();
+        }
+    }
+}
+
+pub fn trigger_jit_reset_ic() {
+    unsafe {
+        if let Some(reset_ic) = JIT_RESET_IC_HOOK {
+            reset_ic();
+        }
+    }
+}
+
 impl Drop for VM {
     fn drop(&mut self) {
-        crate::jit::helpers::reset_global_ic();
+        trigger_jit_reset_ic();
         if let Some(ctx) = self.mir_ctx {
-            crate::jit::cleanup_jit(ctx);
+            unsafe {
+                if let Some(cleanup) = JIT_CLEANUP_HOOK {
+                    cleanup(ctx);
+                }
+            }
         }
     }
 }

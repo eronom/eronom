@@ -9,7 +9,7 @@ pub fn get_re_attr_brace() -> &'static regex::Regex {
 
 pub fn get_re_state() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#"let\s+([A-Za-z0-9_]+)\s*=\s*useState\("#).unwrap())
+    RE.get_or_init(|| regex::Regex::new(r#"(?:let|const|var)\s+([A-Za-z0-9_]+)\s*=\s*(?:useState|erm\.init)\("#).unwrap())
 }
 
 pub fn get_re_import_named() -> &'static regex::Regex {
@@ -28,22 +28,14 @@ pub fn get_re_export() -> &'static regex::Regex {
 }
 
 pub fn file_exists_or_vfs(path: &std::path::Path) -> bool {
-    if path.exists() {
-        return true;
-    }
-    let s = path.to_string_lossy();
-    crate::vm::embedded::has_vfs_file(&s)
+    path.exists()
 }
 
 pub fn read_file_or_vfs(path: &std::path::Path) -> anyhow::Result<String> {
     if path.exists() && path.is_file() {
         return Ok(std::fs::read_to_string(path)?);
     }
-    let s = path.to_string_lossy();
-    if let Some(text) = crate::vm::embedded::get_vfs_text(&s) {
-        return Ok(text);
-    }
-    anyhow::bail!("File not found on disk or in VFS: {}", path.display())
+    anyhow::bail!("File not found on disk: {}", path.display())
 }
 
 pub fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> {
@@ -282,6 +274,9 @@ pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
     let name_pattern = format!("let {} = useState(", name);
     let name_pattern_const = format!("const {} = useState(", name);
     let name_pattern_var = format!("var {} = useState(", name);
+    let name_pattern_erm = format!("let {} = erm.init(", name);
+    let name_pattern_erm_const = format!("const {} = erm.init(", name);
+    let name_pattern_erm_var = format!("var {} = erm.init(", name);
 
     while i < input.len() {
         let matched_pat = if input[i..].starts_with(&name_pattern) {
@@ -290,6 +285,12 @@ pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
             Some(&name_pattern_const)
         } else if input[i..].starts_with(&name_pattern_var) {
             Some(&name_pattern_var)
+        } else if input[i..].starts_with(&name_pattern_erm) {
+            Some(&name_pattern_erm)
+        } else if input[i..].starts_with(&name_pattern_erm_const) {
+            Some(&name_pattern_erm_const)
+        } else if input[i..].starts_with(&name_pattern_erm_var) {
+            Some(&name_pattern_erm_var)
         } else {
             None
         };

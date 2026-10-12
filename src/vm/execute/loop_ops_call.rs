@@ -74,7 +74,9 @@ impl VM {
 
             if self.use_jit && !raw_func.is_async && raw_func.chunk.handlers.is_empty() {
                 if raw_func.jit_ptr.get().is_none() && (self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold) {
-                    crate::jit::compile_function(self, raw_fn_ptr);
+                    if let Some(compile) = super::types::JIT_COMPILE_HOOK {
+                        compile(self, raw_fn_ptr);
+                    }
                 }
                 if raw_func.jit_ptr.get().is_some() {
                     let frame = self.frames.last_mut().unwrap();
@@ -276,7 +278,7 @@ impl VM {
             }
             let frame = self.frames.last_mut().unwrap();
             frame.ip = ip.offset_from(code_ptr) as usize - 1;
-            let result = crate::jit::helpers::construct_struct_from_args_helper(&descriptor, args)?;
+            let result = crate::vm::alloc::construct_struct_from_args(&descriptor, args)?;
             let stack_start = self.stack.as_mut_ptr();
             let slots = stack_start.add(slots_offset);
             *slots.add(dest) = result;

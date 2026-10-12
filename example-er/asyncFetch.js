@@ -1,4 +1,4 @@
-// Node.js (JavaScript) Equivalent
+// JavaScript Reference Implementation
 const taskA = async (url) => {
     console.log("Starting fetch A...");
     await fetch(url);

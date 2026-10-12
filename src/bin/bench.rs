@@ -549,6 +549,7 @@ let stats = runPipeline(5000);
 struct BenchResultRow {
     bench_id: String,
     bench_name: String,
+    native_aot_avg: std::time::Duration,
     vm_jit_avg: std::time::Duration,
     vm_interp_avg: std::time::Duration,
     bun_pure_avg: std::time::Duration,
@@ -907,6 +908,65 @@ console.log((performance.now() - start) / 1000);
         }
     }
 
+    // --- Native (AOT) benchmark ---
+    let mut native_aot_avg = std::time::Duration::from_secs(0);
+    let mut native_aot_rss = None;
+
+    let local_bin = if bench.id == "fibonacci" && std::path::Path::new("./fib").exists() {
+        Some(std::path::PathBuf::from("./fib"))
+    } else {
+        let candidate = std::path::PathBuf::from(format!("./{}", bench.id));
+        if candidate.exists() {
+            Some(candidate)
+        } else {
+            None
+        }
+    };
+
+    let bin_to_run = if let Some(p) = local_bin {
+        Some(p)
+    } else {
+        let temp_aot_dir = std::env::temp_dir();
+        let temp_aot_src = temp_aot_dir.join(format!("bench_aot_{}_{}.er", bench.id, std::process::id()));
+        let temp_aot_bin = temp_aot_dir.join(format!("bench_aot_{}_{}", bench.id, std::process::id()));
+        if std::fs::write(&temp_aot_src, source).is_ok() {
+            if eronom::jit::aot::build_aot_binary(&temp_aot_src, &temp_aot_bin).is_ok() {
+                let _ = std::fs::remove_file(&temp_aot_src);
+                Some(temp_aot_bin)
+            } else {
+                let _ = std::fs::remove_file(&temp_aot_src);
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    if let Some(ref bin_path) = bin_to_run {
+        let bin_str = bin_path.to_string_lossy().to_string();
+        let start = Instant::now();
+        let mut success = true;
+        for _ in 0..iterations {
+            if !std::process::Command::new(&bin_str)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                success = false;
+                break;
+            }
+        }
+        if success {
+            native_aot_avg = start.elapsed() / (iterations as u32);
+            let (_, rss) = run_command_with_metrics(&bin_str, &[]);
+            native_aot_rss = rss;
+        }
+
+        if bin_path.starts_with(std::env::temp_dir()) {
+            let _ = std::fs::remove_file(bin_path);
+        }
+    }
+
     // --- Results Table ---
     eprintln!("┌────────────────────┬────────────┬────────────┬────────────┐");
     eprintln!("│ Runner             │ Avg Time   │ Peak RSS   │ Peak Heap  │");
@@ -928,6 +988,9 @@ console.log((performance.now() - start) / 1000);
     print_row("VM (Interpreter)", vm_interpreter_avg, vm_interpreter_rss, Some(vm_interpreter_peak_heap));
     if vm_jit_avg.as_nanos() > 0 {
         print_row("VM (JIT)", vm_jit_avg, vm_jit_rss, Some(vm_jit_peak_heap));
+    }
+    if native_aot_avg.as_nanos() > 0 {
+        print_row("Native (AOT)", native_aot_avg, native_aot_rss, None);
     }
     print_row("Compile only", compile_avg, compile_rss, Some(compile_peak_heap));
 
@@ -969,9 +1032,30 @@ console.log((performance.now() - start) / 1000);
         print_footer("🚀", &jit_text);
     }
 
-    let vm_avg = if vm_jit_avg.as_nanos() > 0 { vm_jit_avg } else { vm_interpreter_avg };
+    if native_aot_avg.as_nanos() > 0 {
+        let speedup = vm_interpreter_avg.as_nanos() as f64 / native_aot_avg.as_nanos() as f64;
+        let text = format!("Native (AOT) is {:.2}x FASTER than Interpreter", speedup);
+        print_footer("⚡", &text);
+        if vm_jit_avg.as_nanos() > 0 {
+            if native_aot_avg < vm_jit_avg {
+                let speedup = vm_jit_avg.as_nanos() as f64 / native_aot_avg.as_nanos() as f64;
+                let text = format!("Native (AOT) is {:.2}x FASTER than JIT", speedup);
+                print_footer("⚡", &text);
+            }
+        }
+    }
 
-    let engine_name = if vm_jit_avg.as_nanos() > 0 { "JIT" } else { "Interpreter" };
+    let vm_avg = if vm_jit_avg.as_nanos() > 0 {
+        vm_jit_avg
+    } else {
+        vm_interpreter_avg
+    };
+
+    let engine_name = if vm_jit_avg.as_nanos() > 0 {
+        "JIT"
+    } else {
+        "Interpreter"
+    };
 
     if bun_pure_avg.as_nanos() > 0 {
         if vm_avg < bun_pure_avg {
@@ -1056,6 +1140,7 @@ console.log((performance.now() - start) / 1000);
     BenchResultRow {
         bench_id: bench.id.to_string(),
         bench_name: bench.name.to_string(),
+        native_aot_avg,
         vm_jit_avg,
         vm_interp_avg: vm_interpreter_avg,
         bun_pure_avg,
@@ -1065,13 +1150,18 @@ console.log((performance.now() - start) / 1000);
 }
 
 fn print_consolidated_summary(results: &[BenchResultRow]) {
-    eprintln!("╔═══════════════════════════════════════════════════════════════════════════════════════════════════╗");
-    eprintln!("║                                  SUMMARY COMPARISON MATRIX                                        ║");
-    eprintln!("╠═══════════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦════╣");
-    eprintln!("║ Benchmark         ║ Eronom JIT   ║ Eronom Interp║ Node.js Pure ║ Bun Pure     ║ Deno Pure    ║ JIT║");
-    eprintln!("╠═══════════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬════╣");
+    eprintln!("╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
+    eprintln!("║                                           SUMMARY COMPARISON MATRIX                                           ║");
+    eprintln!("╠═══════════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦═════╣");
+    eprintln!("║ Benchmark         ║ Native (AOT) ║ Eronom JIT   ║ Eronom Interp║ Node.js Pure ║ Bun Pure     ║ Deno Pure    ║ JIT ║");
+    eprintln!("╠═══════════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬═════╣");
 
     for r in results {
+        let aot_str = if r.native_aot_avg.as_nanos() > 0 {
+            format!("{:?}", r.native_aot_avg)
+        } else {
+            "-".to_string()
+        };
         let jit_str = if r.vm_jit_avg.as_nanos() > 0 {
             format!("{:?}", r.vm_jit_avg)
         } else {
@@ -1090,15 +1180,16 @@ fn print_consolidated_summary(results: &[BenchResultRow]) {
         };
 
         eprintln!(
-            "║ {:<17} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>2} ║",
-            r.bench_id, jit_str, interp_str, node_str, bun_str, deno_str, speedup_str
+            "║ {:<17} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>3} ║",
+            r.bench_id, aot_str, jit_str, interp_str, node_str, bun_str, deno_str, speedup_str
         );
     }
-    eprintln!("╚═══════════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩════╝");
+    eprintln!("╚═══════════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩═════╝");
     eprintln!();
 }
 
 fn main() {
+    ::eronom::jit::init_jit_hooks();
     eronom::backend::alloc::init_allocator_options();
     let suite = get_benchmark_suite();
 

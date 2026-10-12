@@ -10,11 +10,11 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use runner::{run_file, run_test_command};
 
 fn main() {
-    // 1. Check if the currently executing binary is a self-contained embedded executable
-    if let Ok(true) = backend::embedded::check_and_mount_embedded() {
-        let entrypoint = backend::embedded::get_vfs_entrypoint().unwrap_or_else(|| "server.er".to_string());
-        if let Err(e) = run_file(&entrypoint) {
-            eprintln!("Runtime error: {}", e);
+    eronom::jit::init_jit_hooks();
+    // 0. If running as a standalone self-contained bundle, execute the embedded app
+    if let Some(res) = runner::check_and_run_embedded_bundle() {
+        if let Err(e) = res {
+            eprintln!("Error running standalone application: {}", e);
             std::process::exit(1);
         }
         return;

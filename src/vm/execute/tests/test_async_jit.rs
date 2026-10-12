@@ -21,6 +21,7 @@ fn test_imports_exports() {
     let compiler = Compiler::new();
     let function = compiler.compile(&stmts).unwrap();
     
+    crate::jit::init_jit_hooks();
     let mut vm = VM::new();
     vm.use_jit = true;
     vm.run(function.clone()).unwrap();
@@ -402,6 +403,6 @@ fn test_jit_lifecycle_reset() {
         let code = format!("let val = {} * 10 + 5", i);
         let vm = run_code(&code).unwrap();
         assert_eq!(vm.get_global("val").unwrap().as_number(), (i * 10 + 5) as f64);
-        crate::jit::reset_jit_state();
+        crate::vm::execute::types::trigger_jit_reset();
     }
 }

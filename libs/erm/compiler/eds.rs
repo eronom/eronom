@@ -57,6 +57,7 @@ struct EdsEngine {
 }
 
 fn init_eds_engine(project_dir: Option<&Path>) -> Result<EdsEngine> {
+    crate::vm::execute::gc_integration::set_eds_mark_hook(mark_eds_roots);
     let script_source: Cow<str> = if let Some(path) = find_eds_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             Cow::Owned(content)

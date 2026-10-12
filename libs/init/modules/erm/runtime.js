@@ -669,7 +669,7 @@ function reconcileNodes(parent, newNodes) {
   });
 }
 
-// --- Backwards-Compatible useState & Signals Wrapper ---
+// --- Eronom Reactive State Primitives ---
 const statesRegistry = new Map();
 
 function createArrayProxy(arr, setter, name) {
@@ -703,62 +703,85 @@ function createArrayProxy(arr, setter, name) {
   });
 }
 
-export function useState(val, name) {
-  if (name && statesRegistry.has(name)) {
-    return statesRegistry.get(name);
-  }
-  const hmrVal = name ? getHmrState(name) : undefined;
-  if (hmrVal !== undefined) {
-    val = hmrVal;
-  }
+export const erm = {
+  init(val, name) {
+    if (name && statesRegistry.has(name)) {
+      return statesRegistry.get(name);
+    }
+    const hmrVal = name ? getHmrState(name) : undefined;
+    if (hmrVal !== undefined) {
+      val = hmrVal;
+    }
 
-  if (typeof val === 'function') {
-    const memo = createMemo(val, undefined, { name });
-    const wrapper = function () { return memo(); };
-    Object.defineProperty(wrapper, 'value', {
-      get() { return memo(); },
-      enumerable: true
-    });
-    wrapper.toString = () => String(memo());
-    wrapper.valueOf = () => memo();
-    wrapper[Symbol.toPrimitive] = () => memo();
-    if (name) statesRegistry.set(name, wrapper);
-    return wrapper;
-  }
+    if (typeof val === 'function') {
+      const memo = createMemo(val, undefined, { name });
+      const signal = {
+        _get: memo,
+        _name: name,
+        _isDerived: true
+      };
+      if (name) statesRegistry.set(name, signal);
+      return signal;
+    }
 
-  const [get, set] = createSignal(val, { name });
+    const [get, set] = createSignal(val, { name });
+    const signal = {
+      _get: get,
+      _set: set,
+      _name: name
+    };
 
-  function signalWrapper(...args) {
-    if (args.length > 0) return set(args[0]);
-    return get();
-  }
+    if (name) {
+      statesRegistry.set(name, signal);
+    }
 
-  Object.defineProperty(signalWrapper, 'value', {
-    get() {
-      const current = get();
-      if (Array.isArray(current)) {
-        return createArrayProxy(current, set, name);
+    return signal;
+  },
+
+  get(signal) {
+    if (signal === null || signal === undefined) return signal;
+    if (typeof signal._get === 'function') {
+      const current = signal._get();
+      if (Array.isArray(current) && typeof signal._set === 'function') {
+        return createArrayProxy(current, signal._set, signal._name);
       }
       return current;
-    },
-    set(newVal) {
-      if (name) {
-        setHmrState(name, newVal);
+    }
+    return signal;
+  },
+
+  set(signal, newVal) {
+    if (signal === null || signal === undefined) return newVal;
+    if (typeof signal._set === 'function') {
+      if (signal._name) {
+        setHmrState(signal._name, newVal);
       }
-      set(newVal);
-    },
-    enumerable: true
-  });
+      signal._set(newVal);
+      return newVal;
+    }
+    return newVal;
+  },
 
-  signalWrapper.toString = () => String(get());
-  signalWrapper.valueOf = () => get();
-  signalWrapper[Symbol.toPrimitive] = () => get();
+  update(signal, d = 1) {
+    var value = erm.get(signal);
+    var result = d === 1 ? value++ : value--;
+    erm.set(signal, value);
+    return result;
+  },
 
-  if (name) {
-    statesRegistry.set(name, signalWrapper);
+  update_pre(signal, d = 1) {
+    var value = erm.get(signal);
+    return erm.set(signal, d === 1 ? ++value : --value);
+  },
+
+  mutate(signal, value) {
+    erm.set(signal, untrack(() => erm.get(signal)));
+    return value;
   }
+};
 
-  return signalWrapper;
+export function useState(val, name) {
+  return erm.init(val, name);
 }
 
 export function useEffect(callback, depsFn) {
@@ -1142,6 +1165,7 @@ export async function applyErmHmr(targetPath, timestamp) {
 }
 
 if (typeof window !== 'undefined') {
+  window.erm = erm;
   window.__erm_apply_hmr = applyErmHmr;
 }
 

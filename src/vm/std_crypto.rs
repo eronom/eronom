@@ -1,6 +1,8 @@
-use ring::digest::{self, SHA256, SHA512};
-use ring::hmac;
-use ring::rand::{SecureRandom, SystemRandom};
+use sha2::{Digest, Sha256, Sha512};
+use hmac::{Hmac, Mac};
+
+type HmacSha256 = Hmac<Sha256>;
+type HmacSha512 = Hmac<Sha512>;
 
 use super::gc::{gc_alloc_string, gc_allocate, get_pooled_vec, GcData};
 use super::value::Value;
@@ -158,20 +160,23 @@ pub fn native_crypto_hash(args: Vec<Value>) -> Value {
 
     let hex_res = match algo.as_str() {
         "sha256" => {
-            let d = digest::digest(&SHA256, &bytes);
-            hex_encode(d.as_ref())
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            hex_encode(&hasher.finalize())
         }
         "sha512" => {
-            let d = digest::digest(&SHA512, &bytes);
-            hex_encode(d.as_ref())
+            let mut hasher = Sha512::new();
+            hasher.update(&bytes);
+            hex_encode(&hasher.finalize())
         }
         "md5" => {
             let d = md5_digest(&bytes);
             hex_encode(&d)
         }
         _ => {
-            let d = digest::digest(&SHA256, &bytes);
-            hex_encode(d.as_ref())
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            hex_encode(&hasher.finalize())
         }
     };
 
@@ -189,23 +194,32 @@ pub fn native_crypto_hmac(args: Vec<Value>) -> Value {
 
     let hex_res = match algo.as_str() {
         "sha256" => {
-            let key = hmac::Key::new(hmac::HMAC_SHA256, &key_bytes);
-            let signature = hmac::sign(&key, &data_bytes);
-            hex_encode(signature.as_ref())
+            if let Ok(mut mac) = HmacSha256::new_from_slice(&key_bytes) {
+                mac.update(&data_bytes);
+                hex_encode(&mac.finalize().into_bytes())
+            } else {
+                String::new()
+            }
         }
         "sha512" => {
-            let key = hmac::Key::new(hmac::HMAC_SHA512, &key_bytes);
-            let signature = hmac::sign(&key, &data_bytes);
-            hex_encode(signature.as_ref())
+            if let Ok(mut mac) = HmacSha512::new_from_slice(&key_bytes) {
+                mac.update(&data_bytes);
+                hex_encode(&mac.finalize().into_bytes())
+            } else {
+                String::new()
+            }
         }
         "md5" => {
             let sig = hmac_md5(&key_bytes, &data_bytes);
             hex_encode(&sig)
         }
         _ => {
-            let key = hmac::Key::new(hmac::HMAC_SHA256, &key_bytes);
-            let signature = hmac::sign(&key, &data_bytes);
-            hex_encode(signature.as_ref())
+            if let Ok(mut mac) = HmacSha256::new_from_slice(&key_bytes) {
+                mac.update(&data_bytes);
+                hex_encode(&mac.finalize().into_bytes())
+            } else {
+                String::new()
+            }
         }
     };
 
@@ -232,9 +246,8 @@ pub fn native_crypto_timing_safe_equal(args: Vec<Value>) -> Value {
 }
 
 pub fn native_crypto_random_uuid(_args: Vec<Value>) -> Value {
-    let rng = SystemRandom::new();
     let mut bytes = [0u8; 16];
-    if rng.fill(&mut bytes).is_err() {
+    if getrandom::getrandom(&mut bytes).is_err() {
         // Fallback to timestamp + pseudo random if system random failed
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -269,9 +282,8 @@ pub fn native_crypto_random_bytes(args: Vec<Value>) -> Value {
         32
     };
 
-    let rng = SystemRandom::new();
     let mut buf = vec![0u8; len];
-    let _ = rng.fill(&mut buf);
+    let _ = getrandom::getrandom(&mut buf);
 
     let mut arr = get_pooled_vec(len);
     for b in buf {
@@ -289,9 +301,8 @@ pub fn native_crypto_random_hex(args: Vec<Value>) -> Value {
         16
     };
 
-    let rng = SystemRandom::new();
     let mut buf = vec![0u8; len];
-    let _ = rng.fill(&mut buf);
+    let _ = getrandom::getrandom(&mut buf);
 
     let hex_str = hex_encode(&buf);
     let ptr = gc_alloc_string(&hex_str);
@@ -313,9 +324,8 @@ pub fn native_crypto_random_int(args: Vec<Value>) -> Value {
     }
 
     let range = (max - min) as u64;
-    let rng = SystemRandom::new();
     let mut bytes = [0u8; 8];
-    let _ = rng.fill(&mut bytes);
+    let _ = getrandom::getrandom(&mut bytes);
     let r = u64::from_le_bytes(bytes);
     let val = min + ((r % range) as i64);
 
@@ -330,4 +340,50 @@ pub fn register_crypto_natives(vm: &mut VM) {
     vm.register_global("Eronom_nativeCryptoRandomBytes", Value::native_function(native_crypto_random_bytes));
     vm.register_global("Eronom_nativeCryptoRandomHex", Value::native_function(native_crypto_random_hex));
     vm.register_global("Eronom_nativeCryptoRandomInt", Value::native_function(native_crypto_random_int));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_crypto_sha256_and_md5_hash() {
+        let str_ptr = gc_alloc_string("hello");
+        let val = Value::string(str_ptr);
+
+        let algo_ptr = gc_alloc_string("sha256");
+        let algo_val = Value::string(algo_ptr);
+        let res = native_crypto_hash(vec![algo_val, val]);
+        assert_eq!(
+            res.as_str().unwrap(),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+
+        let md5_ptr = gc_alloc_string("md5");
+        let md5_algo = Value::string(md5_ptr);
+        let res_md5 = native_crypto_hash(vec![md5_algo, val]);
+        assert_eq!(res_md5.as_str().unwrap(), "5d41402abc4b2a76b9719d911017c592");
+    }
+
+    #[test]
+    fn test_crypto_hmac_sha256() {
+        let algo = Value::string(gc_alloc_string("sha256"));
+        let key = Value::string(gc_alloc_string("key"));
+        let data = Value::string(gc_alloc_string("The quick brown fox jumps over the lazy dog"));
+        let hmac_res = native_crypto_hmac(vec![algo, key, data]);
+        assert_eq!(
+            hmac_res.as_str().unwrap(),
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
+    }
+
+    #[test]
+    fn test_crypto_random_uuid_format() {
+        let uuid_val = native_crypto_random_uuid(vec![]);
+        let uuid_str = uuid_val.as_str().unwrap();
+        assert_eq!(uuid_str.len(), 36);
+        assert_eq!(&uuid_str[14..15], "4"); // UUID v4 version nibble
+        let c = uuid_str.chars().nth(19).unwrap();
+        assert!(c == '8' || c == '9' || c == 'a' || c == 'b'); // variant 1
+    }
 }

@@ -7,6 +7,15 @@ use super::types::*;
 use super::utils::{format_cookie, status_code_to_status_line, value_to_json};
 use super::static_files::serve_static_file;
 
+pub type RenderFn = fn(Vec<Value>) -> Value;
+pub static RENDER_HOOK: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+pub static RENDER_STRING_HOOK: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+pub fn set_render_hooks(render_fn: RenderFn, render_string_fn: RenderFn) {
+    RENDER_HOOK.store(render_fn as *mut (), std::sync::atomic::Ordering::SeqCst);
+    RENDER_STRING_HOOK.store(render_string_fn as *mut (), std::sync::atomic::Ordering::SeqCst);
+}
+
 pub fn flush_response(
     res_ptr: *mut c_void,
     body: Option<&[u8]>,
@@ -136,7 +145,15 @@ pub fn native_context_render(args: Vec<Value>) -> Value {
     } else {
         render_args.push(Value::null());
     }
-    let html_val = crate::server::render::native_render(render_args);
+    let html_val = {
+        let hook = RENDER_HOOK.load(std::sync::atomic::Ordering::Relaxed);
+        if !hook.is_null() {
+            let f: RenderFn = unsafe { std::mem::transmute(hook) };
+            f(render_args)
+        } else {
+            super::utils::fallback_render(render_args)
+        }
+    };
     if html_val.is_null() {
         flush_response(res_ptr, Some(b"404 Not Found"), Some("text/plain"), 404);
         return Value::null();
@@ -170,7 +187,15 @@ pub fn native_context_render_string(args: Vec<Value>) -> Value {
     } else {
         render_args.push(Value::null());
     }
-    let html_val = crate::server::render::native_render_string(render_args);
+    let html_val = {
+        let hook = RENDER_STRING_HOOK.load(std::sync::atomic::Ordering::Relaxed);
+        if !hook.is_null() {
+            let f: RenderFn = unsafe { std::mem::transmute(hook) };
+            f(render_args)
+        } else {
+            super::utils::fallback_render_string(render_args)
+        }
+    };
     if html_val.is_null() {
         flush_response(res_ptr, Some(b"500 Internal Server Error"), Some("text/plain"), 500);
         return Value::null();

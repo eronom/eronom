@@ -132,7 +132,7 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
     
     let requested_port = LISTEN_PORT.with(|p| p.get()).unwrap_or_else(|| get_port_from_config(vm));
     let port = if requested_port > 0 {
-        crate::server::find_available_port(requested_port as u16) as i32
+        super::utils::find_available_port(requested_port as u16) as i32
     } else {
         requested_port
     };
@@ -696,7 +696,7 @@ pub fn native_serve(args: Vec<Value>) -> Value {
 
     // 2. Determine final port
     let final_port = if port > 0 {
-        crate::server::find_available_port(port as u16) as i32
+        super::utils::find_available_port(port as u16) as i32
     } else {
         3000
     };
