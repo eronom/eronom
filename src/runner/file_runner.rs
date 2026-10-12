@@ -14,6 +14,7 @@ impl Drop for GcGuard {
 }
 
 pub fn run_file(path: &str) -> anyhow::Result<()> {
+    jit::init_jit_hooks();
     let _guard = GcGuard;
     let path_buf = std::path::PathBuf::from(path);
     if !path_buf.exists() {

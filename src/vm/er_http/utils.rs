@@ -293,3 +293,94 @@ pub fn value_to_json(val: Value) -> serde_json::Value {
         serde_json::Value::Null
     }
 }
+
+pub fn is_port_in_use(port: u16) -> bool {
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::time::Duration;
+
+    let v4 = SocketAddr::from(([127, 0, 0, 1], port));
+    if TcpStream::connect_timeout(&v4, Duration::from_millis(50)).is_ok() {
+        return true;
+    }
+
+    let v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port));
+    if TcpStream::connect_timeout(&v6, Duration::from_millis(50)).is_ok() {
+        return true;
+    }
+
+    if TcpListener::bind(("0.0.0.0", port)).is_err() {
+        return true;
+    }
+
+    if TcpListener::bind(("127.0.0.1", port)).is_err() {
+        return true;
+    }
+
+    false
+}
+
+pub fn find_available_port(start_port: u16) -> u16 {
+    if start_port == 0 {
+        return 0;
+    }
+    let mut port = start_port;
+    while is_port_in_use(port) {
+        if let Some(next) = port.checked_add(1) {
+            port = next;
+        } else {
+            break;
+        }
+    }
+    port
+}
+
+pub fn fallback_render(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let file_path = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+
+    let path = std::path::Path::new(file_path);
+    let mut resolved_path = if path.exists() {
+        path.to_path_buf()
+    } else if path.with_extension("html").exists() {
+        path.with_extension("html")
+    } else {
+        path.to_path_buf()
+    };
+
+    if !resolved_path.exists() {
+        if let Some(target) = super::get_target_script_path() {
+            if let Some(parent) = std::path::Path::new(&target).parent() {
+                let candidate = parent.join(path);
+                if candidate.exists() {
+                    resolved_path = candidate;
+                } else if candidate.with_extension("html").exists() {
+                    resolved_path = candidate.with_extension("html");
+                }
+            }
+        }
+    }
+
+    if let Ok(content) = std::fs::read_to_string(&resolved_path) {
+        let ptr = crate::vm::gc::gc_alloc_string(&content);
+        Value::string(ptr)
+    } else {
+        Value::null()
+    }
+}
+
+pub fn fallback_render_string(args: Vec<Value>) -> Value {
+    if args.is_empty() {
+        return Value::null();
+    }
+    let content = match args[0].as_str() {
+        Some(s) => s,
+        None => return Value::null(),
+    };
+    let ptr = crate::vm::gc::gc_alloc_string(content);
+    Value::string(ptr)
+}

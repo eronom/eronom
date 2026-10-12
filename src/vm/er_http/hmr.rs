@@ -74,7 +74,7 @@ pub fn check_and_reload_script_if_needed(vm: &mut VM) {
     println!("[HTTP] File change detected, reloading script: {}...", path);
     
     // Safely free old MIR JIT buffers and clear code caches on reload
-    crate::jit::reset_jit_state();
+    crate::vm::execute::types::trigger_jit_reset();
 
     let old_routes = ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));
     let old_ws_routes = WS_ROUTES.with(|r| std::mem::take(&mut *r.borrow_mut()));

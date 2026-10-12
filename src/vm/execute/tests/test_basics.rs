@@ -5,6 +5,7 @@ use crate::vm::compiler::Compiler;
 use std::sync::atomic::Ordering;
 
 pub fn run_code(source: &str) -> Result<VM, String> {
+    crate::jit::init_jit_hooks();
     let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
     let tokens = crate::frontend::lex(source);

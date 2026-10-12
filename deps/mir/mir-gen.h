@@ -21,6 +21,7 @@ extern void MIR_gen_set_debug_file (MIR_context_t ctx, FILE *f);
 extern void MIR_gen_set_debug_level (MIR_context_t ctx, int debug_level);
 extern void MIR_gen_set_optimize_level (MIR_context_t ctx, unsigned int level);
 extern void *MIR_gen (MIR_context_t ctx, MIR_item_t func_item);
+extern const uint8_t *MIR_get_func_machine_code (MIR_item_t func_item, size_t *out_len);
 extern void MIR_set_gen_interface (MIR_context_t ctx, MIR_item_t func_item);
 extern void MIR_set_lazy_gen_interface (MIR_context_t ctx, MIR_item_t func_item);
 extern void MIR_set_lazy_bb_gen_interface (MIR_context_t ctx, MIR_item_t func_item);

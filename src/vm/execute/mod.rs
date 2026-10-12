@@ -48,7 +48,7 @@ impl VM {
             20
         };
         crate::vm::alloc::init_allocator_options();
-        crate::jit::helpers::reset_global_ic();
+        types::trigger_jit_reset_ic();
         Self {
             has_error_flag: 0,
             frames: Vec::new(),
@@ -78,7 +78,7 @@ impl VM {
     }
 
     pub fn reset_jit(&mut self) {
-        crate::jit::reset_jit_state();
+        types::trigger_jit_reset();
     }
 
     pub fn register_global(&mut self, name: &str, value: Value) {

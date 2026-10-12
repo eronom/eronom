@@ -10,6 +10,16 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use runner::{run_file, run_test_command};
 
 fn main() {
+    eronom::jit::init_jit_hooks();
+    // 0. If running as a standalone self-contained bundle, execute the embedded app
+    if let Some(res) = runner::check_and_run_embedded_bundle() {
+        if let Err(e) = res {
+            eprintln!("Error running standalone application: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     use clap::Parser;
     let cli = eronom::cli::Cli::parse();
 

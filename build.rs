@@ -15,6 +15,8 @@ fn main() {
         .file(mir_dir.join("mir-gen.c"))
         .include(&mir_dir)
         .flag_if_supported("-Wno-psabi")
+        .flag_if_supported("-fno-unwind-tables")
+        .flag_if_supported("-fno-asynchronous-unwind-tables")
         .warnings(false)
         .compile("mir");
 
@@ -90,6 +92,8 @@ fn main() {
         .file(u_sockets_dir.join("src").join("udp.c"))
         .include(u_sockets_dir.join("src"))
         .define("LIBUS_NO_SSL", None)
+        .flag_if_supported("-fno-unwind-tables")
+        .flag_if_supported("-fno-asynchronous-unwind-tables")
         .warnings(false)
         .opt_level(3);
 
@@ -117,6 +121,10 @@ fn main() {
         .include(u_sockets_dir.join("src"))
         .define("LIBUS_NO_SSL", None)
         .define("UWS_NO_ZLIB", None)
+        .flag_if_supported("-fno-exceptions")
+        .flag_if_supported("-fno-rtti")
+        .flag_if_supported("-fno-unwind-tables")
+        .flag_if_supported("-fno-asynchronous-unwind-tables")
         .warnings(false)
         .opt_level(3);
 

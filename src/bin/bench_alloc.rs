@@ -142,6 +142,7 @@ fn run_command_with_metrics(
 }
 
 fn main() {
+    ::eronom::jit::init_jit_hooks();
     eronom::backend::alloc::init_allocator_options();
     let source = r#"
 for i in 1..50000 {

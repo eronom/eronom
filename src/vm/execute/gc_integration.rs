@@ -9,6 +9,12 @@ use crate::vm::gc::{
 };
 use super::types::{VM, VmTimerAction, AsyncResult};
 
+pub static EDS_MARK_HOOK: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+pub fn set_eds_mark_hook(hook: fn()) {
+    EDS_MARK_HOOK.store(hook as *mut (), std::sync::atomic::Ordering::SeqCst);
+}
+
 thread_local! {
     pub static GC_TIME: Cell<Duration> = const { Cell::new(Duration::from_nanos(0)) };
     pub static GC_COUNT: Cell<u64> = const { Cell::new(0) };
@@ -225,7 +231,11 @@ impl VM {
             }
         });
 
-        crate::compiler::eds::mark_eds_roots();
+        let hook = EDS_MARK_HOOK.load(std::sync::atomic::Ordering::Relaxed);
+        if !hook.is_null() {
+            let func: fn() = unsafe { std::mem::transmute(hook) };
+            func();
+        }
 
         crate::vm::er_http::types::ROUTES.with(|routes| {
             if let Ok(routes) = routes.try_borrow() {

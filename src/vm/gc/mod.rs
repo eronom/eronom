@@ -281,7 +281,7 @@ pub fn gc_free_all() {
         });
         gc_clear_string_cache();
         crate::vm::shape::reset_shape_state();
-        crate::jit::helpers::reset_global_ic();
+        crate::vm::execute::types::trigger_jit_reset_ic();
         crate::vm::alloc::scavenge_idle_memory();
     }
 }

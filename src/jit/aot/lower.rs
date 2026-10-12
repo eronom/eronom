@@ -1,13 +1,147 @@
+use fnv::FnvHashMap;
 use crate::vm::bytecode::{Function, OpCode};
-use crate::jit::compiler::type_flow::{analyze_types, RegType};
 use crate::jit::compiler::emit_header::calculate_max_regs;
 use super::ir::{EirBinaryOp, EirFunction, EirInst, EirModule, EirType, EirUnaryOp};
+
+fn aot_analyze_types(func: &Function, num_regs: usize) -> Vec<Vec<EirType>> {
+    let code = &func.chunk.code;
+    let n = code.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut in_types = vec![vec![EirType::Dynamic; num_regs]; n];
+    let mut worklist = vec![0];
+    let mut in_worklist = vec![false; n];
+    in_worklist[0] = true;
+
+    while let Some(pc) = worklist.pop() {
+        in_worklist[pc] = false;
+        let inst = &code[pc];
+        let mut out = in_types[pc].clone();
+
+        let ra = inst.ra as usize;
+        let rb = inst.rb as usize;
+        let rc = inst.rc as usize;
+
+        match inst.op {
+            OpCode::LoadConst => {
+                if let Some(&val) = func.chunk.constants.get(inst.operand as usize) {
+                    if ra < num_regs {
+                        if val.is_number() {
+                            let f = val.as_number();
+                            if f.fract() != 0.0 || f < i64::MIN as f64 || f > i64::MAX as f64 {
+                                out[ra] = EirType::F64;
+                            } else {
+                                out[ra] = EirType::I64;
+                            }
+                        } else if val.is_boolean() {
+                            out[ra] = EirType::Bool;
+                        } else {
+                            out[ra] = EirType::Dynamic;
+                        }
+                    }
+                }
+            }
+            OpCode::Move => {
+                if ra < num_regs && rb < num_regs {
+                    out[ra] = in_types[pc][rb];
+                }
+            }
+            OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div => {
+                if ra < num_regs {
+                    let rb_is_f64 = rb < num_regs && in_types[pc][rb] == EirType::F64;
+                    let rc_is_f64 = rc < num_regs && in_types[pc][rc] == EirType::F64;
+                    let rb_is_i64 = rb < num_regs && in_types[pc][rb] == EirType::I64;
+                    let rc_is_i64 = rc < num_regs && in_types[pc][rc] == EirType::I64;
+                    if rb_is_f64 || rc_is_f64 {
+                        out[ra] = EirType::F64;
+                    } else if rb_is_i64 && rc_is_i64 {
+                        out[ra] = EirType::I64;
+                    } else {
+                        out[ra] = EirType::Dynamic;
+                    }
+                }
+            }
+            OpCode::Negate => {
+                if ra < num_regs && rb < num_regs {
+                    out[ra] = in_types[pc][rb];
+                }
+            }
+            OpCode::Not | OpCode::Equal | OpCode::Greater | OpCode::Less => {
+                if ra < num_regs {
+                    out[ra] = EirType::Bool;
+                }
+            }
+            _ => {
+                if ra < num_regs {
+                    out[ra] = EirType::Dynamic;
+                }
+            }
+        }
+
+        let mut successors = Vec::new();
+        match inst.op {
+            OpCode::Jump => {
+                let target = pc + 1 + inst.operand as usize;
+                if target < n {
+                    successors.push(target);
+                }
+            }
+            OpCode::JumpIfFalse => {
+                if pc + 1 < n {
+                    successors.push(pc + 1);
+                }
+                let target = pc + 1 + inst.operand as usize;
+                if target < n {
+                    successors.push(target);
+                }
+            }
+            OpCode::Loop => {
+                let opnd = inst.operand as usize;
+                let target = if pc + 1 >= opnd { pc + 1 - opnd } else { 0 };
+                if target < n {
+                    successors.push(target);
+                }
+            }
+            OpCode::Return => {}
+            _ => {
+                if pc + 1 < n {
+                    successors.push(pc + 1);
+                }
+            }
+        }
+
+        for succ in successors {
+            let mut changed = false;
+            for r in 0..num_regs {
+                let old_ty = in_types[succ][r];
+                let new_ty = out[r];
+                let merged = if old_ty == new_ty {
+                    old_ty
+                } else {
+                    EirType::Dynamic
+                };
+                if merged != old_ty {
+                    in_types[succ][r] = merged;
+                    changed = true;
+                }
+            }
+            if changed && !in_worklist[succ] {
+                worklist.push(succ);
+                in_worklist[succ] = true;
+            }
+        }
+    }
+
+    in_types
+}
 
 /// Lower a bytecode function into a typed E-IR function with unboxed numeric and control-flow operations.
 pub fn lower_function_with_symbols(
     func: &Function,
     name_override: Option<&str>,
     child_syms: &[(usize, String)],
+    global_funcs: &FnvHashMap<String, String>,
 ) -> EirFunction {
     let name = name_override
         .map(|s| s.to_string())
@@ -15,17 +149,18 @@ pub fn lower_function_with_symbols(
         .unwrap_or_else(|| "er_main".to_string());
 
     let num_regs = calculate_max_regs(func).max(32);
-    let param_is_double = vec![false; func.arity];
-    let (types_at_inst, _) = analyze_types(func, num_regs, &param_is_double);
+    let in_types = aot_analyze_types(func, num_regs);
 
     let mut instructions = Vec::with_capacity(func.chunk.code.len());
     let mut param_types = Vec::with_capacity(func.arity);
-    for i in 0..func.arity {
-        if i < param_is_double.len() && param_is_double[i] {
-            param_types.push(EirType::F64);
-        } else {
-            param_types.push(EirType::Dynamic);
-        }
+    for _ in 0..func.arity {
+        param_types.push(EirType::Dynamic);
+    }
+
+    let mut reg_fns: FnvHashMap<usize, String> = FnvHashMap::default();
+    let mut local_globals = global_funcs.clone();
+    if let Some(ref self_name) = func.name {
+        local_globals.insert(self_name.clone(), name.clone());
     }
 
     for (idx, inst) in func.chunk.code.iter().enumerate() {
@@ -33,11 +168,13 @@ pub fn lower_function_with_symbols(
         let rb = inst.rb as usize;
         let rc = inst.rc as usize;
         let operand = inst.operand as usize;
-        let reg_type = if idx < types_at_inst.len() && ra < types_at_inst[idx].len() {
-            match types_at_inst[idx][ra] {
-                RegType::Double => EirType::F64,
-                RegType::Unknown => EirType::Dynamic,
-            }
+
+        let rb_ty = in_types.get(idx).and_then(|row| row.get(rb)).copied().unwrap_or(EirType::Dynamic);
+        let rc_ty = in_types.get(idx).and_then(|row| row.get(rc)).copied().unwrap_or(EirType::Dynamic);
+        let bin_ty = if rb_ty == EirType::F64 || rc_ty == EirType::F64 {
+            EirType::F64
+        } else if rb_ty == EirType::I64 && rc_ty == EirType::I64 {
+            EirType::I64
         } else {
             EirType::Dynamic
         };
@@ -68,13 +205,13 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::ConstBool { dest: ra, val: operand != 0 });
             }
             OpCode::Move => {
-                instructions.push(EirInst::Move { dest: ra, src: rb, ty: reg_type });
+                instructions.push(EirInst::Move { dest: ra, src: rb, ty: rb_ty });
             }
             OpCode::Negate => {
                 instructions.push(EirInst::Unary {
                     dest: ra,
                     op: EirUnaryOp::Neg,
-                    ty: reg_type,
+                    ty: rb_ty,
                     src: rb,
                 });
             }
@@ -90,7 +227,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::Add,
-                    ty: reg_type,
+                    ty: bin_ty,
                     left: rb,
                     right: rc,
                 });
@@ -99,7 +236,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::Sub,
-                    ty: reg_type,
+                    ty: bin_ty,
                     left: rb,
                     right: rc,
                 });
@@ -108,7 +245,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::Mul,
-                    ty: reg_type,
+                    ty: bin_ty,
                     left: rb,
                     right: rc,
                 });
@@ -117,7 +254,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::Div,
-                    ty: reg_type,
+                    ty: bin_ty,
                     left: rb,
                     right: rc,
                 });
@@ -126,7 +263,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::Mod,
-                    ty: reg_type,
+                    ty: EirType::Dynamic,
                     left: rb,
                     right: rc,
                 });
@@ -135,7 +272,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::BitAnd,
-                    ty: reg_type,
+                    ty: EirType::Dynamic,
                     left: rb,
                     right: rc,
                 });
@@ -144,7 +281,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::BitOr,
-                    ty: reg_type,
+                    ty: EirType::Dynamic,
                     left: rb,
                     right: rc,
                 });
@@ -153,7 +290,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::BitXor,
-                    ty: reg_type,
+                    ty: EirType::Dynamic,
                     left: rb,
                     right: rc,
                 });
@@ -162,7 +299,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::Shl,
-                    ty: reg_type,
+                    ty: EirType::Dynamic,
                     left: rb,
                     right: rc,
                 });
@@ -171,7 +308,7 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Binary {
                     dest: ra,
                     op: EirBinaryOp::Shr,
-                    ty: reg_type,
+                    ty: EirType::Dynamic,
                     left: rb,
                     right: rc,
                 });
@@ -211,6 +348,9 @@ pub fn lower_function_with_symbols(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                if let Some(sym) = reg_fns.get(&ra) {
+                    local_globals.insert(name.clone(), sym.clone());
+                }
                 instructions.push(EirInst::DefineGlobal { name, src: ra });
             }
             OpCode::GetGlobal => {
@@ -221,6 +361,11 @@ pub fn lower_function_with_symbols(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                if let Some(sym) = local_globals.get(&name) {
+                    reg_fns.insert(ra, sym.clone());
+                } else {
+                    reg_fns.remove(&ra);
+                }
                 instructions.push(EirInst::GetGlobal { dest: ra, name });
             }
             OpCode::Call => {
@@ -228,11 +373,20 @@ pub fn lower_function_with_symbols(
                 for i in 1..=operand {
                     args.push(rb + i);
                 }
-                instructions.push(EirInst::CallDynamic {
-                    dest: ra,
-                    callee: rb,
-                    args,
-                });
+                if let Some(target_fn) = reg_fns.get(&rb) {
+                    instructions.push(EirInst::Call {
+                        dest: ra,
+                        func_name: target_fn.clone(),
+                        args,
+                        ret_ty: EirType::Dynamic,
+                    });
+                } else {
+                    instructions.push(EirInst::CallDynamic {
+                        dest: ra,
+                        callee: rb,
+                        args,
+                    });
+                }
             }
             OpCode::Closure => {
                 if let Some((_, sym)) = child_syms.iter().find(|(idx, _)| *idx == operand) {
@@ -246,8 +400,10 @@ pub fn lower_function_with_symbols(
                         symbol: sym.clone(),
                         upvalues,
                     });
+                    reg_fns.insert(ra, sym.clone());
                 } else {
                     instructions.push(EirInst::ConstNull { dest: ra });
+                    reg_fns.remove(&ra);
                 }
             }
             OpCode::MakeObject => {
@@ -331,15 +487,17 @@ pub fn lower_function_with_symbols(
                 instructions.push(EirInst::Jump { target });
             }
             OpCode::Return => {
-                instructions.push(EirInst::Return { val: Some((ra, reg_type)) });
+                let ra_ty = in_types.get(idx).and_then(|row| row.get(ra)).copied().unwrap_or(EirType::Dynamic);
+                instructions.push(EirInst::Return { val: Some((ra, ra_ty)) });
             }
             _ => {
+                let ra_ty = in_types.get(idx).and_then(|row| row.get(ra)).copied().unwrap_or(EirType::Dynamic);
                 // For other opcodes, use direct native helper call dispatch
                 instructions.push(EirInst::CallNative {
                     dest: ra,
                     symbol: format!("er_jit_op_{:?}", inst.op),
                     args: vec![ra, rb, rc],
-                    ret_ty: reg_type,
+                    ret_ty: ra_ty,
                 });
             }
         }
@@ -381,7 +539,8 @@ fn extract_function(val: crate::vm::Value) -> Option<Function> {
 
 /// Lower a bytecode function into a typed E-IR function.
 pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFunction {
-    lower_function_with_symbols(func, name_override, &[])
+    let dummy = FnvHashMap::default();
+    lower_function_with_symbols(func, name_override, &[], &dummy)
 }
 
 /// Lower a compiled program into an E-IR module ready for ahead-of-time code generation.
@@ -390,10 +549,12 @@ pub fn lower_program(main_func: &Function, module_name: &str) -> EirModule {
     let mut pending = vec![(main_func.clone(), "main".to_string())];
     let mut fn_counter = 0usize;
     let mut lowered = Vec::new();
+    let mut global_funcs = FnvHashMap::default();
 
-    while let Some((func, name)) = pending.pop() {
-        let mut child_syms = Vec::new();
-        for (const_idx, &val) in func.chunk.constants.iter().enumerate() {
+    // Pass 1: Gather all functions and register their symbol names
+    let mut scan_queue = vec![main_func.clone()];
+    while let Some(f) = scan_queue.pop() {
+        for &val in f.chunk.constants.iter() {
             if let Some(child_fn) = extract_function(val) {
                 let sym = child_fn
                     .name
@@ -403,11 +564,30 @@ pub fn lower_program(main_func: &Function, module_name: &str) -> EirModule {
                         fn_counter += 1;
                         format!("er_fn_{}", fn_counter)
                     });
+                if let Some(ref n) = child_fn.name {
+                    global_funcs.insert(n.clone(), sym.clone());
+                }
+                global_funcs.insert(sym.clone(), sym);
+                scan_queue.push(child_fn);
+            }
+        }
+    }
+
+    // Pass 2: Lower each function with global function symbols
+    while let Some((func, name)) = pending.pop() {
+        let mut child_syms = Vec::new();
+        for (const_idx, &val) in func.chunk.constants.iter().enumerate() {
+            if let Some(child_fn) = extract_function(val) {
+                let sym = child_fn
+                    .name
+                    .as_ref()
+                    .and_then(|n| global_funcs.get(n).cloned())
+                    .unwrap_or_else(|| format!("er_fn_{}", const_idx));
                 child_syms.push((const_idx, sym.clone()));
                 pending.push((child_fn, sym));
             }
         }
-        let eir_fn = lower_function_with_symbols(&func, Some(&name), &child_syms);
+        let eir_fn = lower_function_with_symbols(&func, Some(&name), &child_syms, &global_funcs);
         lowered.push(eir_fn);
     }
 

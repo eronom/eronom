@@ -77,7 +77,7 @@ impl VM {
                 } else if let Some(ptr) = raw_func.jit_ptr.get() {
                     Some(ptr)
                 } else if self.jit_threshold == 0 || raw_func.has_loop || count >= self.jit_threshold || self.frames.len() <= 1 {
-                    Some(crate::jit::compile_function(self, raw_fn_ptr))
+                    super::types::JIT_COMPILE_HOOK.map(|compile| compile(self, raw_fn_ptr))
                 } else {
                     None
                 };
@@ -105,7 +105,7 @@ impl VM {
                     ip_val = frame.ip;
                     continue;
                 };
-                let jit_fn: JitFn = std::mem::transmute(native_ptr);
+                let jit_fn: JitFn = std::mem::transmute::<*const std::ffi::c_void, JitFn>(native_ptr);
 
                 let mut ip_out: usize = ip_val;
                 let mut dest_reg_out: usize = 0;

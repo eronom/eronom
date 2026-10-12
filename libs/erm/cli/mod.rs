@@ -2,6 +2,7 @@ pub mod commands;
 pub mod spinner;
 pub mod init;
 pub mod build;
+pub mod bundle;
 
 use std::path::Path;
 use crate::server::start_server;
@@ -39,11 +40,12 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             mut dir,
             target,
             output,
-            runner_stub: _,
+            runner_stub,
             ssr: _,
             ssg,
             ppr,
             aot,
+            in_process,
         } => {
             if dir.starts_with("target=") || dir.starts_with("target:") {
                 let _val = dir.split_once('=').or_else(|| dir.split_once(':')).unwrap().1;
@@ -52,19 +54,47 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
 
             let path = Path::new(&dir);
             let is_script = dir.ends_with(".er") || path.is_file();
-            let wants_binary = aot || output.is_some() || target.is_some() || is_script;
+            let wants_binary = aot || output.is_some() || target.is_some() || runner_stub.is_some() || is_script;
+
+            let stem = if is_script {
+                path.file_stem().unwrap_or_default()
+            } else {
+                path.file_name().unwrap_or_default()
+            };
+            let bin_name = if stem == "." || stem.is_empty() {
+                "server_bin".to_string()
+            } else {
+                stem.to_string_lossy().to_string()
+            };
+
+            let mut out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
+                std::path::PathBuf::from("dist").join(&bin_name)
+            });
+            if out_path.is_dir() {
+                out_path = out_path.join(&bin_name);
+            }
 
             if is_script {
-                let mut out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
-                    let stem = path.file_stem().unwrap_or_default();
-                    std::path::PathBuf::from(stem)
-                });
-                if out_path.is_dir() {
-                    let stem = path.file_stem().unwrap_or_default();
-                    out_path = out_path.join(stem);
+                if aot {
+                    println!("Compiling {} into native standalone binary (AOT): {}", path.display(), out_path.display());
+                    crate::jit::aot::build_aot_binary_with_target_and_options(
+                        path,
+                        &out_path,
+                        target.as_deref(),
+                        in_process,
+                        runner_stub.as_deref().map(Path::new),
+                    )?;
+                } else {
+                    println!("Packaging {} into self-contained standalone binary: {}", path.display(), out_path.display());
+                    let stub_path = if let Some(ref s) = runner_stub {
+                        std::path::PathBuf::from(s)
+                    } else if let Some(p) = crate::jit::aot::resolve_target_stub(None, target.as_deref()) {
+                        p
+                    } else {
+                        std::env::current_exe()?
+                    };
+                    bundle::create_standalone_binary(&stub_path, path, None, &out_path)?;
                 }
-                println!("Compiling {} into native standalone binary: {}", path.display(), out_path.display());
-                crate::jit::aot::build_aot_binary(path, &out_path)?;
                 println!("✓ Successfully built native executable: {}", out_path.display());
                 return Ok(());
             }
@@ -80,7 +110,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             // Build web assets / templates
             build_project(&dir, mode)?;
 
-            // If user requested a binary output from the project directory, compile the entrypoint
+            // If user requested a binary output from the project directory, compile or package the entrypoint
             if wants_binary {
                 let build_server = path.join("build").join("server.er");
                 let direct_server = path.join("server.er");
@@ -92,27 +122,26 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
                     path.join("main.er")
                 };
 
-                let mut out_path = output.clone().map(std::path::PathBuf::from).unwrap_or_else(|| {
-                    let stem = path.file_name().unwrap_or_default().to_string_lossy();
-                    if stem == "." || stem.is_empty() {
-                        std::path::PathBuf::from("dist/server")
+                if aot {
+                    println!("Compiling {} into native standalone binary (AOT): {}", script_to_compile.display(), out_path.display());
+                    crate::jit::aot::build_aot_binary_with_target_and_options(
+                        &script_to_compile,
+                        &out_path,
+                        target.as_deref(),
+                        in_process,
+                        runner_stub.as_deref().map(Path::new),
+                    )?;
+                } else {
+                    println!("Packaging {} into self-contained standalone binary: {}", path.display(), out_path.display());
+                    let stub_path = if let Some(ref s) = runner_stub {
+                        std::path::PathBuf::from(s)
+                    } else if let Some(p) = crate::jit::aot::resolve_target_stub(None, target.as_deref()) {
+                        p
                     } else {
-                        std::path::PathBuf::from(format!("dist/{}", stem))
-                    }
-                });
-
-                if out_path.is_dir() {
-                    let stem = path.file_name().unwrap_or_default().to_string_lossy();
-                    let bin_name = if stem == "." || stem.is_empty() {
-                        "server_bin".to_string()
-                    } else {
-                        format!("{}_bin", stem)
+                        std::env::current_exe()?
                     };
-                    out_path = out_path.join(bin_name);
+                    bundle::create_standalone_binary(&stub_path, &script_to_compile, Some(path), &out_path)?;
                 }
-
-                println!("Compiling {} into native standalone binary: {}", script_to_compile.display(), out_path.display());
-                crate::jit::aot::build_aot_binary(&script_to_compile, &out_path)?;
                 println!("✓ Successfully built native executable: {}", out_path.display());
             }
         }
