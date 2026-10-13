@@ -76,7 +76,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             }
 
             if is_script {
-                if cranelift {
+                if cranelift || (aot && in_process) {
                     println!("Compiling {} into native standalone binary with Cranelift: {}", path.display(), out_path.display());
                     crate::jit::aot::cranelift::build_cranelift_binary(path, &out_path, target.as_deref())?;
                     println!("✓ Successfully built native executable: {}", out_path.display());
