@@ -72,8 +72,20 @@ impl CraneliftBackend {
         let flags = Flags::new(flag_builder);
 
         let target_triple = if let Some(t_str) = target_triple_str {
-            Triple::from_str(t_str)
-                .map_err(|e| anyhow::anyhow!("Invalid target triple '{}': {}", t_str, e))?
+            match t_str.to_lowercase().as_str() {
+                "windows" | "win" | "win64" => Triple::from_str("x86_64-pc-windows-msvc").unwrap(),
+                "macos" | "mac" | "darwin" => {
+                    #[cfg(target_arch = "aarch64")]
+                    { Triple::from_str("aarch64-apple-darwin").unwrap() }
+                    #[cfg(not(target_arch = "aarch64"))]
+                    { Triple::from_str("x86_64-apple-darwin").unwrap() }
+                }
+                "linux" | "linux64" => Triple::from_str("x86_64-unknown-linux-gnu").unwrap(),
+                "linux-arm" | "linux-aarch64" | "arm64" => Triple::from_str("aarch64-unknown-linux-gnu").unwrap(),
+                "riscv" | "riscv64" => Triple::from_str("riscv64gc-unknown-linux-gnu").unwrap(),
+                other => Triple::from_str(other)
+                    .map_err(|e| anyhow::anyhow!("Invalid target triple '{}': {}", other, e))?,
+            }
         } else {
             Triple::host()
         };
@@ -634,41 +646,81 @@ pub fn build_cranelift_binary(
     let eir_module = super::lower::lower_program(&function, &module_name);
 
     let backend = CraneliftBackend::new(&module_name, target)?;
+    let target_os = backend.target_triple.operating_system;
     let obj_bytes = backend.compile_module(&eir_module)?;
 
     let temp_dir = std::env::temp_dir();
     let temp_obj = temp_dir.join(format!("er_clif_{}_{}.o", module_name, std::process::id()));
     std::fs::write(&temp_obj, &obj_bytes)?;
 
-    // Zero-Toolchain Linker Step:
-    // Resolve raw system linker `ld` (checks PATH first, then standard system paths if PATH is empty or stripped).
-    // This avoids calling `cc`, `gcc`, `clang`, or `llvm`, and links zero C libraries.
-    let system_linker = if Command::new("ld").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
-        Some("ld".to_string())
-    } else {
-        ["/usr/bin/ld", "/bin/ld", "/usr/local/bin/ld", "/usr/bin/mold", "/usr/bin/gold", "/usr/bin/lld"]
-            .iter()
-            .find(|&&p| Path::new(p).exists())
-            .map(|&s| s.to_string())
-    };
+    // Zero-Toolchain Cross-Platform Linker Step:
+    let linked = match target_os {
+        target_lexicon::OperatingSystem::Windows => {
+            #[cfg(target_os = "windows")]
+            {
+                let status = Command::new("link.exe")
+                    .arg(&format!("/OUT:{}", output_path.display()))
+                    .arg(&temp_obj)
+                    .status();
+                matches!(status, Ok(s) if s.success())
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
+                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                } else {
+                    false
+                }
+            }
+        }
+        target_lexicon::OperatingSystem::Darwin(_) | target_lexicon::OperatingSystem::MacOSX { .. } => {
+            #[cfg(target_os = "macos")]
+            {
+                let status = Command::new("ld")
+                    .arg(&temp_obj)
+                    .arg("-o")
+                    .arg(output_path)
+                    .status();
+                matches!(status, Ok(s) if s.success())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("macos")) {
+                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                } else {
+                    false
+                }
+            }
+        }
+        _ => {
+            // Linux / System V ELF
+            let system_linker = if Command::new("ld").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+                Some("ld".to_string())
+            } else {
+                ["/usr/bin/ld", "/bin/ld", "/usr/local/bin/ld", "/usr/bin/mold", "/usr/bin/gold", "/usr/bin/lld"]
+                    .iter()
+                    .find(|&&p| Path::new(p).exists())
+                    .map(|&s| s.to_string())
+            };
 
-    let linked = if let Some(linker_bin) = system_linker {
-        let status = Command::new(linker_bin)
-            .arg("-s")
-            .arg(&temp_obj)
-            .arg("-o")
-            .arg(output_path)
-            .status();
-        matches!(status, Ok(s) if s.success())
-    } else {
-        // Fallback: If no linker binary exists at all, attempt pure-Rust in-process ELF linker
-        super::elf_writer::link_object_to_static_elf64(&obj_bytes, output_path).is_ok()
+            if let Some(linker_bin) = system_linker {
+                let status = Command::new(linker_bin)
+                    .arg("-s")
+                    .arg(&temp_obj)
+                    .arg("-o")
+                    .arg(output_path)
+                    .status();
+                matches!(status, Ok(s) if s.success())
+            } else {
+                super::elf_writer::link_object_to_static_elf64(&obj_bytes, output_path).is_ok()
+            }
+        }
     };
 
     let _ = std::fs::remove_file(&temp_obj);
 
     if !linked {
-        anyhow::bail!("Failed to link standalone binary without C compiler (both ld and fallback failed)");
+        anyhow::bail!("Failed to link standalone binary without C compiler (both system linker and fallback failed)");
     }
 
     Ok(())
