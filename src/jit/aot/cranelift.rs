@@ -24,17 +24,42 @@ pub fn map_eir_type_to_clif(ty: EirType) -> types::Type {
     }
 }
 
+const X86_64_SYS_EXIT_BYTES: &[u8] = &[
+    0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00, // mov $60, %rax
+    0x0f, 0x05,                               // syscall
+    0xc3,                                     // ret
+];
+
+const X86_64_PRINT_I64_BYTES: &[u8] = &[
+    0x53, 0x41, 0x54, 0x41, 0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8d, 0x74, 0x24, 0x1f, 0xc6, 0x06,
+    0x0a, 0x49, 0xc7, 0xc5, 0x01, 0x00, 0x00, 0x00, 0x48, 0x89, 0xf8, 0x48, 0x85, 0xc0, 0x79, 0x0c,
+    0x48, 0xf7, 0xd8, 0x49, 0xc7, 0xc4, 0x01, 0x00, 0x00, 0x00, 0xeb, 0x03, 0x4d, 0x31, 0xe4, 0x48,
+    0x85, 0xc0, 0x75, 0x0b, 0x48, 0xff, 0xce, 0xc6, 0x06, 0x30, 0x49, 0xff, 0xc5, 0xeb, 0x1f, 0x48,
+    0x85, 0xc0, 0x74, 0x1a, 0x48, 0x31, 0xd2, 0x48, 0xc7, 0xc3, 0x0a, 0x00, 0x00, 0x00, 0x48, 0xf7,
+    0xf3, 0x80, 0xc2, 0x30, 0x48, 0xff, 0xce, 0x88, 0x16, 0x49, 0xff, 0xc5, 0xeb, 0xe1, 0x4d, 0x85,
+    0xe4, 0x74, 0x09, 0x48, 0xff, 0xce, 0xc6, 0x06, 0x2d, 0x49, 0xff, 0xc5, 0x48, 0xc7, 0xc0, 0x01,
+    0x00, 0x00, 0x00, 0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xea, 0x0f, 0x05, 0x48,
+    0x83, 0xc4, 0x20, 0x41, 0x5d, 0x41, 0x5c, 0x5b, 0xc3,
+];
+
+const X86_64_PRINT_STR_BYTES: &[u8] = &[
+    0x53, 0x41, 0x54, 0x48, 0x89, 0xfe, 0x48, 0x31, 0xd2, 0x80, 0x3c, 0x16, 0x00, 0x74, 0x05, 0x48,
+    0xff, 0xc2, 0xeb, 0xf5, 0x48, 0x85, 0xd2, 0x74, 0x10, 0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00,
+    0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x48, 0x83, 0xec, 0x10, 0xc6, 0x04, 0x24,
+    0x0a, 0x48, 0x89, 0xe6, 0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xc7, 0xc7, 0x01, 0x00,
+    0x00, 0x00, 0x48, 0xc7, 0xc2, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x48, 0x83, 0xc4, 0x10, 0x41,
+    0x5c, 0x5b, 0xc3,
+];
+
 pub struct CraneliftBackend {
     pub module: ObjectModule,
     pub target_triple: Triple,
     declared_funcs: HashMap<String, (FuncId, Signature)>,
+    #[allow(dead_code)]
     runtime_funcs: HashMap<String, FuncId>,
-    printf_fid: Option<FuncId>,
-    printf_f64_fid: Option<FuncId>,
-    fmt_i64_id: Option<DataId>,
-    fmt_f64_id: Option<DataId>,
-    fmt_str_id: Option<DataId>,
-    fflush_fid: Option<FuncId>,
+    sys_exit_fid: Option<FuncId>,
+    print_i64_fid: Option<FuncId>,
+    print_str_fid: Option<FuncId>,
     global_data_ids: HashMap<String, DataId>,
     string_literals: HashMap<String, DataId>,
 }
@@ -66,17 +91,15 @@ impl CraneliftBackend {
             target_triple,
             declared_funcs: HashMap::new(),
             runtime_funcs: HashMap::new(),
-            printf_fid: None,
-            printf_f64_fid: None,
-            fmt_i64_id: None,
-            fmt_f64_id: None,
-            fmt_str_id: None,
-            fflush_fid: None,
+            sys_exit_fid: None,
+            print_i64_fid: None,
+            print_str_fid: None,
             global_data_ids: HashMap::new(),
             string_literals: HashMap::new(),
         })
     }
 
+    #[allow(dead_code)]
     fn declare_runtime_fn(&mut self, name: &str, params: &[types::Type], ret: Option<types::Type>) -> anyhow::Result<FuncId> {
         if let Some(&fid) = self.runtime_funcs.get(name) {
             return Ok(fid);
@@ -94,63 +117,28 @@ impl CraneliftBackend {
     }
 
     pub fn compile_module(mut self, eir: &EirModule) -> anyhow::Result<Vec<u8>> {
-        // 1. Declare libc printf and format strings
-        let mut printf_sig = self.module.make_signature();
-        printf_sig.params.push(AbiParam::new(types::I64));
-        printf_sig.params.push(AbiParam::new(types::I64));
-        printf_sig.returns.push(AbiParam::new(types::I32));
-        let printf_fid = self.module.declare_function("printf", Linkage::Import, &printf_sig)?;
-        self.printf_fid = Some(printf_fid);
+        // 1. Define direct zero-libc syscall routines (sys_write via syscall 1, sys_exit via syscall 60)
+        if self.target_triple.architecture == target_lexicon::Architecture::X86_64 {
+            let mut exit_sig = self.module.make_signature();
+            exit_sig.params.push(AbiParam::new(types::I64));
+            let exit_fid = self.module.declare_function("er_sys_exit", Linkage::Export, &exit_sig)?;
+            self.module.define_function_bytes(exit_fid, 16, X86_64_SYS_EXIT_BYTES, &[])?;
+            self.sys_exit_fid = Some(exit_fid);
 
-        let mut dprintf_sig = self.module.make_signature();
-        dprintf_sig.params.push(AbiParam::new(types::I32));
-        dprintf_sig.params.push(AbiParam::new(types::I64));
-        dprintf_sig.params.push(AbiParam::new(types::F64));
-        dprintf_sig.returns.push(AbiParam::new(types::I32));
-        let printf_f64_fid = self.module.declare_function("dprintf", Linkage::Import, &dprintf_sig)?;
-        self.printf_f64_fid = Some(printf_f64_fid);
+            let mut print_i64_sig = self.module.make_signature();
+            print_i64_sig.params.push(AbiParam::new(types::I64));
+            let print_i64_fid = self.module.declare_function("er_print_i64", Linkage::Export, &print_i64_sig)?;
+            self.module.define_function_bytes(print_i64_fid, 16, X86_64_PRINT_I64_BYTES, &[])?;
+            self.print_i64_fid = Some(print_i64_fid);
 
-        let mut d_i64 = DataDescription::new();
-        d_i64.define(b"%ld\n\0".to_vec().into_boxed_slice());
-        let fmt_i64_id = self.module.declare_data("__fmt_i64", Linkage::Local, false, false)?;
-        self.module.define_data(fmt_i64_id, &d_i64)?;
-        self.fmt_i64_id = Some(fmt_i64_id);
+            let mut print_str_sig = self.module.make_signature();
+            print_str_sig.params.push(AbiParam::new(types::I64));
+            let print_str_fid = self.module.declare_function("er_print_str", Linkage::Export, &print_str_sig)?;
+            self.module.define_function_bytes(print_str_fid, 16, X86_64_PRINT_STR_BYTES, &[])?;
+            self.print_str_fid = Some(print_str_fid);
+        }
 
-        let mut d_f64 = DataDescription::new();
-        d_f64.define(b"%f\n\0".to_vec().into_boxed_slice());
-        let fmt_f64_id = self.module.declare_data("__fmt_f64", Linkage::Local, false, false)?;
-        self.module.define_data(fmt_f64_id, &d_f64)?;
-        self.fmt_f64_id = Some(fmt_f64_id);
-
-        let mut d_str = DataDescription::new();
-        d_str.define(b"%s\n\0".to_vec().into_boxed_slice());
-        let fmt_str_id = self.module.declare_data("__fmt_str", Linkage::Local, false, false)?;
-        self.module.define_data(fmt_str_id, &d_str)?;
-        self.fmt_str_id = Some(fmt_str_id);
-
-        let mut fflush_sig = self.module.make_signature();
-        fflush_sig.params.push(AbiParam::new(types::I64));
-        fflush_sig.returns.push(AbiParam::new(types::I32));
-        let fflush_fid = self.module.declare_function("fflush", Linkage::Import, &fflush_sig)?;
-        self.fflush_fid = Some(fflush_fid);
-
-        // 2. Declare standard runtime helper imports
-        self.declare_runtime_fn("er_runtime_init", &[], None)?;
-        self.declare_runtime_fn("er_runtime_cleanup", &[], None)?;
-        self.declare_runtime_fn("er_println_i64", &[types::I64], None)?;
-        self.declare_runtime_fn("er_println_f64", &[types::F64], None)?;
-        self.declare_runtime_fn("er_println_bool", &[types::I64], None)?;
-        self.declare_runtime_fn("er_print_string", &[types::I64, types::I64], None)?;
-        self.declare_runtime_fn("er_println_string", &[types::I64, types::I64], None)?;
-        self.declare_runtime_fn("er_alloc_string", &[types::I64, types::I64], Some(types::I64))?;
-        self.declare_runtime_fn("er_alloc_array", &[types::I64], Some(types::I64))?;
-        self.declare_runtime_fn("er_alloc_object", &[], Some(types::I64))?;
-        self.declare_runtime_fn("er_alloc_struct", &[types::I64, types::I64], Some(types::I64))?;
-        self.declare_runtime_fn("er_aot_array_push", &[types::I64, types::I64], Some(types::I64))?;
-        self.declare_runtime_fn("er_aot_array_get", &[types::I64, types::I64], Some(types::I64))?;
-        self.declare_runtime_fn("er_aot_array_set", &[types::I64, types::I64, types::I64], None)?;
-
-        // Pre-scan and declare global variables and string literals
+        // 2. Pre-scan and declare global variables and string literals
         for func in &eir.functions {
             for inst in &func.instructions {
                 match inst {
@@ -214,7 +202,38 @@ impl CraneliftBackend {
             self.module.clear_context(&mut ctx);
         }
 
-        // 5. Emit finalized native object code
+        // 5. Emit standard standalone _start entrypoint (invokes main and er_sys_exit)
+        let start_sig = self.module.make_signature();
+        let start_fid = self.module.declare_function("_start", Linkage::Export, &start_sig)?;
+        ctx.func.signature = start_sig;
+        ctx.func.name = UserFuncName::User(UserExternalName::new(start_fid.as_u32(), 0));
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+        let entry_block = builder.create_block();
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        if let Some(&(main_fid, _)) = self.declared_funcs.get("main") {
+            let main_ref = self.module.declare_func_in_func(main_fid, builder.func);
+            let call_inst = builder.ins().call(main_ref, &[]);
+            let ret_val = builder.inst_results(call_inst)[0];
+
+            if let Some(exit_fid) = self.sys_exit_fid {
+                let exit_ref = self.module.declare_func_in_func(exit_fid, builder.func);
+                builder.ins().call(exit_ref, &[ret_val]);
+            }
+        } else if let Some(exit_fid) = self.sys_exit_fid {
+            let exit_ref = self.module.declare_func_in_func(exit_fid, builder.func);
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.ins().call(exit_ref, &[zero]);
+        }
+        builder.ins().return_(&[]);
+        builder.finalize(self.module.isa().frontend_config());
+        self.module.define_function(start_fid, &mut ctx)?;
+        self.module.clear_context(&mut ctx);
+
+        // 6. Emit finalized native object code
         let product = self.module.finish();
         let bytes = product.emit()
             .map_err(|e| anyhow::anyhow!("Failed to serialize Cranelift object: {}", e))?;
@@ -459,29 +478,11 @@ impl CraneliftBackend {
                     }
                     terminated = true;
                 }
-                EirInst::Print { reg, ty } | EirInst::Println { reg, ty } => {
-                    if *ty == EirType::F64 {
-                        if let (Some(printf_f64_fid), Some(fmt_f64_id)) = (self.printf_f64_fid, self.fmt_f64_id) {
-                            let dprintf_ref = self.module.declare_func_in_func(printf_f64_fid, builder.func);
-                            let fd = builder.ins().iconst(types::I32, 1);
-                            let fval = builder.use_var(float_vars[*reg]);
-                            let fmt_ref = self.module.declare_data_in_func(fmt_f64_id, builder.func);
-                            let fmt_ptr = builder.ins().symbol_value(types::I64, fmt_ref);
-                            builder.ins().call(dprintf_ref, &[fd, fmt_ptr, fval]);
-                        }
-                    } else {
-                        if let (Some(printf_fid), Some(fmt_i64_id)) = (self.printf_fid, self.fmt_i64_id) {
-                            let printf_ref = self.module.declare_func_in_func(printf_fid, builder.func);
-                            let val = builder.use_var(int_vars[*reg]);
-                            let fmt_ref = self.module.declare_data_in_func(fmt_i64_id, builder.func);
-                            let fmt_ptr = builder.ins().symbol_value(types::I64, fmt_ref);
-                            builder.ins().call(printf_ref, &[fmt_ptr, val]);
-                        }
-                    }
-                    if let Some(fflush_fid) = self.fflush_fid {
-                        let fflush_ref = self.module.declare_func_in_func(fflush_fid, builder.func);
-                        let zero_ptr = builder.ins().iconst(types::I64, 0);
-                        builder.ins().call(fflush_ref, &[zero_ptr]);
+                EirInst::Print { reg, .. } | EirInst::Println { reg, .. } => {
+                    if let Some(print_i64_fid) = self.print_i64_fid {
+                        let print_ref = self.module.declare_func_in_func(print_i64_fid, builder.func);
+                        let val = builder.use_var(int_vars[*reg]);
+                        builder.ins().call(print_ref, &[val]);
                     }
                 }
                 EirInst::ConstString { dest, val } => {
@@ -549,31 +550,22 @@ impl CraneliftBackend {
                         builder.ins().brif(is_str, str_block, &[], int_block, &[]);
 
                         builder.switch_to_block(str_block);
-                        if let (Some(printf_fid), Some(fmt_str_id)) = (self.printf_fid, self.fmt_str_id) {
-                            let printf_ref = self.module.declare_func_in_func(printf_fid, builder.func);
+                        if let Some(print_str_fid) = self.print_str_fid {
+                            let print_ref = self.module.declare_func_in_func(print_str_fid, builder.func);
                             let ptr_mask = builder.ins().iconst(types::I64, 0x0000_ffff_ffff_ffff_u64 as i64);
                             let raw_ptr = builder.ins().band(arg_val, ptr_mask);
-                            let fmt_ref = self.module.declare_data_in_func(fmt_str_id, builder.func);
-                            let fmt_ptr = builder.ins().symbol_value(types::I64, fmt_ref);
-                            builder.ins().call(printf_ref, &[fmt_ptr, raw_ptr]);
+                            builder.ins().call(print_ref, &[raw_ptr]);
                         }
                         builder.ins().jump(next_arg_block, &[]);
 
                         builder.switch_to_block(int_block);
-                        if let (Some(printf_fid), Some(fmt_i64_id)) = (self.printf_fid, self.fmt_i64_id) {
-                            let printf_ref = self.module.declare_func_in_func(printf_fid, builder.func);
-                            let fmt_ref = self.module.declare_data_in_func(fmt_i64_id, builder.func);
-                            let fmt_ptr = builder.ins().symbol_value(types::I64, fmt_ref);
-                            builder.ins().call(printf_ref, &[fmt_ptr, arg_val]);
+                        if let Some(print_i64_fid) = self.print_i64_fid {
+                            let print_ref = self.module.declare_func_in_func(print_i64_fid, builder.func);
+                            builder.ins().call(print_ref, &[arg_val]);
                         }
                         builder.ins().jump(next_arg_block, &[]);
 
                         builder.switch_to_block(next_arg_block);
-                    }
-                    if let Some(fflush_fid) = self.fflush_fid {
-                        let fflush_ref = self.module.declare_func_in_func(fflush_fid, builder.func);
-                        let zero_ptr = builder.ins().iconst(types::I64, 0);
-                        builder.ins().call(fflush_ref, &[zero_ptr]);
                     }
                     let zero_ret = builder.ins().iconst(types::I64, 0);
                     builder.def_var(int_vars[*dest], zero_ret);
@@ -648,21 +640,37 @@ pub fn build_cranelift_binary(
     let temp_obj = temp_dir.join(format!("er_clif_{}_{}.o", module_name, std::process::id()));
     std::fs::write(&temp_obj, &obj_bytes)?;
 
-    let status = Command::new("cc")
-        .arg("-O3")
-        .arg("-fomit-frame-pointer")
+    // Zero-Toolchain Linker Step:
+    // Try raw system linker `ld` first (-s <temp_obj> -o <output_path>).
+    // This avoids calling `cc`, `gcc`, `clang`, or `llvm`, and links zero C libraries.
+    let ld_res = Command::new("ld")
+        .arg("-s")
         .arg(&temp_obj)
         .arg("-o")
         .arg(output_path)
         .status();
 
+    let linked = match ld_res {
+        Ok(s) if s.success() => true,
+        _ => {
+            // Fallback: If `ld` is not directly available, attempt `cc -nostdlib`
+            let cc_res = Command::new("cc")
+                .arg("-nostdlib")
+                .arg(&temp_obj)
+                .arg("-o")
+                .arg(output_path)
+                .status();
+            matches!(cc_res, Ok(s) if s.success())
+        }
+    };
+
     let _ = std::fs::remove_file(&temp_obj);
 
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        Ok(s) => anyhow::bail!("Linker failed with exit code: {:?}", s.code()),
-        Err(e) => anyhow::bail!("Failed to execute host linker (cc): {}", e),
+    if !linked {
+        anyhow::bail!("Failed to link standalone binary without C compiler (both ld and fallback failed)");
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -730,5 +738,38 @@ print("Done Cranelift!");
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("5050"), "Expected sum=5050, got: {}", stdout);
         assert!(stdout.contains("Done Cranelift!"), "Expected 'Done Cranelift!', got: {}", stdout);
+    }
+
+    #[test]
+    fn test_cranelift_zero_toolchain_direct_execution() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_zero_{}.er", std::process::id()));
+        let bin_path = temp_dir.join(format!("test_clif_zero_bin_{}", std::process::id()));
+
+        let script = r#"
+fn fib(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+let res = fib(12);
+print(res);
+print("Zero CC Verified!");
+"#;
+        std::fs::write(&script_path, script).unwrap();
+        let res = build_cranelift_binary(&script_path, &bin_path, None);
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(res.is_ok(), "build_cranelift_binary failed: {:?}", res.err());
+        assert!(bin_path.exists());
+
+        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let _ = std::fs::remove_file(&bin_path);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("144"), "Expected fib(12)=144, got: {}", stdout);
+        assert!(stdout.contains("Zero CC Verified!"), "Expected 'Zero CC Verified!', got: {}", stdout);
     }
 }
