@@ -647,6 +647,7 @@ pub fn build_cranelift_binary(
 
     let backend = CraneliftBackend::new(&module_name, target)?;
     let target_os = backend.target_triple.operating_system;
+    let target_arch = backend.target_triple.architecture;
     let obj_bytes = backend.compile_module(&eir_module)?;
 
     let temp_dir = std::env::temp_dir();
@@ -662,11 +663,18 @@ pub fn build_cranelift_binary(
                     .arg(&format!("/OUT:{}", output_path.display()))
                     .arg(&temp_obj)
                     .status();
-                matches!(status, Ok(s) if s.success())
+                if matches!(status, Ok(s) if s.success()) {
+                    true
+                } else {
+                    super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok()
+                }
             }
             #[cfg(not(target_os = "windows"))]
             {
-                if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
+                // Pure-Rust PE32+ Synthesizer: emits standalone .exe without MSVC link.exe or runner stub
+                if super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok() {
+                    true
+                } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
                     crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
                 } else {
                     false
@@ -674,6 +682,7 @@ pub fn build_cranelift_binary(
             }
         }
         target_lexicon::OperatingSystem::Darwin(_) | target_lexicon::OperatingSystem::MacOSX { .. } => {
+            let is_arm64 = matches!(target_arch, target_lexicon::Architecture::Aarch64(_));
             #[cfg(target_os = "macos")]
             {
                 let status = Command::new("ld")
@@ -681,11 +690,18 @@ pub fn build_cranelift_binary(
                     .arg("-o")
                     .arg(output_path)
                     .status();
-                matches!(status, Ok(s) if s.success())
+                if matches!(status, Ok(s) if s.success()) {
+                    true
+                } else {
+                    super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
+                }
             }
             #[cfg(not(target_os = "macos"))]
             {
-                if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("macos")) {
+                // Pure-Rust Mach-O 64-bit Synthesizer: emits standalone macOS binary without ld64 or runner stub
+                if super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok() {
+                    true
+                } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("macos")) {
                     crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
                 } else {
                     false
@@ -729,6 +745,8 @@ pub fn build_cranelift_binary(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jit::aot::lower;
+    use object::{Object, ObjectSection, ObjectSymbol};
 
     #[test]
     fn test_cranelift_build_and_run_fib() {
@@ -854,5 +872,117 @@ print(res);
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("55"), "Expected 55, got: {}", stdout);
+    }
+
+    #[test]
+    fn test_cranelift_cross_windows_obj() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_win_probe_{}.er", std::process::id()));
+        std::fs::write(&script_path, "let x = 42;\nprint(x);\n").unwrap();
+        let stmts = parse_and_resolve_imports(&script_path).unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        let eir_module = lower::lower_program(&function, "test_win_probe");
+        let backend = CraneliftBackend::new("test_win_probe", Some("windows")).unwrap();
+        let obj_bytes = backend.compile_module(&eir_module).unwrap();
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(!obj_bytes.is_empty(), "Object bytes should not be empty");
+        let parsed = object::File::parse(&obj_bytes[..]).unwrap();
+        println!("Windows object format: {:?}", parsed.format());
+        assert_eq!(parsed.format(), object::BinaryFormat::Coff);
+        for sec in parsed.sections() {
+            println!("  COFF Section: {} (size: {})", sec.name().unwrap_or("?"), sec.data().unwrap().len());
+        }
+        for sym in parsed.symbols() {
+            if let Ok(name) = sym.name() {
+                println!("  COFF Symbol: {} at 0x{:x}", name, sym.address());
+            }
+        }
+        if let Some(text) = parsed.section_by_name(".text") {
+            println!("  COFF .text relocations count: {}", text.relocations().count());
+            for (offset, reloc) in text.relocations() {
+                println!("    reloc at 0x{:x}: {:?}", offset, reloc.target());
+            }
+        }
+    }
+
+    #[test]
+    fn test_cranelift_cross_macos_obj() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_mac_probe_{}.er", std::process::id()));
+        std::fs::write(&script_path, "let x = 42;\nprint(x);\n").unwrap();
+        let stmts = parse_and_resolve_imports(&script_path).unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        let eir_module = lower::lower_program(&function, "test_mac_probe");
+        let backend = CraneliftBackend::new("test_mac_probe", Some("macos")).unwrap();
+        let obj_bytes = backend.compile_module(&eir_module).unwrap();
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(!obj_bytes.is_empty(), "Object bytes should not be empty");
+        let parsed = object::File::parse(&obj_bytes[..]).unwrap();
+        println!("macOS object format: {:?}", parsed.format());
+        assert_eq!(parsed.format(), object::BinaryFormat::MachO);
+        for sec in parsed.sections() {
+            println!("  Mach-O Section: {} (size: {})", sec.name().unwrap_or("?"), sec.data().unwrap().len());
+        }
+        for sym in parsed.symbols() {
+            if let Ok(name) = sym.name() {
+                println!("  Mach-O Symbol: {} at 0x{:x}", name, sym.address());
+            }
+        }
+        if let Some(text) = parsed.section_by_name("__text") {
+            println!("  Mach-O __text relocations count: {}", text.relocations().count());
+            for (offset, reloc) in text.relocations() {
+                println!("    reloc at 0x{:x}: {:?}", offset, reloc.target());
+            }
+        }
+    }
+
+    #[test]
+    fn test_cranelift_cross_windows_micro_binary() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_win_bin_{}.er", std::process::id()));
+        let out_path = temp_dir.join(format!("test_clif_win_bin_{}.exe", std::process::id()));
+        std::fs::write(&script_path, "let x = 100;\nprint(x);\n").unwrap();
+
+        let res = build_cranelift_binary(&script_path, &out_path, Some("windows"));
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(res.is_ok(), "Windows micro binary build failed: {:?}", res.err());
+        assert!(out_path.exists());
+        let meta = std::fs::metadata(&out_path).unwrap();
+        println!("Generated Windows .exe size: {} bytes", meta.len());
+        // Verify micro-binary size is < 10 KB (no 2.5MB runner stub)
+        assert!(meta.len() < 10_000, "Windows executable should be < 10KB, got {}", meta.len());
+
+        let bytes = std::fs::read(&out_path).unwrap();
+        let parsed = object::File::parse(&bytes[..]).unwrap();
+        assert_eq!(parsed.format(), object::BinaryFormat::Pe);
+        let _ = std::fs::remove_file(&out_path);
+    }
+
+    #[test]
+    fn test_cranelift_cross_macos_micro_binary() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_mac_bin_{}.er", std::process::id()));
+        let out_path = temp_dir.join(format!("test_clif_mac_bin_{}", std::process::id()));
+        std::fs::write(&script_path, "let x = 100;\nprint(x);\n").unwrap();
+
+        let res = build_cranelift_binary(&script_path, &out_path, Some("macos"));
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(res.is_ok(), "macOS micro binary build failed: {:?}", res.err());
+        assert!(out_path.exists());
+        let meta = std::fs::metadata(&out_path).unwrap();
+        println!("Generated macOS binary size: {} bytes", meta.len());
+        // Verify micro-binary size is < 10 KB (no runner stub)
+        assert!(meta.len() < 10_000, "macOS binary should be < 10KB, got {}", meta.len());
+
+        let bytes = std::fs::read(&out_path).unwrap();
+        let parsed = object::File::parse(&bytes[..]).unwrap();
+        assert_eq!(parsed.format(), object::BinaryFormat::MachO);
+        let _ = std::fs::remove_file(&out_path);
     }
 }

@@ -6,6 +6,8 @@ pub mod linker;
 pub mod object_builder;
 pub mod cranelift;
 pub mod elf_writer;
+pub mod pe_writer;
+pub mod macho_writer;
 
 pub use runtime::*;
 pub use ir::*;
@@ -15,3 +17,5 @@ pub use linker::*;
 pub use object_builder::*;
 pub use cranelift::*;
 pub use elf_writer::*;
+pub use pe_writer::*;
+pub use macho_writer::*;
