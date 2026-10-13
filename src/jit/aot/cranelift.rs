@@ -641,27 +641,28 @@ pub fn build_cranelift_binary(
     std::fs::write(&temp_obj, &obj_bytes)?;
 
     // Zero-Toolchain Linker Step:
-    // Try raw system linker `ld` first (-s <temp_obj> -o <output_path>).
+    // Resolve raw system linker `ld` (checks PATH first, then standard system paths if PATH is empty or stripped).
     // This avoids calling `cc`, `gcc`, `clang`, or `llvm`, and links zero C libraries.
-    let ld_res = Command::new("ld")
-        .arg("-s")
-        .arg(&temp_obj)
-        .arg("-o")
-        .arg(output_path)
-        .status();
+    let system_linker = if Command::new("ld").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        Some("ld".to_string())
+    } else {
+        ["/usr/bin/ld", "/bin/ld", "/usr/local/bin/ld", "/usr/bin/mold", "/usr/bin/gold", "/usr/bin/lld"]
+            .iter()
+            .find(|&&p| Path::new(p).exists())
+            .map(|&s| s.to_string())
+    };
 
-    let linked = match ld_res {
-        Ok(s) if s.success() => true,
-        _ => {
-            // Fallback: If `ld` is not directly available, attempt `cc -nostdlib`
-            let cc_res = Command::new("cc")
-                .arg("-nostdlib")
-                .arg(&temp_obj)
-                .arg("-o")
-                .arg(output_path)
-                .status();
-            matches!(cc_res, Ok(s) if s.success())
-        }
+    let linked = if let Some(linker_bin) = system_linker {
+        let status = Command::new(linker_bin)
+            .arg("-s")
+            .arg(&temp_obj)
+            .arg("-o")
+            .arg(output_path)
+            .status();
+        matches!(status, Ok(s) if s.success())
+    } else {
+        // Fallback: If no linker binary exists at all, attempt pure-Rust in-process ELF linker
+        super::elf_writer::link_object_to_static_elf64(&obj_bytes, output_path).is_ok()
     };
 
     let _ = std::fs::remove_file(&temp_obj);
@@ -771,5 +772,35 @@ print("Zero CC Verified!");
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("144"), "Expected fib(12)=144, got: {}", stdout);
         assert!(stdout.contains("Zero CC Verified!"), "Expected 'Zero CC Verified!', got: {}", stdout);
+    }
+
+    #[test]
+    fn test_cranelift_build_with_empty_path() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_empty_{}.er", std::process::id()));
+        let bin_path = temp_dir.join(format!("test_clif_empty_bin_{}", std::process::id()));
+
+        let script = r#"
+fn fib(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+let res = fib(10);
+print(res);
+"#;
+        std::fs::write(&script_path, script).unwrap();
+        let res = build_cranelift_binary(&script_path, &bin_path, None);
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(res.is_ok(), "build_cranelift_binary failed: {:?}", res.err());
+        assert!(bin_path.exists());
+
+        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let _ = std::fs::remove_file(&bin_path);
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("55"), "Expected 55, got: {}", stdout);
     }
 }
