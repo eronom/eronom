@@ -89,6 +89,10 @@ pub enum Commands {
         /// Build standalone native binary in-process without requiring external cc/gcc/llvm
         #[arg(long, alias = "no-cc")]
         in_process: bool,
+
+        /// Use pure-Rust Cranelift backend for native AOT code generation
+        #[arg(long)]
+        cranelift: bool,
     },
     /// Start the server in production mode
     Start {
@@ -123,6 +127,10 @@ pub enum Commands {
     Check {
         /// File to type-check (e.g. main.er)
         file: PathBuf,
+
+        /// Output diagnostics as machine-readable JSON for tooling and agents
+        #[arg(long)]
+        json: bool,
     },
     /// Transpile an Eronom (.er) script to JavaScript (.js)
     Transpile {

@@ -26,6 +26,27 @@ fn find_zig() -> Option<std::path::PathBuf> {
     None
 }
 
+fn get_aot_cache_dir() -> Option<std::path::PathBuf> {
+    if std::env::var("ERONOM_NO_CACHE").map(|v| v == "1" || v == "true").unwrap_or(false)
+        || std::env::var("ERONOM_AOT_NO_CACHE").map(|v| v == "1" || v == "true").unwrap_or(false)
+    {
+        return None;
+    }
+    if let Ok(dir) = std::env::var("ERONOM_CACHE_DIR") {
+        return Some(std::path::PathBuf::from(dir).join("aot"));
+    }
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        return Some(std::path::PathBuf::from(xdg).join("eronom").join("aot"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(std::path::PathBuf::from(home).join(".cache").join("eronom").join("aot"));
+    }
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        return Some(std::path::PathBuf::from(userprofile).join(".cache").join("eronom").join("aot"));
+    }
+    None
+}
+
 fn resolve_target_triple(target: &str) -> (&'static str, &'static str) {
     let lower = target.to_lowercase();
     if lower == "windows"
@@ -387,6 +408,34 @@ fn build_aot_binary_full(
         .unwrap_or(false);
     let use_in_process = prefer_in_process || env_in_process;
 
+    // Content-addressed AOT binary caching
+    let cache_dir = get_aot_cache_dir();
+    let cache_file = if let Some(ref cdir) = cache_dir {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(c_source.as_bytes());
+        hasher.update(target.unwrap_or("host").as_bytes());
+        hasher.update((if use_in_process { "in_process" } else { "cc" }).as_bytes());
+        let hash_hex = format!("{:x}", hasher.finalize());
+        let _ = std::fs::create_dir_all(cdir);
+        Some(cdir.join(hash_hex))
+    } else {
+        None
+    };
+
+    if let Some(ref cfile) = cache_file {
+        if cfile.exists() && cfile.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+            if std::fs::copy(cfile, &final_out).is_ok() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
+                }
+                return Ok(());
+            }
+        }
+    }
+
     if use_in_process {
         let _is_cross = if let Some(target_str) = target {
             let (_, os_kind) = resolve_target_triple(target_str);
@@ -409,7 +458,23 @@ fn build_aot_binary_full(
             }
         }
 
-        // 2. If a runner stub is available and not in pure-native mode, use it to ensure runnability
+        // 2. Try Cranelift backend first for pure-Rust native code generation
+        let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1").unwrap_or(false);
+        if !no_clif {
+            if super::cranelift::build_cranelift_binary(script_path, &final_out, target).is_ok() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
+                }
+                if let Some(ref cfile) = cache_file {
+                    let _ = std::fs::copy(&final_out, cfile);
+                }
+                return Ok(());
+            }
+        }
+
+        // 3. Fallback: If a runner stub is available and not in pure-native mode, use it to ensure runnability
         let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1").unwrap_or(false);
         if !pure_native {
             if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
@@ -431,6 +496,9 @@ fn build_aot_binary_full(
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
+        }
+        if let Some(ref cfile) = cache_file {
+            let _ = std::fs::copy(&final_out, cfile);
         }
         return Ok(());
     }
@@ -532,6 +600,10 @@ fn build_aot_binary_full(
 
     if !status.success() {
         anyhow::bail!("Native compilation failed with exit code: {:?}", status.code());
+    }
+
+    if let Some(ref cfile) = cache_file {
+        let _ = std::fs::copy(&final_out, cfile);
     }
 
     Ok(())

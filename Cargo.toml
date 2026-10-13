@@ -23,6 +23,11 @@ hmac = "0.12"
 getrandom = "0.2"
 mimalloc = { version = "0.1", default-features = false }
 object = { version = "0.40.0", features = ["write", "std"] }
+cranelift-codegen = { version = "0.135.5", features = ["all-arch", "std"] }
+cranelift-frontend = "0.135.5"
+cranelift-module = "0.135.5"
+cranelift-object = "0.135.5"
+target-lexicon = "0.13.5"
 
 [[bin]]
 name = "eronom-runner"
