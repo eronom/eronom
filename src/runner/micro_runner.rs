@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use eronom::frontend;
 use eronom::vm as backend;
+use eronom::jit;
 use backend::{Compiler, VM, Value};
 pub const MAGIC_BYTES: &[u8; 16] = b"ERONOM_STUB_v1\0\0";
 
@@ -181,6 +182,7 @@ pub fn register_micro_natives(vm: &mut VM) {
 }
 
 pub fn run_micro_file(path: &str) -> anyhow::Result<()> {
+    jit::init_jit_hooks();
     let path_buf = PathBuf::from(path);
     if !path_buf.exists() {
         anyhow::bail!("File not found: {}", path);
@@ -263,6 +265,7 @@ pub fn run_micro_file(path: &str) -> anyhow::Result<()> {
     backend::er_http::start_http_server_if_needed(&mut vm);
 
     gc::gc_free_all();
+    jit::reset_jit_state();
     Ok(())
 }
 

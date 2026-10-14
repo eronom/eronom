@@ -1,5 +1,6 @@
 pub use eronom::vm as backend;
 pub use eronom::frontend;
+pub use eronom::jit;
 
 mod http_detect;
 mod micro_runner;
@@ -8,6 +9,7 @@ mod micro_runner;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
+    eronom::jit::init_jit_hooks();
     // 1. If running as a standalone self-contained bundle, execute the embedded app
     if let Some(res) = micro_runner::check_and_run_micro_bundle() {
         if let Err(e) = res {

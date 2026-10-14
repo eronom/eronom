@@ -178,9 +178,9 @@ pub fn lower_function_with_symbols(
         } else {
             EirType::Dynamic
         };
-
         match inst.op {
             OpCode::LoadConst => {
+                reg_fns.remove(&ra);
                 if let Some(&val) = func.chunk.constants.get(operand) {
                     if val.is_number() {
                         let n = val.as_number();
@@ -199,12 +199,19 @@ pub fn lower_function_with_symbols(
                 }
             }
             OpCode::LoadNull => {
+                reg_fns.remove(&ra);
                 instructions.push(EirInst::ConstNull { dest: ra });
             }
             OpCode::LoadBool => {
+                reg_fns.remove(&ra);
                 instructions.push(EirInst::ConstBool { dest: ra, val: operand != 0 });
             }
             OpCode::Move => {
+                if let Some(sym) = reg_fns.get(&rb).cloned() {
+                    reg_fns.insert(ra, sym);
+                } else {
+                    reg_fns.remove(&ra);
+                }
                 instructions.push(EirInst::Move { dest: ra, src: rb, ty: rb_ty });
             }
             OpCode::Negate => {
@@ -363,10 +370,11 @@ pub fn lower_function_with_symbols(
                     .to_string();
                 if let Some(sym) = local_globals.get(&name) {
                     reg_fns.insert(ra, sym.clone());
+                    instructions.push(EirInst::ConstFuncPtr { dest: ra, symbol: sym.clone() });
                 } else {
                     reg_fns.remove(&ra);
+                    instructions.push(EirInst::GetGlobal { dest: ra, name });
                 }
-                instructions.push(EirInst::GetGlobal { dest: ra, name });
             }
             OpCode::Call => {
                 let mut args = Vec::with_capacity(operand);
@@ -501,6 +509,15 @@ pub fn lower_function_with_symbols(
                 });
             }
         }
+
+        if inst.op != OpCode::Closure
+            && inst.op != OpCode::GetGlobal
+            && inst.op != OpCode::Move
+            && inst.op != OpCode::DefineGlobal
+            && inst.op != OpCode::SetGlobal
+        {
+            reg_fns.remove(&ra);
+        }
     }
 
     EirFunction {
@@ -551,11 +568,37 @@ pub fn lower_program(main_func: &Function, module_name: &str) -> EirModule {
     let mut lowered = Vec::new();
     let mut global_funcs = FnvHashMap::default();
 
+    // Scan main_func for Closure followed by DefineGlobal/SetGlobal to infer child function names
+    let mut const_to_name: FnvHashMap<usize, String> = FnvHashMap::default();
+    let code = &main_func.chunk.code;
+    for (i, inst) in code.iter().enumerate() {
+        if inst.op == OpCode::Closure {
+            let closure_reg = inst.ra;
+            let const_idx = inst.operand as usize;
+            for next_inst in code.iter().skip(i + 1) {
+                if (next_inst.op == OpCode::DefineGlobal || next_inst.op == OpCode::SetGlobal) && next_inst.ra == closure_reg {
+                    if let Some(name_str) = main_func.chunk.constants.get(next_inst.operand as usize).and_then(|v| v.as_str()) {
+                        const_to_name.insert(const_idx, name_str.to_string());
+                    }
+                    break;
+                }
+                if next_inst.ra == closure_reg {
+                    break;
+                }
+            }
+        }
+    }
+
     // Pass 1: Gather all functions and register their symbol names
     let mut scan_queue = vec![main_func.clone()];
     while let Some(f) = scan_queue.pop() {
-        for &val in f.chunk.constants.iter() {
-            if let Some(child_fn) = extract_function(val) {
+        for (idx, &val) in f.chunk.constants.iter().enumerate() {
+            if let Some(mut child_fn) = extract_function(val) {
+                if child_fn.name.is_none() {
+                    if let Some(inferred) = const_to_name.get(&idx) {
+                        child_fn.name = Some(inferred.clone());
+                    }
+                }
                 let sym = child_fn
                     .name
                     .as_ref()
@@ -577,7 +620,12 @@ pub fn lower_program(main_func: &Function, module_name: &str) -> EirModule {
     while let Some((func, name)) = pending.pop() {
         let mut child_syms = Vec::new();
         for (const_idx, &val) in func.chunk.constants.iter().enumerate() {
-            if let Some(child_fn) = extract_function(val) {
+            if let Some(mut child_fn) = extract_function(val) {
+                if child_fn.name.is_none() {
+                    if let Some(inferred) = const_to_name.get(&const_idx) {
+                        child_fn.name = Some(inferred.clone());
+                    }
+                }
                 let sym = child_fn
                     .name
                     .as_ref()
@@ -626,6 +674,17 @@ mod tests {
         assert!(matches!(eir.instructions[0], EirInst::ConstI64 { dest: 0, val: 10 }));
         assert!(matches!(eir.instructions[1], EirInst::ConstI64 { dest: 1, val: 20 }));
         assert!(matches!(eir.instructions[2], EirInst::Binary { dest: 2, op: EirBinaryOp::Add, left: 0, right: 1, .. }));
+    }
+
+    #[test]
+    fn test_lower_fib_recursive_call() {
+        let stmts = crate::frontend::parse_and_resolve_imports(std::path::Path::new("fib.er")).unwrap();
+        let compiler = crate::vm::compiler::Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+        let eir_module = lower_program(&function, "fib");
+        let fib_fn = eir_module.functions.iter().find(|f| f.name == "er_fn_fib").expect("fib function should exist");
+        let direct_calls: Vec<_> = fib_fn.instructions.iter().filter(|i| matches!(i, EirInst::Call { func_name, .. } if func_name == "er_fn_fib")).collect();
+        assert_eq!(direct_calls.len(), 2, "fib should have 2 direct recursive calls");
     }
 }
 

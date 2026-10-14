@@ -1,7 +1,7 @@
 use std::fmt;
 use super::token::TokenType;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct SourceLocation {
     pub file_path: String,
     pub line: usize,
