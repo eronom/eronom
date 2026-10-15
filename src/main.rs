@@ -24,6 +24,33 @@ fn main() {
     let cli = eronom::cli::Cli::parse();
 
     if let Some(file_path) = cli.file {
+        if file_path.to_string_lossy().ends_with(".exe") && file_path.exists() {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            {
+                let bytes = match std::fs::read(&file_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Error reading {}: {}", file_path.display(), e);
+                        std::process::exit(1);
+                    }
+                };
+                match eronom::jit::aot::pe_writer::run_pe64_standalone(&bytes) {
+                    Ok((code, output)) => {
+                        print!("{}", output);
+                        std::process::exit(code);
+                    }
+                    Err(e) => {
+                        eprintln!("Error executing PE binary {}: {}", file_path.display(), e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+            {
+                eprintln!("Running .exe directly is only supported on x86_64 Linux or natively on Windows.");
+                std::process::exit(1);
+            }
+        }
         if !file_path.to_string_lossy().ends_with(".er") && !file_path.exists() {
             eprintln!("Error: Unknown command or file: {}", file_path.display());
             std::process::exit(1);

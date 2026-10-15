@@ -51,6 +51,40 @@ const X86_64_PRINT_STR_BYTES: &[u8] = &[
     0x5c, 0x5b, 0xc3,
 ];
 
+const X86_64_WIN_SYS_EXIT_BYTES: &[u8] = &[
+    0x55,                         // push rbp
+    0x48, 0x89, 0xe5,             // mov rbp, rsp
+    0x48, 0x83, 0xec, 0x20,       // sub rsp, 32
+    0xe8, 0x00, 0x00, 0x00, 0x00, // call thunk_ExitProcess (patched by pe_writer)
+];
+
+const X86_64_WIN_PRINT_I64_BYTES: &[u8] = &[
+    0x55, 0x48, 0x89, 0xe5, 0x53, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x48, 0x83, 0xec, 0x50, 0x48,
+    0x8d, 0x74, 0x24, 0x4f, 0xc6, 0x06, 0x0a, 0x49, 0xc7, 0xc5, 0x01, 0x00, 0x00, 0x00, 0x48, 0x89,
+    0xc8, 0x48, 0x85, 0xc0, 0x79, 0x0c, 0x48, 0xf7, 0xd8, 0x49, 0xc7, 0xc4, 0x01, 0x00, 0x00, 0x00,
+    0xeb, 0x03, 0x4d, 0x31, 0xe4, 0x48, 0x85, 0xc0, 0x75, 0x0b, 0x48, 0xff, 0xce, 0xc6, 0x06, 0x30,
+    0x49, 0xff, 0xc5, 0xeb, 0x1f, 0x48, 0x85, 0xc0, 0x74, 0x1a, 0x48, 0x31, 0xd2, 0x48, 0xc7, 0xc3,
+    0x0a, 0x00, 0x00, 0x00, 0x48, 0xf7, 0xf3, 0x80, 0xc2, 0x30, 0x48, 0xff, 0xce, 0x88, 0x16, 0x49,
+    0xff, 0xc5, 0xeb, 0xe1, 0x4d, 0x85, 0xe4, 0x74, 0x09, 0x48, 0xff, 0xce, 0xc6, 0x06, 0x2d, 0x49,
+    0xff, 0xc5, 0x48, 0xc7, 0xc1, 0xf5, 0xff, 0xff, 0xff, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x89,
+    0xc1, 0x48, 0x89, 0xf2, 0x4d, 0x89, 0xe8, 0x4c, 0x8d, 0x4c, 0x24, 0x28, 0x48, 0xc7, 0x44, 0x24,
+    0x20, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x83, 0xc4, 0x50, 0x41, 0x5e,
+    0x41, 0x5d, 0x41, 0x5c, 0x5b, 0x5d, 0xc3,
+];
+
+const X86_64_WIN_PRINT_STR_BYTES: &[u8] = &[
+    0x55, 0x48, 0x89, 0xe5, 0x53, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x48, 0x83, 0xec, 0x50, 0x48,
+    0x89, 0xce, 0x48, 0x85, 0xf6, 0x74, 0x7c, 0x48, 0x31, 0xd2, 0x80, 0x3c, 0x16, 0x00, 0x74, 0x05,
+    0x48, 0xff, 0xc2, 0xeb, 0xf5, 0x48, 0x85, 0xd2, 0x74, 0x2e, 0x49, 0x89, 0xd5, 0x48, 0xc7, 0xc1,
+    0xf5, 0xff, 0xff, 0xff, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x89, 0xc3, 0x48, 0x89, 0xd9, 0x48,
+    0x89, 0xf2, 0x4d, 0x89, 0xe8, 0x4c, 0x8d, 0x4c, 0x24, 0x28, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x00,
+    0x00, 0x00, 0x00, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xdb, 0x75, 0x0f, 0x48, 0xc7, 0xc1,
+    0xf5, 0xff, 0xff, 0xff, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x89, 0xc3, 0xc6, 0x44, 0x24, 0x4f,
+    0x0a, 0x48, 0x89, 0xd9, 0x48, 0x8d, 0x54, 0x24, 0x4f, 0x49, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00,
+    0x4c, 0x8d, 0x4c, 0x24, 0x28, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x00,
+    0x00, 0x00, 0x00, 0x48, 0x83, 0xc4, 0x50, 0x41, 0x5e, 0x41, 0x5d, 0x41, 0x5c, 0x5b, 0x5d, 0xc3,
+];
+
 pub struct CraneliftBackend {
     pub module: ObjectModule,
     pub target_triple: Triple,
@@ -129,24 +163,39 @@ impl CraneliftBackend {
     }
 
     pub fn compile_module(mut self, eir: &EirModule) -> anyhow::Result<Vec<u8>> {
-        // 1. Define direct zero-libc syscall routines (sys_write via syscall 1, sys_exit via syscall 60)
+        // 1. Define direct zero-libc routines (Linux syscalls or Windows Win32 IAT routines)
+        let is_windows = self.target_triple.operating_system == target_lexicon::OperatingSystem::Windows;
         if self.target_triple.architecture == target_lexicon::Architecture::X86_64 {
+            let (exit_bytes, print_i64_bytes, print_str_bytes) = if is_windows {
+                (
+                    X86_64_WIN_SYS_EXIT_BYTES,
+                    X86_64_WIN_PRINT_I64_BYTES,
+                    X86_64_WIN_PRINT_STR_BYTES,
+                )
+            } else {
+                (
+                    X86_64_SYS_EXIT_BYTES,
+                    X86_64_PRINT_I64_BYTES,
+                    X86_64_PRINT_STR_BYTES,
+                )
+            };
+
             let mut exit_sig = self.module.make_signature();
             exit_sig.params.push(AbiParam::new(types::I64));
             let exit_fid = self.module.declare_function("er_sys_exit", Linkage::Export, &exit_sig)?;
-            self.module.define_function_bytes(exit_fid, 16, X86_64_SYS_EXIT_BYTES, &[])?;
+            self.module.define_function_bytes(exit_fid, 16, exit_bytes, &[])?;
             self.sys_exit_fid = Some(exit_fid);
 
             let mut print_i64_sig = self.module.make_signature();
             print_i64_sig.params.push(AbiParam::new(types::I64));
             let print_i64_fid = self.module.declare_function("er_print_i64", Linkage::Export, &print_i64_sig)?;
-            self.module.define_function_bytes(print_i64_fid, 16, X86_64_PRINT_I64_BYTES, &[])?;
+            self.module.define_function_bytes(print_i64_fid, 16, print_i64_bytes, &[])?;
             self.print_i64_fid = Some(print_i64_fid);
 
             let mut print_str_sig = self.module.make_signature();
             print_str_sig.params.push(AbiParam::new(types::I64));
             let print_str_fid = self.module.declare_function("er_print_str", Linkage::Export, &print_str_sig)?;
-            self.module.define_function_bytes(print_str_fid, 16, X86_64_PRINT_STR_BYTES, &[])?;
+            self.module.define_function_bytes(print_str_fid, 16, print_str_bytes, &[])?;
             self.print_str_fid = Some(print_str_fid);
         }
 
@@ -662,6 +711,10 @@ pub fn build_cranelift_binary(
                 let status = Command::new("link.exe")
                     .arg(&format!("/OUT:{}", output_path.display()))
                     .arg(&temp_obj)
+                    .arg("/ENTRY:_start")
+                    .arg("/SUBSYSTEM:CONSOLE")
+                    .arg("kernel32.lib")
+                    .arg("/NODEFAULTLIB")
                     .status();
                 if matches!(status, Ok(s) if s.success()) {
                     true
@@ -889,22 +942,7 @@ print(res);
 
         assert!(!obj_bytes.is_empty(), "Object bytes should not be empty");
         let parsed = object::File::parse(&obj_bytes[..]).unwrap();
-        println!("Windows object format: {:?}", parsed.format());
         assert_eq!(parsed.format(), object::BinaryFormat::Coff);
-        for sec in parsed.sections() {
-            println!("  COFF Section: {} (size: {})", sec.name().unwrap_or("?"), sec.data().unwrap().len());
-        }
-        for sym in parsed.symbols() {
-            if let Ok(name) = sym.name() {
-                println!("  COFF Symbol: {} at 0x{:x}", name, sym.address());
-            }
-        }
-        if let Some(text) = parsed.section_by_name(".text") {
-            println!("  COFF .text relocations count: {}", text.relocations().count());
-            for (offset, reloc) in text.relocations() {
-                println!("    reloc at 0x{:x}: {:?}", offset, reloc.target());
-            }
-        }
     }
 
     #[test]
@@ -960,7 +998,37 @@ print(res);
         let bytes = std::fs::read(&out_path).unwrap();
         let parsed = object::File::parse(&bytes[..]).unwrap();
         assert_eq!(parsed.format(), object::BinaryFormat::Pe);
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            let (code, output) = crate::jit::aot::pe_writer::run_pe64_standalone(&bytes).unwrap();
+            assert_eq!(code, 0, "Windows executable exited with non-zero code");
+            assert_eq!(output.trim(), "100", "Expected output '100', got '{}'", output);
+        }
+
         let _ = std::fs::remove_file(&out_path);
+    }
+
+    #[test]
+    fn test_cranelift_cross_windows_fib_execution() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_win_fib_{}.er", std::process::id()));
+        let out_path = temp_dir.join(format!("test_clif_win_fib_{}.exe", std::process::id()));
+        std::fs::write(&script_path, "fn fib(n) {\n    if (n <= 1) {\n        return n;\n    }\n    return fib(n - 1) + fib(n - 2);\n}\nlet res = fib(10);\nprint(res);\n").unwrap();
+
+        let res = build_cranelift_binary(&script_path, &out_path, Some("windows"));
+        let _ = std::fs::remove_file(&script_path);
+        assert!(res.is_ok(), "Build failed: {:?}", res.err());
+
+        let bytes = std::fs::read(&out_path).unwrap();
+        let _ = std::fs::remove_file(&out_path);
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            let (code, output) = crate::jit::aot::pe_writer::run_pe64_standalone(&bytes).unwrap();
+            assert_eq!(code, 0, "Windows executable exited with non-zero code");
+            assert_eq!(output.trim(), "55", "Expected output '55', got '{}'", output);
+        }
     }
 
     #[test]
