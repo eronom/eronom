@@ -24,6 +24,33 @@ fn main() {
     let cli = eronom::cli::Cli::parse();
 
     if let Some(file_path) = cli.file {
+        if file_path.to_string_lossy().ends_with(".exe") && file_path.exists() {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            {
+                let bytes = match std::fs::read(&file_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Error reading {}: {}", file_path.display(), e);
+                        std::process::exit(1);
+                    }
+                };
+                match eronom::jit::aot::pe_writer::run_pe64_standalone(&bytes) {
+                    Ok((code, output)) => {
+                        print!("{}", output);
+                        std::process::exit(code);
+                    }
+                    Err(e) => {
+                        eprintln!("Error executing PE binary {}: {}", file_path.display(), e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+            {
+                eprintln!("Running .exe directly is only supported on x86_64 Linux or natively on Windows.");
+                std::process::exit(1);
+            }
+        }
         if !file_path.to_string_lossy().ends_with(".er") && !file_path.exists() {
             eprintln!("Error: Unknown command or file: {}", file_path.display());
             std::process::exit(1);
@@ -40,25 +67,60 @@ fn main() {
                     std::process::exit(1);
                 }
             }
-            eronom::cli::Commands::Check { file } => {
+            eronom::cli::Commands::Check { file, json } => {
                 let path_buf = file.clone();
                 match eronom::frontend::parse_and_resolve_imports(&path_buf) {
                     Ok(stmts) => {
                         match eronom::frontend::check_program(&stmts) {
                             Ok(()) => {
-                                println!("✓ Type check passed: {}", file.display());
+                                if json {
+                                    let payload = serde_json::json!({
+                                        "status": "ok",
+                                        "file": file.to_string_lossy(),
+                                        "errors": []
+                                    });
+                                    println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+                                } else {
+                                    println!("✓ Type check passed: {}", file.display());
+                                }
                             }
                             Err(errs) => {
-                                eprintln!("✗ Type check failed with {} error(s):", errs.len());
-                                for err in errs {
-                                    eprintln!("  {}", err);
+                                if json {
+                                    let payload = serde_json::json!({
+                                        "status": "error",
+                                        "file": file.to_string_lossy(),
+                                        "errors": errs
+                                    });
+                                    println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+                                } else {
+                                    eprintln!("✗ Type check failed with {} error(s):", errs.len());
+                                    for err in errs {
+                                        eprintln!("  {}", err);
+                                    }
                                 }
                                 std::process::exit(1);
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("Parse/Import error: {}", e);
+                        if json {
+                            let payload = serde_json::json!({
+                                "status": "error",
+                                "file": file.to_string_lossy(),
+                                "errors": [{
+                                    "code": "E0001",
+                                    "message": format!("Parse/Import error: {}", e),
+                                    "loc": {
+                                        "file_path": file.to_string_lossy(),
+                                        "line": 0,
+                                        "col": 0
+                                    }
+                                }]
+                            });
+                            println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+                        } else {
+                            eprintln!("Parse/Import error: {}", e);
+                        }
                         std::process::exit(1);
                     }
                 }

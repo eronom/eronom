@@ -57,6 +57,20 @@ impl TypeChecker {
                         .collect();
                     self.env.define_var(name.clone(), TypeNode::Object(props));
                 }
+                Stmt::VarDecl(name, type_ann, _, expr, _) => {
+                    if let Expr::Function(params, ret_ty, _, _, _) = expr {
+                        let param_types = params
+                            .iter()
+                            .map(|p| p.ty.clone().unwrap_or(TypeNode::Primitive(PrimitiveType::Any)))
+                            .collect();
+                        let ret = ret_ty.clone().unwrap_or(TypeNode::Primitive(PrimitiveType::Any));
+                        let fn_ty = TypeNode::Function {
+                            params: param_types,
+                            return_type: Box::new(ret),
+                        };
+                        self.env.define_var(name.clone(), type_ann.clone().unwrap_or(fn_ty));
+                    }
+                }
                 _ => {}
             }
         }
@@ -74,13 +88,19 @@ impl TypeChecker {
 
                 if let Some(expected_ty) = type_ann {
                     if !is_assignable(expected_ty, &init_ty, &self.env) {
-                        self.errors.push(TypeError {
-                            message: format!(
-                                "Type mismatch in variable declaration '{}': expected '{}', found '{}'",
-                                name, expected_ty, init_ty
-                            ),
-                            loc: loc.clone(),
-                        });
+                        self.errors.push(
+                            TypeError::new(
+                                "E0301",
+                                format!(
+                                    "Type mismatch in variable declaration '{}': expected '{}', found '{}'",
+                                    name, expected_ty, init_ty
+                                ),
+                                loc.clone(),
+                            ).with_explanation(format!(
+                                "Variable was declared with explicit type '{}', but initialized with incompatible type '{}'",
+                                expected_ty, init_ty
+                            ))
+                        );
                     }
                     self.env.define_var(name.clone(), expected_ty.clone());
                 } else {
@@ -130,10 +150,13 @@ impl TypeChecker {
 
                 let int_ty = TypeNode::Primitive(PrimitiveType::Int);
                 if !is_assignable(&int_ty, &start_ty, &self.env) || !is_assignable(&int_ty, &end_ty, &self.env) {
-                    self.errors.push(TypeError {
-                        message: "Range loop boundaries must evaluate to integers".to_string(),
-                        loc: SourceLocation::default(),
-                    });
+                    self.errors.push(
+                        TypeError::new(
+                            "E0302",
+                            "Range loop boundaries must evaluate to integers",
+                            SourceLocation::default(),
+                        ).with_explanation("Both start and end expressions of a range loop must be integer numbers")
+                    );
                 }
 
                 self.env.push_scope();
@@ -162,13 +185,19 @@ impl TypeChecker {
 
                 if let Some(ref expected_ret) = self.env.current_return_type {
                     if !is_assignable(expected_ret, &ret_ty, &self.env) {
-                        self.errors.push(TypeError {
-                            message: format!(
-                                "Return type mismatch: expected '{}', found '{}'",
+                        self.errors.push(
+                            TypeError::new(
+                                "E0303",
+                                format!(
+                                    "Return type mismatch: expected '{}', found '{}'",
+                                    expected_ret, ret_ty
+                                ),
+                                loc.clone(),
+                            ).with_explanation(format!(
+                                "Function specifies return type '{}', but returned expression of type '{}'",
                                 expected_ret, ret_ty
-                            ),
-                            loc: loc.clone(),
-                        });
+                            ))
+                        );
                     }
                 }
             }
@@ -215,10 +244,16 @@ impl TypeChecker {
                 if let Some(ty) = self.env.get_var(name) {
                     ty.clone()
                 } else {
-                    self.errors.push(TypeError {
-                        message: format!("Cannot find name '{}' in current scope", name),
-                        loc: loc.clone(),
-                    });
+                    self.errors.push(
+                        TypeError::new(
+                            "E0201",
+                            format!("Cannot find name '{}' in current scope", name),
+                            loc.clone(),
+                        ).with_explanation(format!(
+                            "Identifier '{}' was referenced before declaration or does not exist in scope",
+                            name
+                        ))
+                    );
                     TypeNode::Primitive(PrimitiveType::Any)
                 }
             }
@@ -226,19 +261,31 @@ impl TypeChecker {
                 let val_ty = self.infer_expr(val);
                 if let Some(var_ty) = self.env.get_var(name).cloned() {
                     if !is_assignable(&var_ty, &val_ty, &self.env) {
-                        self.errors.push(TypeError {
-                            message: format!(
-                                "Cannot assign type '{}' to variable '{}' of type '{}'",
-                                val_ty, name, var_ty
-                            ),
-                            loc: loc.clone(),
-                        });
+                        self.errors.push(
+                            TypeError::new(
+                                "E0304",
+                                format!(
+                                    "Cannot assign type '{}' to variable '{}' of type '{}'",
+                                    val_ty, name, var_ty
+                                ),
+                                loc.clone(),
+                            ).with_explanation(format!(
+                                "Variable '{}' has type '{}' and cannot receive value of type '{}'",
+                                name, var_ty, val_ty
+                            ))
+                        );
                     }
                 } else {
-                    self.errors.push(TypeError {
-                        message: format!("Cannot assign to undeclared variable '{}'", name),
-                        loc: loc.clone(),
-                    });
+                    self.errors.push(
+                        TypeError::new(
+                            "E0202",
+                            format!("Cannot assign to undeclared variable '{}'", name),
+                            loc.clone(),
+                        ).with_explanation(format!(
+                            "Variable '{}' must be declared with 'let' before assigning a value",
+                            name
+                        ))
+                    );
                 }
                 val_ty
             }
@@ -374,15 +421,21 @@ impl TypeChecker {
                     } => {
                         for (idx, (param_ty, arg_ty)) in params.iter().zip(arg_types.iter()).enumerate() {
                             if !is_assignable(param_ty, arg_ty, &self.env) {
-                                self.errors.push(TypeError {
-                                    message: format!(
-                                        "Argument {} type mismatch: expected '{}', got '{}'",
-                                        idx + 1,
-                                        param_ty,
-                                        arg_ty
-                                    ),
-                                    loc: SourceLocation::default(),
-                                });
+                                self.errors.push(
+                                    TypeError::new(
+                                        "E0305",
+                                        format!(
+                                            "Argument {} type mismatch: expected '{}', got '{}'",
+                                            idx + 1,
+                                            param_ty,
+                                            arg_ty
+                                        ),
+                                        SourceLocation::default(),
+                                    ).with_explanation(format!(
+                                        "Parameter {} expects argument of type '{}'",
+                                        idx + 1, param_ty
+                                    ))
+                                );
                             }
                         }
                         *return_type
@@ -421,13 +474,19 @@ impl TypeChecker {
                 if let TypeNode::Object(props) = self.env.resolve_type(&obj_ty) {
                     for p in props {
                         if &p.name == prop && !is_assignable(&p.ty, &val_ty, &self.env) {
-                            self.errors.push(TypeError {
-                                message: format!(
-                                    "Cannot assign type '{}' to property '{}' of type '{}'",
-                                    val_ty, prop, p.ty
-                                ),
-                                loc: SourceLocation::default(),
-                            });
+                            self.errors.push(
+                                TypeError::new(
+                                    "E0306",
+                                    format!(
+                                        "Cannot assign type '{}' to property '{}' of type '{}'",
+                                        val_ty, prop, p.ty
+                                    ),
+                                    SourceLocation::default(),
+                                ).with_explanation(format!(
+                                    "Object property '{}' is typed as '{}'",
+                                    prop, p.ty
+                                ))
+                            );
                         }
                     }
                 }
@@ -451,19 +510,31 @@ impl TypeChecker {
                         let v_ty = self.infer_expr(v);
                         if let Some(expected_f_ty) = field_map.get(k.as_str()) {
                             if !is_assignable(expected_f_ty, &v_ty, &self.env) {
-                                self.errors.push(TypeError {
-                                    message: format!(
-                                        "Field '{}' of struct '{}' expects '{}', got '{}'",
-                                        k, name, expected_f_ty, v_ty
-                                    ),
-                                    loc: loc.clone(),
-                                });
+                                self.errors.push(
+                                    TypeError::new(
+                                        "E0401",
+                                        format!(
+                                            "Field '{}' of struct '{}' expects '{}', got '{}'",
+                                            k, name, expected_f_ty, v_ty
+                                        ),
+                                        loc.clone(),
+                                    ).with_explanation(format!(
+                                        "Struct '{}' field '{}' has declared type '{}'",
+                                        name, k, expected_f_ty
+                                    ))
+                                );
                             }
                         } else {
-                            self.errors.push(TypeError {
-                                message: format!("Unknown field '{}' for struct '{}'", k, name),
-                                loc: loc.clone(),
-                            });
+                            self.errors.push(
+                                TypeError::new(
+                                    "E0402",
+                                    format!("Unknown field '{}' for struct '{}'", k, name),
+                                    loc.clone(),
+                                ).with_explanation(format!(
+                                    "Field '{}' is not a member of struct definition '{}'",
+                                    k, name
+                                ))
+                            );
                         }
                     }
                 }

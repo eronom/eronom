@@ -178,7 +178,17 @@ pub fn emit_call_and_control(
 
             if arg_count == func.arity && !func.is_async {
                 let func_val_u64 = Value::function(func_obj).0;
-                mir.push_str(&format!("          bne not_self_call_{}, r{}, {}\n", idx, rb, func_val_u64));
+                mir.push_str(&format!("          beq is_self_call_{}, r{}, {}\n", idx, rb, func_val_u64));
+                mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                mir.push_str("          and tmp, tmp, 0xffff000000000000\n");
+                mir.push_str(&format!("          bne not_self_call_{}, tmp, 0xfff8000000000000\n", idx));
+                mir.push_str(&format!("          mov tmp, r{}\n", rb));
+                mir.push_str("          and tmp, tmp, 0x0000ffffffffffff\n");
+                mir.push_str("          mov tmp1, u8:16(tmp)\n");
+                mir.push_str(&format!("          bne not_self_call_{}, tmp1, 10\n", idx));
+                mir.push_str("          mov tmp1, i64:24(tmp)\n");
+                mir.push_str(&format!("          bne not_self_call_{}, tmp1, {}\n", idx, func_obj as usize));
+                mir.push_str(&format!("is_self_call_{}:\n", idx));
                 // Direct recursive call fast-path!
                 mir.push_str(&format!("          add start_ptr, frame_slots, {}\n", (rb + 1) * 8));
                 mir.push_str(&format!("          call p_jit_fn, {}, status, vm, start_ptr, constants_ptr, 0, ip_out, dest_reg_out, func_reg_out, arg_count_out, ret_val_out\n", func_name));

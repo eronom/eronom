@@ -152,6 +152,7 @@ struct BenchmarkDef {
     default_iterations: usize,
     er_source: &'static str,
     js_source: &'static str,
+    tov_source: &'static str,
 }
 
 fn get_benchmark_suite() -> Vec<BenchmarkDef> {
@@ -182,6 +183,21 @@ for (let i = 1; i < 50000; i++) {
     let dummy = obj.a;
 }
 "#,
+            tov_source: r#"
+function runAlloc() {
+    for (let i = 1; i < 50000; i++) {
+        let arr = [i, i + 1, i + 2];
+        arr.push(i + 3);
+        let pop_val = arr.pop();
+        let obj = { a: arr, b: i };
+        let s = `num: ${i}`;
+        let dummy = obj.a;
+    }
+}
+function main() {
+    runAlloc();
+}
+"#,
         },
         BenchmarkDef {
             id: "fibonacci",
@@ -206,6 +222,17 @@ function fib(n) {
     return fib(n - 1) + fib(n - 2);
 }
 let res = fib(28);
+"#,
+            tov_source: r#"
+function fib(n: int): int {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+function main() {
+    let res = fib(28);
+}
 "#,
         },
         BenchmarkDef {
@@ -261,6 +288,37 @@ let stretchDepth = maxDepth + 1;
 let check = itemCheck(bottomUpTree(stretchDepth));
 let longLivedTree = bottomUpTree(maxDepth);
 let longLivedCheck = itemCheck(longLivedTree);
+"#,
+            tov_source: r#"
+type Tree = {
+    left: Tree | undefined,
+    right: Tree | undefined,
+}
+
+function bottomUpTree(depth: int): Tree {
+    if (depth <= 0) {
+        return { left: undefined, right: undefined };
+    }
+    return {
+        left: bottomUpTree(depth - 1),
+        right: bottomUpTree(depth - 1),
+    };
+}
+
+function itemCheck(node: Tree): int {
+    if (node.left === undefined || node.right === undefined) {
+        return 1;
+    }
+    return 1 + itemCheck(node.left) + itemCheck(node.right);
+}
+
+function main() {
+    let maxDepth = 12;
+    let stretchDepth = maxDepth + 1;
+    let check = itemCheck(bottomUpTree(stretchDepth));
+    let longLivedTree = bottomUpTree(maxDepth);
+    let longLivedCheck = itemCheck(longLivedTree);
+}
 "#,
         },
         BenchmarkDef {
@@ -322,6 +380,36 @@ function sieve(limit) {
     return count;
 }
 let primes = sieve(30000);
+"#,
+            tov_source: r#"
+function sieve(limit: int): int {
+    let is_prime: int[] = [];
+    for (let i = 0; i < limit; i++) {
+        is_prime.push(1);
+    }
+    let p = 2;
+    while (p * p < limit) {
+        if (is_prime[p] === 1) {
+            let k = p * p;
+            while (k < limit) {
+                is_prime[k] = 0;
+                k = k + p;
+            }
+        }
+        p = p + 1;
+    }
+    let count = 0;
+    for (let i = 2; i < limit; i++) {
+        if (is_prime[i] === 1) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
+
+function main() {
+    let primes = sieve(30000);
+}
 "#,
         },
         BenchmarkDef {
@@ -398,6 +486,42 @@ let a = makeMatrix(n, n, 1);
 let b = makeMatrix(n, n, 2);
 let c = matrixMultiply(a, b, n);
 "#,
+            tov_source: r#"
+function makeMatrix(rows: int, cols: int, initial: int): int[][] {
+    let mat: int[][] = [];
+    for (let r = 0; r < rows; r++) {
+        let row: int[] = [];
+        for (let c = 0; c < cols; c++) {
+            row.push(initial + r + c);
+        }
+        mat.push(row);
+    }
+    return mat;
+}
+
+function matrixMultiply(a: int[][], b: int[][], n: int): int[][] {
+    let res: int[][] = [];
+    for (let i = 0; i < n; i++) {
+        let row: int[] = [];
+        for (let j = 0; j < n; j++) {
+            let sum = 0;
+            for (let k = 0; k < n; k++) {
+                sum = sum + a[i]![k]! * b[k]![j]!;
+            }
+            row.push(sum);
+        }
+        res.push(row);
+    }
+    return res;
+}
+
+function main() {
+    let n = 45;
+    let a = makeMatrix(n, n, 1);
+    let b = makeMatrix(n, n, 2);
+    let c = matrixMultiply(a, b, n);
+}
+"#,
         },
         BenchmarkDef {
             id: "mandelbrot",
@@ -450,6 +574,32 @@ function mandelbrot(width, height, max_iter) {
     return checksum;
 }
 let sum = mandelbrot(100, 100, 100);
+"#,
+            tov_source: r#"
+function mandelbrot(width: int, height: int, max_iter: int): int {
+    let checksum = 0;
+    for (let y = 0; y < height; y++) {
+        let ci = (y * 2.0 / height) - 1.0;
+        for (let x = 0; x < width; x++) {
+            let cr = (x * 3.0 / width) - 2.0;
+            let zr = 0.0;
+            let zi = 0.0;
+            let iter = 0;
+            while (zr * zr + zi * zi <= 4.0 && iter < max_iter) {
+                let temp = zr * zr - zi * zi + cr;
+                zi = 2.0 * zr * zi + ci;
+                zr = temp;
+                iter = iter + 1;
+            }
+            checksum = checksum + iter;
+        }
+    }
+    return checksum;
+}
+
+function main() {
+    let sum = mandelbrot(100, 100, 100);
+}
 "#,
         },
         BenchmarkDef {
@@ -540,6 +690,64 @@ function runPipeline(count) {
 }
 let stats = runPipeline(5000);
 "#,
+            tov_source: r#"
+type User = {
+    id: int,
+    name: string,
+    score: int,
+    active: int,
+}
+
+type Res = {
+    total: int,
+    active: int,
+    sumScore: int,
+    highScoreCount: int,
+}
+
+function runPipeline(count: int): Res {
+    let users: User[] = [];
+    for (let i = 0; i < count; i++) {
+        let active = 0;
+        if (i % 2 === 0) {
+            active = 1;
+        }
+        let user: User = {
+            id: i,
+            name: `user_${i}`,
+            score: (i * 17) % 100,
+            active: active,
+        };
+        users.push(user);
+    }
+
+    let totalScore = 0;
+    let activeCount = 0;
+    let highScorers: User[] = [];
+    for (let i = 0; i < count; i++) {
+        let u = users[i]!;
+        if (u.active === 1) {
+            totalScore = totalScore + u.score;
+            activeCount = activeCount + 1;
+            if (u.score > 50) {
+                highScorers.push(u);
+            }
+        }
+    }
+    let hs_len = highScorers.length;
+    let res: Res = {
+        total: count,
+        active: activeCount,
+        sumScore: totalScore,
+        highScoreCount: hs_len,
+    };
+    return res;
+}
+
+function main() {
+    let stats = runPipeline(5000);
+}
+"#,
         },
     ]
 }
@@ -550,6 +758,7 @@ struct BenchResultRow {
     bench_id: String,
     bench_name: String,
     native_aot_avg: std::time::Duration,
+    tov_avg: std::time::Duration,
     vm_jit_avg: std::time::Duration,
     vm_interp_avg: std::time::Duration,
     bun_pure_avg: std::time::Duration,
@@ -912,20 +1121,7 @@ console.log((performance.now() - start) / 1000);
     let mut native_aot_avg = std::time::Duration::from_secs(0);
     let mut native_aot_rss = None;
 
-    let local_bin = if bench.id == "fibonacci" && std::path::Path::new("./fib").exists() {
-        Some(std::path::PathBuf::from("./fib"))
-    } else {
-        let candidate = std::path::PathBuf::from(format!("./{}", bench.id));
-        if candidate.exists() {
-            Some(candidate)
-        } else {
-            None
-        }
-    };
-
-    let bin_to_run = if let Some(p) = local_bin {
-        Some(p)
-    } else {
+    let bin_to_run = {
         let temp_aot_dir = std::env::temp_dir();
         let temp_aot_src = temp_aot_dir.join(format!("bench_aot_{}_{}.er", bench.id, std::process::id()));
         let temp_aot_bin = temp_aot_dir.join(format!("bench_aot_{}_{}", bench.id, std::process::id()));
@@ -967,6 +1163,56 @@ console.log((performance.now() - start) / 1000);
         }
     }
 
+    // --- Tov (Native) benchmark ---
+    let mut tov_avg = std::time::Duration::from_secs(0);
+    let mut tov_rss = None;
+
+    let tov_cmd = if std::process::Command::new("tov").arg("version").output().is_ok() {
+        Some("tov".to_string())
+    } else if std::path::Path::new("./Tov/target/release/tov").exists() {
+        Some("./Tov/target/release/tov".to_string())
+    } else if std::path::Path::new("./Tov/target/debug/tov").exists() {
+        Some("./Tov/target/debug/tov".to_string())
+    } else {
+        None
+    };
+
+    if let Some(ref cmd_name) = tov_cmd {
+        let temp_tov_dir = std::env::temp_dir();
+        let temp_tov_src = temp_tov_dir.join(format!("bench_tov_{}_{}.tov", bench.id, std::process::id()));
+        let temp_tov_bin = temp_tov_dir.join(format!("bench_tov_{}_{}", bench.id, std::process::id()));
+        if std::fs::write(&temp_tov_src, bench.tov_source).is_ok() {
+            let build_status = std::process::Command::new(cmd_name)
+                .arg("build")
+                .arg(&temp_tov_src)
+                .arg("-o")
+                .arg(&temp_tov_bin)
+                .output();
+
+            if build_status.map(|o| o.status.success()).unwrap_or(false) {
+                let start = Instant::now();
+                let mut success = true;
+                for _ in 0..iterations {
+                    if !std::process::Command::new(&temp_tov_bin)
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false)
+                    {
+                        success = false;
+                        break;
+                    }
+                }
+                if success {
+                    tov_avg = start.elapsed() / (iterations as u32);
+                    let (_, rss) = run_command_with_metrics(&temp_tov_bin.to_string_lossy(), &[]);
+                    tov_rss = rss;
+                }
+                let _ = std::fs::remove_file(&temp_tov_bin);
+            }
+            let _ = std::fs::remove_file(&temp_tov_src);
+        }
+    }
+
     // --- Results Table ---
     eprintln!("┌────────────────────┬────────────┬────────────┬────────────┐");
     eprintln!("│ Runner             │ Avg Time   │ Peak RSS   │ Peak Heap  │");
@@ -991,6 +1237,9 @@ console.log((performance.now() - start) / 1000);
     }
     if native_aot_avg.as_nanos() > 0 {
         print_row("Native (AOT)", native_aot_avg, native_aot_rss, None);
+    }
+    if tov_avg.as_nanos() > 0 {
+        print_row("Tov (Native)", tov_avg, tov_rss, None);
     }
     print_row("Compile only", compile_avg, compile_rss, Some(compile_peak_heap));
 
@@ -1045,86 +1294,101 @@ console.log((performance.now() - start) / 1000);
         }
     }
 
-    let vm_avg = if vm_jit_avg.as_nanos() > 0 {
-        vm_jit_avg
-    } else {
-        vm_interpreter_avg
-    };
+    if tov_avg.as_nanos() > 0 {
+        let speedup = vm_interpreter_avg.as_nanos() as f64 / tov_avg.as_nanos() as f64;
+        let text = format!("Tov (Native) is {:.2}x FASTER than Interpreter", speedup);
+        print_footer("⚡", &text);
+        if vm_jit_avg.as_nanos() > 0 {
+            if tov_avg < vm_jit_avg {
+                let speedup = vm_jit_avg.as_nanos() as f64 / tov_avg.as_nanos() as f64;
+                let text = format!("Tov (Native) is {:.2}x FASTER than JIT", speedup);
+                print_footer("⚡", &text);
+            } else {
+                let speedup = tov_avg.as_nanos() as f64 / vm_jit_avg.as_nanos() as f64;
+                let text = format!("JIT is {:.2}x FASTER than Tov (Native)", speedup);
+                print_footer("🚀", &text);
+            }
+        }
+    }
 
-    let engine_name = if vm_jit_avg.as_nanos() > 0 {
-        "JIT"
+    let (cmp_avg, cmp_name) = if vm_jit_avg.as_nanos() > 0 {
+        (vm_jit_avg, "JIT")
+    } else if native_aot_avg.as_nanos() > 0 {
+        (native_aot_avg, "Native (AOT)")
+    } else if tov_avg.as_nanos() > 0 {
+        (tov_avg, "Tov")
     } else {
-        "Interpreter"
+        (vm_interpreter_avg, "Interpreter")
     };
 
     if bun_pure_avg.as_nanos() > 0 {
-        if vm_avg < bun_pure_avg {
-            let speedup = bun_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Bun (pure)", engine_name, speedup);
+        if cmp_avg < bun_pure_avg {
+            let speedup = bun_pure_avg.as_nanos() as f64 / cmp_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x FASTER than Bun (pure)", cmp_name, speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / bun_pure_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Bun (pure)", engine_name, slowdown);
+            let slowdown = cmp_avg.as_nanos() as f64 / bun_pure_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x SLOWER than Bun (pure)", cmp_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
 
     if bun_cli_avg.as_nanos() > 0 {
-        if vm_avg < bun_cli_avg {
-            let speedup = bun_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Bun (CLI)", engine_name, speedup);
+        if cmp_avg < bun_cli_avg {
+            let speedup = bun_cli_avg.as_nanos() as f64 / cmp_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x FASTER than Bun (CLI)", cmp_name, speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / bun_cli_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Bun (CLI)", engine_name, slowdown);
+            let slowdown = cmp_avg.as_nanos() as f64 / bun_cli_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x SLOWER than Bun (CLI)", cmp_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
 
     if node_pure_avg.as_nanos() > 0 {
-        if vm_avg < node_pure_avg {
-            let speedup = node_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Node (pure)", engine_name, speedup);
+        if cmp_avg < node_pure_avg {
+            let speedup = node_pure_avg.as_nanos() as f64 / cmp_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x FASTER than Node (pure)", cmp_name, speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Node (pure)", engine_name, slowdown);
+            let slowdown = cmp_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x SLOWER than Node (pure)", cmp_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
 
     if node_cli_avg.as_nanos() > 0 {
-        if vm_avg < node_cli_avg {
-            let speedup = node_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Node (CLI)", engine_name, speedup);
+        if cmp_avg < node_cli_avg {
+            let speedup = node_cli_avg.as_nanos() as f64 / cmp_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x FASTER than Node (CLI)", cmp_name, speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Node (CLI)", engine_name, slowdown);
+            let slowdown = cmp_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x SLOWER than Node (CLI)", cmp_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
 
     if deno_pure_avg.as_nanos() > 0 {
-        if vm_avg < deno_pure_avg {
-            let speedup = deno_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Deno (pure)", engine_name, speedup);
+        if cmp_avg < deno_pure_avg {
+            let speedup = deno_pure_avg.as_nanos() as f64 / cmp_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x FASTER than Deno (pure)", cmp_name, speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / deno_pure_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Deno (pure)", engine_name, slowdown);
+            let slowdown = cmp_avg.as_nanos() as f64 / deno_pure_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x SLOWER than Deno (pure)", cmp_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
 
     if deno_cli_avg.as_nanos() > 0 {
-        if vm_avg < deno_cli_avg {
-            let speedup = deno_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Deno (CLI)", engine_name, speedup);
+        if cmp_avg < deno_cli_avg {
+            let speedup = deno_cli_avg.as_nanos() as f64 / cmp_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x FASTER than Deno (CLI)", cmp_name, speedup);
             print_footer("✅", &text);
         } else {
-            let slowdown = vm_avg.as_nanos() as f64 / deno_cli_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Deno (CLI)", engine_name, slowdown);
+            let slowdown = cmp_avg.as_nanos() as f64 / deno_cli_avg.as_nanos() as f64;
+            let text = format!("{} is {:.2}x SLOWER than Deno (CLI)", cmp_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1141,6 +1405,7 @@ console.log((performance.now() - start) / 1000);
         bench_id: bench.id.to_string(),
         bench_name: bench.name.to_string(),
         native_aot_avg,
+        tov_avg,
         vm_jit_avg,
         vm_interp_avg: vm_interpreter_avg,
         bun_pure_avg,
@@ -1150,15 +1415,20 @@ console.log((performance.now() - start) / 1000);
 }
 
 fn print_consolidated_summary(results: &[BenchResultRow]) {
-    eprintln!("╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
-    eprintln!("║                                           SUMMARY COMPARISON MATRIX                                           ║");
-    eprintln!("╠═══════════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦═════╣");
-    eprintln!("║ Benchmark         ║ Native (AOT) ║ Eronom JIT   ║ Eronom Interp║ Node.js Pure ║ Bun Pure     ║ Deno Pure    ║ JIT ║");
-    eprintln!("╠═══════════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬═════╣");
+    eprintln!("╔═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
+    eprintln!("║                                                    SUMMARY COMPARISON MATRIX                                                    ║");
+    eprintln!("╠═══════════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦══════════════╦═════╣");
+    eprintln!("║ Benchmark         ║ Native (AOT) ║ Tov (Native) ║ Eronom JIT   ║ Eronom Interp║ Node.js Pure ║ Bun Pure     ║ Deno Pure    ║ JIT ║");
+    eprintln!("╠═══════════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬══════════════╬═════╣");
 
     for r in results {
         let aot_str = if r.native_aot_avg.as_nanos() > 0 {
             format!("{:?}", r.native_aot_avg)
+        } else {
+            "-".to_string()
+        };
+        let tov_str = if r.tov_avg.as_nanos() > 0 {
+            format!("{:?}", r.tov_avg)
         } else {
             "-".to_string()
         };
@@ -1180,11 +1450,11 @@ fn print_consolidated_summary(results: &[BenchResultRow]) {
         };
 
         eprintln!(
-            "║ {:<17} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>3} ║",
-            r.bench_id, aot_str, jit_str, interp_str, node_str, bun_str, deno_str, speedup_str
+            "║ {:<17} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>12} ║ {:>3} ║",
+            r.bench_id, aot_str, tov_str, jit_str, interp_str, node_str, bun_str, deno_str, speedup_str
         );
     }
-    eprintln!("╚═══════════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩═════╝");
+    eprintln!("╚═══════════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩══════════════╩═════╝");
     eprintln!();
 }
 

@@ -403,8 +403,9 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("    if (!er_is_object(obj_val) || !key) return;\n");
     out.push_str("    ErObjectObj *obj = er_as_object_obj(obj_val);\n");
     out.push_str("    if (!obj) return;\n");
+    out.push_str("    char k0 = key[0];\n");
     out.push_str("    for (uint32_t i = 0; i < obj->count; ++i) {\n");
-    out.push_str("        if (strcmp(obj->properties[i].key, key) == 0) {\n");
+    out.push_str("        if (obj->properties[i].key[0] == k0 && strcmp(obj->properties[i].key, key) == 0) {\n");
     out.push_str("            obj->properties[i].value = val;\n");
     out.push_str("            return;\n");
     out.push_str("        }\n");
@@ -441,8 +442,9 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("    if (!er_is_object(obj_val) || !key) return (int64_t)ER_TAG_NULL;\n");
     out.push_str("    ErObjectObj *obj = er_as_object_obj(obj_val);\n");
     out.push_str("    if (!obj) return (int64_t)ER_TAG_NULL;\n");
+    out.push_str("    char k0 = key[0];\n");
     out.push_str("    for (uint32_t i = 0; i < obj->count; ++i) {\n");
-    out.push_str("        if (strcmp(obj->properties[i].key, key) == 0) {\n");
+    out.push_str("        if (obj->properties[i].key[0] == k0 && strcmp(obj->properties[i].key, key) == 0) {\n");
     out.push_str("            return obj->properties[i].value;\n");
     out.push_str("        }\n");
     out.push_str("    }\n");
@@ -620,6 +622,12 @@ pub fn generate_native_c(module: &EirModule) -> String {
     out.push_str("}\n\n");
 
     out.push_str("static inline int64_t er_val_add(int64_t a, int64_t b) {\n");
+    out.push_str("    if (__builtin_expect((((uint64_t)a | (uint64_t)b) & 0xffff000000000000ULL) == 0, 1)) {\n");
+    out.push_str("        return a + b;\n");
+    out.push_str("    }\n");
+    out.push_str("    if (__builtin_expect(((uint64_t)a & 0xffff000000000000ULL) != ER_TAG_STRING && ((uint64_t)b & 0xffff000000000000ULL) != ER_TAG_STRING, 1)) {\n");
+    out.push_str("        return a + b;\n");
+    out.push_str("    }\n");
     out.push_str("    if (er_is_string(a) || er_is_string(b)) {\n");
     out.push_str("        char buf_a[64];\n");
     out.push_str("        char buf_b[64];\n");
@@ -716,7 +724,7 @@ fn emit_c_function(out: &mut String, func: &EirFunction) {
 
     // Registers
     let num_regs = func.reg_count.max(8);
-    out.push_str(&format!("    int64_t r[{}];\n    memset(r, 0, sizeof(r));\n", num_regs));
+    out.push_str(&format!("    int64_t r[{}] = {{0}};\n", num_regs));
 
     let has_floats = func.instructions.iter().any(|inst| match inst {
         EirInst::ConstF64 { .. } => true,
@@ -1024,8 +1032,12 @@ pub fn emit_native_object(module: &EirModule, obj_path: &Path) -> anyhow::Result
     let temp_c = obj_path.with_extension("tmp.c");
     std::fs::write(&temp_c, c_code)?;
 
-    let status = Command::new("cc")
-        .arg("-O2")
+    let has_clang = Command::new("clang").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    let compiler = if has_clang { "clang" } else { "cc" };
+    let status = Command::new(compiler)
+        .arg("-O3")
+        .arg("-fomit-frame-pointer")
+        .arg("-fno-math-errno")
         .arg("-c")
         .arg(&temp_c)
         .arg("-o")
