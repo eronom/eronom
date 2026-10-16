@@ -204,7 +204,7 @@ pub fn lower_function_with_symbols(
             }
             OpCode::LoadBool => {
                 reg_fns.remove(&ra);
-                instructions.push(EirInst::ConstBool { dest: ra, val: operand != 0 });
+                instructions.push(EirInst::ConstBool { dest: ra, val: rb != 0 || operand != 0 });
             }
             OpCode::Move => {
                 if let Some(sym) = reg_fns.get(&rb).cloned() {
@@ -530,7 +530,7 @@ pub fn lower_function_with_symbols(
     }
 }
 
-fn extract_function(val: crate::vm::Value) -> Option<Function> {
+fn extract_function_info(val: crate::vm::Value) -> Option<(usize, Function)> {
     if !val.is_function() {
         return None;
     }
@@ -540,11 +540,15 @@ fn extract_function(val: crate::vm::Value) -> Option<Function> {
             return None;
         }
         match &(*ptr).data {
-            crate::vm::gc::GcData::Function(f) => Some(*f.clone()),
+            crate::vm::gc::GcData::Function(f) => {
+                let fn_ptr = (&**f) as *const Function as usize;
+                Some((fn_ptr, *f.clone()))
+            }
             crate::vm::gc::GcData::Closure(c) => {
                 if !c.function.is_null() {
                     if let crate::vm::gc::GcData::Function(f) = &(*c.function).data {
-                        return Some(*f.clone());
+                        let fn_ptr = (&**f) as *const Function as usize;
+                        return Some((fn_ptr, *f.clone()));
                     }
                 }
                 None
@@ -552,6 +556,33 @@ fn extract_function(val: crate::vm::Value) -> Option<Function> {
             _ => None,
         }
     }
+}
+
+fn extract_function(val: crate::vm::Value) -> Option<Function> {
+    extract_function_info(val).map(|(_, f)| f)
+}
+
+fn infer_closure_names(func: &Function) -> FnvHashMap<usize, String> {
+    let mut const_to_name: FnvHashMap<usize, String> = FnvHashMap::default();
+    let code = &func.chunk.code;
+    for (i, inst) in code.iter().enumerate() {
+        if inst.op == OpCode::Closure {
+            let closure_reg = inst.ra;
+            let const_idx = inst.operand as usize;
+            for next_inst in code.iter().skip(i + 1) {
+                if (next_inst.op == OpCode::DefineGlobal || next_inst.op == OpCode::SetGlobal) && next_inst.ra == closure_reg {
+                    if let Some(name_str) = func.chunk.constants.get(next_inst.operand as usize).and_then(|v| v.as_str()) {
+                        const_to_name.insert(const_idx, name_str.to_string());
+                    }
+                    break;
+                }
+                if next_inst.ra == closure_reg {
+                    break;
+                }
+            }
+        }
+    }
+    const_to_name
 }
 
 /// Lower a bytecode function into a typed E-IR function.
@@ -563,76 +594,67 @@ pub fn lower_function(func: &Function, name_override: Option<&str>) -> EirFuncti
 /// Lower a compiled program into an E-IR module ready for ahead-of-time code generation.
 pub fn lower_program(main_func: &Function, module_name: &str) -> EirModule {
     let mut module = EirModule::new(module_name);
-    let mut pending = vec![(main_func.clone(), "main".to_string())];
-    let mut fn_counter = 0usize;
-    let mut lowered = Vec::new();
+    let mut func_symbols: FnvHashMap<usize, String> = FnvHashMap::default();
+    let mut used_symbols: fnv::FnvHashSet<String> = fnv::FnvHashSet::default();
     let mut global_funcs = FnvHashMap::default();
+    used_symbols.insert("main".to_string());
 
-    // Scan main_func for Closure followed by DefineGlobal/SetGlobal to infer child function names
-    let mut const_to_name: FnvHashMap<usize, String> = FnvHashMap::default();
-    let code = &main_func.chunk.code;
-    for (i, inst) in code.iter().enumerate() {
-        if inst.op == OpCode::Closure {
-            let closure_reg = inst.ra;
-            let const_idx = inst.operand as usize;
-            for next_inst in code.iter().skip(i + 1) {
-                if (next_inst.op == OpCode::DefineGlobal || next_inst.op == OpCode::SetGlobal) && next_inst.ra == closure_reg {
-                    if let Some(name_str) = main_func.chunk.constants.get(next_inst.operand as usize).and_then(|v| v.as_str()) {
-                        const_to_name.insert(const_idx, name_str.to_string());
-                    }
-                    break;
-                }
-                if next_inst.ra == closure_reg {
-                    break;
-                }
-            }
-        }
-    }
-
-    // Pass 1: Gather all functions and register their symbol names
+    let mut fn_counter = 0usize;
     let mut scan_queue = vec![main_func.clone()];
+
+    // Pass 1: Discover all functions and register unique global symbols
     while let Some(f) = scan_queue.pop() {
+        let inferred_names = infer_closure_names(&f);
         for (idx, &val) in f.chunk.constants.iter().enumerate() {
-            if let Some(mut child_fn) = extract_function(val) {
-                if child_fn.name.is_none() {
-                    if let Some(inferred) = const_to_name.get(&idx) {
-                        child_fn.name = Some(inferred.clone());
+            if let Some((fn_ptr_key, mut child_fn)) = extract_function_info(val) {
+                if !func_symbols.contains_key(&fn_ptr_key) {
+                    if child_fn.name.is_none() {
+                        if let Some(inferred) = inferred_names.get(&idx) {
+                            child_fn.name = Some(inferred.clone());
+                        }
                     }
-                }
-                let sym = child_fn
-                    .name
-                    .as_ref()
-                    .map(|n| format!("er_fn_{}", n))
-                    .unwrap_or_else(|| {
+                    let base_name = child_fn.name.as_deref().unwrap_or("");
+                    let sym = if !base_name.is_empty() && !used_symbols.contains(&format!("er_fn_{}", base_name)) {
+                        format!("er_fn_{}", base_name)
+                    } else {
                         fn_counter += 1;
-                        format!("er_fn_{}", fn_counter)
-                    });
-                if let Some(ref n) = child_fn.name {
-                    global_funcs.insert(n.clone(), sym.clone());
+                        if base_name.is_empty() {
+                            format!("er_fn_{}", fn_counter)
+                        } else {
+                            format!("er_fn_{}_{}", base_name, fn_counter)
+                        }
+                    };
+                    used_symbols.insert(sym.clone());
+                    func_symbols.insert(fn_ptr_key, sym.clone());
+                    if let Some(ref n) = child_fn.name {
+                        if !global_funcs.contains_key(n) {
+                            global_funcs.insert(n.clone(), sym.clone());
+                        }
+                    }
+                    global_funcs.insert(sym.clone(), sym);
+                    scan_queue.push(child_fn);
                 }
-                global_funcs.insert(sym.clone(), sym);
-                scan_queue.push(child_fn);
             }
         }
     }
 
     // Pass 2: Lower each function with global function symbols
+    let mut lowered = Vec::new();
+    let mut pending = vec![(main_func.clone(), "main".to_string())];
+    let mut visited_funcs: fnv::FnvHashSet<usize> = fnv::FnvHashSet::default();
+
     while let Some((func, name)) = pending.pop() {
         let mut child_syms = Vec::new();
         for (const_idx, &val) in func.chunk.constants.iter().enumerate() {
-            if let Some(mut child_fn) = extract_function(val) {
-                if child_fn.name.is_none() {
-                    if let Some(inferred) = const_to_name.get(&const_idx) {
-                        child_fn.name = Some(inferred.clone());
-                    }
-                }
-                let sym = child_fn
-                    .name
-                    .as_ref()
-                    .and_then(|n| global_funcs.get(n).cloned())
-                    .unwrap_or_else(|| format!("er_fn_{}", const_idx));
+            if let Some((fn_ptr_key, child_fn)) = extract_function_info(val) {
+                let sym = func_symbols.get(&fn_ptr_key).cloned().unwrap_or_else(|| {
+                    fn_counter += 1;
+                    format!("er_fn_{}", fn_counter)
+                });
                 child_syms.push((const_idx, sym.clone()));
-                pending.push((child_fn, sym));
+                if visited_funcs.insert(fn_ptr_key) {
+                    pending.push((child_fn, sym));
+                }
             }
         }
         let eir_fn = lower_function_with_symbols(&func, Some(&name), &child_syms, &global_funcs);
