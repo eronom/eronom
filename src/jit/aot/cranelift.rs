@@ -88,12 +88,20 @@ const X86_64_WIN_PRINT_STR_BYTES: &[u8] = &[
 pub struct CraneliftBackend {
     pub module: ObjectModule,
     pub target_triple: Triple,
+    pub is_server: bool,
     declared_funcs: HashMap<String, (FuncId, Signature)>,
     #[allow(dead_code)]
     runtime_funcs: HashMap<String, FuncId>,
     sys_exit_fid: Option<FuncId>,
     print_i64_fid: Option<FuncId>,
     print_str_fid: Option<FuncId>,
+    serve_config_fid: Option<FuncId>,
+    alloc_object_fid: Option<FuncId>,
+    object_set_fid: Option<FuncId>,
+    object_get_fid: Option<FuncId>,
+    str_eq_fid: Option<FuncId>,
+    json_stringify_fid: Option<FuncId>,
+    str_concat_fid: Option<FuncId>,
     global_data_ids: HashMap<String, DataId>,
     string_literals: HashMap<String, DataId>,
 }
@@ -135,11 +143,19 @@ impl CraneliftBackend {
         Ok(Self {
             module: clif_module,
             target_triple,
+            is_server: false,
             declared_funcs: HashMap::new(),
             runtime_funcs: HashMap::new(),
             sys_exit_fid: None,
             print_i64_fid: None,
             print_str_fid: None,
+            serve_config_fid: None,
+            alloc_object_fid: None,
+            object_set_fid: None,
+            object_get_fid: None,
+            str_eq_fid: None,
+            json_stringify_fid: None,
+            str_concat_fid: None,
             global_data_ids: HashMap::new(),
             string_literals: HashMap::new(),
         })
@@ -199,12 +215,36 @@ impl CraneliftBackend {
             self.print_str_fid = Some(print_str_fid);
         }
 
+        // Declare native runtime imports for HTTP and object operations
+        if self.is_server {
+            let serve_config_fid = self.declare_runtime_fn("er_clif_serve_config", &[types::I64], None)?;
+            self.serve_config_fid = Some(serve_config_fid);
+
+            let alloc_object_fid = self.declare_runtime_fn("er_clif_alloc_object", &[], Some(types::I64))?;
+            self.alloc_object_fid = Some(alloc_object_fid);
+
+            let object_set_fid = self.declare_runtime_fn("er_clif_object_set", &[types::I64, types::I64, types::I64], None)?;
+            self.object_set_fid = Some(object_set_fid);
+
+            let object_get_fid = self.declare_runtime_fn("er_clif_object_get", &[types::I64, types::I64], Some(types::I64))?;
+            self.object_get_fid = Some(object_get_fid);
+
+            let str_eq_fid = self.declare_runtime_fn("er_clif_str_eq", &[types::I64, types::I64], Some(types::I64))?;
+            self.str_eq_fid = Some(str_eq_fid);
+
+            let json_stringify_fid = self.declare_runtime_fn("er_clif_json_stringify", &[types::I64], Some(types::I64))?;
+            self.json_stringify_fid = Some(json_stringify_fid);
+
+            let str_concat_fid = self.declare_runtime_fn("er_clif_str_concat", &[types::I64, types::I64], Some(types::I64))?;
+            self.str_concat_fid = Some(str_concat_fid);
+        }
+
         // 2. Pre-scan and declare global variables and string literals
         for func in &eir.functions {
             for inst in &func.instructions {
                 match inst {
                     EirInst::DefineGlobal { name, .. } | EirInst::GetGlobal { name, .. } => {
-                        if name != "print" && name != "println" && !self.global_data_ids.contains_key(name) {
+                        if name != "print" && name != "println" && name != "serve" && name != "JSON" && !self.global_data_ids.contains_key(name) {
                             let data_id = self.module.declare_data(&format!("__er_g_{}", name), Linkage::Local, true, false)?;
                             let mut desc = DataDescription::new();
                             desc.define_zeroinit(8);
@@ -212,7 +252,7 @@ impl CraneliftBackend {
                             self.global_data_ids.insert(name.clone(), data_id);
                         }
                     }
-                    EirInst::ConstString { val, .. } => {
+                    EirInst::ConstString { val, .. } | EirInst::GetProperty { key: val, .. } | EirInst::SetProperty { key: val, .. } => {
                         if !self.string_literals.contains_key(val) {
                             let mut desc = DataDescription::new();
                             let mut bytes = val.as_bytes().to_vec();
@@ -264,35 +304,38 @@ impl CraneliftBackend {
         }
 
         // 5. Emit standard standalone _start entrypoint (invokes main and er_sys_exit)
-        let start_sig = self.module.make_signature();
-        let start_fid = self.module.declare_function("_start", Linkage::Export, &start_sig)?;
-        ctx.func.signature = start_sig;
-        ctx.func.name = UserFuncName::User(UserExternalName::new(start_fid.as_u32(), 0));
+        // If compiling as an HTTP server binary, CRT handles _start when linking with cc
+        if !self.is_server {
+            let start_sig = self.module.make_signature();
+            let start_fid = self.module.declare_function("_start", Linkage::Export, &start_sig)?;
+            ctx.func.signature = start_sig;
+            ctx.func.name = UserFuncName::User(UserExternalName::new(start_fid.as_u32(), 0));
 
-        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
-        let entry_block = builder.create_block();
-        builder.append_block_params_for_function_params(entry_block);
-        builder.switch_to_block(entry_block);
-        builder.seal_block(entry_block);
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+            let entry_block = builder.create_block();
+            builder.append_block_params_for_function_params(entry_block);
+            builder.switch_to_block(entry_block);
+            builder.seal_block(entry_block);
 
-        if let Some(&(main_fid, _)) = self.declared_funcs.get("main") {
-            let main_ref = self.module.declare_func_in_func(main_fid, builder.func);
-            let call_inst = builder.ins().call(main_ref, &[]);
-            let ret_val = builder.inst_results(call_inst)[0];
+            if let Some(&(main_fid, _)) = self.declared_funcs.get("main") {
+                let main_ref = self.module.declare_func_in_func(main_fid, builder.func);
+                let call_inst = builder.ins().call(main_ref, &[]);
+                let ret_val = builder.inst_results(call_inst)[0];
 
-            if let Some(exit_fid) = self.sys_exit_fid {
+                if let Some(exit_fid) = self.sys_exit_fid {
+                    let exit_ref = self.module.declare_func_in_func(exit_fid, builder.func);
+                    builder.ins().call(exit_ref, &[ret_val]);
+                }
+            } else if let Some(exit_fid) = self.sys_exit_fid {
                 let exit_ref = self.module.declare_func_in_func(exit_fid, builder.func);
-                builder.ins().call(exit_ref, &[ret_val]);
+                let zero = builder.ins().iconst(types::I64, 0);
+                builder.ins().call(exit_ref, &[zero]);
             }
-        } else if let Some(exit_fid) = self.sys_exit_fid {
-            let exit_ref = self.module.declare_func_in_func(exit_fid, builder.func);
-            let zero = builder.ins().iconst(types::I64, 0);
-            builder.ins().call(exit_ref, &[zero]);
+            builder.ins().return_(&[]);
+            builder.finalize(self.module.isa().frontend_config());
+            self.module.define_function(start_fid, &mut ctx)?;
+            self.module.clear_context(&mut ctx);
         }
-        builder.ins().return_(&[]);
-        builder.finalize(self.module.isa().frontend_config());
-        self.module.define_function(start_fid, &mut ctx)?;
-        self.module.clear_context(&mut ctx);
 
         // 6. Emit finalized native object code
         let product = self.module.finish();
@@ -430,7 +473,40 @@ impl CraneliftBackend {
                         let l = builder.use_var(int_vars[*left]);
                         let r = builder.use_var(int_vars[*right]);
                         let res = match op {
-                            EirBinaryOp::Add => builder.ins().iadd(l, r),
+                            EirBinaryOp::Add => {
+                                if let Some(concat_fid) = self.str_concat_fid {
+                                    let str_tag = builder.ins().iconst(types::I64, 0xfff4_0000_0000_0000_u64 as i64);
+                                    let mask = builder.ins().iconst(types::I64, 0xffff_0000_0000_0000_u64 as i64);
+                                    let l_tag = builder.ins().band(l, mask);
+                                    let r_tag = builder.ins().band(r, mask);
+                                    let l_is_str = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, l_tag, str_tag);
+                                    let r_is_str = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, r_tag, str_tag);
+                                    let either_str = builder.ins().bor(l_is_str, r_is_str);
+
+                                    let concat_block = builder.create_block();
+                                    let add_block = builder.create_block();
+                                    let merge_add_block = builder.create_block();
+
+                                    builder.ins().brif(either_str, concat_block, &[], add_block, &[]);
+
+                                    builder.switch_to_block(concat_block);
+                                    let concat_ref = self.module.declare_func_in_func(concat_fid, builder.func);
+                                    let call_inst = builder.ins().call(concat_ref, &[l, r]);
+                                    let c_res = builder.inst_results(call_inst)[0];
+                                    builder.def_var(int_vars[*dest], c_res);
+                                    builder.ins().jump(merge_add_block, &[]);
+
+                                    builder.switch_to_block(add_block);
+                                    let i_res = builder.ins().iadd(l, r);
+                                    builder.def_var(int_vars[*dest], i_res);
+                                    builder.ins().jump(merge_add_block, &[]);
+
+                                    builder.switch_to_block(merge_add_block);
+                                    builder.use_var(int_vars[*dest])
+                                } else {
+                                    builder.ins().iadd(l, r)
+                                }
+                            }
                             EirBinaryOp::Sub => builder.ins().isub(l, r),
                             EirBinaryOp::Mul => builder.ins().imul(l, r),
                             EirBinaryOp::Div => builder.ins().sdiv(l, r),
@@ -457,8 +533,14 @@ impl CraneliftBackend {
                                 builder.ins().uextend(types::I64, c)
                             }
                             EirBinaryOp::Eq => {
-                                let c = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, l, r);
-                                builder.ins().uextend(types::I64, c)
+                                if let Some(streq_fid) = self.str_eq_fid {
+                                    let streq_ref = self.module.declare_func_in_func(streq_fid, builder.func);
+                                    let call_inst = builder.ins().call(streq_ref, &[l, r]);
+                                    builder.inst_results(call_inst)[0]
+                                } else {
+                                    let c = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, l, r);
+                                    builder.ins().uextend(types::I64, c)
+                                }
                             }
                             EirBinaryOp::Ne => {
                                 let c = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::NotEqual, l, r);
@@ -574,6 +656,12 @@ impl CraneliftBackend {
                     if name == "print" || name == "println" {
                         let print_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0001_u64 as i64);
                         builder.def_var(int_vars[*dest], print_tag);
+                    } else if name == "serve" {
+                        let serve_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0002_u64 as i64);
+                        builder.def_var(int_vars[*dest], serve_tag);
+                    } else if name == "JSON" {
+                        let json_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0003_u64 as i64);
+                        builder.def_var(int_vars[*dest], json_tag);
                     } else if let Some(&data_id) = self.global_data_ids.get(name) {
                         let data_ref = self.module.declare_data_in_func(data_id, builder.func);
                         let ptr = builder.ins().symbol_value(types::I64, data_ref);
@@ -589,11 +677,60 @@ impl CraneliftBackend {
                     let print_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0001_u64 as i64);
                     let is_print = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, callee_val, print_tag);
 
+                    let serve_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0002_u64 as i64);
+                    let is_serve = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, callee_val, serve_tag);
+
+                    let stringify_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0004_u64 as i64);
+                    let is_stringify = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, callee_val, stringify_tag);
+
                     let print_block = builder.create_block();
+                    let check_serve_block = builder.create_block();
+                    let serve_block = builder.create_block();
+                    let check_stringify_block = builder.create_block();
+                    let stringify_block = builder.create_block();
                     let indirect_block = builder.create_block();
                     let merge_block = builder.create_block();
 
-                    builder.ins().brif(is_print, print_block, &[], indirect_block, &[]);
+                    builder.ins().brif(is_print, print_block, &[], check_serve_block, &[]);
+
+                    builder.switch_to_block(check_serve_block);
+                    builder.ins().brif(is_serve, serve_block, &[], check_stringify_block, &[]);
+
+                    builder.switch_to_block(check_stringify_block);
+                    builder.ins().brif(is_stringify, stringify_block, &[], indirect_block, &[]);
+
+                    // serve_block
+                    builder.switch_to_block(serve_block);
+                    if let Some(serve_fid) = self.serve_config_fid {
+                        let serve_ref = self.module.declare_func_in_func(serve_fid, builder.func);
+                        let cfg_val = if !args.is_empty() {
+                            builder.use_var(int_vars[args[0]])
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        };
+                        builder.ins().call(serve_ref, &[cfg_val]);
+                    }
+                    let zero_ret = builder.ins().iconst(types::I64, 0);
+                    builder.def_var(int_vars[*dest], zero_ret);
+                    builder.ins().jump(merge_block, &[]);
+
+                    // stringify_block
+                    builder.switch_to_block(stringify_block);
+                    if let Some(stringify_fid) = self.json_stringify_fid {
+                        let stringify_ref = self.module.declare_func_in_func(stringify_fid, builder.func);
+                        let arg_val = if !args.is_empty() {
+                            builder.use_var(int_vars[args[0]])
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        };
+                        let call_inst = builder.ins().call(stringify_ref, &[arg_val]);
+                        let res = builder.inst_results(call_inst)[0];
+                        builder.def_var(int_vars[*dest], res);
+                    } else {
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        builder.def_var(int_vars[*dest], zero);
+                    }
+                    builder.ins().jump(merge_block, &[]);
 
                     // print_block: print all arguments
                     builder.switch_to_block(print_block);
@@ -657,6 +794,81 @@ impl CraneliftBackend {
                     // merge_block
                     builder.switch_to_block(merge_block);
                 }
+                EirInst::MakeObject { dest, start_reg, pair_count } => {
+                    if let (Some(alloc_fid), Some(set_fid)) = (self.alloc_object_fid, self.object_set_fid) {
+                        let alloc_ref = self.module.declare_func_in_func(alloc_fid, builder.func);
+                        let set_ref = self.module.declare_func_in_func(set_fid, builder.func);
+                        let call_alloc = builder.ins().call(alloc_ref, &[]);
+                        let obj_val = builder.inst_results(call_alloc)[0];
+                        for i in 0..*pair_count {
+                            let k_reg = start_reg + i * 2;
+                            let v_reg = start_reg + i * 2 + 1;
+                            let k_val = builder.use_var(int_vars[k_reg]);
+                            let v_val = builder.use_var(int_vars[v_reg]);
+                            builder.ins().call(set_ref, &[obj_val, k_val, v_val]);
+                        }
+                        builder.def_var(int_vars[*dest], obj_val);
+                    }
+                }
+                EirInst::GetProperty { dest, obj, key } => {
+                    let obj_val = builder.use_var(int_vars[*obj]);
+                    if key == "stringify" {
+                        let json_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0003_u64 as i64);
+                        let is_json = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, obj_val, json_tag);
+                        let normal_prop_block = builder.create_block();
+                        let stringify_prop_block = builder.create_block();
+                        let merge_prop_block = builder.create_block();
+
+                        builder.ins().brif(is_json, stringify_prop_block, &[], normal_prop_block, &[]);
+
+                        builder.switch_to_block(stringify_prop_block);
+                        let stringify_tag = builder.ins().iconst(types::I64, 0xfff8_0000_0000_0004_u64 as i64);
+                        builder.def_var(int_vars[*dest], stringify_tag);
+                        builder.ins().jump(merge_prop_block, &[]);
+
+                        builder.switch_to_block(normal_prop_block);
+                        if let Some(get_fid) = self.object_get_fid {
+                            let get_ref = self.module.declare_func_in_func(get_fid, builder.func);
+                            let key_ptr = if let Some(&id) = self.string_literals.get(key) {
+                                let data_ref = self.module.declare_data_in_func(id, builder.func);
+                                builder.ins().symbol_value(types::I64, data_ref)
+                            } else {
+                                builder.ins().iconst(types::I64, 0)
+                            };
+                            let call_inst = builder.ins().call(get_ref, &[obj_val, key_ptr]);
+                            let res = builder.inst_results(call_inst)[0];
+                            builder.def_var(int_vars[*dest], res);
+                        }
+                        builder.ins().jump(merge_prop_block, &[]);
+
+                        builder.switch_to_block(merge_prop_block);
+                    } else if let Some(get_fid) = self.object_get_fid {
+                        let get_ref = self.module.declare_func_in_func(get_fid, builder.func);
+                        let key_ptr = if let Some(&id) = self.string_literals.get(key) {
+                            let data_ref = self.module.declare_data_in_func(id, builder.func);
+                            builder.ins().symbol_value(types::I64, data_ref)
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        };
+                        let call_inst = builder.ins().call(get_ref, &[obj_val, key_ptr]);
+                        let res = builder.inst_results(call_inst)[0];
+                        builder.def_var(int_vars[*dest], res);
+                    }
+                }
+                EirInst::SetProperty { obj, key, val } => {
+                    if let Some(set_fid) = self.object_set_fid {
+                        let set_ref = self.module.declare_func_in_func(set_fid, builder.func);
+                        let obj_val = builder.use_var(int_vars[*obj]);
+                        let val_val = builder.use_var(int_vars[*val]);
+                        let key_ptr = if let Some(&id) = self.string_literals.get(key) {
+                            let data_ref = self.module.declare_data_in_func(id, builder.func);
+                            builder.ins().symbol_value(types::I64, data_ref)
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        };
+                        builder.ins().call(set_ref, &[obj_val, key_ptr, val_val]);
+                    }
+                }
                 _ => {}
             }
         }
@@ -673,6 +885,53 @@ impl CraneliftBackend {
         builder.seal_all_blocks();
         Ok(())
     }
+}
+
+fn find_static_lib(name: &str) -> Option<std::path::PathBuf> {
+    // 1. Environment variable override
+    if let Ok(dir) = std::env::var("ERONOM_LIB_DIR") {
+        let p = Path::new(&dir).join(format!("lib{}.a", name));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Current executable directory (e.g. ~/.eronom/lib or next to binary)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate1 = parent.join(format!("lib{}.a", name));
+            if candidate1.exists() {
+                return Some(candidate1);
+            }
+            let candidate2 = parent.join("lib").join(format!("lib{}.a", name));
+            if candidate2.exists() {
+                return Some(candidate2);
+            }
+        }
+    }
+
+    // 3. target/er_native/ directory in CARGO_MANIFEST_DIR
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let native_dir = manifest_dir.join("target").join("er_native").join(format!("lib{}.a", name));
+    if native_dir.exists() {
+        return Some(native_dir);
+    }
+
+    // 4. Scan target/debug/build and target/release/build directories
+    let target_dir = manifest_dir.join("target");
+    for profile in &["debug", "release"] {
+        let build_dir = target_dir.join(profile).join("build");
+        if let Ok(entries) = std::fs::read_dir(&build_dir) {
+            for entry in entries.flatten() {
+                let out_lib = entry.path().join("out").join(format!("lib{}.a", name));
+                if out_lib.exists() {
+                    return Some(out_lib);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Compiles an Eronom source script ahead-of-time directly using Cranelift.
@@ -694,7 +953,12 @@ pub fn build_cranelift_binary(
 
     let eir_module = super::lower::lower_program(&function, &module_name);
 
-    let backend = CraneliftBackend::new(&module_name, target)?;
+    let is_server = eir_module.functions.iter().any(|f| {
+        f.instructions.iter().any(|i| matches!(i, EirInst::GetGlobal { name, .. } if name == "serve" || name == "er_http_create_server"))
+    });
+
+    let mut backend = CraneliftBackend::new(&module_name, target)?;
+    backend.is_server = is_server;
     let target_os = backend.target_triple.operating_system;
     let target_arch = backend.target_triple.architecture;
     let obj_bytes = backend.compile_module(&eir_module)?;
@@ -703,85 +967,159 @@ pub fn build_cranelift_binary(
     let temp_obj = temp_dir.join(format!("er_clif_{}_{}.o", module_name, std::process::id()));
     std::fs::write(&temp_obj, &obj_bytes)?;
 
-    // Zero-Toolchain Cross-Platform Linker Step:
-    let linked = match target_os {
-        target_lexicon::OperatingSystem::Windows => {
-            #[cfg(target_os = "windows")]
-            {
-                let status = Command::new("link.exe")
-                    .arg(&format!("/OUT:{}", output_path.display()))
+    // Dual-Mode Linker Step:
+    let linked = if is_server {
+        match target_os {
+            target_lexicon::OperatingSystem::Windows => {
+                #[cfg(target_os = "windows")]
+                {
+                    let liber_http = find_static_lib("er_http").unwrap_or_else(|| std::path::PathBuf::from("er_http.lib"));
+                    let libusockets = find_static_lib("usockets").unwrap_or_else(|| std::path::PathBuf::from("usockets.lib"));
+                    let libuv = find_static_lib("uv").unwrap_or_else(|| std::path::PathBuf::from("uv.lib"));
+                    let status = Command::new("link.exe")
+                        .arg(&format!("/OUT:{}", output_path.display()))
+                        .arg(&temp_obj)
+                        .arg(&liber_http)
+                        .arg(&libusockets)
+                        .arg(&libuv)
+                        .arg("ws2_32.lib")
+                        .arg("psapi.lib")
+                        .arg("user32.lib")
+                        .arg("advapi32.lib")
+                        .arg("iphlpapi.lib")
+                        .arg("userenv.lib")
+                        .arg("/SUBSYSTEM:CONSOLE")
+                        .status();
+                    matches!(status, Ok(s) if s.success())
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
+                        crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                    } else {
+                        false
+                    }
+                }
+            }
+            target_lexicon::OperatingSystem::Darwin(_) | target_lexicon::OperatingSystem::MacOSX { .. } => {
+                let liber_http = find_static_lib("er_http")
+                    .ok_or_else(|| anyhow::anyhow!("Could not find liber_http.a for Cranelift server linking"))?;
+                let libusockets = find_static_lib("usockets")
+                    .ok_or_else(|| anyhow::anyhow!("Could not find libusockets.a for Cranelift server linking"))?;
+                let status = Command::new("clang")
+                    .arg("-Wl,-dead_strip")
                     .arg(&temp_obj)
-                    .arg("/ENTRY:_start")
-                    .arg("/SUBSYSTEM:CONSOLE")
-                    .arg("kernel32.lib")
-                    .arg("/NODEFAULTLIB")
-                    .status();
-                if matches!(status, Ok(s) if s.success()) {
-                    true
-                } else {
-                    super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok()
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                // Pure-Rust PE32+ Synthesizer: emits standalone .exe without MSVC link.exe or runner stub
-                if super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok() {
-                    true
-                } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
-                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
-                } else {
-                    false
-                }
-            }
-        }
-        target_lexicon::OperatingSystem::Darwin(_) | target_lexicon::OperatingSystem::MacOSX { .. } => {
-            let is_arm64 = matches!(target_arch, target_lexicon::Architecture::Aarch64(_));
-            #[cfg(target_os = "macos")]
-            {
-                let status = Command::new("ld")
-                    .arg(&temp_obj)
-                    .arg("-o")
-                    .arg(output_path)
-                    .status();
-                if matches!(status, Ok(s) if s.success()) {
-                    true
-                } else {
-                    super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
-                }
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                // Pure-Rust Mach-O 64-bit Synthesizer: emits standalone macOS binary without ld64 or runner stub
-                if super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok() {
-                    true
-                } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("macos")) {
-                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
-                } else {
-                    false
-                }
-            }
-        }
-        _ => {
-            // Linux / System V ELF
-            let system_linker = if Command::new("ld").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
-                Some("ld".to_string())
-            } else {
-                ["/usr/bin/ld", "/bin/ld", "/usr/local/bin/ld", "/usr/bin/mold", "/usr/bin/gold", "/usr/bin/lld"]
-                    .iter()
-                    .find(|&&p| Path::new(p).exists())
-                    .map(|&s| s.to_string())
-            };
-
-            if let Some(linker_bin) = system_linker {
-                let status = Command::new(linker_bin)
-                    .arg("-s")
-                    .arg(&temp_obj)
+                    .arg(&liber_http)
+                    .arg(&libusockets)
+                    .arg("-lc++")
+                    .arg("-lpthread")
                     .arg("-o")
                     .arg(output_path)
                     .status();
                 matches!(status, Ok(s) if s.success())
-            } else {
-                super::elf_writer::link_object_to_static_elf64(&obj_bytes, output_path).is_ok()
+            }
+            _ => {
+                // Linux / System V ELF: Link with liber_http.a, libusockets.a, -lstdc++, -lpthread, -lm
+                let liber_http = find_static_lib("er_http")
+                    .ok_or_else(|| anyhow::anyhow!("Could not find liber_http.a for Cranelift server linking"))?;
+                let libusockets = find_static_lib("usockets")
+                    .ok_or_else(|| anyhow::anyhow!("Could not find libusockets.a for Cranelift server linking"))?;
+                let cc_bin = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+                let status = Command::new(cc_bin)
+                    .arg("-s")
+                    .arg(&temp_obj)
+                    .arg(&liber_http)
+                    .arg(&libusockets)
+                    .arg("-lstdc++")
+                    .arg("-lpthread")
+                    .arg("-lm")
+                    .arg("-o")
+                    .arg(output_path)
+                    .status();
+                matches!(status, Ok(s) if s.success())
+            }
+        }
+    } else {
+        // Zero-Toolchain Cross-Platform Linker Step for compute scripts:
+        match target_os {
+            target_lexicon::OperatingSystem::Windows => {
+                #[cfg(target_os = "windows")]
+                {
+                    let status = Command::new("link.exe")
+                        .arg(&format!("/OUT:{}", output_path.display()))
+                        .arg(&temp_obj)
+                        .arg("/ENTRY:_start")
+                        .arg("/SUBSYSTEM:CONSOLE")
+                        .arg("kernel32.lib")
+                        .arg("/NODEFAULTLIB")
+                        .status();
+                    if matches!(status, Ok(s) if s.success()) {
+                        true
+                    } else {
+                        super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok()
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // Pure-Rust PE32+ Synthesizer: emits standalone .exe without MSVC link.exe or runner stub
+                    if super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok() {
+                        true
+                    } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
+                        crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                    } else {
+                        false
+                    }
+                }
+            }
+            target_lexicon::OperatingSystem::Darwin(_) | target_lexicon::OperatingSystem::MacOSX { .. } => {
+                let is_arm64 = matches!(target_arch, target_lexicon::Architecture::Aarch64(_));
+                #[cfg(target_os = "macos")]
+                {
+                    let status = Command::new("ld")
+                        .arg(&temp_obj)
+                        .arg("-o")
+                        .arg(output_path)
+                        .status();
+                    if matches!(status, Ok(s) if s.success()) {
+                        true
+                    } else {
+                        super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    // Pure-Rust Mach-O 64-bit Synthesizer: emits standalone macOS binary without ld64 or runner stub
+                    if super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok() {
+                        true
+                    } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("macos")) {
+                        crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                    } else {
+                        false
+                    }
+                }
+            }
+            _ => {
+                // Linux / System V ELF
+                let system_linker = if Command::new("ld").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+                    Some("ld".to_string())
+                } else {
+                    ["/usr/bin/ld", "/bin/ld", "/usr/local/bin/ld", "/usr/bin/mold", "/usr/bin/gold", "/usr/bin/lld"]
+                        .iter()
+                        .find(|&&p| Path::new(p).exists())
+                        .map(|&s| s.to_string())
+                };
+
+                if let Some(linker_bin) = system_linker {
+                    let status = Command::new(linker_bin)
+                        .arg("-s")
+                        .arg(&temp_obj)
+                        .arg("-o")
+                        .arg(output_path)
+                        .status();
+                    matches!(status, Ok(s) if s.success())
+                } else {
+                    super::elf_writer::link_object_to_static_elf64(&obj_bytes, output_path).is_ok()
+                }
             }
         }
     };
@@ -789,7 +1127,7 @@ pub fn build_cranelift_binary(
     let _ = std::fs::remove_file(&temp_obj);
 
     if !linked {
-        anyhow::bail!("Failed to link standalone binary without C compiler (both system linker and fallback failed)");
+        anyhow::bail!("Failed to link binary");
     }
 
     Ok(())
@@ -1051,6 +1389,33 @@ print(res);
         let bytes = std::fs::read(&out_path).unwrap();
         let parsed = object::File::parse(&bytes[..]).unwrap();
         assert_eq!(parsed.format(), object::BinaryFormat::MachO);
+        let _ = std::fs::remove_file(&out_path);
+    }
+
+    #[test]
+    fn test_cranelift_build_server_binary() {
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("test_clif_srv_{}.er", std::process::id()));
+        let out_path = temp_dir.join(format!("test_clif_srv_bin_{}", std::process::id()));
+        let script = r#"
+import { serve, Response } from "std/http"
+
+serve({
+    port: 3999,
+    fetch: (req) => {
+        if (req.path == "/health") {
+            return Response.text("OK", { status: 200 })
+        }
+        return Response.json({ status: "running", path: req.path })
+    }
+})
+"#;
+        std::fs::write(&script_path, script).unwrap();
+        let res = build_cranelift_binary(&script_path, &out_path, None);
+        let _ = std::fs::remove_file(&script_path);
+
+        assert!(res.is_ok(), "Server build failed: {:?}", res.err());
+        assert!(out_path.exists());
         let _ = std::fs::remove_file(&out_path);
     }
 }
