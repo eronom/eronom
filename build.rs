@@ -146,4 +146,16 @@ fn main() {
     }
 
     u_websockets_build.compile("er_http");
+
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let native_dir = Path::new(&manifest_dir).join("target").join("er_native");
+    let _ = std::fs::create_dir_all(&native_dir);
+    if is_windows {
+        let _ = std::fs::copy(Path::new(&out_dir).join("usockets.lib"), native_dir.join("usockets.lib"));
+        let _ = std::fs::copy(Path::new(&out_dir).join("er_http.lib"), native_dir.join("er_http.lib"));
+        let _ = std::fs::copy(Path::new(&out_dir).join("uv.lib"), native_dir.join("uv.lib"));
+    } else {
+        let _ = std::fs::copy(Path::new(&out_dir).join("libusockets.a"), native_dir.join("libusockets.a"));
+        let _ = std::fs::copy(Path::new(&out_dir).join("liber_http.a"), native_dir.join("liber_http.a"));
+    }
 }
