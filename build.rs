@@ -152,12 +152,36 @@ fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let native_dir = Path::new(&manifest_dir).join("target").join("er_native");
     let _ = std::fs::create_dir_all(&native_dir);
-    if is_windows {
-        let _ = std::fs::copy(Path::new(&out_dir).join("usockets.lib"), native_dir.join("usockets.lib"));
-        let _ = std::fs::copy(Path::new(&out_dir).join("er_http.lib"), native_dir.join("er_http.lib"));
-        let _ = std::fs::copy(Path::new(&out_dir).join("uv.lib"), native_dir.join("uv.lib"));
-    } else {
-        let _ = std::fs::copy(Path::new(&out_dir).join("libusockets.a"), native_dir.join("libusockets.a"));
-        let _ = std::fs::copy(Path::new(&out_dir).join("liber_http.a"), native_dir.join("liber_http.a"));
+
+    // Copy all compiled static libraries from OUT_DIR to target/er_native/
+    if let Ok(entries) = std::fs::read_dir(&out_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if ext == "lib" || ext == "a" {
+                    if let Some(fname) = path.file_name() {
+                        let _ = std::fs::copy(&path, native_dir.join(fname));
+                    }
+                }
+            }
+        }
+    }
+
+    // Mirror libraries across standard naming conventions (.lib, lib*.a, lib*.lib)
+    for name in &["er_http", "usockets", "uv", "mir"] {
+        let candidates = [
+            format!("{}.lib", name),
+            format!("lib{}.a", name),
+            format!("lib{}.lib", name),
+        ];
+        for src_name in &candidates {
+            let src_file = Path::new(&out_dir).join(src_name);
+            if src_file.exists() {
+                for dst_name in &candidates {
+                    let _ = std::fs::copy(&src_file, native_dir.join(dst_name));
+                }
+                break;
+            }
+        }
     }
 }

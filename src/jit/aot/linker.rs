@@ -403,6 +403,12 @@ fn build_aot_binary_full(
         }
     }
 
+    let sync_final_out = |final_out: &Path| {
+        if final_out != output_path && final_out.exists() {
+            let _ = std::fs::copy(final_out, output_path);
+        }
+    };
+
     let env_in_process = std::env::var("ERONOM_AOT_IN_PROCESS")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false);
@@ -431,6 +437,7 @@ fn build_aot_binary_full(
                     use std::os::unix::fs::PermissionsExt;
                     let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
                 }
+                sync_final_out(&final_out);
                 return Ok(());
             }
         }
@@ -454,6 +461,7 @@ fn build_aot_binary_full(
         if let Some(custom) = custom_stub {
             if custom.exists() {
                 crate::cli::bundle::create_standalone_binary(custom, script_path, None, &final_out)?;
+                sync_final_out(&final_out);
                 return Ok(());
             }
         }
@@ -470,6 +478,7 @@ fn build_aot_binary_full(
                 if let Some(ref cfile) = cache_file {
                     let _ = std::fs::copy(&final_out, cfile);
                 }
+                sync_final_out(&final_out);
                 return Ok(());
             }
         }
@@ -479,6 +488,7 @@ fn build_aot_binary_full(
         if !pure_native {
             if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
                 crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
+                sync_final_out(&final_out);
                 return Ok(());
             }
         }
@@ -500,6 +510,7 @@ fn build_aot_binary_full(
         if let Some(ref cfile) = cache_file {
             let _ = std::fs::copy(&final_out, cfile);
         }
+        sync_final_out(&final_out);
         return Ok(());
     }
 
@@ -545,6 +556,7 @@ fn build_aot_binary_full(
                 if let Some(stub_path) = resolve_runner_stub(custom_stub) {
                     let _ = std::fs::remove_file(&temp_c);
                     crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
+                    sync_final_out(&final_out);
                     return Ok(());
                 } else {
                     let _ = std::fs::remove_file(&temp_c);
@@ -586,9 +598,14 @@ fn build_aot_binary_full(
                 .arg("-o")
                 .arg(&final_out)
                 .status()?
+        } else if super::cranelift::build_cranelift_binary(script_path, &final_out, None).is_ok() {
+            let _ = std::fs::remove_file(&temp_c);
+            sync_final_out(&final_out);
+            return Ok(());
         } else if let Some(stub_path) = resolve_runner_stub(custom_stub) {
             let _ = std::fs::remove_file(&temp_c);
             crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
+            sync_final_out(&final_out);
             return Ok(());
         } else {
             let _ = std::fs::remove_file(&temp_c);
@@ -605,6 +622,7 @@ fn build_aot_binary_full(
     if let Some(ref cfile) = cache_file {
         let _ = std::fs::copy(&final_out, cfile);
     }
+    sync_final_out(&final_out);
 
     Ok(())
 }
@@ -626,11 +644,17 @@ mod tests {
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary should succeed: {:?}", res.err());
-        assert!(bin_path.exists(), "Binary file should exist on disk");
+        let actual_bin = if bin_path.exists() {
+            bin_path.clone()
+        } else {
+            bin_path.with_extension("exe")
+        };
+        assert!(actual_bin.exists(), "Binary file should exist on disk");
 
         // Execute the compiled native binary
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success(), "Compiled binary exited with status {:?}", output.status);
     }
@@ -654,8 +678,15 @@ test()
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let actual_bin = if bin_path.exists() {
+            bin_path.clone()
+        } else {
+            bin_path.with_extension("exe")
+        };
+        assert!(actual_bin.exists());
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -681,8 +712,15 @@ print(arr[1]);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let actual_bin = if bin_path.exists() {
+            bin_path.clone()
+        } else {
+            bin_path.with_extension("exe")
+        };
+        assert!(actual_bin.exists());
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(
             output.status.success(),
@@ -701,8 +739,15 @@ print(arr[1]);
         let bin_path = temp_dir.join(format!("test_fib_bin_{}", std::process::id()));
         let res = build_aot_binary(Path::new("fib.er"), &bin_path);
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let actual_bin = if bin_path.exists() {
+            bin_path.clone()
+        } else {
+            bin_path.with_extension("exe")
+        };
+        assert!(actual_bin.exists());
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -721,10 +766,16 @@ print(arr[1]);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary in-process failed: {:?}", res.err());
-        assert!(bin_path.exists(), "Binary file should exist on disk");
+        let actual_bin = if bin_path.exists() {
+            bin_path.clone()
+        } else {
+            bin_path.with_extension("exe")
+        };
+        assert!(actual_bin.exists(), "Binary file should exist on disk");
 
-        let output = Command::new(&bin_path).output().expect("Failed to execute in-process binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute in-process binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success(), "In-process binary exited with status {:?}", output.status);
         let stdout = String::from_utf8_lossy(&output.stdout);

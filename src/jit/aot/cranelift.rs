@@ -929,16 +929,36 @@ fn find_static_lib(name: &str) -> Option<std::path::PathBuf> {
         }
     }
 
-    // 4. Scan target/debug/build and target/release/build directories
+    // 4. Scan all build directories under target/ (including target/<triple>/<profile>/build)
     let target_dir = manifest_dir.join("target");
+    let mut search_dirs = Vec::new();
     for profile in &["debug", "release"] {
-        let build_dir = target_dir.join(profile).join("build");
+        search_dirs.push(target_dir.join(profile).join("build"));
+    }
+    if let Ok(entries) = std::fs::read_dir(&target_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                for profile in &["debug", "release"] {
+                    let candidate = p.join(profile).join("build");
+                    if candidate.is_dir() {
+                        search_dirs.push(candidate);
+                    }
+                }
+            }
+        }
+    }
+
+    for build_dir in search_dirs {
         if let Ok(entries) = std::fs::read_dir(&build_dir) {
             for entry in entries.flatten() {
-                for lib_name in &lib_names {
-                    let out_lib = entry.path().join("out").join(lib_name);
-                    if out_lib.exists() {
-                        return Some(out_lib);
+                let out_dir = entry.path().join("out");
+                if out_dir.is_dir() {
+                    for lib_name in &lib_names {
+                        let out_lib = out_dir.join(lib_name);
+                        if out_lib.exists() {
+                            return Some(out_lib);
+                        }
                     }
                 }
             }
@@ -946,6 +966,54 @@ fn find_static_lib(name: &str) -> Option<std::path::PathBuf> {
     }
 
     None
+}
+
+#[cfg(target_os = "windows")]
+fn find_msvc_linker() -> std::path::PathBuf {
+    // 1. Direct invocation from PATH
+    if Command::new("link.exe").arg("/?").output().is_ok() {
+        return std::path::PathBuf::from("link.exe");
+    }
+
+    // 2. Environment variables from VS developer prompt
+    if let Ok(vc_dir) = std::env::var("VCINSTALLDIR") {
+        let msvc_tools = Path::new(&vc_dir).join("Tools").join("MSVC");
+        if let Ok(entries) = std::fs::read_dir(&msvc_tools) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("bin").join("Hostx64").join("x64").join("link.exe");
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    // 3. Fallback search in Visual Studio directories
+    for vs_base in &[
+        r"C:\Program Files\Microsoft Visual Studio",
+        r"C:\Program Files (x86)\Microsoft Visual Studio",
+    ] {
+        let base = Path::new(vs_base);
+        if let Ok(years) = std::fs::read_dir(base) {
+            for year in years.flatten() {
+                if let Ok(editions) = std::fs::read_dir(year.path()) {
+                    for edition in editions.flatten() {
+                        let msvc_dir = edition.path().join("VC").join("Tools").join("MSVC");
+                        if let Ok(versions) = std::fs::read_dir(&msvc_dir) {
+                            for version in versions.flatten() {
+                                let candidate = version.path().join("bin").join("Hostx64").join("x64").join("link.exe");
+                                if candidate.exists() {
+                                    return candidate;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::path::PathBuf::from("link.exe")
 }
 
 /// Compiles an Eronom source script ahead-of-time directly using Cranelift.
@@ -990,8 +1058,9 @@ pub fn build_cranelift_binary(
                     let liber_http = find_static_lib("er_http").unwrap_or_else(|| std::path::PathBuf::from("er_http.lib"));
                     let libusockets = find_static_lib("usockets").unwrap_or_else(|| std::path::PathBuf::from("usockets.lib"));
                     let libuv = find_static_lib("uv").unwrap_or_else(|| std::path::PathBuf::from("uv.lib"));
-                    let status = Command::new("link.exe")
-                        .arg(&format!("/OUT:{}", output_path.display()))
+                    let linker_bin = find_msvc_linker();
+                    let mut cmd = Command::new(&linker_bin);
+                    cmd.arg(&format!("/OUT:{}", output_path.display()))
                         .arg(&temp_obj)
                         .arg(&liber_http)
                         .arg(&libusockets)
@@ -1002,11 +1071,42 @@ pub fn build_cranelift_binary(
                         .arg("advapi32.lib")
                         .arg("iphlpapi.lib")
                         .arg("userenv.lib")
+                        .arg("dbghelp.lib")
+                        .arg("ole32.lib")
+                        .arg("shell32.lib")
+                        .arg("kernel32.lib")
+                        .arg("msvcrt.lib")
+                        .arg("msvcprt.lib")
                         .arg("/SUBSYSTEM:CONSOLE")
                         .arg("/OPT:REF")
-                        .arg("/OPT:ICF")
-                        .status();
-                    matches!(status, Ok(s) if s.success())
+                        .arg("/OPT:ICF");
+
+                    if let Some(parent) = liber_http.parent() {
+                        cmd.arg(format!("/LIBPATH:{}", parent.display()));
+                    }
+                    if let Some(parent) = libusockets.parent() {
+                        cmd.arg(format!("/LIBPATH:{}", parent.display()));
+                    }
+                    if let Some(parent) = libuv.parent() {
+                        cmd.arg(format!("/LIBPATH:{}", parent.display()));
+                    }
+
+                    let output = cmd.output();
+                    match output {
+                        Ok(ref out) if out.status.success() => true,
+                        Ok(ref out) => {
+                            eprintln!("link.exe failed with exit code {:?}:\nSTDOUT:\n{}\nSTDERR:\n{}",
+                                out.status.code(),
+                                String::from_utf8_lossy(&out.stdout),
+                                String::from_utf8_lossy(&out.stderr)
+                            );
+                            false
+                        }
+                        Err(ref e) => {
+                            eprintln!("Failed to invoke link.exe ({:?}): {:?}", linker_bin, e);
+                            false
+                        }
+                    }
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
@@ -1144,6 +1244,20 @@ pub fn build_cranelift_binary(
 
     if !linked {
         anyhow::bail!("Failed to link binary");
+    }
+
+    // On Windows, ensure both output_path and output_path.exe exist
+    let exe_path = if output_path.extension().map(|e| e == "exe").unwrap_or(false) {
+        output_path.to_path_buf()
+    } else {
+        output_path.with_extension("exe")
+    };
+    if exe_path != output_path {
+        if exe_path.exists() && !output_path.exists() {
+            let _ = std::fs::copy(&exe_path, output_path);
+        } else if output_path.exists() && !exe_path.exists() {
+            let _ = std::fs::copy(output_path, &exe_path);
+        }
     }
 
     Ok(())
@@ -1431,7 +1545,13 @@ serve({
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "Server build failed: {:?}", res.err());
-        assert!(out_path.exists());
+        let actual_bin = if out_path.exists() {
+            out_path.clone()
+        } else {
+            out_path.with_extension("exe")
+        };
+        assert!(actual_bin.exists(), "Server binary should exist on disk");
         let _ = std::fs::remove_file(&out_path);
+        let _ = std::fs::remove_file(out_path.with_extension("exe"));
     }
 }
