@@ -113,10 +113,12 @@ fn main() {
     let u_websockets_dir = Path::new(&manifest_dir).join("deps").join("uWebSockets");
     let mut u_websockets_build = cc::Build::new();
     println!("cargo:rerun-if-changed=src/vm/er_http.cpp");
+    println!("cargo:rerun-if-changed=src/vm/er_clif.cpp");
     u_websockets_build
         .cpp(true)
         .std("c++17")
         .file("src/vm/er_http.cpp")
+        .file("src/vm/er_clif.cpp")
         .include(u_websockets_dir.join("src"))
         .include(u_sockets_dir.join("src"))
         .define("LIBUS_NO_SSL", None)

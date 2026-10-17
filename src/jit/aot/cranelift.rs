@@ -1374,12 +1374,12 @@ print(res);
         let _ = std::fs::remove_file(&script_path);
         assert!(res.is_ok(), "Build failed: {:?}", res.err());
 
-        let bytes = std::fs::read(&out_path).unwrap();
+        let _bytes = std::fs::read(&out_path).unwrap();
         let _ = std::fs::remove_file(&out_path);
 
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
-            let (code, output) = crate::jit::aot::pe_writer::run_pe64_standalone(&bytes).unwrap();
+            let (code, output) = crate::jit::aot::pe_writer::run_pe64_standalone(&_bytes).unwrap();
             assert_eq!(code, 0, "Windows executable exited with non-zero code");
             assert_eq!(output.trim(), "55", "Expected output '55', got '{}'", output);
         }

@@ -13,22 +13,16 @@
 #define strcasecmp _stricmp
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
-#define ER_WEAK __attribute__((weak))
-#else
-#define ER_WEAK
-#endif
-
 extern "C" {
     // Legacy callbacks
-    ER_WEAK void er_http_on_request(void*, const char*, size_t, const char*, size_t, const char*, size_t, const char*, size_t) {}
-    ER_WEAK void er_ws_on_open(void*, const char*, size_t) {}
-    ER_WEAK void er_ws_on_message(void*, const char*, size_t, const char*, size_t, int) {}
-    ER_WEAK void er_ws_on_close(void*, const char*, size_t, int, const char*, size_t) {}
-    ER_WEAK void er_http_on_listening() {}
+    void er_http_on_request(void*, const char*, size_t, const char*, size_t, const char*, size_t, const char*, size_t);
+    void er_ws_on_open(void*, const char*, size_t);
+    void er_ws_on_message(void*, const char*, size_t, const char*, size_t, int);
+    void er_ws_on_close(void*, const char*, size_t, int, const char*, size_t);
+    void er_http_on_listening();
 
     // Direct dispatch callbacks
-    ER_WEAK void er_http_on_route(
+    void er_http_on_route(
         void*,
         uint32_t,
         void*,
@@ -37,9 +31,9 @@ extern "C" {
         size_t,
         const char*,
         size_t
-    ) {}
+    );
 
-    ER_WEAK void er_http_on_fallback(
+    void er_http_on_fallback(
         void*,
         void*,
         void*,
@@ -49,12 +43,12 @@ extern "C" {
         size_t,
         const char*,
         size_t
-    ) {}
+    );
 
-    ER_WEAK void er_http_on_listening_instance(void*, int) {}
-    ER_WEAK void er_ws_on_open_instance(void*, uint32_t, void*, const char*, size_t) {}
-    ER_WEAK void er_ws_on_message_instance(void*, uint32_t, void*, const char*, size_t, const char*, size_t, int) {}
-    ER_WEAK void er_ws_on_close_instance(void*, uint32_t, void*, const char*, size_t, int, const char*, size_t) {}
+    void er_http_on_listening_instance(void*, int);
+    void er_ws_on_open_instance(void*, uint32_t, void*, const char*, size_t);
+    void er_ws_on_message_instance(void*, uint32_t, void*, const char*, size_t, const char*, size_t, int);
+    void er_ws_on_close_instance(void*, uint32_t, void*, const char*, size_t, int, const char*, size_t);
 }
 
 typedef void (*HttpRequestCallback)(void* res, const char* method, size_t method_len, const char* path, size_t path_len, const char* headers, size_t headers_len, const char* body, size_t body_len);
@@ -766,333 +760,6 @@ void er_http_create_timer(int ms, void (*cb)(void*)) {
         std::memcpy(&cb, us_timer_ext(t), sizeof(void (*)(void*)));
         cb(t);
     }, ms, ms);
-}
-
-// ─── Cranelift Native AOT HTTP Bridge ───────────────────────────────────────
-
-constexpr uint32_t ER_CLIF_MAGIC_REQ = 0x45525251; // 'ERRQ'
-constexpr uint32_t ER_CLIF_MAGIC_OBJ = 0x45524F42; // 'EROB'
-
-struct ErClifReq {
-    uint32_t magic;
-    std::string path;
-    std::string method;
-    std::string url;
-    std::string body;
-    void* token;
-};
-
-const char* er_clif_req_get_path(void* req_ptr) {
-    if (!req_ptr) return "";
-    return static_cast<ErClifReq*>(req_ptr)->path.c_str();
-}
-
-const char* er_clif_req_get_method(void* req_ptr) {
-    if (!req_ptr) return "";
-    return static_cast<ErClifReq*>(req_ptr)->method.c_str();
-}
-
-const char* er_clif_req_get_url(void* req_ptr) {
-    if (!req_ptr) return "";
-    return static_cast<ErClifReq*>(req_ptr)->url.c_str();
-}
-
-const char* er_clif_req_get_body(void* req_ptr) {
-    if (!req_ptr) return "";
-    return static_cast<ErClifReq*>(req_ptr)->body.c_str();
-}
-
-struct ErClifProp {
-    char key[64];
-    int64_t value;
-};
-
-struct ErClifObject {
-    uint32_t magic;
-    uint32_t count;
-    uint32_t cap;
-    ErClifProp props[64];
-};
-
-const char* er_clif_as_str(int64_t val) {
-    if (!val) return "";
-    uint64_t u = static_cast<uint64_t>(val);
-    if ((u & 0xffff000000000000ULL) == 0xfff4000000000000ULL) {
-        return reinterpret_cast<const char*>(u & 0x0000ffffffffffffULL);
-    }
-    if ((u & 0xffff000000000000ULL) == 0) {
-        return reinterpret_cast<const char*>(u);
-    }
-    return "";
-}
-
-int64_t er_clif_alloc_object() {
-    auto* obj = new ErClifObject();
-    obj->magic = ER_CLIF_MAGIC_OBJ;
-    obj->count = 0;
-    obj->cap = 64;
-    return reinterpret_cast<int64_t>(obj);
-}
-
-void er_clif_object_set(int64_t obj_val, int64_t key_val, int64_t val) {
-    if (!obj_val) return;
-    auto* obj = reinterpret_cast<ErClifObject*>(obj_val);
-    const char* key = er_clif_as_str(key_val);
-    if (!key || obj->magic != ER_CLIF_MAGIC_OBJ || obj->count >= 64) return;
-    for (uint32_t i = 0; i < obj->count; ++i) {
-        if (strcmp(obj->props[i].key, key) == 0) {
-            obj->props[i].value = val;
-            return;
-        }
-    }
-    strncpy(obj->props[obj->count].key, key, 63);
-    obj->props[obj->count].key[63] = '\0';
-    obj->props[obj->count].value = val;
-    obj->count++;
-}
-
-int64_t er_clif_object_get(int64_t obj_val, int64_t key_val) {
-    if (!obj_val) return 0;
-    const char* key = er_clif_as_str(key_val);
-    if (!key) return 0;
-
-    uint32_t magic = *reinterpret_cast<const uint32_t*>(obj_val);
-    if (magic == ER_CLIF_MAGIC_REQ) {
-        auto* req = reinterpret_cast<ErClifReq*>(obj_val);
-        if (strcmp(key, "path") == 0) {
-            return reinterpret_cast<int64_t>(req->path.c_str()) | 0xfff4000000000000ULL;
-        }
-        if (strcmp(key, "method") == 0) {
-            return reinterpret_cast<int64_t>(req->method.c_str()) | 0xfff4000000000000ULL;
-        }
-        if (strcmp(key, "url") == 0) {
-            return reinterpret_cast<int64_t>(req->url.c_str()) | 0xfff4000000000000ULL;
-        }
-        if (strcmp(key, "body") == 0) {
-            return reinterpret_cast<int64_t>(req->body.c_str()) | 0xfff4000000000000ULL;
-        }
-        return 0;
-    }
-
-    if (magic == ER_CLIF_MAGIC_OBJ) {
-        auto* obj = reinterpret_cast<ErClifObject*>(obj_val);
-        for (uint32_t i = 0; i < obj->count; ++i) {
-            if (strcmp(obj->props[i].key, key) == 0) {
-                return obj->props[i].value;
-            }
-        }
-    }
-    return 0;
-}
-
-int64_t er_clif_object_get_str(int64_t obj_val, const char* key) {
-    if (!obj_val || !key) return 0;
-    uint32_t magic = *reinterpret_cast<const uint32_t*>(obj_val);
-    if (magic == ER_CLIF_MAGIC_REQ) {
-        auto* req = reinterpret_cast<ErClifReq*>(obj_val);
-        if (strcmp(key, "path") == 0) {
-            return reinterpret_cast<int64_t>(req->path.c_str()) | 0xfff4000000000000ULL;
-        }
-        if (strcmp(key, "method") == 0) {
-            return reinterpret_cast<int64_t>(req->method.c_str()) | 0xfff4000000000000ULL;
-        }
-        if (strcmp(key, "url") == 0) {
-            return reinterpret_cast<int64_t>(req->url.c_str()) | 0xfff4000000000000ULL;
-        }
-        if (strcmp(key, "body") == 0) {
-            return reinterpret_cast<int64_t>(req->body.c_str()) | 0xfff4000000000000ULL;
-        }
-        return 0;
-    }
-    if (magic == ER_CLIF_MAGIC_OBJ) {
-        auto* obj = reinterpret_cast<ErClifObject*>(obj_val);
-        for (uint32_t i = 0; i < obj->count; ++i) {
-            if (strcmp(obj->props[i].key, key) == 0) {
-                return obj->props[i].value;
-            }
-        }
-    }
-    return 0;
-}
-
-int64_t er_clif_str_eq(int64_t a, int64_t b) {
-    if (a == b) return 1;
-    const char* sa = er_clif_as_str(a);
-    const char* sb = er_clif_as_str(b);
-    if (!sa || !sb) return 0;
-    return strcmp(sa, sb) == 0 ? 1 : 0;
-}
-
-void er_clif_json_serialize_value(int64_t val, std::string& out) {
-    if (!val) {
-        out += "null";
-        return;
-    }
-    uint64_t u = static_cast<uint64_t>(val);
-    if ((u & 0xffff000000000000ULL) == 0xfff4000000000000ULL) {
-        const char* s = reinterpret_cast<const char*>(u & 0x0000ffffffffffffULL);
-        out += "\"";
-        if (s) {
-            for (const char* p = s; *p; ++p) {
-                if (*p == '"') out += "\\\"";
-                else if (*p == '\\') out += "\\\\";
-                else if (*p == '\n') out += "\\n";
-                else if (*p == '\r') out += "\\r";
-                else if (*p == '\t') out += "\\t";
-                else out += *p;
-            }
-        }
-        out += "\"";
-        return;
-    }
-
-    uint32_t magic = 0;
-    if (u > 0x1000 && u < 0x0000ffffffffffffULL) {
-        magic = *reinterpret_cast<const uint32_t*>(val);
-    }
-
-    if (magic == ER_CLIF_MAGIC_OBJ) {
-        auto* obj = reinterpret_cast<ErClifObject*>(val);
-        out += "{";
-        for (uint32_t i = 0; i < obj->count; ++i) {
-            if (i > 0) out += ",";
-            out += "\"";
-            out += obj->props[i].key;
-            out += "\":";
-            er_clif_json_serialize_value(obj->props[i].value, out);
-        }
-        out += "}";
-        return;
-    } else if (magic == ER_CLIF_MAGIC_REQ) {
-        auto* req = reinterpret_cast<ErClifReq*>(val);
-        out += "{\"path\":\"" + req->path + "\",\"method\":\"" + req->method + "\",\"url\":\"" + req->url + "\"}";
-        return;
-    }
-
-    out += std::to_string(val);
-}
-
-int64_t er_clif_json_stringify(int64_t val) {
-    std::string buf;
-    er_clif_json_serialize_value(val, buf);
-    char* copy = strdup(buf.c_str());
-    return reinterpret_cast<int64_t>(copy) | 0xfff4000000000000ULL;
-}
-
-int64_t er_clif_str_concat(int64_t a, int64_t b) {
-    const char* sa = er_clif_as_str(a);
-    const char* sb = er_clif_as_str(b);
-    std::string res;
-    if (sa && *sa) {
-        res += sa;
-    } else if (a != 0 && (static_cast<uint64_t>(a) & 0xffff000000000000ULL) != 0xfff4000000000000ULL) {
-        res += std::to_string(a);
-    }
-    if (sb && *sb) {
-        res += sb;
-    } else if (b != 0 && (static_cast<uint64_t>(b) & 0xffff000000000000ULL) != 0xfff4000000000000ULL) {
-        res += std::to_string(b);
-    }
-    char* copy = strdup(res.c_str());
-    return reinterpret_cast<int64_t>(copy) | 0xfff4000000000000ULL;
-}
-
-static thread_local HttpResponseToken* g_clif_token = nullptr;
-
-void er_clif_respond(int32_t status, const char* content_type, const char* body, size_t body_len) {
-    if (!g_clif_token) return;
-    auto* token = g_clif_token;
-    if (token->aborted.load(std::memory_order_acquire)) return;
-    if (token->responded.exchange(true, std::memory_order_acq_rel)) return;
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return;
-
-    std::string status_str;
-    switch (status) {
-        case 200: status_str = "200 OK"; break;
-        case 201: status_str = "201 Created"; break;
-        case 204: status_str = "204 No Content"; break;
-        case 400: status_str = "400 Bad Request"; break;
-        case 404: status_str = "404 Not Found"; break;
-        case 500: status_str = "500 Internal Server Error"; break;
-        default: status_str = std::to_string(status) + " OK"; break;
-    }
-
-    http_res->writeStatus(status_str);
-    if (content_type && strlen(content_type) > 0) {
-        http_res->writeHeader("content-type", content_type);
-    }
-    std::string_view payload(body ? body : "", body ? body_len : 0);
-    http_res->end(payload);
-}
-
-typedef int64_t (*ErClifFetchCallback)(void* req);
-
-void er_clif_serve(int32_t port, ErClifFetchCallback fetch_fn) {
-    if (port <= 0) port = 3000;
-    auto app = uWS::App();
-    app.any("/*", [fetch_fn](auto* res, auto* req) {
-        auto* token = new HttpResponseToken(res);
-        res->onAborted(AbortHandler(token));
-
-        ErClifReq clif_req;
-        clif_req.magic = ER_CLIF_MAGIC_REQ;
-        clif_req.path = std::string(req->getUrl());
-        clif_req.method = std::string(req->getCaseSensitiveMethod());
-        clif_req.url = std::string(req->getFullUrl());
-        clif_req.token = token;
-
-        g_clif_token = token;
-        int64_t ret = fetch_fn ? fetch_fn(&clif_req) : 0;
-
-        if (!token->aborted.load(std::memory_order_acquire) && !token->responded.load(std::memory_order_acquire)) {
-            if (ret != 0) {
-                int64_t is_resp = er_clif_object_get_str(ret, "_isResponse");
-                if (is_resp) {
-                    int64_t status = er_clif_object_get_str(ret, "status");
-                    if (status <= 0) status = 200;
-                    int64_t body_val = er_clif_object_get_str(ret, "body");
-                    const char* body_str = er_clif_as_str(body_val);
-                    int64_t headers_val = er_clif_object_get_str(ret, "headers");
-                    const char* content_type = "text/plain; charset=utf-8";
-                    if (headers_val) {
-                        int64_t ct_val = er_clif_object_get_str(headers_val, "content-type");
-                        const char* ct_str = er_clif_as_str(ct_val);
-                        if (ct_str && strlen(ct_str) > 0) content_type = ct_str;
-                    }
-                    er_clif_respond((int32_t)status, content_type, body_str, body_str ? strlen(body_str) : 0);
-                } else {
-                    std::string json_body;
-                    er_clif_json_serialize_value(ret, json_body);
-                    er_clif_respond(200, "application/json; charset=utf-8", json_body.c_str(), json_body.size());
-                }
-            } else {
-                er_clif_respond(200, "text/plain; charset=utf-8", "OK", 2);
-            }
-        }
-        g_clif_token = nullptr;
-    });
-
-    app.listen(port, [port](auto* listen_socket) {
-        if (listen_socket) {
-            std::cout << "[HTTP] Server listening on http://0.0.0.0:" << port << std::endl;
-        } else {
-            std::cerr << "[HTTP] Failed to listen on port " << port << std::endl;
-        }
-    });
-
-    app.run();
-}
-
-void er_clif_serve_config(int64_t config_val) {
-    int32_t port = 3000;
-    int64_t port_val = er_clif_object_get_str(config_val, "port");
-    if (port_val > 0 && port_val <= 65535) {
-        port = static_cast<int32_t>(port_val);
-    }
-    int64_t fetch_fn_val = er_clif_object_get_str(config_val, "fetch");
-    ErClifFetchCallback fetch_fn = reinterpret_cast<ErClifFetchCallback>(fetch_fn_val);
-    er_clif_serve(port, fetch_fn);
 }
 
 } // extern "C"

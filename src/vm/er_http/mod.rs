@@ -25,6 +25,8 @@ pub use request_builder::*;
 pub use server::*;
 pub use hmr::*;
 pub use fetch::*;
+#[allow(unused_imports)]
 pub use string_api::*;
+#[allow(unused_imports)]
 pub use file_write::*;
 pub use file_api::*;
