@@ -888,33 +888,45 @@ impl CraneliftBackend {
 }
 
 fn find_static_lib(name: &str) -> Option<std::path::PathBuf> {
+    let lib_names = [
+        format!("lib{}.a", name),
+        format!("{}.lib", name),
+        format!("lib{}.lib", name),
+    ];
+
     // 1. Environment variable override
     if let Ok(dir) = std::env::var("ERONOM_LIB_DIR") {
-        let p = Path::new(&dir).join(format!("lib{}.a", name));
-        if p.exists() {
-            return Some(p);
+        for lib_name in &lib_names {
+            let p = Path::new(&dir).join(lib_name);
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
 
     // 2. Current executable directory (e.g. ~/.eronom/lib or next to binary)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            let candidate1 = parent.join(format!("lib{}.a", name));
-            if candidate1.exists() {
-                return Some(candidate1);
-            }
-            let candidate2 = parent.join("lib").join(format!("lib{}.a", name));
-            if candidate2.exists() {
-                return Some(candidate2);
+            for lib_name in &lib_names {
+                let candidate1 = parent.join(lib_name);
+                if candidate1.exists() {
+                    return Some(candidate1);
+                }
+                let candidate2 = parent.join("lib").join(lib_name);
+                if candidate2.exists() {
+                    return Some(candidate2);
+                }
             }
         }
     }
 
     // 3. target/er_native/ directory in CARGO_MANIFEST_DIR
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let native_dir = manifest_dir.join("target").join("er_native").join(format!("lib{}.a", name));
-    if native_dir.exists() {
-        return Some(native_dir);
+    for lib_name in &lib_names {
+        let native_dir = manifest_dir.join("target").join("er_native").join(lib_name);
+        if native_dir.exists() {
+            return Some(native_dir);
+        }
     }
 
     // 4. Scan target/debug/build and target/release/build directories
@@ -923,9 +935,11 @@ fn find_static_lib(name: &str) -> Option<std::path::PathBuf> {
         let build_dir = target_dir.join(profile).join("build");
         if let Ok(entries) = std::fs::read_dir(&build_dir) {
             for entry in entries.flatten() {
-                let out_lib = entry.path().join("out").join(format!("lib{}.a", name));
-                if out_lib.exists() {
-                    return Some(out_lib);
+                for lib_name in &lib_names {
+                    let out_lib = entry.path().join("out").join(lib_name);
+                    if out_lib.exists() {
+                        return Some(out_lib);
+                    }
                 }
             }
         }
@@ -989,6 +1003,8 @@ pub fn build_cranelift_binary(
                         .arg("iphlpapi.lib")
                         .arg("userenv.lib")
                         .arg("/SUBSYSTEM:CONSOLE")
+                        .arg("/OPT:REF")
+                        .arg("/OPT:ICF")
                         .status();
                     matches!(status, Ok(s) if s.success())
                 }

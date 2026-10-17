@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-and-build:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc g++ clang libssl-dev
+
+      - name: Run Test Suite
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: Build Debug Binary
+        run: cargo build --target ${{ matrix.target }}
+
+      # Linux: Verify Pure Native Cranelift Server Binary
+      - name: Verify Pure Native Cranelift Server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo run -- build server.er --cranelift -o server_clif
+          ls -lh server_clif
+          test -f server_clif
+
+      # Windows: Verify Pure Native Cranelift Server Binary (MSVC link.exe)
+      - name: Verify Pure Native Cranelift Server (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo run -- build server.er --cranelift -o server_native.exe
+          $item = Get-Item server_native.exe
+          Write-Host "Built native Windows binary: $($item.Length) bytes"
+          if ($item.Length -gt 1500000) {
+            throw "Binary size $($item.Length) bytes exceeds 1.5MB! Expected pure native binary (~250KB)."
+          }
