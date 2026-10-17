@@ -1,0 +1,15 @@
+import { serve, Response } from "std/http"
+
+serve({
+    port: 3000,
+    fetch: (req) => {
+        if (req.path == "/health") {
+            return Response.text("OK", { status: 200 })
+        }
+        return Response.json({
+            message: "Welcome to Eronom HTTP Server!",
+            path: req.path,
+            method: req.method
+        })
+    }
+})
