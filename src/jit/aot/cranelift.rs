@@ -1159,32 +1159,13 @@ pub fn build_cranelift_binary(
         // Zero-Toolchain Cross-Platform Linker Step for compute scripts:
         match target_os {
             target_lexicon::OperatingSystem::Windows => {
-                #[cfg(target_os = "windows")]
-                {
-                    let status = Command::new("link.exe")
-                        .arg(&format!("/OUT:{}", output_path.display()))
-                        .arg(&temp_obj)
-                        .arg("/ENTRY:_start")
-                        .arg("/SUBSYSTEM:CONSOLE")
-                        .arg("kernel32.lib")
-                        .arg("/NODEFAULTLIB")
-                        .status();
-                    if matches!(status, Ok(s) if s.success()) {
-                        true
-                    } else {
-                        super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok()
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    // Pure-Rust PE32+ Synthesizer: emits standalone .exe without MSVC link.exe or runner stub
-                    if super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok() {
-                        true
-                    } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
-                        crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
-                    } else {
-                        false
-                    }
+                // Pure-Rust PE32+ Synthesizer: directly emits standalone Windows PE32+ (.exe) with Win32 IAT thunks
+                if super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok() {
+                    true
+                } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
+                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                } else {
+                    false
                 }
             }
             target_lexicon::OperatingSystem::Darwin(_) | target_lexicon::OperatingSystem::MacOSX { .. } => {
@@ -1290,10 +1271,16 @@ print(res);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_cranelift_binary failed: {:?}", res.err());
-        assert!(bin_path.exists());
+        let actual_bin = if bin_path.with_extension("exe").exists() {
+            bin_path.with_extension("exe")
+        } else {
+            bin_path.clone()
+        };
+        assert!(actual_bin.exists());
 
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1321,10 +1308,16 @@ print("Done Cranelift!");
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_cranelift_binary failed: {:?}", res.err());
-        assert!(bin_path.exists());
+        let actual_bin = if bin_path.with_extension("exe").exists() {
+            bin_path.with_extension("exe")
+        } else {
+            bin_path.clone()
+        };
+        assert!(actual_bin.exists());
 
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1354,10 +1347,16 @@ print("Zero CC Verified!");
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_cranelift_binary failed: {:?}", res.err());
-        assert!(bin_path.exists());
+        let actual_bin = if bin_path.with_extension("exe").exists() {
+            bin_path.with_extension("exe")
+        } else {
+            bin_path.clone()
+        };
+        assert!(actual_bin.exists());
 
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1386,10 +1385,16 @@ print(res);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_cranelift_binary failed: {:?}", res.err());
-        assert!(bin_path.exists());
+        let actual_bin = if bin_path.with_extension("exe").exists() {
+            bin_path.with_extension("exe")
+        } else {
+            bin_path.clone()
+        };
+        assert!(actual_bin.exists());
 
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("55"), "Expected 55, got: {}", stdout);
