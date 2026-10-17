@@ -49,6 +49,36 @@ pub fn create_standalone_binary(
         }
     }
 
+    // Collect any imported files referenced by the script (local modules or std)
+    if let Ok(imported_paths) = crate::frontend::parser::get_imported_file_paths(entry_script) {
+        let canonical_entry = entry_script.canonicalize().unwrap_or_else(|_| entry_script.to_path_buf());
+        let canonical_parent = canonical_entry.parent().unwrap_or_else(|| Path::new("."));
+        for imp_path in imported_paths {
+            if imp_path == canonical_entry {
+                continue;
+            }
+            if let Ok(content) = fs::read(&imp_path) {
+                let path_str = imp_path.to_string_lossy();
+                let rel_key = if let Some(std_idx) = path_str.find("/std/") {
+                    path_str[std_idx + 1..].to_string()
+                } else if let Some(std_idx) = path_str.find("\\std\\") {
+                    path_str[std_idx + 1..].replace('\\', "/")
+                } else if let Ok(rel) = imp_path.strip_prefix(canonical_parent) {
+                    rel.to_string_lossy().replace('\\', "/")
+                } else {
+                    imp_path.file_name().unwrap_or_default().to_string_lossy().to_string()
+                };
+
+                if !files.iter().any(|(p, _)| p == &rel_key) {
+                    files.push((rel_key, content));
+                }
+            }
+        }
+    }
+
+    // Ensure all standard library files are always present in the standalone bundle
+    collect_std_files(entry_script.parent().unwrap_or_else(|| Path::new(".")), &mut files);
+
     let bundle = AppBundle {
         entrypoint: entry_relative,
         files,
@@ -120,4 +150,69 @@ fn walkdir(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
         }
     }
     Ok(results)
+}
+
+const EMBEDDED_STD_MODULES: &[(&str, &[u8])] = &[
+    ("std/clock.er", include_bytes!("../../../std/clock.er")),
+    ("std/crypto.er", include_bytes!("../../../std/crypto.er")),
+    ("std/env.er", include_bytes!("../../../std/env.er")),
+    ("std/erm.er", include_bytes!("../../../std/erm.er")),
+    ("std/fs.er", include_bytes!("../../../std/fs.er")),
+    ("std/http.er", include_bytes!("../../../std/http.er")),
+    ("std/io.er", include_bytes!("../../../std/io.er")),
+    ("std/json.er", include_bytes!("../../../std/json.er")),
+    ("std/path.er", include_bytes!("../../../std/path.er")),
+    ("std/process.er", include_bytes!("../../../std/process.er")),
+    ("std/schedule.er", include_bytes!("../../../std/schedule.er")),
+    ("std/task.er", include_bytes!("../../../std/task.er")),
+    ("std/test.er", include_bytes!("../../../std/test.er")),
+];
+
+fn collect_std_files(base_dir: &Path, files: &mut Vec<(String, Vec<u8>)>) {
+    if let Some(std_dir) = find_std_dir_for_bundle(base_dir) {
+        if let Ok(entries) = fs::read_dir(&std_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                        if let Ok(bytes) = fs::read(&p) {
+                            let rel = format!("std/{}", name);
+                            if !files.iter().any(|(existing, _)| existing == &rel) {
+                                files.push((rel, bytes));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Always ensure embedded std files are present as guaranteed fallbacks
+    for (rel_path, content) in EMBEDDED_STD_MODULES {
+        if !files.iter().any(|(existing, _)| existing == *rel_path) {
+            files.push((rel_path.to_string(), content.to_vec()));
+        }
+    }
+}
+
+fn find_std_dir_for_bundle(start: &Path) -> Option<PathBuf> {
+    let mut curr = Some(start);
+    while let Some(dir) = curr {
+        let std_dir = dir.join("std");
+        if std_dir.is_dir() {
+            return Some(std_dir);
+        }
+        curr = dir.parent();
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut curr = Some(cwd.as_path());
+        while let Some(dir) = curr {
+            let std_dir = dir.join("std");
+            if std_dir.is_dir() {
+                return Some(std_dir);
+            }
+            curr = dir.parent();
+        }
+    }
+    None
 }

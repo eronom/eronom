@@ -9,6 +9,13 @@ pub fn parse_and_resolve_imports(path: &Path) -> Result<Vec<Stmt>, String> {
     resolve_imports_recursive(path, &mut visited, &mut visited_exports)
 }
 
+pub fn get_imported_file_paths(path: &Path) -> Result<HashSet<PathBuf>, String> {
+    let mut visited = HashSet::new();
+    let mut visited_exports = HashMap::new();
+    let _ = resolve_imports_recursive(path, &mut visited, &mut visited_exports)?;
+    Ok(visited)
+}
+
 fn get_exported_names(stmts: &[Stmt]) -> HashSet<String> {
     let mut names = HashSet::new();
     for stmt in stmts {

@@ -8,7 +8,7 @@ mod type_parser;
 use super::token::{Token, TokenType};
 use super::ast::Stmt;
 
-pub use resolver::parse_and_resolve_imports;
+pub use resolver::{parse_and_resolve_imports, get_imported_file_paths};
 
 pub struct Parser {
     pub(crate) tokens: Vec<Token>,
