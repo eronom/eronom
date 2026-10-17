@@ -64,6 +64,15 @@ jobs:
           ls -lh server_clif
           test -f server_clif
 
+      - name: Upload Linux Artifacts
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eronom-linux-x64
+          path: |
+            server_clif
+            target/${{ matrix.target }}/debug/eronom
+
       # Windows: Verify Pure Native Cranelift Server Binary (MSVC link.exe)
       - name: Verify Pure Native Cranelift Server (Windows)
         if: runner.os == 'Windows'
@@ -75,3 +84,12 @@ jobs:
           if ($item.Length -gt 1500000) {
             throw "Binary size $($item.Length) bytes exceeds 1.5MB! Expected pure native binary (~250KB)."
           }
+
+      - name: Upload Windows Artifacts
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eronom-windows-x64
+          path: |
+            server_native.exe
+            target/${{ matrix.target }}/debug/eronom.exe
