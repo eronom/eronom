@@ -116,7 +116,11 @@ const char* er_clif_as_str(int64_t val) {
     if ((u & 0xffff000000000000ULL) == 0xfff4000000000000ULL) {
         return reinterpret_cast<const char*>(u & 0x0000ffffffffffffULL);
     }
-    if ((u & 0xffff000000000000ULL) == 0) {
+    if ((u & 0xffff000000000000ULL) == 0 && u >= 0x1000) {
+        auto* magic_ptr = reinterpret_cast<const uint32_t*>(u);
+        if (*magic_ptr == ER_CLIF_MAGIC_OBJ || *magic_ptr == ER_CLIF_MAGIC_REQ) {
+            return "";
+        }
         return reinterpret_cast<const char*>(u);
     }
     return "";
@@ -215,6 +219,55 @@ int64_t er_clif_str_eq(int64_t a, int64_t b) {
 }
 
 void er_clif_json_serialize_value(int64_t val, std::string& out) {
+    if (!val) {
+        out += "null";
+        return;
+    }
+    uint64_t u = static_cast<uint64_t>(val);
+
+    if ((u & 0xffff000000000000ULL) == 0 && u >= 0x1000) {
+        auto* magic_ptr = reinterpret_cast<const uint32_t*>(u);
+        if (*magic_ptr == ER_CLIF_MAGIC_OBJ) {
+            auto* obj = reinterpret_cast<ErClifObject*>(val);
+            out += '{';
+            for (uint32_t i = 0; i < obj->count; ++i) {
+                if (i > 0) out += ',';
+                out += '"';
+                out += obj->props[i].key;
+                out += "\":";
+                er_clif_json_serialize_value(obj->props[i].value, out);
+            }
+            out += '}';
+            return;
+        }
+        if (*magic_ptr == ER_CLIF_MAGIC_REQ) {
+            auto* req = reinterpret_cast<ErClifReq*>(val);
+            out += "{\"path\":\"";
+            out += req->path;
+            out += "\",\"method\":\"";
+            out += req->method;
+            out += "\"}";
+            return;
+        }
+    }
+
+    if ((u & 0xffff000000000000ULL) == 0xfff4000000000000ULL) {
+        const char* s = reinterpret_cast<const char*>(u & 0x0000ffffffffffffULL);
+        out += '"';
+        if (s) {
+            for (const char* p = s; *p; ++p) {
+                if (*p == '"') out += "\\\"";
+                else if (*p == '\\') out += "\\\\";
+                else if (*p == '\n') out += "\\n";
+                else if (*p == '\r') out += "\\r";
+                else if (*p == '\t') out += "\\t";
+                else out += *p;
+            }
+        }
+        out += '"';
+        return;
+    }
+
     const char* s = er_clif_as_str(val);
     if (s && *s) {
         out += '"';
@@ -229,19 +282,7 @@ void er_clif_json_serialize_value(int64_t val, std::string& out) {
         out += '"';
         return;
     }
-    auto* obj = reinterpret_cast<ErClifObject*>(val);
-    if (obj && obj->magic == ER_CLIF_MAGIC_OBJ) {
-        out += '{';
-        for (uint32_t i = 0; i < obj->count; ++i) {
-            if (i > 0) out += ',';
-            out += '"';
-            out += obj->props[i].key;
-            out += "\":";
-            er_clif_json_serialize_value(obj->props[i].value, out);
-        }
-        out += '}';
-        return;
-    }
+
     if ((val & 0xffff000000000000ULL) == 0) {
         out += std::to_string(val);
         return;
