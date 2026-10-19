@@ -384,10 +384,6 @@ dependencies = [
  "anyhow",
  "cc",
  "clap",
- "cranelift-codegen",
- "cranelift-frontend",
- "cranelift-module",
- "cranelift-object",
  "fnv",
  "getrandom",
  "hmac",
@@ -400,6 +396,21 @@ dependencies = [
  "target-lexicon",
  "toml",
  "ureq",
+]
+
+[[package]]
+name = "eronom-cranelift"
+version = "0.9.4"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-module",
+ "cranelift-object",
+ "eronom",
+ "object 0.40.0",
+ "target-lexicon",
 ]
 
 [[package]]

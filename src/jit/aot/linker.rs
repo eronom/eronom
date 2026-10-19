@@ -469,7 +469,7 @@ fn build_aot_binary_full(
         // 2. Try Cranelift backend first for pure-Rust native code generation
         let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1").unwrap_or(false);
         if !no_clif {
-            if super::cranelift::build_cranelift_binary(script_path, &final_out, target).is_ok() {
+            if crate::toolchain::run_cranelift_build(script_path, &final_out, target).is_ok() {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -598,7 +598,7 @@ fn build_aot_binary_full(
                 .arg("-o")
                 .arg(&final_out)
                 .status()?
-        } else if super::cranelift::build_cranelift_binary(script_path, &final_out, None).is_ok() {
+        } else if crate::toolchain::run_cranelift_build(script_path, &final_out, None).is_ok() {
             let _ = std::fs::remove_file(&temp_c);
             sync_final_out(&final_out);
             return Ok(());

@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::server::start_server;
 use clap::Parser;
 
-pub use commands::{Cli, Commands, BuildMode};
+pub use commands::{Cli, Commands, BuildMode, ToolchainAction};
 pub use init::init_project;
 pub use build::build_project;
 
@@ -78,7 +78,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             if is_script {
                 if cranelift || (aot && in_process) {
                     println!("Compiling {} into native standalone binary with Cranelift: {}", path.display(), out_path.display());
-                    crate::jit::aot::cranelift::build_cranelift_binary(path, &out_path, target.as_deref())?;
+                    crate::toolchain::run_cranelift_build(path, &out_path, target.as_deref())?;
                     println!("✓ Successfully built native executable: {}", out_path.display());
                     return Ok(());
                 }
@@ -131,7 +131,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
 
                 if cranelift {
                     println!("Compiling {} into native standalone binary with Cranelift: {}", script_to_compile.display(), out_path.display());
-                    crate::jit::aot::cranelift::build_cranelift_binary(&script_to_compile, &out_path, target.as_deref())?;
+                    crate::toolchain::run_cranelift_build(&script_to_compile, &out_path, target.as_deref())?;
                     println!("✓ Successfully built native executable: {}", out_path.display());
                     return Ok(());
                 } else if aot {
@@ -188,6 +188,29 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
         }
         Commands::Transpile { .. } => {
             // Handled via the main binary entrypoint
+        }
+        Commands::Toolchain { action } => {
+            match action {
+                ToolchainAction::List => {
+                    let toolchains = crate::toolchain::list_toolchains();
+                    println!("Available Eronom toolchains:");
+                    for tc in toolchains {
+                        let status = if tc.installed {
+                            let ver_str = tc.version.as_deref().unwrap_or("installed");
+                            format!("{} ({})", ver_str, tc.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default())
+                        } else {
+                            "not installed (install with: eronom toolchain add <name>)".to_string()
+                        };
+                        println!("  - {}: {}", tc.name, status);
+                    }
+                }
+                ToolchainAction::Add { name } => {
+                    crate::toolchain::install_toolchain(&name)?;
+                }
+                ToolchainAction::Remove { name } => {
+                    crate::toolchain::remove_toolchain(&name)?;
+                }
+            }
         }
     }
     Ok(())

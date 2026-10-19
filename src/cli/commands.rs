@@ -145,6 +145,27 @@ pub enum Commands {
         #[arg(long, default_value_t = true)]
         check: bool,
     },
+    /// Manage optional Eronom toolchains (e.g. cranelift)
+    Toolchain {
+        #[command(subcommand)]
+        action: ToolchainAction,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ToolchainAction {
+    /// List available and installed toolchains
+    List,
+    /// Install an optional toolchain (e.g. 'cranelift')
+    Add {
+        /// Name of the toolchain to install
+        name: String,
+    },
+    /// Remove an installed toolchain
+    Remove {
+        /// Name of the toolchain to remove
+        name: String,
+    },
 }
 
 pub fn parse_dir_and_port(

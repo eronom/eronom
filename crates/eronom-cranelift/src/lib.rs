@@ -13,9 +13,9 @@ use cranelift_module::{default_libcall_names, DataDescription, DataId, FuncId, L
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use target_lexicon::Triple;
 
-use super::ir::{EirBinaryOp, EirFunction, EirInst, EirModule, EirType, EirUnaryOp};
-use crate::frontend::parse_and_resolve_imports;
-use crate::vm::Compiler;
+use eronom::jit::aot::ir::{EirBinaryOp, EirFunction, EirInst, EirModule, EirType, EirUnaryOp};
+use eronom::frontend::parse_and_resolve_imports;
+use eronom::vm::Compiler;
 
 pub fn map_eir_type_to_clif(ty: EirType) -> types::Type {
     match ty {
@@ -920,17 +920,46 @@ fn find_static_lib(name: &str) -> Option<std::path::PathBuf> {
         }
     }
 
-    // 3. target/er_native/ directory in CARGO_MANIFEST_DIR
+    // 3. target/er_native/ directory in workspace hierarchy
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for lib_name in &lib_names {
-        let native_dir = manifest_dir.join("target").join("er_native").join(lib_name);
-        if native_dir.exists() {
-            return Some(native_dir);
+    let mut root_candidates = vec![
+        manifest_dir.to_path_buf(),
+    ];
+    if let Some(p1) = manifest_dir.parent() {
+        root_candidates.push(p1.to_path_buf());
+        if let Some(p2) = p1.parent() {
+            root_candidates.push(p2.to_path_buf());
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        root_candidates.push(cwd.clone());
+        if let Some(p) = cwd.parent() {
+            root_candidates.push(p.to_path_buf());
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(p1) = exe.parent() {
+            root_candidates.push(p1.to_path_buf());
+            if let Some(p2) = p1.parent() {
+                root_candidates.push(p2.to_path_buf());
+                if let Some(p3) = p2.parent() {
+                    root_candidates.push(p3.to_path_buf());
+                }
+            }
+        }
+    }
+
+    for root in &root_candidates {
+        for lib_name in &lib_names {
+            let native_dir = root.join("target").join("er_native").join(lib_name);
+            if native_dir.exists() {
+                return Some(native_dir);
+            }
         }
     }
 
     // 4. Scan all build directories under target/ (including target/<triple>/<profile>/build)
-    let target_dir = manifest_dir.join("target");
+    let target_dir = manifest_dir.parent().and_then(|p| p.parent()).unwrap_or(manifest_dir).join("target");
     let mut search_dirs = Vec::new();
     for profile in &["debug", "release"] {
         search_dirs.push(target_dir.join(profile).join("build"));
@@ -1033,7 +1062,7 @@ pub fn build_cranelift_binary(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "er_module".to_string());
 
-    let eir_module = super::lower::lower_program(&function, &module_name);
+    let eir_module = eronom::jit::aot::lower::lower_program(&function, &module_name);
 
     let is_server = eir_module.functions.iter().any(|f| {
         f.instructions.iter().any(|i| matches!(i, EirInst::GetGlobal { name, .. } if name == "serve" || name == "er_http_create_server"))
@@ -1110,8 +1139,8 @@ pub fn build_cranelift_binary(
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
-                        crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                    if let Some(stub_path) = eronom::jit::aot::resolve_target_stub(None, Some("windows")) {
+                        eronom::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
                     } else {
                         false
                     }
@@ -1160,10 +1189,10 @@ pub fn build_cranelift_binary(
         match target_os {
             target_lexicon::OperatingSystem::Windows => {
                 // Pure-Rust PE32+ Synthesizer: directly emits standalone Windows PE32+ (.exe) with Win32 IAT thunks
-                if super::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok() {
+                if eronom::jit::aot::pe_writer::link_object_to_static_pe64(&obj_bytes, output_path).is_ok() {
                     true
-                } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("windows")) {
-                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                } else if let Some(stub_path) = eronom::jit::aot::resolve_target_stub(None, Some("windows")) {
+                    eronom::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
                 } else {
                     false
                 }
@@ -1180,16 +1209,16 @@ pub fn build_cranelift_binary(
                     if matches!(status, Ok(s) if s.success()) {
                         true
                     } else {
-                        super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
+                        eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
                     }
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
                     // Pure-Rust Mach-O 64-bit Synthesizer: emits standalone macOS binary without ld64 or runner stub
-                    if super::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok() {
+                    if eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok() {
                         true
-                    } else if let Some(stub_path) = crate::jit::aot::resolve_target_stub(None, Some("macos")) {
-                        crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                    } else if let Some(stub_path) = eronom::jit::aot::resolve_target_stub(None, Some("macos")) {
+                        eronom::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
                     } else {
                         false
                     }
@@ -1215,7 +1244,7 @@ pub fn build_cranelift_binary(
                         .status();
                     matches!(status, Ok(s) if s.success())
                 } else {
-                    super::elf_writer::link_object_to_static_elf64(&obj_bytes, output_path).is_ok()
+                    eronom::jit::aot::elf_writer::link_object_to_static_elf64(&obj_bytes, output_path).is_ok()
                 }
             }
         }
@@ -1247,7 +1276,7 @@ pub fn build_cranelift_binary(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jit::aot::lower;
+    use eronom::jit::aot::lower;
     use object::{Object, ObjectSection, ObjectSymbol};
 
     #[test]
@@ -1474,7 +1503,7 @@ print(res);
 
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
-            let (code, output) = crate::jit::aot::pe_writer::run_pe64_standalone(&bytes).unwrap();
+            let (code, output) = eronom::jit::aot::pe_writer::run_pe64_standalone(&bytes).unwrap();
             assert_eq!(code, 0, "Windows executable exited with non-zero code");
             assert_eq!(output.trim(), "100", "Expected output '100', got '{}'", output);
         }
@@ -1498,7 +1527,7 @@ print(res);
 
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
-            let (code, output) = crate::jit::aot::pe_writer::run_pe64_standalone(&_bytes).unwrap();
+            let (code, output) = eronom::jit::aot::pe_writer::run_pe64_standalone(&_bytes).unwrap();
             assert_eq!(code, 0, "Windows executable exited with non-zero code");
             assert_eq!(output.trim(), "55", "Expected output '55', got '{}'", output);
         }

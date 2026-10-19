@@ -1,0 +1,23 @@
+[package]
+name = "eronom-cranelift"
+version = "0.9.4"
+edition = "2024"
+
+[dependencies]
+eronom = { path = "../.." }
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+target-lexicon = "0.13.5"
+object = { version = "0.40.0", features = ["write", "std"] }
+cranelift-codegen = { version = "0.135.5", features = ["all-arch", "std"] }
+cranelift-frontend = "0.135.5"
+cranelift-module = "0.135.5"
+cranelift-object = "0.135.5"
+
+[[bin]]
+name = "eronom-cranelift"
+path = "src/main.rs"
+
+[lib]
+name = "eronom_cranelift"
+path = "src/lib.rs"

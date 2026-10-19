@@ -51,10 +51,10 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Run Test Suite
-        run: cargo test --target ${{ matrix.target }}
+        run: cargo test --workspace --target ${{ matrix.target }}
 
       - name: Build Debug Binary
-        run: cargo build --target ${{ matrix.target }}
+        run: cargo build --workspace --target ${{ matrix.target }}
 
       # Linux: Verify Pure Native Cranelift Server Binary
       - name: Verify Pure Native Cranelift Server (Linux)
@@ -72,6 +72,7 @@ jobs:
           path: |
             server_clif
             target/${{ matrix.target }}/debug/eronom
+            target/${{ matrix.target }}/debug/eronom-cranelift
 
       # Windows: Verify Pure Native Cranelift Server Binary (MSVC link.exe)
       - name: Verify Pure Native Cranelift Server (Windows)
@@ -93,3 +94,4 @@ jobs:
           path: |
             server_native.exe
             target/${{ matrix.target }}/debug/eronom.exe
+            target/${{ matrix.target }}/debug/eronom-cranelift.exe
