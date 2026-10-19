@@ -1307,7 +1307,17 @@ print(res);
         };
         assert!(actual_bin.exists());
 
-        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
+        let mut attempts = 0;
+        let output = loop {
+            match Command::new(&actual_bin).output() {
+                Ok(out) => break out,
+                Err(e) if attempts < 15 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => panic!("Failed to execute binary: {:?}", e),
+            }
+        };
         let _ = std::fs::remove_file(&bin_path);
         let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
@@ -1344,7 +1354,17 @@ print("Done Cranelift!");
         };
         assert!(actual_bin.exists());
 
-        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
+        let mut attempts = 0;
+        let output = loop {
+            match Command::new(&actual_bin).output() {
+                Ok(out) => break out,
+                Err(e) if attempts < 15 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => panic!("Failed to execute binary: {:?}", e),
+            }
+        };
         let _ = std::fs::remove_file(&bin_path);
         let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 

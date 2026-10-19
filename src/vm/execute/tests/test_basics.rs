@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 pub fn run_code(source: &str) -> Result<VM, String> {
     let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     crate::jit::init_jit_hooks();
+    crate::jit::reset_jit_state();
     gc_free_all();
     let tokens = crate::frontend::lex(source);
     let mut parser = crate::frontend::Parser::new(tokens);
@@ -24,6 +25,7 @@ pub fn run_code(source: &str) -> Result<VM, String> {
     }
 
     // Clean up JIT allocations before running Interpreter
+    crate::jit::reset_jit_state();
     gc_free_all();
 
     // Recompile to get fresh constants for the Interpreter run

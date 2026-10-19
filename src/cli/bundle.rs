@@ -152,21 +152,7 @@ fn walkdir(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     Ok(results)
 }
 
-const EMBEDDED_STD_MODULES: &[(&str, &[u8])] = &[
-    ("std/clock.er", include_bytes!("../../std/clock.er")),
-    ("std/crypto.er", include_bytes!("../../std/crypto.er")),
-    ("std/env.er", include_bytes!("../../std/env.er")),
-    ("std/erm.er", include_bytes!("../../std/erm.er")),
-    ("std/fs.er", include_bytes!("../../std/fs.er")),
-    ("std/http.er", include_bytes!("../../std/http.er")),
-    ("std/io.er", include_bytes!("../../std/io.er")),
-    ("std/json.er", include_bytes!("../../std/json.er")),
-    ("std/path.er", include_bytes!("../../std/path.er")),
-    ("std/process.er", include_bytes!("../../std/process.er")),
-    ("std/schedule.er", include_bytes!("../../std/schedule.er")),
-    ("std/task.er", include_bytes!("../../std/task.er")),
-    ("std/test.er", include_bytes!("../../std/test.er")),
-];
+include!(concat!(env!("OUT_DIR"), "/embedded_std.rs"));
 
 fn collect_std_files(base_dir: &Path, files: &mut Vec<(String, Vec<u8>)>) {
     if let Some(std_dir) = find_std_dir_for_bundle(base_dir) {

@@ -403,6 +403,9 @@ fn test_jit_lifecycle_reset() {
         let code = format!("let val = {} * 10 + 5", i);
         let vm = run_code(&code).unwrap();
         assert_eq!(vm.get_global("val").unwrap().as_number(), (i * 10 + 5) as f64);
-        crate::vm::execute::types::trigger_jit_reset();
+        {
+            let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            crate::vm::execute::types::trigger_jit_reset();
+        }
     }
 }
