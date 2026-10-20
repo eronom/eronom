@@ -7,7 +7,7 @@ use crate::vm::gc::{
     mark_value, gc_with_state, gc_blacken_object,
     GC_ROOTS, GC_NEEDS_STEP, GcColor, GcPhase, GcObject
 };
-use super::types::{VM, VmTimerAction, AsyncResult};
+use super::types::VM;
 
 pub static EDS_MARK_HOOK: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
@@ -157,63 +157,7 @@ impl VM {
             }
         }
         mark_value(&self.thrown_value);
-        if let Ok(queue) = self.event_loop_queue.try_lock() {
-            if !queue.is_empty() {
-                for task in queue.iter() {
-                    mark_value(&task.callback);
-                    for arg in task.args.iter() {
-                        mark_value(arg);
-                    }
-                    match &task.result {
-                        AsyncResult::ResolvePromise(ptr, val) => {
-                            if !ptr.is_null() {
-                                crate::vm::gc::mark_object(*ptr);
-                            }
-                            mark_value(val);
-                        }
-                        AsyncResult::ResolveFetchPromise(ptr, _) |
-                        AsyncResult::ResolveTextPromise(ptr, _) |
-                        AsyncResult::ResolveJsonPromise(ptr, _) |
-                        AsyncResult::ResolveWritePromise(ptr, _) => {
-                            if !ptr.is_null() {
-                                crate::vm::gc::mark_object(*ptr);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if let Ok(pending) = self.pending_callbacks.try_lock() {
-            if !pending.is_empty() {
-                for item in pending.iter() {
-                    mark_value(&item.callback);
-                    for arg in item.args.iter() {
-                        mark_value(arg);
-                    }
-                }
-            }
-        }
-        if let Ok(timers) = self.timers.try_lock() {
-            if !timers.is_empty() {
-                for timer in timers.iter() {
-                    match &timer.action {
-                        VmTimerAction::Callback { callback, args } => {
-                            mark_value(callback);
-                            for arg in args {
-                                mark_value(arg);
-                            }
-                        }
-                        VmTimerAction::ResolvePromise { promise_ptr, value } => {
-                            if !promise_ptr.is_null() {
-                                crate::vm::gc::mark_object(*promise_ptr);
-                            }
-                            mark_value(value);
-                        }
-                    }
-                }
-            }
-        }
+        self.event_loop.trace_roots(&mut mark_value);
     }
 
     fn mark_roots(&self) {

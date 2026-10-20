@@ -104,7 +104,7 @@ pub fn construct_file_object(vm: &mut VM, name: &str, type_str: &str, size: usiz
     let type_val = Value::string(crate::vm::gc::get_or_create_string(type_str));
     let size_val = Value::number(size as f64);
 
-    if let Some(desc) = vm.structs.get("File") {
+    if let Some(desc) = vm.shapes.structs.get("File") {
         let count = desc.field_indices.len();
         let mut fields = crate::vm::gc::get_pooled_vec(count);
         fields.resize(count, Value::null());

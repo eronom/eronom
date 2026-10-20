@@ -2,9 +2,9 @@ use std::rc::Rc;
 use fnv::FnvHashMap;
 use crate::vm::value::{Value, MapKey};
 use crate::vm::gc::StructDescriptor;
-use super::types::VM;
+use super::types::{VM, ShapeRegistry};
 
-impl VM {
+impl ShapeRegistry {
     pub fn find_matching_struct(&self, keys: &[Value]) -> Option<Rc<StructDescriptor>> {
         for desc in self.structs.values() {
             if desc.field_indices.len() == keys.len() {
@@ -88,3 +88,16 @@ impl VM {
         Some((desc, &self.last_matched_offsets))
     }
 }
+
+impl VM {
+    #[inline]
+    pub fn find_matching_struct(&self, keys: &[Value]) -> Option<Rc<StructDescriptor>> {
+        self.shapes.find_matching_struct(keys)
+    }
+
+    #[inline]
+    pub fn find_matching_struct_cached(&mut self, keys: &[Value]) -> Option<(Rc<StructDescriptor>, &[usize])> {
+        self.shapes.find_matching_struct_cached(keys)
+    }
+}
+

@@ -117,9 +117,8 @@ pub fn native_eronom_file_exists(args: Vec<Value>) -> Value {
             }
         }
 
-        let active_counter = vm.active_async_tasks.clone();
-        let queue = vm.event_loop_queue.clone();
-        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let el = vm.event_loop.clone();
+        el.increment_active_tasks();
 
         let promise_ptr_usize = promise_ptr as usize;
 
@@ -128,14 +127,11 @@ pub fn native_eronom_file_exists(args: Vec<Value>) -> Value {
             let exists = std::path::Path::new(&path_str).exists();
             let res_val = Value::boolean(exists);
 
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
+            el.post_and_decrement(crate::vm::execute::EventLoopTask {
                 callback: Value::null(),
                 args: Vec::new(),
                 result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, res_val),
             });
-
-            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         });
 
         Value::null()
@@ -184,9 +180,8 @@ pub fn native_eronom_file_text(args: Vec<Value>) -> Value {
             }
         }
 
-        let active_counter = vm.active_async_tasks.clone();
-        let queue = vm.event_loop_queue.clone();
-        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let el = vm.event_loop.clone();
+        el.increment_active_tasks();
 
         let promise_ptr_usize = promise_ptr as usize;
 
@@ -194,14 +189,11 @@ pub fn native_eronom_file_text(args: Vec<Value>) -> Value {
             let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
             let content = std::fs::read_to_string(&path_str).map_err(|e| e.to_string());
 
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
+            el.post_and_decrement(crate::vm::execute::EventLoopTask {
                 callback: Value::null(),
                 args: Vec::new(),
                 result: crate::vm::execute::AsyncResult::ResolveTextPromise(promise_ptr, content),
             });
-
-            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         });
 
         Value::null()
@@ -255,9 +247,8 @@ pub fn native_eronom_file_json(args: Vec<Value>) -> Value {
             }
         }
 
-        let active_counter = vm.active_async_tasks.clone();
-        let queue = vm.event_loop_queue.clone();
-        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let el = vm.event_loop.clone();
+        el.increment_active_tasks();
 
         let promise_ptr_usize = promise_ptr as usize;
 
@@ -265,14 +256,11 @@ pub fn native_eronom_file_json(args: Vec<Value>) -> Value {
             let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
             let content = std::fs::read_to_string(&path_str).map_err(|e| e.to_string());
 
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
+            el.post_and_decrement(crate::vm::execute::EventLoopTask {
                 callback: Value::null(),
                 args: Vec::new(),
                 result: crate::vm::execute::AsyncResult::ResolveJsonPromise(promise_ptr, content),
             });
-
-            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         });
 
         Value::null()

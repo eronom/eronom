@@ -45,19 +45,11 @@ pub fn native_set_timeout(args: Vec<Value>) -> Value {
     }
     let vm = unsafe { &mut *vm_ptr };
 
-    let timer_id = vm.next_timer_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let due_time = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms);
-
-    vm.timers.lock().unwrap().push(crate::vm::execute::VmTimer {
-        id: timer_id,
-        due_time,
-        action: crate::vm::execute::VmTimerAction::Callback {
-            callback,
-            args: cb_args,
-        },
+    let timer_id = vm.event_loop.schedule_timer(due_time, crate::vm::execute::VmTimerAction::Callback {
+        callback,
+        args: cb_args,
     });
-    vm.active_async_tasks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    vm.event_loop_condvar.notify_all();
 
     Value::number(timer_id as f64)
 }
@@ -74,15 +66,7 @@ pub fn native_clear_timeout(args: Vec<Value>) -> Value {
     }
     let vm = unsafe { &mut *vm_ptr };
 
-    let mut timers = vm.timers.lock().unwrap();
-    let mut remaining: Vec<crate::vm::execute::VmTimer> = timers.drain().collect();
-    if let Some(pos) = remaining.iter().position(|t| t.id == timer_id) {
-        remaining.swap_remove(pos);
-        vm.active_async_tasks.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-    for t in remaining {
-        timers.push(t);
-    }
+    vm.event_loop.cancel_timer(timer_id);
 
     Value::null()
 }
@@ -181,10 +165,8 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
     }
 
     // 3. Increment active async tasks counter
-    let active_counter = vm.active_async_tasks.clone();
-    let queue = vm.event_loop_queue.clone();
-    let condvar = vm.event_loop_condvar.clone();
-    active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let el = vm.event_loop.clone();
+    el.increment_active_tasks();
 
     let promise_ptr_usize = promise_ptr as usize;
 
@@ -194,17 +176,11 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
         let res = perform_native_fetch(&url_str);
 
         // Post ResolveFetchPromise back to event loop
-        {
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
-                callback: Value::null(),
-                args: Vec::new(),
-                result: crate::vm::execute::AsyncResult::ResolveFetchPromise(promise_ptr, res),
-            });
-            condvar.notify_one();
-        }
-
-        active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        el.post_and_decrement(crate::vm::execute::EventLoopTask {
+            callback: Value::null(),
+            args: Vec::new(),
+            result: crate::vm::execute::AsyncResult::ResolveFetchPromise(promise_ptr, res),
+        });
     });
 
     Value::null()
@@ -411,19 +387,11 @@ pub fn native_sleep(args: Vec<Value>) -> Value {
     let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
     let promise_val = Value::promise(promise_ptr);
 
-    let timer_id = vm.next_timer_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let due_time = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms);
-
-    vm.timers.lock().unwrap().push(crate::vm::execute::VmTimer {
-        id: timer_id,
-        due_time,
-        action: crate::vm::execute::VmTimerAction::ResolvePromise {
-            promise_ptr,
-            value: Value::null(),
-        },
+    vm.event_loop.schedule_timer(due_time, crate::vm::execute::VmTimerAction::ResolvePromise {
+        promise_ptr,
+        value: Value::null(),
     });
-    vm.active_async_tasks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    vm.event_loop_condvar.notify_all();
 
     promise_val
 }

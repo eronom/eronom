@@ -1,6 +1,3 @@
-use std::time::{Instant, Duration};
-use std::sync::atomic::Ordering;
-
 use crate::vm::value::Value;
 use crate::vm::bytecode::OpCode;
 use super::types::{VM, AsyncResult, EventLoopTask, VmTimerAction};
@@ -19,24 +16,8 @@ impl VM {
     fn run_event_loop_inner(&mut self, wait_for_active: bool) -> Result<(), String> {
         loop {
             // 1. Process all expired timers from the min-heap
-            loop {
-                let now = Instant::now();
-                let timer_opt = {
-                    let mut timers = self.timers.lock().unwrap();
-                    if let Some(top) = timers.peek() {
-                        if top.due_time <= now {
-                            timers.pop()
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-
-                let Some(timer) = timer_opt else { break; };
-
-                self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+            while let Some(timer) = self.event_loop.pop_expired_timer() {
+                self.event_loop.decrement_active_tasks();
                 match timer.action {
                     VmTimerAction::Callback { callback, args } => {
                         if let Err(e) = self.call_function_reentrant(callback, args) {
@@ -44,8 +25,7 @@ impl VM {
                         }
                     }
                     VmTimerAction::ResolvePromise { promise_ptr, value } => {
-                        let mut q = self.event_loop_queue.lock().unwrap();
-                        q.push(EventLoopTask {
+                        self.event_loop.enqueue_task(EventLoopTask {
                             callback: Value::null(),
                             args: Vec::new(),
                             result: AsyncResult::ResolvePromise(promise_ptr, value),
@@ -55,10 +35,7 @@ impl VM {
             }
 
             // 2. Process tasks from event loop queue (promises, I/O, etc.)
-            let tasks = {
-                let mut queue = self.event_loop_queue.lock().unwrap();
-                std::mem::take(&mut *queue)
-            };
+            let tasks = self.event_loop.take_tasks();
 
             for task in tasks {
                 match task.result {
@@ -266,36 +243,18 @@ impl VM {
             }
 
             let has_ready_fibers = !self.scheduler.ready_queue.is_empty();
-            let active = self.active_async_tasks.load(Ordering::SeqCst);
+            let active = self.event_loop.active_tasks();
             if (active == 0 && !has_ready_fibers) || !wait_for_active {
-                let queue_empty = self.event_loop_queue.lock().unwrap().is_empty();
-                let has_due_timers = {
-                    let timers = self.timers.lock().unwrap();
-                    timers.peek().map_or(false, |t| t.due_time <= Instant::now())
-                };
+                let queue_empty = self.event_loop.is_empty();
+                let has_due_timers = self.event_loop.has_due_timers();
                 if queue_empty && !has_due_timers && !has_ready_fibers {
                     break;
                 }
             }
 
-            let queue = self.event_loop_queue.lock().unwrap();
-            if queue.is_empty() && !has_ready_fibers {
-                let now = Instant::now();
-                let wait_timeout = {
-                    let timers = self.timers.lock().unwrap();
-                    if let Some(top) = timers.peek() {
-                        if top.due_time > now {
-                            top.due_time.duration_since(now).min(Duration::from_millis(10))
-                        } else {
-                            Duration::from_millis(0)
-                        }
-                    } else {
-                        Duration::from_millis(10)
-                    }
-                };
-                if wait_timeout > Duration::from_millis(0) {
-                    let _ = self.event_loop_condvar.wait_timeout(queue, wait_timeout);
-                }
+            if self.event_loop.is_empty() && !has_ready_fibers {
+                let wait_timeout = self.event_loop.next_wait_timeout();
+                self.event_loop.wait_timeout(wait_timeout);
             }
         }
         Ok(())

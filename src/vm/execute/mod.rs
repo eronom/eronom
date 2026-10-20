@@ -22,9 +22,6 @@ pub use gc_integration::{GC_TIME, GC_COUNT, er_gc_reset_stats, er_gc_print_stats
 pub use builtins::{get_string_builtin_method_id, get_array_builtin_method_id, get_object_builtin_method_id};
 
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::{AtomicUsize, AtomicU64};
-use std::collections::BinaryHeap;
 use fnv::FnvHashMap;
 
 use crate::vm::value::Value;
@@ -60,19 +57,10 @@ impl VM {
             jit_threshold,
             alloc_count_local: 0,
             use_evented_io: true,
-            structs: FnvHashMap::default(),
-            auto_shapes: FnvHashMap::default(),
-            last_matched_keys: Vec::new(),
-            last_matched_descriptor: None,
-            last_matched_offsets: Vec::new(),
             open_upvalues: Vec::new(),
             thrown_value: Value::null(),
-            event_loop_queue: Arc::new(Mutex::new(Vec::new())),
-            event_loop_condvar: Arc::new(Condvar::new()),
-            active_async_tasks: Arc::new(AtomicUsize::new(0)),
-            pending_callbacks: Arc::new(Mutex::new(Vec::new())),
-            timers: Arc::new(Mutex::new(BinaryHeap::new())),
-            next_timer_id: Arc::new(AtomicU64::new(1)),
+            shapes: types::ShapeRegistry::new(),
+            event_loop: types::VmEventLoop::new(),
             scheduler: FiberScheduler::new(),
         }
     }
@@ -119,15 +107,11 @@ impl VM {
         if callee.is_method_resolve() {
             let promise_ptr = callee.as_gc_ptr();
             let arg = args.first().copied().unwrap_or(Value::null());
-            let queue = self.event_loop_queue.clone();
-            let condvar = self.event_loop_condvar.clone();
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
+            self.event_loop.enqueue_task(crate::vm::execute::EventLoopTask {
                 callback: Value::null(),
                 args: Vec::new(),
                 result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, arg),
             });
-            condvar.notify_one();
             return Ok(Value::null());
         }
 

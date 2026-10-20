@@ -360,9 +360,7 @@ pub extern "C" fn er_jit_call_non_vm(
             } else {
                 Value::null()
             };
-            let queue = (*_vm).event_loop_queue.clone();
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
+            (*_vm).event_loop.enqueue_task(crate::vm::execute::EventLoopTask {
                 callback: Value::null(),
                 args: Vec::new(),
                 result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, arg),

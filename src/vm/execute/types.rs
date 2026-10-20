@@ -1,7 +1,7 @@
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::{AtomicUsize, AtomicU64};
+use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use std::collections::BinaryHeap;
 use fnv::FnvHashMap;
 
@@ -69,6 +69,219 @@ pub struct PendingAsync {
 
 unsafe impl Send for PendingAsync {}
 
+#[derive(Clone)]
+pub struct VmEventLoop {
+    pub queue: Arc<Mutex<Vec<EventLoopTask>>>,
+    pub condvar: Arc<Condvar>,
+    pub active_async_tasks: Arc<AtomicUsize>,
+    pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
+    pub timers: Arc<Mutex<BinaryHeap<VmTimer>>>,
+    pub next_timer_id: Arc<AtomicU64>,
+}
+
+impl Default for VmEventLoop {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VmEventLoop {
+    pub fn new() -> Self {
+        Self {
+            queue: Arc::new(Mutex::new(Vec::new())),
+            condvar: Arc::new(Condvar::new()),
+            active_async_tasks: Arc::new(AtomicUsize::new(0)),
+            pending_callbacks: Arc::new(Mutex::new(Vec::new())),
+            timers: Arc::new(Mutex::new(BinaryHeap::new())),
+            next_timer_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    #[inline]
+    pub fn enqueue_task(&self, task: EventLoopTask) {
+        if let Ok(mut q) = self.queue.lock() {
+            q.push(task);
+        }
+        self.condvar.notify_all();
+    }
+
+    #[inline]
+    pub fn post_and_decrement(&self, task: EventLoopTask) {
+        if let Ok(mut q) = self.queue.lock() {
+            q.push(task);
+        }
+        self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+        self.condvar.notify_all();
+    }
+
+    #[inline]
+    pub fn increment_active_tasks(&self) {
+        self.active_async_tasks.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[inline]
+    pub fn decrement_active_tasks(&self) {
+        self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    #[inline]
+    pub fn active_tasks(&self) -> usize {
+        self.active_async_tasks.load(Ordering::SeqCst)
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.queue.lock().map_or(true, |q| q.is_empty())
+    }
+
+    pub fn take_tasks(&self) -> Vec<EventLoopTask> {
+        let mut queue = self.queue.lock().unwrap();
+        std::mem::take(&mut *queue)
+    }
+
+    pub fn pop_expired_timer(&self) -> Option<VmTimer> {
+        let now = Instant::now();
+        let mut timers = self.timers.lock().unwrap();
+        if let Some(top) = timers.peek() {
+            if top.due_time <= now {
+                return timers.pop();
+            }
+        }
+        None
+    }
+
+    pub fn has_due_timers(&self) -> bool {
+        let timers = self.timers.lock().unwrap();
+        timers.peek().map_or(false, |t| t.due_time <= Instant::now())
+    }
+
+    pub fn next_wait_timeout(&self) -> Duration {
+        let now = Instant::now();
+        let timers = self.timers.lock().unwrap();
+        if let Some(top) = timers.peek() {
+            if top.due_time > now {
+                top.due_time.duration_since(now).min(Duration::from_millis(10))
+            } else {
+                Duration::from_millis(0)
+            }
+        } else {
+            Duration::from_millis(10)
+        }
+    }
+
+    pub fn wait_timeout(&self, timeout: Duration) {
+        if timeout > Duration::from_millis(0) {
+            let queue = self.queue.lock().unwrap();
+            let _ = self.condvar.wait_timeout(queue, timeout);
+        }
+    }
+
+    pub fn schedule_timer(&self, due_time: Instant, action: VmTimerAction) -> u64 {
+        let timer_id = self.next_timer_id.fetch_add(1, Ordering::SeqCst);
+        self.timers.lock().unwrap().push(VmTimer {
+            id: timer_id,
+            due_time,
+            action,
+        });
+        self.active_async_tasks.fetch_add(1, Ordering::SeqCst);
+        self.condvar.notify_all();
+        timer_id
+    }
+
+    pub fn cancel_timer(&self, timer_id: u64) -> bool {
+        let mut timers = self.timers.lock().unwrap();
+        let mut remaining: Vec<VmTimer> = timers.drain().collect();
+        let mut found = false;
+        if let Some(pos) = remaining.iter().position(|t| t.id == timer_id) {
+            remaining.swap_remove(pos);
+            self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+            found = true;
+        }
+        for t in remaining {
+            timers.push(t);
+        }
+        found
+    }
+
+    pub fn trace_roots<F>(&self, mut mark_value: F)
+    where
+        F: FnMut(&Value),
+    {
+        if let Ok(queue) = self.queue.try_lock() {
+            if !queue.is_empty() {
+                for task in queue.iter() {
+                    mark_value(&task.callback);
+                    for arg in task.args.iter() {
+                        mark_value(arg);
+                    }
+                    match &task.result {
+                        AsyncResult::ResolvePromise(ptr, val) => {
+                            if !ptr.is_null() {
+                                crate::vm::gc::mark_object(*ptr);
+                            }
+                            mark_value(val);
+                        }
+                        AsyncResult::ResolveFetchPromise(ptr, _)
+                        | AsyncResult::ResolveTextPromise(ptr, _)
+                        | AsyncResult::ResolveJsonPromise(ptr, _)
+                        | AsyncResult::ResolveWritePromise(ptr, _) => {
+                            if !ptr.is_null() {
+                                crate::vm::gc::mark_object(*ptr);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if let Ok(pending) = self.pending_callbacks.try_lock() {
+            if !pending.is_empty() {
+                for item in pending.iter() {
+                    mark_value(&item.callback);
+                    for arg in item.args.iter() {
+                        mark_value(arg);
+                    }
+                }
+            }
+        }
+        if let Ok(timers) = self.timers.try_lock() {
+            if !timers.is_empty() {
+                for timer in timers.iter() {
+                    match &timer.action {
+                        VmTimerAction::Callback { callback, args } => {
+                            mark_value(callback);
+                            for arg in args {
+                                mark_value(arg);
+                            }
+                        }
+                        VmTimerAction::ResolvePromise { promise_ptr, value } => {
+                            if !promise_ptr.is_null() {
+                                crate::vm::gc::mark_object(*promise_ptr);
+                            }
+                            mark_value(value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ShapeRegistry {
+    pub structs: FnvHashMap<Rc<str>, Rc<StructDescriptor>>,
+    pub auto_shapes: FnvHashMap<Vec<MapKey>, (Rc<StructDescriptor>, Vec<usize>)>,
+    pub last_matched_keys: Vec<Value>,
+    pub last_matched_descriptor: Option<Rc<StructDescriptor>>,
+    pub last_matched_offsets: Vec<usize>,
+}
+
+impl ShapeRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CallFrame {
     pub function: *mut GcObject,
@@ -93,21 +306,12 @@ pub struct VM {
     pub jit_threshold: usize,
     pub alloc_count_local: usize,
     pub use_evented_io: bool,
-    pub structs: FnvHashMap<Rc<str>, Rc<StructDescriptor>>,
-    pub auto_shapes: FnvHashMap<Vec<MapKey>, (Rc<StructDescriptor>, Vec<usize>)>,
-    pub last_matched_keys: Vec<Value>,
-    pub last_matched_descriptor: Option<Rc<StructDescriptor>>,
-    pub last_matched_offsets: Vec<usize>,
     pub open_upvalues: Vec<*mut GcObject>,
     pub thrown_value: Value,
-    
-    // Event loop fields
-    pub event_loop_queue: Arc<Mutex<Vec<EventLoopTask>>>,
-    pub event_loop_condvar: Arc<Condvar>,
-    pub active_async_tasks: Arc<AtomicUsize>,
-    pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
-    pub timers: Arc<Mutex<BinaryHeap<VmTimer>>>,
-    pub next_timer_id: Arc<AtomicU64>,
+
+    // Subsystems
+    pub shapes: ShapeRegistry,
+    pub event_loop: VmEventLoop,
     pub scheduler: super::scheduler::FiberScheduler,
 }
 

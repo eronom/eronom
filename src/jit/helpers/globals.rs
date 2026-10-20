@@ -133,7 +133,7 @@ pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val:
             field_indices,
             methods,
         ));
-        (*vm).structs.insert(name_rc.clone(), descriptor.clone());
+        (*vm).shapes.structs.insert(name_rc.clone(), descriptor.clone());
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
         (*vm).globals.insert(name_rc, Value::object(ptr));
         0

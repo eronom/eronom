@@ -236,9 +236,7 @@ impl VM {
             } else {
                 Value::null()
             };
-            let queue = self.event_loop_queue.clone();
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
+            self.event_loop.enqueue_task(crate::vm::execute::EventLoopTask {
                 callback: Value::null(),
                 args: Vec::new(),
                 result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, arg),
@@ -379,7 +377,7 @@ impl VM {
             field_indices,
             methods,
         ));
-        self.structs.insert(name_rc.clone(), descriptor.clone());
+        self.shapes.structs.insert(name_rc.clone(), descriptor.clone());
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
         self.globals.insert(name_rc, Value::object(ptr));
     }}

@@ -60,9 +60,8 @@ pub fn native_eronom_write_file(args: Vec<Value>) -> Value {
             }
         }
 
-        let active_counter = vm.active_async_tasks.clone();
-        let queue = vm.event_loop_queue.clone();
-        active_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let el = vm.event_loop.clone();
+        el.increment_active_tasks();
 
         let promise_ptr_usize = promise_ptr as usize;
 
@@ -70,14 +69,11 @@ pub fn native_eronom_write_file(args: Vec<Value>) -> Value {
             let promise_ptr = promise_ptr_usize as *mut crate::vm::gc::GcObject;
             let res = write_file_helper(&path_str, &data_str, is_src_file);
 
-            let mut q = queue.lock().unwrap();
-            q.push(crate::vm::execute::EventLoopTask {
+            el.post_and_decrement(crate::vm::execute::EventLoopTask {
                 callback: Value::null(),
                 args: Vec::new(),
                 result: crate::vm::execute::AsyncResult::ResolveWritePromise(promise_ptr, res),
             });
-
-            active_counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         });
 
         Value::null()
