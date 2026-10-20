@@ -1,15 +1,41 @@
-#Build output
+# Build output
 /build
 build/
-
-# Added by cargo
 /target
+target/
 
-# eronom binary
-eronom
-
-# temporary compiled MIR output
+# Binaries & Object Files
+*.exe
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.mir
 temp_compiled.mir
+eronom
+eronom-runner
+eronom-cranelift
 
-# graphify
+# Logs & Test Scratch Artifacts
+*.log
+*.tmp
+test_out.txt
+test_out_*.html
+ermex.html
+uperm.html
+contact_src.html
+c_fib
+er_fib
+pure_native_fib
+fib_*
+fibeg*
+fibnewcc
+server_*
+new*
+ermeg
+hello
+
+# Graphify
 graphify-out/
+
