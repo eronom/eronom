@@ -15,7 +15,7 @@ target/
 temp_compiled.mir
 eronom
 eronom-runner
-eronom-cranelift
+/eronom-cranelift
 
 # Logs & Test Scratch Artifacts
 *.log

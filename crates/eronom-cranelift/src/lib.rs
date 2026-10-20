@@ -1257,16 +1257,18 @@ pub fn build_cranelift_binary(
     }
 
     // On Windows, ensure both output_path and output_path.exe exist
-    let exe_path = if output_path.extension().map(|e| e == "exe").unwrap_or(false) {
-        output_path.to_path_buf()
-    } else {
-        output_path.with_extension("exe")
-    };
-    if exe_path != output_path {
-        if exe_path.exists() && !output_path.exists() {
-            let _ = std::fs::copy(&exe_path, output_path);
-        } else if output_path.exists() && !exe_path.exists() {
-            let _ = std::fs::copy(output_path, &exe_path);
+    if matches!(target_os, target_lexicon::OperatingSystem::Windows) {
+        let exe_path = if output_path.extension().map(|e| e == "exe").unwrap_or(false) {
+            output_path.to_path_buf()
+        } else {
+            output_path.with_extension("exe")
+        };
+        if exe_path != output_path {
+            if exe_path.exists() && !output_path.exists() {
+                let _ = std::fs::copy(&exe_path, output_path);
+            } else if output_path.exists() && !exe_path.exists() {
+                let _ = std::fs::copy(output_path, &exe_path);
+            }
         }
     }
 
