@@ -40,15 +40,24 @@ pub extern "C" fn dev_http_callback(
 
     if let Err(e) = handle_dev_request(res, method, path, headers, body) {
         let err_msg = format!("Internal Server Error: {}", e);
-        let err_bytes = err_msg.as_bytes();
-        unsafe {
-            let status = CString::new("500 Internal Server Error").unwrap();
-            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-            let content_type = CString::new("text/plain; charset=utf-8").unwrap();
-            let content_type_key = CString::new("Content-Type").unwrap();
-            er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
-            er_http_response_end(res, err_msg.as_ptr() as *const c_char, err_bytes.len());
-        }
+        send_response(res, "500 Internal Server Error", "text/plain; charset=utf-8", err_msg.as_bytes());
+    }
+}
+
+pub fn send_response(res: *mut c_void, status: &str, content_type: &str, body: &[u8]) {
+    unsafe {
+        let status_c = CString::new(status).unwrap_or_else(|_| CString::new("500 Internal Server Error").unwrap());
+        er_http_response_write_status(res, status_c.as_ptr(), status_c.as_bytes().len());
+        let ct_key = c"Content-Type";
+        let ct_val = CString::new(content_type).unwrap_or_else(|_| CString::new("text/plain").unwrap());
+        er_http_response_write_header(
+            res,
+            ct_key.as_ptr(),
+            ct_key.to_bytes().len(),
+            ct_val.as_ptr(),
+            ct_val.as_bytes().len(),
+        );
+        er_http_response_end(res, body.as_ptr() as *const c_char, body.len());
     }
 }
 
@@ -140,14 +149,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
         let file_path = base_path.join(rel_file);
         if file_path.exists() && file_path.is_file() {
             if let Ok(src) = fs::read_to_string(&file_path) {
-                unsafe {
-                    let status = CString::new("200 OK").unwrap();
-                    er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-                    let content_type = CString::new("text/plain; charset=utf-8").unwrap();
-                    let content_type_key = CString::new("Content-Type").unwrap();
-                    er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
-                    er_http_response_end(res, src.as_ptr() as *const c_char, src.len());
-                }
+                send_response(res, "200 OK", "text/plain; charset=utf-8", src.as_bytes());
                 return Ok(());
             }
         }
@@ -162,14 +164,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
             include_bytes!("../../init/modules/erm/hmr.js").as_slice().into()
         };
 
-        unsafe {
-            let status = CString::new("200 OK").unwrap();
-            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-            let content_type = CString::new("application/javascript; charset=utf-8").unwrap();
-            let content_type_key = CString::new("Content-Type").unwrap();
-            er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
-            er_http_response_end(res, content.as_ptr() as *const c_char, content.len());
-        }
+        send_response(res, "200 OK", "application/javascript; charset=utf-8", &content);
         return Ok(());
     }
 
@@ -182,14 +177,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
             include_bytes!("../../init/modules/erm/runtime.js").as_slice().into()
         };
 
-        unsafe {
-            let status = CString::new("200 OK").unwrap();
-            er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-            let content_type = CString::new("application/javascript; charset=utf-8").unwrap();
-            let content_type_key = CString::new("Content-Type").unwrap();
-            er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
-            er_http_response_end(res, content.as_ptr() as *const c_char, content.len());
-        }
+        send_response(res, "200 OK", "application/javascript; charset=utf-8", &content);
         return Ok(());
     }
 
@@ -287,14 +275,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                             processed.insert_str(0, &filename_script);
                         }
                     }
-                    unsafe {
-                        let status = CString::new("200 OK").unwrap();
-                        er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-                        let content_type = CString::new("text/html; charset=utf-8").unwrap();
-                        let content_type_key = CString::new("Content-Type").unwrap();
-                        er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
-                        er_http_response_end(res, processed.as_ptr() as *const c_char, processed.len());
-                    }
+                    send_response(res, "200 OK", "text/html; charset=utf-8", processed.as_bytes());
                 }
                 Err(e) => {
                     let rel_path = file_path.strip_prefix(&base_path)
@@ -331,20 +312,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
 </body>
 </html>"#, rel_path_escaped, err_msg_escaped);
 
-                    unsafe {
-                        let status = CString::new("500 Internal Server Error").unwrap();
-                        er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-                        let content_type = CString::new("text/html; charset=utf-8").unwrap();
-                        let content_type_key = CString::new("Content-Type").unwrap();
-                        er_http_response_write_header(
-                            res,
-                            content_type_key.as_ptr(),
-                            content_type_key.as_bytes().len(),
-                            content_type.as_ptr(),
-                            content_type.as_bytes().len(),
-                        );
-                        er_http_response_end(res, html_content.as_ptr() as *const c_char, html_content.len());
-                    }
+                    send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html_content.as_bytes());
                 }
             }
         } else if file_path.extension().map_or(false, |ext| ext == "er") {
@@ -375,16 +343,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
             } else {
                 None
             };
-            unsafe {
-                let status = CString::new("200 OK").unwrap();
-                er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());
-                if let Some(mime_type) = mime {
-                    let content_type = CString::new(mime_type).unwrap();
-                    let content_type_key = CString::new("Content-Type").unwrap();
-                    er_http_response_write_header(res, content_type_key.as_ptr(), content_type_key.as_bytes().len(), content_type.as_ptr(), content_type.as_bytes().len());
-                }
-                er_http_response_end(res, content.as_ptr() as *const c_char, content.len());
-            }
+            send_response(res, "200 OK", mime.unwrap_or("application/octet-stream"), &content);
         }
     } else {
         unsafe {

@@ -448,7 +448,7 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
         let mut arg_expr = full_arg_expr;
         let mut brace_depth = 0;
         let mut in_quote = None;
-        for (idx, c) in full_arg_expr.chars().enumerate() {
+        for (idx, c) in full_arg_expr.char_indices() {
             if let Some(q) = in_quote {
                 if c == q { in_quote = None; }
             } else if c == '"' || c == '\'' || c == '`' {

@@ -22,10 +22,6 @@ pub const TAG_PROMISE: u64     = 0xfffe_0000_0000_0000;
 pub const TAG_METHOD_RESOLVE: u64 = 0xffff_0000_0000_0000;
 pub const PTR_MASK: u64        = 0x0000_ffff_ffff_ffff;
 
-thread_local! {
-    static SSO_BUF: std::cell::UnsafeCell<[[u8; 8]; 8]> = const { std::cell::UnsafeCell::new([[0u8; 8]; 8]) };
-    static SSO_IDX: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
@@ -237,18 +233,16 @@ impl Value {
     pub fn as_str(&self) -> Option<&str> {
         if self.is_inline_string() {
             let len = ((self.0 >> 48) & 0x7) as usize;
-            SSO_IDX.with(|idx_cell| {
-                let idx = idx_cell.get();
-                idx_cell.set((idx + 1) & 7);
-                SSO_BUF.with(|buf_cell| unsafe {
-                    let buf = &mut (*buf_cell.get())[idx];
-                    let bits = (self.0 & 0x0000_ffff_ffff_ffff).to_le_bytes();
-                    buf[..6].copy_from_slice(&bits[..6]);
-                    buf[6] = 0;
-                    buf[7] = 0;
-                    Some(std::str::from_utf8_unchecked(&buf[..len]))
-                })
-            })
+            if len <= 6 {
+                let slice = unsafe {
+                    let ptr = self as *const Value as *const u8;
+                    std::slice::from_raw_parts(ptr, len)
+                };
+                std::str::from_utf8(slice).ok()
+            } else {
+                None
+            }
+
         } else if (self.0 & 0xffff_0000_0000_0000) == TAG_STRING {
             unsafe {
                 match &(*self.as_gc_ptr()).data {

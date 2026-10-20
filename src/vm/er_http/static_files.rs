@@ -76,17 +76,22 @@ pub fn serve_static_file(
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let mime = get_mime_type_for_extension(ext);
 
+    let send_304 = |res_ptr: *mut c_void, etag_str: &str| {
+        unsafe {
+            let status = c"304 Not Modified";
+            er_http_response_write_status(res_ptr, status.as_ptr(), status.to_bytes().len());
+            let etag_key = c"ETag";
+            if let Ok(etag_val) = CString::new(etag_str) {
+                er_http_response_write_header(res_ptr, etag_key.as_ptr(), etag_key.to_bytes().len(), etag_val.as_ptr(), etag_val.as_bytes().len());
+            }
+            er_http_response_end(res_ptr, b"".as_ptr() as *const c_char, 0);
+        }
+    };
+
     // 1. Conditional GET: If-None-Match
     if let Some(if_none_match) = req_headers.get("if-none-match") {
         if if_none_match.contains(&etag) || if_none_match.trim() == "*" {
-            unsafe {
-                let status = CString::new("304 Not Modified").unwrap();
-                er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
-                let etag_key = CString::new("ETag").unwrap();
-                let etag_val = CString::new(etag).unwrap();
-                er_http_response_write_header(res_ptr, etag_key.as_ptr(), etag_key.as_bytes().len(), etag_val.as_ptr(), etag_val.as_bytes().len());
-                er_http_response_end(res_ptr, b"".as_ptr() as *const c_char, 0);
-            }
+            send_304(res_ptr, &etag);
             return true;
         }
     }
@@ -94,14 +99,7 @@ pub fn serve_static_file(
     // 2. Conditional GET: If-Modified-Since
     if let Some(if_mod_since) = req_headers.get("if-modified-since") {
         if if_mod_since.trim() == last_modified.as_str() {
-            unsafe {
-                let status = CString::new("304 Not Modified").unwrap();
-                er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
-                let etag_key = CString::new("ETag").unwrap();
-                let etag_val = CString::new(etag).unwrap();
-                er_http_response_write_header(res_ptr, etag_key.as_ptr(), etag_key.as_bytes().len(), etag_val.as_ptr(), etag_val.as_bytes().len());
-                er_http_response_end(res_ptr, b"".as_ptr() as *const c_char, 0);
-            }
+            send_304(res_ptr, &etag);
             return true;
         }
     }
@@ -163,28 +161,32 @@ pub fn serve_static_file(
     // 4. Full file response
     if let Ok(content) = fs::read(file_path) {
         unsafe {
-            let status = CString::new("200 OK").unwrap();
-            er_http_response_write_status(res_ptr, status.as_ptr(), status.as_bytes().len());
+            let status = c"200 OK";
+            er_http_response_write_status(res_ptr, status.as_ptr(), status.to_bytes().len());
 
-            let ct_k = CString::new("Content-Type").unwrap();
-            let ct_v = CString::new(mime).unwrap();
-            er_http_response_write_header(res_ptr, ct_k.as_ptr(), ct_k.as_bytes().len(), ct_v.as_ptr(), ct_v.as_bytes().len());
+            let ct_k = c"Content-Type";
+            if let Ok(ct_v) = CString::new(mime) {
+                er_http_response_write_header(res_ptr, ct_k.as_ptr(), ct_k.to_bytes().len(), ct_v.as_ptr(), ct_v.as_bytes().len());
+            }
 
-            let ar_k = CString::new("Accept-Ranges").unwrap();
-            let ar_v = CString::new("bytes").unwrap();
-            er_http_response_write_header(res_ptr, ar_k.as_ptr(), ar_k.as_bytes().len(), ar_v.as_ptr(), ar_v.as_bytes().len());
+            let ar_k = c"Accept-Ranges";
+            let ar_v = c"bytes";
+            er_http_response_write_header(res_ptr, ar_k.as_ptr(), ar_k.to_bytes().len(), ar_v.as_ptr(), ar_v.to_bytes().len());
 
-            let etag_k = CString::new("ETag").unwrap();
-            let etag_v = CString::new(etag).unwrap();
-            er_http_response_write_header(res_ptr, etag_k.as_ptr(), etag_k.as_bytes().len(), etag_v.as_ptr(), etag_v.as_bytes().len());
+            let etag_k = c"ETag";
+            if let Ok(etag_v) = CString::new(etag.as_str()) {
+                er_http_response_write_header(res_ptr, etag_k.as_ptr(), etag_k.to_bytes().len(), etag_v.as_ptr(), etag_v.as_bytes().len());
+            }
 
-            let lm_k = CString::new("Last-Modified").unwrap();
-            let lm_v = CString::new(last_modified).unwrap();
-            er_http_response_write_header(res_ptr, lm_k.as_ptr(), lm_k.as_bytes().len(), lm_v.as_ptr(), lm_v.as_bytes().len());
+            let lm_k = c"Last-Modified";
+            if let Ok(lm_v) = CString::new(last_modified.as_str()) {
+                er_http_response_write_header(res_ptr, lm_k.as_ptr(), lm_k.to_bytes().len(), lm_v.as_ptr(), lm_v.as_bytes().len());
+            }
 
-            let cl_k = CString::new("Content-Length").unwrap();
-            let cl_v = CString::new(format!("{}", content.len())).unwrap();
-            er_http_response_write_header(res_ptr, cl_k.as_ptr(), cl_k.as_bytes().len(), cl_v.as_ptr(), cl_v.as_bytes().len());
+            let cl_k = c"Content-Length";
+            if let Ok(cl_v) = CString::new(content.len().to_string()) {
+                er_http_response_write_header(res_ptr, cl_k.as_ptr(), cl_k.to_bytes().len(), cl_v.as_ptr(), cl_v.as_bytes().len());
+            }
 
             er_http_response_end(res_ptr, content.as_ptr() as *const c_char, content.len());
         }
