@@ -16,29 +16,7 @@ pub struct AppBundle {
 
 use backend::gc::{self, GcData};
 use super::http_detect::{find_listen_port, has_http_import};
-
-fn native_print(args: Vec<Value>) -> Value {
-    let mut outputs = Vec::new();
-    for arg in args {
-        outputs.push(arg.to_string());
-    }
-    println!("{}", outputs.join(" "));
-    Value::null()
-}
-
-fn native_now(_args: Vec<Value>) -> Value {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    Value::number(now as f64)
-}
-
-fn native_local_time_string(_args: Vec<Value>) -> Value {
-    let now = std::time::SystemTime::now();
-    let ptr = backend::gc::gc_alloc_string(&format!("{:?}", now));
-    Value::string(ptr)
-}
+use super::natives::{native_print, native_now, native_local_time_string};
 
 fn extract_params_map(params_val: Value) -> std::collections::HashMap<String, String> {
     let mut params_map = std::collections::HashMap::new();

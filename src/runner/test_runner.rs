@@ -14,10 +14,13 @@ pub fn find_test_files_in_dir(dir: &Path, out: &mut Vec<PathBuf>) {
                 }
             } else if path.is_file() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name.ends_with(".er") {
-                    if name.starts_with("test_") || name.ends_with(".test.er") || name.ends_with("_test.er") || path.parent().map_or(false, |p| p.ends_with("tests")) {
-                        out.push(path);
-                    }
+                if name.ends_with(".er")
+                    && (name.starts_with("test_")
+                        || name.ends_with(".test.er")
+                        || name.ends_with("_test.er")
+                        || path.parent().is_some_and(|p| p.ends_with("tests")))
+                {
+                    out.push(path);
                 }
             }
         }

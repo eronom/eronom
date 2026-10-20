@@ -3,6 +3,7 @@ pub use eronom::frontend;
 pub use eronom::jit;
 
 mod http_detect;
+mod natives;
 mod micro_runner;
 
 #[global_allocator]
