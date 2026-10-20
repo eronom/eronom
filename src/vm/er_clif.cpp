@@ -390,7 +390,7 @@ void er_clif_serve(int32_t port, ErClifFetchCallback fetch_fn) {
 
     app.listen(port, [port](auto* listen_socket) {
         if (listen_socket) {
-            std::cout << "[HTTP] Server listening on http://0.0.0.0:" << port << std::endl;
+            std::cout << "[HTTP] Server listening on http://localhost:" << port << std::endl;
         } else {
             std::cerr << "[HTTP] Failed to listen on port " << port << std::endl;
         }

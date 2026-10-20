@@ -612,9 +612,9 @@ pub fn native_serve(args: Vec<Value>) -> Value {
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     let (config_port, config_host) = if !vm_ptr.is_null() {
         let vm = unsafe { &*vm_ptr };
-        (get_port_from_config(vm), "0.0.0.0".to_string())
+        (get_port_from_config(vm), "localhost".to_string())
     } else {
-        (3000, "0.0.0.0".to_string())
+        (3000, "localhost".to_string())
     };
 
     let mut port = config_port;
@@ -718,7 +718,7 @@ pub fn native_serve(args: Vec<Value>) -> Value {
 
     println!("[HTTP] Server listening on http://{}:{}", hostname, final_port);
 
-    // 4. Construct JS Server object
+    // 4. Construct Eronom Server object
     let mut server_map = crate::vm::gc::get_pooled_map(8);
     let port_str = get_or_create_string("port");
     let host_str = get_or_create_string("hostname");

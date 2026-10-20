@@ -125,7 +125,7 @@ pub fn is_assignable(expected: &TypeNode, actual: &TypeNode, env: &TypeEnv) -> b
         },
     ) = (&exp_resolved, &act_resolved)
     {
-        // Parameter count must match or act can accept fewer (standard JS/TS rule)
+        // Parameter count must match or act can accept fewer
         if act_params.len() > exp_params.len() {
             return false;
         }
