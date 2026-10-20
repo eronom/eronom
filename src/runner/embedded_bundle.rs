@@ -16,115 +16,10 @@ pub struct AppBundle {
 
 use backend::gc::{self, GcData};
 use super::http_detect::{find_listen_port, has_http_import};
-use super::natives::{native_print, native_now, native_local_time_string};
-
-fn extract_params_map(params_val: Value) -> std::collections::HashMap<String, String> {
-    let mut params_map = std::collections::HashMap::new();
-    if params_val.is_object() {
-        unsafe {
-            match &(*params_val.as_gc_ptr()).data {
-                backend::GcData::Object(map) => {
-                    for (k, v) in map {
-                        if let Some(key_str) = k.0.as_str() {
-                            let val_str = if v.is_string() {
-                                v.as_str().unwrap_or("").to_string()
-                            } else {
-                                v.to_string()
-                            };
-                            params_map.insert(key_str.to_string(), val_str);
-                        }
-                    }
-                }
-                backend::GcData::Struct(s) => {
-                    for (map_key, &idx) in &s.descriptor.field_indices {
-                        let name = map_key.0.as_str().unwrap_or("");
-                        let v = s.fields[idx];
-                        let val_str = if v.is_string() {
-                            v.as_str().unwrap_or("").to_string()
-                        } else {
-                            v.to_string()
-                        };
-                        params_map.insert(name.to_string(), val_str);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    params_map
-}
-
-pub fn native_render(args: Vec<Value>) -> Value {
-    if args.is_empty() {
-        return Value::null();
-    }
-    let file_path_val = args[0];
-    let file_path = match file_path_val.as_str() {
-        Some(s) => s,
-        None => return Value::null(),
-    };
-    let params_val = if args.len() > 1 { args[1] } else { Value::null() };
-    let params_map = extract_params_map(params_val);
-
-    let path = std::path::Path::new(file_path);
-    let mut resolved_path = if path.exists() {
-        path.to_path_buf()
-    } else if path.with_extension("html").exists() {
-        path.with_extension("html")
-    } else {
-        path.to_path_buf()
-    };
-
-    if !resolved_path.exists() {
-        if let Some(target) = backend::er_http::get_target_script_path() {
-            if let Some(parent) = std::path::Path::new(&target).parent() {
-                let candidate = parent.join(path);
-                if candidate.exists() {
-                    resolved_path = candidate;
-                } else if candidate.with_extension("html").exists() {
-                    resolved_path = candidate.with_extension("html");
-                }
-            }
-        }
-    }
-
-    if let Ok(content) = std::fs::read_to_string(&resolved_path) {
-        let mut final_content = content;
-        if !params_map.is_empty() {
-            let mut params_js = String::from("window.__erm_params = {");
-            for (k, v) in &params_map {
-                params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
-            }
-            params_js.push_str("};");
-            final_content = final_content.replace("window.__erm_params = {};", &params_js);
-        }
-        let ptr = backend::gc::gc_alloc_string(&final_content);
-        Value::string(ptr)
-    } else {
-        Value::null()
-    }
-}
-
-pub fn native_render_string(args: Vec<Value>) -> Value {
-    if args.is_empty() {
-        return Value::null();
-    }
-    let content = match args[0].as_str() {
-        Some(s) => s,
-        None => return Value::null(),
-    };
-    let params_val = if args.len() > 1 { args[1] } else { Value::null() };
-    let params_map = extract_params_map(params_val);
-
-    let mut final_content = content.to_string();
-    if !params_map.is_empty() {
-        for (k, v) in &params_map {
-            final_content = final_content.replace(&format!("{{{}}}", k), v);
-        }
-    }
-    let ptr = backend::gc::gc_alloc_string(&final_content);
-    Value::string(ptr)
-}
+use super::natives::{
+    native_print, native_now, native_local_time_string,
+    native_render, native_render_string,
+};
 
 pub fn register_micro_natives(vm: &mut VM) {
     vm.register_global("print", Value::native_function(native_print));
@@ -341,3 +236,19 @@ pub fn check_and_run_micro_bundle() -> Option<anyhow::Result<()>> {
     let _ = fs::remove_dir_all(&temp_app_dir);
     Some(res)
 }
+
+#[inline]
+pub fn check_and_run_embedded_bundle() -> Option<anyhow::Result<()>> {
+    check_and_run_micro_bundle()
+}
+
+#[inline]
+pub fn run_embedded_file(path: &str) -> anyhow::Result<()> {
+    run_micro_file(path)
+}
+
+#[inline]
+pub fn register_embedded_natives(vm: &mut VM) {
+    register_micro_natives(vm);
+}
+

@@ -13,7 +13,7 @@ src/runner/
 ├── bundle.rs           # Embedded standalone binary bundle extractor and loader
 ├── natives.rs          # Registration of native standard library functions in the VM
 ├── http_detect.rs      # HTTP server startup detection and socket event loop hooks
-├── micro_runner.rs     # Minimal execution loop for lightweight scripts
+├── embedded_bundle.rs  # Standalone execution harness for embedded bundles
 └── mod.rs              # Runner module exports
 ```
 

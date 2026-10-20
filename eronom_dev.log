@@ -1,5 +1,0 @@
-Dev server running at http://localhost:4000
-[uWebSockets] Server listening on port 4000
-Request: GET /contact
-Request: GET /core/hmr.js
-Request: GET /core/runtime.js
