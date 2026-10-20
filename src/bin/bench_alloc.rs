@@ -967,22 +967,22 @@ print(time.perf_counter() - start)
     print_row("Compile only", compile_avg, compile_rss, Some(compile_peak_heap));
 
     if bun_pure_avg.as_nanos() > 0 {
-        print_row("Bun (pure run)", bun_pure_avg, bun_pure_rss, None);
+        print_row("Baseline B (pure run)", bun_pure_avg, bun_pure_rss, None);
     }
     if bun_cli_avg.as_nanos() > 0 {
-        print_row("Bun (external CLI)", bun_cli_avg, bun_cli_rss, None);
+        print_row("Baseline B (external CLI)", bun_cli_avg, bun_cli_rss, None);
     }
     if node_pure_avg.as_nanos() > 0 {
-        print_row("Node (pure run)", node_pure_avg, node_pure_rss, None);
+        print_row("Baseline A (pure run)", node_pure_avg, node_pure_rss, None);
     }
     if node_cli_avg.as_nanos() > 0 {
-        print_row("Node (external CLI)", node_cli_avg, node_cli_rss, None);
+        print_row("Baseline A (external CLI)", node_cli_avg, node_cli_rss, None);
     }
     if deno_pure_avg.as_nanos() > 0 {
-        print_row("Deno (pure run)", deno_pure_avg, deno_pure_rss, None);
+        print_row("Baseline C (pure run)", deno_pure_avg, deno_pure_rss, None);
     }
     if deno_cli_avg.as_nanos() > 0 {
-        print_row("Deno (external CLI)", deno_cli_avg, deno_cli_rss, None);
+        print_row("Baseline C (external CLI)", deno_cli_avg, deno_cli_rss, None);
     }
     if go_pure_avg.as_nanos() > 0 {
         print_row("Go (pure run)", go_pure_avg, go_pure_rss, None);
@@ -1024,11 +1024,11 @@ print(time.perf_counter() - start)
     if bun_pure_avg.as_nanos() > 0 {
         if vm_pure_avg < bun_pure_avg {
             let speedup = bun_pure_avg.as_nanos() as f64 / vm_pure_avg.as_nanos() as f64;
-            let text = format!("{} (pure) is {:.2}x FASTER than Bun (pure)", engine_name, speedup);
+            let text = format!("{} (pure) is {:.2}x FASTER than Baseline B (pure)", engine_name, speedup);
             print_footer("⚡", &text);
         } else {
             let slowdown = vm_pure_avg.as_nanos() as f64 / bun_pure_avg.as_nanos() as f64;
-            let text = format!("{} (pure) is {:.2}x SLOWER than Bun (pure)", engine_name, slowdown);
+            let text = format!("{} (pure) is {:.2}x SLOWER than Baseline B (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1036,11 +1036,11 @@ print(time.perf_counter() - start)
     if bun_cli_avg.as_nanos() > 0 {
         if vm_avg < bun_cli_avg {
             let speedup = bun_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Bun (CLI)", engine_name, speedup);
+            let text = format!("{} is {:.2}x FASTER than Baseline B (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / bun_cli_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Bun (CLI)", engine_name, slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Baseline B (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1048,11 +1048,11 @@ print(time.perf_counter() - start)
     if node_pure_avg.as_nanos() > 0 {
         if vm_avg < node_pure_avg {
             let speedup = node_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Node (pure)", engine_name, speedup);
+            let text = format!("{} is {:.2}x FASTER than Baseline A (pure)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / node_pure_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Node (pure)", engine_name, slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Baseline A (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1060,11 +1060,11 @@ print(time.perf_counter() - start)
     if node_cli_avg.as_nanos() > 0 {
         if vm_avg < node_cli_avg {
             let speedup = node_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Node (CLI)", engine_name, speedup);
+            let text = format!("{} is {:.2}x FASTER than Baseline A (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / node_cli_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Node (CLI)", engine_name, slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Baseline A (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1072,11 +1072,11 @@ print(time.perf_counter() - start)
     if deno_pure_avg.as_nanos() > 0 {
         if vm_avg < deno_pure_avg {
             let speedup = deno_pure_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Deno (pure)", engine_name, speedup);
+            let text = format!("{} is {:.2}x FASTER than Baseline C (pure)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / deno_pure_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Deno (pure)", engine_name, slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Baseline C (pure)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
@@ -1084,11 +1084,11 @@ print(time.perf_counter() - start)
     if deno_cli_avg.as_nanos() > 0 {
         if vm_avg < deno_cli_avg {
             let speedup = deno_cli_avg.as_nanos() as f64 / vm_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x FASTER than Deno (CLI)", engine_name, speedup);
+            let text = format!("{} is {:.2}x FASTER than Baseline C (CLI)", engine_name, speedup);
             print_footer("✅", &text);
         } else {
             let slowdown = vm_avg.as_nanos() as f64 / deno_cli_avg.as_nanos() as f64;
-            let text = format!("{} is {:.2}x SLOWER than Deno (CLI)", engine_name, slowdown);
+            let text = format!("{} is {:.2}x SLOWER than Baseline C (CLI)", engine_name, slowdown);
             print_footer("⚠️", &text);
         }
     }
