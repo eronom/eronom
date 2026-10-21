@@ -694,10 +694,23 @@ function createArrayProxy(arr, setter, name) {
     },
     set(target, prop, newVal) {
       target[prop] = newVal;
+      setter([...target]);
+      return true;
+    }
+  });
+}
+
+function createObjectProxy(obj, setter, name) {
+  return new Proxy(obj, {
+    get(target, prop, receiver) {
+      return Reflect.get(target, prop, receiver);
+    },
+    set(target, prop, newVal, receiver) {
+      target[prop] = newVal;
       if (name) {
         setHmrState(name, target);
       }
-      setter([...target]);
+      setter({ ...target });
       return true;
     }
   });
@@ -707,6 +720,10 @@ export const erm = {
   init(val, name) {
     if (name && statesRegistry.has(name)) {
       return statesRegistry.get(name);
+    }
+    if (val && typeof val === 'object' && ('_get' in val || (val.target && '_get' in val.target))) {
+      if (name) statesRegistry.set(name, val);
+      return val;
     }
     const hmrVal = name ? getHmrState(name) : undefined;
     if (hmrVal !== undefined) {
@@ -754,11 +771,35 @@ export const erm = {
     signal.valueOf = () => get();
     signal[Symbol.toPrimitive] = () => get();
 
+    const result = new Proxy(signal, {
+      get(target, prop, receiver) {
+        if (prop in target || typeof prop === 'symbol') {
+          return Reflect.get(target, prop, receiver);
+        }
+        const current = target.value;
+        if (current && typeof current === 'object' && prop in current) {
+          return current[prop];
+        }
+        return undefined;
+      },
+      set(target, prop, newVal, receiver) {
+        if (prop in target || prop === 'value') {
+          return Reflect.set(target, prop, newVal, receiver);
+        }
+        const current = target.value;
+        if (current && typeof current === 'object') {
+          target.value = { ...current, [prop]: newVal };
+          return true;
+        }
+        return Reflect.set(target, prop, newVal, receiver);
+      }
+    });
+
     if (name) {
-      statesRegistry.set(name, signal);
+      statesRegistry.set(name, result);
     }
 
-    return signal;
+    return result;
   },
 
   get(signal) {
@@ -767,6 +808,9 @@ export const erm = {
       const current = signal._get();
       if (Array.isArray(current) && typeof signal._set === 'function') {
         return createArrayProxy(current, signal._set, signal._name);
+      }
+      if (current && typeof current === 'object' && typeof signal._set === 'function') {
+        return createObjectProxy(current, signal._set, signal._name);
       }
       return current;
     }
@@ -929,6 +973,26 @@ export function useParams() {
     return window.__erm_params;
   }
   return currentParams;
+}
+
+export async function useFetch(url, options = {}) {
+  const fetchOptions = (typeof options === 'object' && options !== null) ? options : {};
+  const name = typeof options === 'string' ? options : (options && options.name);
+  try {
+    const res = await fetch(url, fetchOptions);
+    if (!res.ok) {
+      console.warn(`useFetch: HTTP ${res.status} for ${url}`);
+      return erm.init(null, name);
+    }
+    const contentType = res.headers && typeof res.headers.get === 'function' ? res.headers.get('content-type') : '';
+    const data = contentType && contentType.includes('application/json')
+      ? await res.json()
+      : await res.json().catch(() => res.text());
+    return erm.init(data, name);
+  } catch (err) {
+    console.error(`useFetch error for ${url}:`, err);
+    return erm.init(null, name);
+  }
 }
 
 // --- Suspense & Loading Swap ---

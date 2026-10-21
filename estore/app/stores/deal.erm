@@ -1,0 +1,3 @@
+<script>
+    export const deal = await useFetch('/api/deal');
+</script>

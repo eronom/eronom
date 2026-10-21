@@ -320,7 +320,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     for v in &result.state_vars {
         if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(v))) {
             if !re_decl.is_match(&combined_scripts) {
-                let fallback_val = match v.as_str() {
+                let mut fallback_val = match v.as_str() {
                     "activeTheme" => "'light'".to_string(),
                     "count" => "0".to_string(),
                     "timer" => "0".to_string(),
@@ -335,6 +335,14 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
                         }
                     }
                 };
+
+                if let Some(source_file) = state_var_sources.get(v) {
+                    if let Ok(src_content) = std::fs::read_to_string(source_file) {
+                        if let Some(extracted) = extract_state_variable_init(&src_content, v) {
+                            fallback_val = extracted;
+                        }
+                    }
+                }
                 let scoped_name = if let Some(source_file) = state_var_sources.get(v) {
                     let rel_path = if let Ok(cwd) = std::env::current_dir() {
                         if let Ok(rel) = std::path::Path::new(source_file).strip_prefix(&cwd) {
@@ -374,12 +382,12 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         script_assets.push_str("import {\n");
         script_assets.push_str("  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n");
         script_assets.push_str("  onMount, onCleanup, batch, untrack,\n");
-        script_assets.push_str("  useState, useEffect, useProps, unwrap, useParams, setParams, effect,\n");
+        script_assets.push_str("  useState, useEffect, useProps, useFetch, unwrap, useParams, setParams, effect,\n");
         script_assets.push_str("  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n");
         script_assets.push_str("  Show, For, setCurrentPageDispose,\n");
         script_assets.push_str("  erm\n");
         script_assets.push_str("} from '/modules/erm/runtime.js';\n");
-        script_assets.push_str("createRoot((dispose) => {\n");
+        script_assets.push_str("createRoot(async (dispose) => {\n");
         script_assets.push_str("  setCurrentPageDispose(dispose);\n");
         for s in &scripts_to_inject { script_assets.push_str(s); script_assets.push('\n'); }
         script_assets.push_str("});\n");

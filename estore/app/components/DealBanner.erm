@@ -1,23 +1,14 @@
 <script>
-    import { isDealLoading, dealTitle, dealDiscount, dealPrice, dealOriginalPrice, dealEmoji, dealCategory } from "@pages/index.erm";
+    import { deal } from "@stores/deal.erm";
 
     let { onclaim } = useProps();
 
-    let deal = erm.init(null);
-
-    async function loadDeal() {
-        const res = await fetch('/api/deal');
-        deal = await res.json();
-    }
-
     function claimDeal() {
-        onclaim?.(101, dealTitle.value, dealPrice.value, dealEmoji.value, dealCategory.value || "Keyboards");
+        onclaim?.(101, deal.title, deal.price, deal.emoji, deal.category || "Keyboards");
     }
-    
 </script>
 
-if isDealLoading {
-    <div class="deal-banner-card deal-skeleton">
+<Loading fallback={<div class="deal-banner-card deal-skeleton">
         <div class="deal-badge-row">
             <span class="deal-pill skeleton-glow">⚡ FLASH DEAL OF THE DAY</span>
             <span class="deal-discount skeleton-pill">Fetching deal...</span>
@@ -39,24 +30,23 @@ if isDealLoading {
             <span class="deal-timer">⏳ Fetching live deal from Eronom server API...</span>
             <span class="deal-tag">API: /api/deal</span>
         </div>
-    </div>
-} else {
+    </div>}>
     <div class="deal-banner-card">
         <div class="deal-badge-row">
             <span class="deal-pill">⚡ FLASH DEAL OF THE DAY</span>
-            <span class="deal-discount">-{dealDiscount}% OFF</span>
+            <span class="deal-discount">-{deal.discount}% OFF</span>
         </div>
 
         <div class="deal-content">
             <div class="deal-visual">
-                <span class="deal-emoji">{dealEmoji}</span>
+                <span class="deal-emoji">{deal.emoji}</span>
             </div>
             <div class="deal-info">
-                <h3 class="deal-title">{dealTitle}</h3>
+                <h3 class="deal-title">{deal.title}</h3>
                 <p class="deal-desc">Precision-tuned enthusiast hardware compiled with native MIR JIT speed.</p>
                 <div class="deal-pricing">
-                    <span class="deal-price-current">${dealPrice}</span>
-                    <span class="deal-price-old">${dealOriginalPrice}</span>
+                    <span class="deal-price-current">${deal.price}</span>
+                    <span class="deal-price-old">${deal.originalPrice}</span>
                     <span class="deal-shipping-badge">✓ Free Express Delivery</span>
                 </div>
             </div>
@@ -72,7 +62,7 @@ if isDealLoading {
             <span class="deal-tag">⚡ Reactive Signal Component</span>
         </div>
     </div>
-}
+</Loading>
 
 <style>
     .deal-banner-card {

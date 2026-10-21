@@ -259,13 +259,53 @@ fn test_createroot_module_generation() {
     "#;
     let params = std::collections::HashMap::new();
     let res = process_erm_component(".", content, false, &params).unwrap();
-    assert!(res.contains("createRoot((dispose) => {"));
+    assert!(res.contains("createRoot(async (dispose) => {"));
     assert!(res.contains("import {"));
     assert!(res.contains("createSignal"));
     assert!(res.contains("createEffect"));
     assert!(res.contains("bindText"));
+    assert!(res.contains("useFetch"));
     assert!(!res.contains("window.__erm_init_reactivity"));
     assert!(!res.contains("window.__erm_update"));
+}
+
+#[test]
+fn test_use_fetch_and_loading_boundary() {
+    let content = r#"
+    <script>
+        const deal = await useFetch('/api/deal');
+    </script>
+    <Loading fallback={<div class="skeleton">Loading...</div>}>
+        <div class="deal-card">
+            <h3>{deal.title}</h3>
+            <p>${deal.price}</p>
+        </div>
+    </Loading>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("createRoot(async (dispose) => {"));
+    assert!(res.contains("useFetch(") && res.contains("/api/deal"));
+    assert!(res.contains("class=\"erm-suspense-container\""));
+    assert!(res.contains("class=\"erm-suspense-fallback\""));
+    assert!(res.contains("class=\"erm-suspense-content\""));
+    assert!(res.contains("class=\"skeleton\"") && res.contains("Loading..."));
+    assert!(res.contains("bindText("));
+}
+
+#[test]
+fn test_use_fetch_state_extraction_and_injection() {
+    let store_content = r#"
+    <script>
+        export const deal = await useFetch('/api/deal');
+    </script>
+    "#;
+    let extracted = extract_state_variable_init(store_content, "deal");
+    assert_eq!(extracted, Some("await useFetch('/api/deal')".to_string()));
+
+    let script = "const deal = await useFetch('/api/deal');";
+    let injected = inject_state_name(script, "deal", "store_deal");
+    assert!(injected.contains("await useFetch('/api/deal', \"store_deal\")"));
 }
 
 #[test]

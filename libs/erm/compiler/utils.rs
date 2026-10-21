@@ -9,7 +9,7 @@ pub fn get_re_attr_brace() -> &'static regex::Regex {
 
 pub fn get_re_state() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#"(?:let|const|var)\s+([A-Za-z0-9_]+)\s*=\s*(?:useState|erm\.init)\("#).unwrap())
+    RE.get_or_init(|| regex::Regex::new(r#"(?:let|const|var)\s+([A-Za-z0-9_]+)\s*=\s*(?:await\s+)?(?:useState|erm\.init|useFetch)\("#).unwrap())
 }
 
 pub fn get_re_import_named() -> &'static regex::Regex {
@@ -72,6 +72,27 @@ pub fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> 
             let comp_dir_alt = curr.join("components");
             if comp_dir_alt.exists() && curr.join("eronom.toml").exists() {
                 resolved = Some(comp_dir_alt.join(&import_path["@components/".len()..]));
+                break;
+            }
+            if let Some(parent) = curr.parent() {
+                curr = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+        resolved
+    } else if import_path.starts_with("@stores/") {
+        let mut curr = std::path::PathBuf::from(base_dir);
+        let mut resolved = None;
+        loop {
+            let store_dir = curr.join("app").join("stores");
+            if store_dir.exists() {
+                resolved = Some(store_dir.join(&import_path["@stores/".len()..]));
+                break;
+            }
+            let store_dir_alt = curr.join("stores");
+            if store_dir_alt.exists() && curr.join("eronom.toml").exists() {
+                resolved = Some(store_dir_alt.join(&import_path["@stores/".len()..]));
                 break;
             }
             if let Some(parent) = curr.parent() {
@@ -277,6 +298,12 @@ pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
     let name_pattern_erm = format!("let {} = erm.init(", name);
     let name_pattern_erm_const = format!("const {} = erm.init(", name);
     let name_pattern_erm_var = format!("var {} = erm.init(", name);
+    let name_pattern_fetch = format!("let {} = useFetch(", name);
+    let name_pattern_fetch_const = format!("const {} = useFetch(", name);
+    let name_pattern_fetch_var = format!("var {} = useFetch(", name);
+    let name_pattern_await_fetch = format!("let {} = await useFetch(", name);
+    let name_pattern_await_fetch_const = format!("const {} = await useFetch(", name);
+    let name_pattern_await_fetch_var = format!("var {} = await useFetch(", name);
 
     while i < input.len() {
         let matched_pat = if input[i..].starts_with(&name_pattern) {
@@ -291,6 +318,18 @@ pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
             Some(&name_pattern_erm_const)
         } else if input[i..].starts_with(&name_pattern_erm_var) {
             Some(&name_pattern_erm_var)
+        } else if input[i..].starts_with(&name_pattern_fetch) {
+            Some(&name_pattern_fetch)
+        } else if input[i..].starts_with(&name_pattern_fetch_const) {
+            Some(&name_pattern_fetch_const)
+        } else if input[i..].starts_with(&name_pattern_fetch_var) {
+            Some(&name_pattern_fetch_var)
+        } else if input[i..].starts_with(&name_pattern_await_fetch) {
+            Some(&name_pattern_await_fetch)
+        } else if input[i..].starts_with(&name_pattern_await_fetch_const) {
+            Some(&name_pattern_await_fetch_const)
+        } else if input[i..].starts_with(&name_pattern_await_fetch_var) {
+            Some(&name_pattern_await_fetch_var)
         } else {
             None
         };
@@ -382,69 +421,91 @@ pub fn find_state_variables(script_content: &str, init_fn: &str, state_vars: &mu
     }
 }
 
-pub fn extract_attribute(tag_content: &str, attr_name: &str) -> Option<String> {
-    for part in tag_content.split_whitespace() {
-        if part.starts_with(&format!("{}=", attr_name)) {
-            let val_part = &part[attr_name.len() + 1..];
-            if val_part.starts_with('{') {
-                let mut depth = 0;
-                let mut end_idx = None;
-                for (i, c) in val_part.chars().enumerate() {
-                    if c == '{' { depth += 1; }
-                    else if c == '}' {
-                        depth -= 1;
-                        if depth == 0 {
-                            end_idx = Some(i);
-                            break;
+pub fn extract_state_variable_init(content: &str, var_name: &str) -> Option<String> {
+    let re = regex::Regex::new(&format!(
+        r#"(?:let|const|var)\s+{}\s*=\s*((?:await\s+)?useFetch|useState|erm\.init)\s*\("#,
+        regex::escape(var_name)
+    )).ok()?;
+    if let Some(caps) = re.captures(content) {
+        let whole_match = caps.get(0).unwrap();
+        let func_kind = caps.get(1).unwrap().as_str();
+        let is_fetch = func_kind.contains("useFetch");
+        let start = whole_match.end();
+        let mut depth = 1;
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut in_backtick = false;
+        let mut escaped = false;
+        let chars: Vec<(usize, char)> = content[start..].char_indices().collect();
+        for (idx, c) in chars {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if c == '\\' {
+                escaped = true;
+                continue;
+            }
+            if !in_double && !in_backtick && c == '\'' { in_single = !in_single; }
+            else if !in_single && !in_backtick && c == '"' { in_double = !in_double; }
+            else if !in_single && !in_double && c == '`' { in_backtick = !in_backtick; }
+            else if !in_single && !in_double && !in_backtick {
+                if c == '(' || c == '{' || c == '[' { depth += 1; }
+                else if c == ')' || c == '}' || c == ']' {
+                    depth -= 1;
+                    if depth == 0 {
+                        let init_raw = content[start..start + idx].trim();
+                        if is_fetch {
+                            return Some(format!("await useFetch({})", init_raw));
+                        } else {
+                            return Some(init_raw.to_string());
                         }
                     }
+                } else if !is_fetch && c == ',' && depth == 1 {
+                    let init_raw = content[start..start + idx].trim();
+                    return Some(init_raw.to_string());
                 }
-                if let Some(e) = end_idx {
-                    return Some(val_part[1..e].trim().to_string());
-                }
-            } else if val_part.starts_with('"') {
-                if let Some(end) = val_part[1..].find('"') {
-                    return Some(val_part[1..end + 1].to_string());
-                }
-            } else if val_part.starts_with('\'') {
-                if let Some(end) = val_part[1..].find('\'') {
-                    return Some(val_part[1..end + 1].to_string());
-                }
-            } else {
-                let end = val_part.find(char::is_whitespace).unwrap_or(val_part.len());
-                return Some(val_part[..end].to_string());
             }
         }
     }
-    if let Some(pos) = tag_content.find(&format!("{}=", attr_name)) {
-        let val_part = tag_content[pos + attr_name.len() + 1..].trim_start();
-        if val_part.starts_with('{') {
-            let mut depth = 0;
-            let mut end_idx = None;
-            for (i, c) in val_part.chars().enumerate() {
-                if c == '{' { depth += 1; }
-                else if c == '}' {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_idx = Some(i);
-                        break;
+    None
+}
+
+pub fn extract_attribute(tag_content: &str, attr_name: &str) -> Option<String> {
+    let target = format!("{}=", attr_name);
+    let mut search_from = 0;
+    while search_from < tag_content.len() {
+        if let Some(pos) = tag_content[search_from..].find(&target) {
+            let match_idx = search_from + pos;
+            if match_idx == 0 || tag_content[..match_idx].chars().next_back().map_or(false, |c| c.is_ascii_whitespace()) {
+                let val_part = tag_content[match_idx + target.len()..].trim_start();
+                if val_part.starts_with('{') {
+                    let mut depth = 0;
+                    for (i, c) in val_part.char_indices() {
+                        if c == '{' { depth += 1; }
+                        else if c == '}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some(val_part[1..i].trim().to_string());
+                            }
+                        }
                     }
+                } else if val_part.starts_with('"') {
+                    if let Some(end) = val_part[1..].find('"') {
+                        return Some(val_part[1..end + 1].to_string());
+                    }
+                } else if val_part.starts_with('\'') {
+                    if let Some(end) = val_part[1..].find('\'') {
+                        return Some(val_part[1..end + 1].to_string());
+                    }
+                } else {
+                    let end = val_part.find(char::is_whitespace).unwrap_or(val_part.len());
+                    return Some(val_part[..end].to_string());
                 }
             }
-            if let Some(e) = end_idx {
-                return Some(val_part[1..e].trim().to_string());
-            }
-        } else if val_part.starts_with('"') {
-            if let Some(end) = val_part[1..].find('"') {
-                return Some(val_part[1..end + 1].to_string());
-            }
-        } else if val_part.starts_with('\'') {
-            if let Some(end) = val_part[1..].find('\'') {
-                return Some(val_part[1..end + 1].to_string());
-            }
+            search_from = match_idx + target.len();
         } else {
-            let end = val_part.find(char::is_whitespace).unwrap_or(val_part.len());
-            return Some(val_part[..end].to_string());
+            break;
         }
     }
     None

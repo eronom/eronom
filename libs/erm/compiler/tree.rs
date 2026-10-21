@@ -114,7 +114,10 @@ pub fn process_component_tree(
                                   local_state_vars.push(name.clone());
                             }
                             if let Some(resolved_path) = resolve_import_path(&base_dir, &comp_path_val) {
-                                state_var_sources.insert(name, resolved_path);
+                                state_var_sources.insert(name, resolved_path.clone());
+                                if let Ok(src_content) = std::fs::read_to_string(&resolved_path) {
+                                    let _ = ev.parse_script_vars(&src_content);
+                                }
                             }
                         }
                     }
@@ -221,9 +224,10 @@ pub fn process_component_tree(
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = script_tag[content_start..script_tag.len() - 9].trim();
 
-            // Find state vars (useState & erm.init) in script
+            // Find state vars (useState, erm.init, and useFetch) in script
             find_state_variables(script_content, "useState(", &mut state_vars);
             find_state_variables(script_content, "erm.init(", &mut state_vars);
+            find_state_variables(script_content, "useFetch(", &mut state_vars);
 
             // Also check imported variables that are lowercased (state imports)
             for line in script_content.lines() {
@@ -238,7 +242,10 @@ pub fn process_component_tree(
                                 state_vars.push(name.clone());
                             }
                             if let Some(resolved_path) = resolve_import_path(&base_dir, &comp_path_val) {
-                                state_var_sources.insert(name, resolved_path);
+                                state_var_sources.insert(name, resolved_path.clone());
+                                if let Ok(src_content) = std::fs::read_to_string(&resolved_path) {
+                                    let _ = ev.parse_script_vars(&src_content);
+                                }
                             }
                         }
                     }

@@ -253,7 +253,7 @@ pub fn resolve_custom_component(
             
             let sub_combined_script = sub_scripts.join("\n");
             let component_def = format!(
-                "function {}(anchorId, props) {{\n  const useProps = (p = props) => erm.useProps(p);\n  try {{\n    let el = document.getElementById(anchorId);\n    if (el && el.innerHTML.trim() === \"\") {{\n      el.innerHTML = `{}`;\n    }}\n  }} catch(e) {{ console.error(e); }}\n  {}\n}};\n",
+                "async function {}(anchorId, props) {{\n  const useProps = (p = props) => erm.useProps(p);\n  try {{\n    let el = document.getElementById(anchorId);\n    if (el && el.innerHTML.trim() === \"\") {{\n      el.innerHTML = `{}`;\n    }}\n  }} catch(e) {{ console.error(e); }}\n  {}\n}};\n",
                 tag_name, sub_html.replace("__erm_anchor_id_prefix__", "${anchorId}").replace("`", "\\`"), sub_combined_script
             );
             
@@ -275,7 +275,7 @@ pub fn resolve_custom_component(
             anchor_id, sub_html_scoped
         ));
 
-        scripts.push(format!("{}(anchorId + \"{}\", {});", tag_name, anchor_id, props_js));
+        scripts.push(format!("await {}(anchorId + \"{}\", {});", tag_name, anchor_id, props_js));
         Ok(())
     } else {
         anyhow::bail!("Component '{}' not found in components/ or current directory.", tag_name);
