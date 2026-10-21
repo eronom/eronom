@@ -720,6 +720,14 @@ export const erm = {
         _name: name,
         _isDerived: true
       };
+      Object.defineProperty(signal, 'value', {
+        get() { return memo(); },
+        enumerable: true,
+        configurable: true
+      });
+      signal.toString = () => String(memo());
+      signal.valueOf = () => memo();
+      signal[Symbol.toPrimitive] = () => memo();
       if (name) statesRegistry.set(name, signal);
       return signal;
     }
@@ -730,6 +738,21 @@ export const erm = {
       _set: set,
       _name: name
     };
+
+    Object.defineProperty(signal, 'value', {
+      get() {
+        return erm.get(signal);
+      },
+      set(newVal) {
+        return erm.set(signal, newVal);
+      },
+      enumerable: true,
+      configurable: true
+    });
+
+    signal.toString = () => String(get());
+    signal.valueOf = () => get();
+    signal[Symbol.toPrimitive] = () => get();
 
     if (name) {
       statesRegistry.set(name, signal);
@@ -747,6 +770,12 @@ export const erm = {
       }
       return current;
     }
+    if (typeof signal === 'function') {
+      return signal();
+    }
+    if (typeof signal === 'object' && 'value' in signal) {
+      return signal.value;
+    }
     return signal;
   },
 
@@ -757,6 +786,13 @@ export const erm = {
         setHmrState(signal._name, newVal);
       }
       signal._set(newVal);
+      return newVal;
+    }
+    if (typeof signal === 'function') {
+      return signal(newVal);
+    }
+    if (typeof signal === 'object' && 'value' in signal) {
+      signal.value = newVal;
       return newVal;
     }
     return newVal;
@@ -777,8 +813,56 @@ export const erm = {
   mutate(signal, value) {
     erm.set(signal, untrack(() => erm.get(signal)));
     return value;
+  },
+
+  useProps(rawProps) {
+    return useProps(rawProps);
+  },
+
+  unwrap(v) {
+    return unwrap(v);
   }
 };
+
+export function unwrap(v) {
+  if (v && typeof v === 'object' && '_get' in v) {
+    return v._get();
+  }
+  if (v && typeof v === 'object' && 'value' in v) {
+    return v.value;
+  }
+  return v;
+}
+
+export function useProps(rawProps) {
+  const p = rawProps || (typeof props !== 'undefined' ? props : {});
+  if (!p) return {};
+  if (p.__isPropsProxy) return p;
+  return new Proxy(p, {
+    get(target, prop) {
+      if (prop === '__isPropsProxy') return true;
+      if (!(prop in target)) return undefined;
+      let val = target[prop];
+      if (typeof val === 'function') {
+        val = val();
+      }
+      return val;
+    },
+    has(target, prop) {
+      return prop in target;
+    },
+    ownKeys(target) {
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      return {
+        enumerable: true,
+        configurable: true,
+        value: this.get(target, prop),
+      };
+    }
+  });
+}
 
 export function useState(val, name) {
   return erm.init(val, name);
@@ -800,7 +884,7 @@ export function useEffect(callback, depsFn) {
 
     if (depsFn) {
       try {
-        currentDeps = depsFn();
+        currentDeps = typeof depsFn === 'function' ? depsFn() : depsFn;
       } catch (e) {
         console.error("Effect deps evaluation failed:", e);
       }
@@ -1164,9 +1248,5 @@ export async function applyErmHmr(targetPath, timestamp) {
   }
 }
 
-if (typeof window !== 'undefined') {
-  window.erm = erm;
-  window.__erm_apply_hmr = applyErmHmr;
-}
 
 

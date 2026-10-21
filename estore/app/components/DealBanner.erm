@@ -1,6 +1,8 @@
 <script>
     import { isDealLoading, dealTitle, dealDiscount, dealPrice, dealOriginalPrice, dealEmoji, dealCategory } from "@pages/index.erm";
 
+    let { onclaim } = useProps();
+
     let deal = erm.init(null);
 
     async function loadDeal() {
@@ -9,11 +11,7 @@
     }
 
     function claimDeal() {
-        if (typeof window !== "undefined" && typeof window.addToCart === "function") {
-            window.addToCart(101, dealTitle, dealPrice, dealEmoji, dealCategory || "Keyboards");
-        } else if (typeof addToCart === "function") {
-            addToCart(101, dealTitle, dealPrice, dealEmoji, dealCategory || "Keyboards");
-        }
+        onclaim?.(101, dealTitle.value, dealPrice.value, dealEmoji.value, dealCategory.value || "Keyboards");
     }
     
 </script>

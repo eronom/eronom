@@ -656,13 +656,14 @@ export class HMRClient {
 
     // ERM Hot Module Replacement boundary:
     // If runtime HMR handler is available, hot-update the ERM component/page in-place!
-    if (typeof window !== 'undefined' && typeof window.__erm_apply_hmr === 'function') {
-      try {
-        await window.__erm_apply_hmr(targetPath, timestamp);
+    try {
+      const { applyErmHmr } = await import('./runtime.js');
+      if (typeof applyErmHmr === 'function') {
+        await applyErmHmr(targetPath, timestamp);
         return;
-      } catch (err) {
-        console.error(`[eronom] [hmr] Error during ERM hot update:`, err);
       }
+    } catch (err) {
+      console.error(`[eronom] [hmr] Error during ERM hot update:`, err);
     }
 
     // Fallback only if no ERM HMR handler is registered

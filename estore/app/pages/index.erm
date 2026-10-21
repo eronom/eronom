@@ -68,10 +68,6 @@
         toastMessage.value = "Added " + name + " to cart!";
     }
 
-    if (typeof window !== "undefined") {
-        window.addToCart = addToCart;
-    }
-
     function openCart() {
         isCartOpen.value = true;
     }
@@ -384,7 +380,7 @@
 
     <!-- Reactive Deal of the Day (Declarative Eronom Component via /api/deal) -->
     <div class="deal-section-wrap">
-        <DealBanner />
+        <DealBanner onclaim={addToCart} />
     </div>
 
     <!-- Category Filter Tabs -->

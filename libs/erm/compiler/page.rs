@@ -374,7 +374,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         script_assets.push_str("import {\n");
         script_assets.push_str("  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n");
         script_assets.push_str("  onMount, onCleanup, batch, untrack,\n");
-        script_assets.push_str("  useState, useEffect, useParams, setParams, effect,\n");
+        script_assets.push_str("  useState, useEffect, useProps, unwrap, useParams, setParams, effect,\n");
         script_assets.push_str("  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n");
         script_assets.push_str("  Show, For, setCurrentPageDispose,\n");
         script_assets.push_str("  erm\n");

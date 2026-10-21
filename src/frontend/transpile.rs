@@ -504,6 +504,17 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
             )
         }
         Expr::Get(obj, prop) => {
+            if let Expr::Variable(name, loc) = &**obj {
+                if state_vars.contains(name) && !shadowed.contains(name) && prop == "value" {
+                    return Expr::Call(
+                        Box::new(Expr::Get(
+                            Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                            "get".to_string(),
+                        )),
+                        vec![Expr::Variable(name.clone(), loc.clone())],
+                    );
+                }
+            }
             Expr::Get(
                 Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
                 prop.clone(),
@@ -511,6 +522,17 @@ pub fn transform_expr_reactivity(expr: &Expr, state_vars: &[String], shadowed: &
         }
         Expr::Set(obj, prop, val) => {
             let new_val = transform_expr_reactivity(val, state_vars, shadowed);
+            if let Expr::Variable(name, loc) = &**obj {
+                if state_vars.contains(name) && !shadowed.contains(name) && prop == "value" {
+                    return Expr::Call(
+                        Box::new(Expr::Get(
+                            Box::new(Expr::Variable("erm".to_string(), loc.clone())),
+                            "set".to_string(),
+                        )),
+                        vec![Expr::Variable(name.clone(), loc.clone()), new_val],
+                    );
+                }
+            }
             Expr::Set(
                 Box::new(transform_expr_reactivity(obj, state_vars, shadowed)),
                 prop.clone(),
@@ -903,5 +925,20 @@ mod tests {
 
         let res_set = transpile_expr_reactivity("deal = { title: \"New\" }", &state_vars).unwrap();
         assert!(res_set.contains("erm.set(deal, { title: \"New\" })"));
+    }
+
+    #[test]
+    fn test_transpile_state_var_dot_value() {
+        let state_vars = vec!["isCartOpen".to_string()];
+        let res_get = transpile_expr_reactivity("isCartOpen.value", &state_vars).unwrap();
+        assert_eq!(res_get, "erm.get(isCartOpen)");
+
+        let res_set = transpile_expr_reactivity("isCartOpen.value = true", &state_vars).unwrap();
+        assert_eq!(res_set, "erm.set(isCartOpen, true)");
+
+        let script = "function openCart() { isCartOpen.value = true; }";
+        let res_fn = transform_script_reactivity(script, &state_vars).unwrap();
+        assert!(res_fn.contains("erm.set(isCartOpen, true)"));
+        assert!(!res_fn.contains("erm.get(isCartOpen).value"));
     }
 }
