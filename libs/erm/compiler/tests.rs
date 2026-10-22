@@ -306,7 +306,29 @@ fn test_use_fetch_state_extraction_and_injection() {
     let script = "const deal = await useFetch('/api/deal');";
     let injected = inject_state_name(script, "deal", "store_deal");
     assert!(injected.contains("await useFetch('/api/deal', \"store_deal\")"));
+
+    let script_no_await = "const deal = useFetch('/api/deal');";
+    let injected_no_await = inject_state_name(script_no_await, "deal", "store_deal");
+    assert!(injected_no_await.contains("await useFetch('/api/deal', \"store_deal\")"));
 }
+
+#[test]
+fn test_use_fetch_optional_await() {
+    let content = r#"
+    <script>
+        export const deal = useFetch('/api/deal');
+    </script>
+    <h1>{deal.title}</h1>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("await useFetch("));
+
+    let direct_export = "export const deal = useFetch('/api/deal');";
+    let injected = inject_state_name(direct_export, "deal", "store_deal");
+    assert!(injected.contains("await useFetch("));
+}
+
 
 #[test]
 fn test_clean_blocks_compilation() {

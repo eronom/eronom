@@ -306,37 +306,37 @@ pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
     let name_pattern_await_fetch_var = format!("var {} = await useFetch(", name);
 
     while i < input.len() {
-        let matched_pat = if input[i..].starts_with(&name_pattern) {
-            Some(&name_pattern)
+        let matched = if input[i..].starts_with(&name_pattern) {
+            Some((name_pattern.len(), name_pattern.as_str()))
         } else if input[i..].starts_with(&name_pattern_const) {
-            Some(&name_pattern_const)
+            Some((name_pattern_const.len(), name_pattern_const.as_str()))
         } else if input[i..].starts_with(&name_pattern_var) {
-            Some(&name_pattern_var)
+            Some((name_pattern_var.len(), name_pattern_var.as_str()))
         } else if input[i..].starts_with(&name_pattern_erm) {
-            Some(&name_pattern_erm)
+            Some((name_pattern_erm.len(), name_pattern_erm.as_str()))
         } else if input[i..].starts_with(&name_pattern_erm_const) {
-            Some(&name_pattern_erm_const)
+            Some((name_pattern_erm_const.len(), name_pattern_erm_const.as_str()))
         } else if input[i..].starts_with(&name_pattern_erm_var) {
-            Some(&name_pattern_erm_var)
-        } else if input[i..].starts_with(&name_pattern_fetch) {
-            Some(&name_pattern_fetch)
-        } else if input[i..].starts_with(&name_pattern_fetch_const) {
-            Some(&name_pattern_fetch_const)
-        } else if input[i..].starts_with(&name_pattern_fetch_var) {
-            Some(&name_pattern_fetch_var)
+            Some((name_pattern_erm_var.len(), name_pattern_erm_var.as_str()))
         } else if input[i..].starts_with(&name_pattern_await_fetch) {
-            Some(&name_pattern_await_fetch)
+            Some((name_pattern_await_fetch.len(), name_pattern_await_fetch.as_str()))
         } else if input[i..].starts_with(&name_pattern_await_fetch_const) {
-            Some(&name_pattern_await_fetch_const)
+            Some((name_pattern_await_fetch_const.len(), name_pattern_await_fetch_const.as_str()))
         } else if input[i..].starts_with(&name_pattern_await_fetch_var) {
-            Some(&name_pattern_await_fetch_var)
+            Some((name_pattern_await_fetch_var.len(), name_pattern_await_fetch_var.as_str()))
+        } else if input[i..].starts_with(&name_pattern_fetch) {
+            Some((name_pattern_fetch.len(), name_pattern_await_fetch.as_str()))
+        } else if input[i..].starts_with(&name_pattern_fetch_const) {
+            Some((name_pattern_fetch_const.len(), name_pattern_await_fetch_const.as_str()))
+        } else if input[i..].starts_with(&name_pattern_fetch_var) {
+            Some((name_pattern_fetch_var.len(), name_pattern_await_fetch_var.as_str()))
         } else {
             None
         };
 
-        if let Some(pat) = matched_pat {
-            result.push_str(pat);
-            i += pat.len();
+        if let Some((pat_len, replacement)) = matched {
+            result.push_str(replacement);
+            i += pat_len;
             let mut depth = 1;
             let mut j = i;
             while j < input.len() && depth > 0 {
