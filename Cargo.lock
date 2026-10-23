@@ -386,6 +386,7 @@ dependencies = [
  "clap",
  "eronom-core",
  "eronom-frontend",
+ "eronom-net",
  "fnv",
  "getrandom",
  "hmac",
@@ -431,6 +432,13 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "eronom-net"
+version = "0.9.4"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

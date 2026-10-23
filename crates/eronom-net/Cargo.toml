@@ -1,0 +1,7 @@
+[package]
+name = "eronom-net"
+version = "0.9.4"
+edition = "2024"
+
+[build-dependencies]
+cc = "1.0"
