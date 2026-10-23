@@ -2,9 +2,9 @@
 
 use std::fs;
 use std::path::PathBuf;
-use eronom::frontend;
-use eronom::vm as backend;
-use eronom::jit;
+use eronom_frontend as frontend;
+use eronom_vm as backend;
+use eronom_vm::jit;
 use backend::{Compiler, VM, Value};
 pub const MAGIC_BYTES: &[u8; 16] = b"ERONOM_STUB_v1\0\0";
 

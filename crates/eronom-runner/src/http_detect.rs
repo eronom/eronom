@@ -1,4 +1,4 @@
-use eronom::frontend::{Expr, LiteralValue, Stmt};
+use eronom_frontend::{Expr, LiteralValue, Stmt};
 
 pub fn has_http_import(stmts: &[Stmt]) -> bool {
     for stmt in stmts {

@@ -4,6 +4,7 @@ members = [
     "crates/eronom-core",
     "crates/eronom-frontend",
     "crates/eronom-net",
+    "crates/eronom-vm",
     "crates/eronom-runner",
     "crates/eronom-cranelift",
 ]
@@ -24,6 +25,7 @@ path = "src/lib.rs"
 eronom-core = { path = "crates/eronom-core" }
 eronom-frontend = { path = "crates/eronom-frontend" }
 eronom-net = { path = "crates/eronom-net" }
+eronom-vm = { path = "crates/eronom-vm" }
 anyhow = "1.0.102"
 fnv = "1.0.7"
 serde = { version = "1.0.228", features = ["derive"] }

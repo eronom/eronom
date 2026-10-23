@@ -4,7 +4,10 @@ version = "0.9.4"
 edition = "2024"
 
 [dependencies]
-eronom = { path = "../.." }
+eronom-core = { path = "../eronom-core" }
+eronom-frontend = { path = "../eronom-frontend" }
+eronom-net = { path = "../eronom-net" }
+eronom-vm = { path = "../eronom-vm" }
 mimalloc = { version = "0.1", default-features = false }
 anyhow = "1.0.102"
 toml = "0.8.19"

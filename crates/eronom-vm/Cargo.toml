@@ -1,0 +1,23 @@
+[package]
+name = "eronom-vm"
+version = "0.9.4"
+edition = "2024"
+
+[dependencies]
+eronom-core = { path = "../eronom-core" }
+eronom-frontend = { path = "../eronom-frontend" }
+eronom-net = { path = "../eronom-net" }
+anyhow = "1.0.102"
+fnv = "1.0.7"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+regex = "1"
+toml = "0.8.19"
+ureq = { version = "3.3.0", default-features = false }
+sha2 = "0.10"
+hmac = "0.12"
+getrandom = "0.2"
+mimalloc = { version = "0.1", default-features = false }
+
+[build-dependencies]
+cc = "1.0"

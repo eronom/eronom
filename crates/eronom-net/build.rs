@@ -94,8 +94,8 @@ fn main() {
 
     // Compile uWebSockets C++ wrapper
     let u_websockets_dir = root_dir.join("deps").join("uWebSockets");
-    let er_http_cpp = root_dir.join("src").join("vm").join("er_http.cpp");
-    let er_clif_cpp = root_dir.join("src").join("vm").join("er_clif.cpp");
+    let er_http_cpp = Path::new(&manifest_dir).join("cpp").join("er_http.cpp");
+    let er_clif_cpp = Path::new(&manifest_dir).join("cpp").join("er_clif.cpp");
 
     println!("cargo:rerun-if-changed={}", er_http_cpp.display());
     println!("cargo:rerun-if-changed={}", er_clif_cpp.display());

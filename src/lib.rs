@@ -1,7 +1,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 pub use eronom_frontend as frontend;
-pub mod vm;
+pub use eronom_vm as vm;
 pub mod jit;
 pub mod toolchain;
 pub mod cli;

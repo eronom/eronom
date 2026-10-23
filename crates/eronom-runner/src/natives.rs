@@ -1,4 +1,4 @@
-use eronom::vm as backend;
+use eronom_vm as backend;
 use backend::Value;
 
 #[repr(C)]
@@ -179,7 +179,7 @@ pub fn native_render(args: Vec<Value>) -> Value {
         None => return Value::null(),
     };
     let params_val = if args.len() > 1 { args[1] } else { Value::null() };
-    let is_prod = if args.len() > 2 { args[2].as_boolean() } else { true };
+    let _is_prod = if args.len() > 2 { args[2].as_boolean() } else { true };
     let params_map = extract_params_map(params_val);
     
     let path = std::path::Path::new(file_path);
@@ -258,39 +258,14 @@ pub fn native_render(args: Vec<Value>) -> Value {
         return Value::string(ptr);
     }
     
-    match eronom::compiler::process_erm_component(&comp_path, &content, is_prod, &params_map) {
-        Ok(html) => {
-            let ptr = backend::gc::gc_alloc_string(&html);
-            Value::string(ptr)
-        }
-        Err(e) => {
-            eprintln!("[render] Compiler error: {:?}", e);
-            Value::null()
-        }
-    }
+    eprintln!("[render] Runtime note: Dynamic .erm compilation is decoupled from eronom-runner. Pre-compile templates to HTML via 'eronom build' (SSG/PPR) for production deployment: {}", comp_path);
+    Value::null()
 }
 
 pub fn native_render_string(args: Vec<Value>) -> Value {
     if args.is_empty() {
         return Value::null();
     }
-    let content_val = args[0];
-    let content = match content_val.as_str() {
-        Some(s) => s,
-        None => return Value::null(),
-    };
-    let params_val = if args.len() > 1 { args[1] } else { Value::null() };
-    let is_prod = if args.len() > 2 { args[2].as_boolean() } else { true };
-    let params_map = extract_params_map(params_val);
-
-    match eronom::compiler::process_erm_component("<inline.erm>", content, is_prod, &params_map) {
-        Ok(html) => {
-            let ptr = backend::gc::gc_alloc_string(&html);
-            Value::string(ptr)
-        }
-        Err(e) => {
-            eprintln!("[renderString] Compiler error: {:?}", e);
-            Value::null()
-        }
-    }
+    eprintln!("[renderString] Runtime note: Dynamic .erm string compilation is decoupled from eronom-runner. Pre-compile templates via 'eronom build' for production deployment.");
+    Value::null()
 }

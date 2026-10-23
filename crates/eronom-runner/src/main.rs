@@ -1,6 +1,6 @@
-pub use eronom::vm as backend;
-pub use eronom::frontend;
-pub use eronom::jit;
+pub use eronom_vm as backend;
+pub use eronom_frontend as frontend;
+pub use eronom_vm::jit;
 
 mod http_detect;
 mod natives;
@@ -10,7 +10,7 @@ mod embedded_bundle;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
-    eronom::jit::init_jit_hooks();
+    backend::jit::init_jit_hooks();
     // 1. If running as a standalone self-contained bundle, execute the embedded app
     if let Some(res) = embedded_bundle::check_and_run_embedded_bundle() {
         if let Err(e) = res {

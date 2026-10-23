@@ -387,6 +387,7 @@ dependencies = [
  "eronom-core",
  "eronom-frontend",
  "eronom-net",
+ "eronom-vm",
  "fnv",
  "getrandom",
  "hmac",
@@ -446,11 +447,35 @@ name = "eronom-runner"
 version = "0.9.4"
 dependencies = [
  "anyhow",
- "eronom",
+ "eronom-core",
+ "eronom-frontend",
+ "eronom-net",
+ "eronom-vm",
  "mimalloc",
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "eronom-vm"
+version = "0.9.4"
+dependencies = [
+ "anyhow",
+ "cc",
+ "eronom-core",
+ "eronom-frontend",
+ "eronom-net",
+ "fnv",
+ "getrandom",
+ "hmac",
+ "mimalloc",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+ "ureq",
 ]
 
 [[package]]
