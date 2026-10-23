@@ -71,7 +71,18 @@ pub fn run_test_command(file_opt: Option<PathBuf>) -> anyhow::Result<()> {
         if total_files > 1 {
             println!("\n> {}", test_file.display());
         }
-        if let Err(e) = run_file(path_str) {
+        let original_dir = std::env::current_dir().ok();
+        if let Some(parent) = test_file.parent() {
+            if parent != Path::new("") && parent != Path::new(".") {
+                let _ = std::env::set_current_dir(parent);
+            }
+        }
+        let file_name = test_file.file_name().and_then(|f| f.to_str()).unwrap_or(path_str);
+        let res = run_file(file_name);
+        if let Some(dir) = original_dir {
+            let _ = std::env::set_current_dir(dir);
+        }
+        if let Err(e) = res {
             eprintln!("Test failed in {}: {}", test_file.display(), e);
             std::process::exit(1);
         }

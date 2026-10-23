@@ -143,21 +143,71 @@ impl Parser {
         Err(format!("Error at line {}: {}", self.peek().line, msg))
     }
 
+    pub(crate) fn consume_property_name(&mut self) -> Result<String, String> {
+        let tok = self.peek().clone();
+        let name = match &tok.ty {
+            TokenType::Identifier(s) => s.clone(),
+            TokenType::Number(n) => n.to_string(),
+            TokenType::Type => "type".to_string(),
+            TokenType::Await => "await".to_string(),
+            TokenType::New => "new".to_string(),
+            TokenType::Spawn => "spawn".to_string(),
+            TokenType::On => "on".to_string(),
+            TokenType::Concurrent => "concurrent".to_string(),
+            TokenType::Underscore => "_".to_string(),
+            TokenType::From => "from".to_string(),
+            TokenType::Default => "default".to_string(),
+            TokenType::Typeof => "typeof".to_string(),
+            TokenType::Async => "async".to_string(),
+            TokenType::Sync => "sync".to_string(),
+            TokenType::As => "as".to_string(),
+            TokenType::Is => "is".to_string(),
+            TokenType::In => "in".to_string(),
+            TokenType::For => "for".to_string(),
+            TokenType::If => "if".to_string(),
+            TokenType::Else => "else".to_string(),
+            TokenType::While => "while".to_string(),
+            TokenType::Break => "break".to_string(),
+            TokenType::Continue => "continue".to_string(),
+            TokenType::Return => "return".to_string(),
+            TokenType::Function => "function".to_string(),
+            TokenType::Struct => "struct".to_string(),
+            TokenType::Embed => "embed".to_string(),
+            TokenType::Interface => "interface".to_string(),
+            TokenType::Try => "try".to_string(),
+            TokenType::Catch => "catch".to_string(),
+            TokenType::Finally => "finally".to_string(),
+            TokenType::Throw => "throw".to_string(),
+            TokenType::Switch => "switch".to_string(),
+            TokenType::Case => "case".to_string(),
+            TokenType::Match => "match".to_string(),
+            TokenType::Enum => "enum".to_string(),
+            TokenType::Null => "null".to_string(),
+            TokenType::True => "true".to_string(),
+            TokenType::False => "false".to_string(),
+            TokenType::Print => "print".to_string(),
+            TokenType::Let => "let".to_string(),
+            TokenType::Const => "const".to_string(),
+            TokenType::Import => "import".to_string(),
+            TokenType::Export => "export".to_string(),
+            _ => {
+                return Err(format!(
+                    "Error at line {}: Expected property name or number after '.'.",
+                    tok.line
+                ));
+            }
+        };
+        self.advance();
+        Ok(name)
+    }
+
     pub(crate) fn consume_prop_key(&mut self, msg: &str) -> Result<String, String> {
         if let TokenType::String(s) = &self.peek().ty {
             let s_clone = s.clone();
             self.advance();
             return Ok(s_clone);
         }
-        if self.peek().ty == TokenType::Await {
-            self.advance();
-            return Ok("await".to_string());
-        }
-        if self.peek().ty == TokenType::New {
-            self.advance();
-            return Ok("new".to_string());
-        }
-        self.consume_ident(msg)
+        self.consume_property_name().map_err(|_| format!("Error at line {}: {}", self.peek().line, msg))
     }
 
     pub fn parse(&mut self) -> Result<Vec<Stmt>, String> {

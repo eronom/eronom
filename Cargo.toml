@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/eronom-frontend",
     "crates/eronom-cranelift",
 ]
 default-members = ["."]
@@ -17,6 +18,7 @@ path = "src/lib.rs"
 
 
 [dependencies]
+eronom-frontend = { path = "crates/eronom-frontend" }
 anyhow = "1.0.102"
 fnv = "1.0.7"
 serde = { version = "1.0.228", features = ["derive"] }

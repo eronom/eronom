@@ -384,6 +384,7 @@ dependencies = [
  "anyhow",
  "cc",
  "clap",
+ "eronom-frontend",
  "fnv",
  "getrandom",
  "hmac",
@@ -411,6 +412,14 @@ dependencies = [
  "eronom",
  "object 0.40.0",
  "target-lexicon",
+]
+
+[[package]]
+name = "eronom-frontend"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

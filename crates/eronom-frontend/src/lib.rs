@@ -15,3 +15,6 @@ pub use typecheck::{check_program, TypeChecker, TypeError};
 pub use transpile::{transpile_to_js, emit_expr, transpile_expr_reactivity, transform_script_reactivity};
 pub use effects::{EffectRung, FunctionEffects, infer_effects, infer_expr_effect, infer_stmt_effect};
 pub use sync::{check_sync_constraints, EffectError, SyncChecker};
+
+// Internal alias so submodules can use `crate::frontend::...`
+pub use crate as frontend;

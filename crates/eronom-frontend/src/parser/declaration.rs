@@ -100,9 +100,9 @@ impl Parser {
                         self.pop_scope();
                         methods.push((method_name, params, body));
                     } else {
-                        let field_name = self.consume_ident("Expected field name.")?;
+                        let field_name = self.consume_property_name()?;
                         self.consume(TokenType::Colon, "Expected ':' after field name.")?;
-                        let field_type = self.consume_ident("Expected field type.")?;
+                        let field_type = self.consume_property_name()?;
                         fields.push((field_name, field_type));
                     }
                     self.match_token(&[TokenType::Comma]);
@@ -143,9 +143,9 @@ impl Parser {
                         self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
                         methods.push((method_name, params));
                     } else {
-                        let field_name = self.consume_ident("Expected field name.")?;
+                        let field_name = self.consume_property_name()?;
                         self.consume(TokenType::Colon, "Expected ':' after field name.")?;
-                        let field_type = self.consume_ident("Expected field type.")?;
+                        let field_type = self.consume_property_name()?;
                         fields.push((field_name, field_type));
                     }
                     self.match_token(&[TokenType::Comma]);

@@ -242,23 +242,7 @@ impl Parser {
                     had_call = true;
                 }
             } else if self.match_token(&[TokenType::Dot]) {
-                let name = if self.check_ident() {
-                    self.consume_ident("Expected property name.")?
-                } else if self.check(&TokenType::Await) {
-                    self.advance();
-                    "await".to_string()
-                } else if self.check(&TokenType::New) {
-                    self.advance();
-                    "new".to_string()
-                } else if let TokenType::Number(n) = self.peek().ty.clone() {
-                    self.advance();
-                    n.to_string()
-                } else {
-                    return Err(format!(
-                        "Error at line {}: Expected property name or number after '.'.",
-                        self.peek().line
-                    ));
-                };
+                let name = self.consume_property_name()?;
                 expr = Expr::Get(Box::new(expr), name);
             } else if self.match_token(&[TokenType::LeftBracket]) {
                 let index = self.expression()?;
