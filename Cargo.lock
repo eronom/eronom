@@ -384,6 +384,7 @@ dependencies = [
  "anyhow",
  "cc",
  "clap",
+ "eronom-core",
  "eronom-frontend",
  "fnv",
  "getrandom",
@@ -397,6 +398,16 @@ dependencies = [
  "target-lexicon",
  "toml",
  "ureq",
+]
+
+[[package]]
+name = "eronom-core"
+version = "0.9.4"
+dependencies = [
+ "fnv",
+ "mimalloc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -29,7 +29,7 @@ pub enum PromiseState {
 pub struct GcPromise {
     pub state: std::sync::Arc<std::sync::Mutex<PromiseState>>,
     pub suspended_stack: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
-    pub suspended_frames: std::sync::Arc<std::sync::Mutex<Vec<crate::vm::execute::CallFrame>>>,
+    pub suspended_frames: std::sync::Arc<std::sync::Mutex<Vec<crate::frame::CallFrame>>>,
 }
 
 static NEXT_DESCRIPTOR_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);

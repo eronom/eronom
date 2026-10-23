@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/eronom-core",
     "crates/eronom-frontend",
     "crates/eronom-cranelift",
 ]
@@ -18,6 +19,7 @@ path = "src/lib.rs"
 
 
 [dependencies]
+eronom-core = { path = "crates/eronom-core" }
 eronom-frontend = { path = "crates/eronom-frontend" }
 anyhow = "1.0.102"
 fnv = "1.0.7"

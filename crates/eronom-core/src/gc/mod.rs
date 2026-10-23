@@ -280,8 +280,8 @@ pub fn gc_free_all() {
             GC_NEEDS_STEP.store(false, Ordering::Relaxed);
         });
         gc_clear_string_cache();
-        crate::vm::shape::reset_shape_state();
-        crate::vm::execute::types::trigger_jit_reset_ic();
-        crate::vm::alloc::scavenge_idle_memory();
+        crate::shape::reset_shape_state();
+        crate::hooks::trigger_jit_reset_ic();
+        crate::alloc::scavenge_idle_memory();
     }
 }
