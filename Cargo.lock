@@ -442,6 +442,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "eronom-runner"
+version = "0.9.4"
+dependencies = [
+ "anyhow",
+ "eronom",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

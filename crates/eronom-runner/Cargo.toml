@@ -1,0 +1,16 @@
+[package]
+name = "eronom-runner"
+version = "0.9.4"
+edition = "2024"
+
+[dependencies]
+eronom = { path = "../.." }
+mimalloc = { version = "0.1", default-features = false }
+anyhow = "1.0.102"
+toml = "0.8.19"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+
+[[bin]]
+name = "eronom-runner"
+path = "src/main.rs"

@@ -4,6 +4,7 @@ members = [
     "crates/eronom-core",
     "crates/eronom-frontend",
     "crates/eronom-net",
+    "crates/eronom-runner",
     "crates/eronom-cranelift",
 ]
 default-members = ["."]
@@ -38,9 +39,6 @@ mimalloc = { version = "0.1", default-features = false }
 object = { version = "0.40.0", features = ["write", "std"] }
 target-lexicon = "0.13.5"
 
-[[bin]]
-name = "eronom-runner"
-path = "src/runner/main.rs"
 [build-dependencies]
 cc = "1.0"
 

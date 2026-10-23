@@ -13,9 +13,10 @@ target/
 *.dll
 *.mir
 temp_compiled.mir
-eronom
-eronom-runner
-/eronom-cranelift
+**/eronom
+**/eronom-runner
+**/eronom-cranelift
+!crates/**
 
 # Logs & Test Scratch Artifacts
 *.log
