@@ -12,10 +12,14 @@ Eronom is a high-performance, JIT-compiled scripting language runtime, template 
 
 | Path | Purpose & Key Files |
 | :--- | :--- |
-| **`src/frontend/`** | **Frontend Compiler**: Lexer (`lexer.rs`), recursive-descent parser (`parser.rs`), AST nodes (`ast.rs`), and static typechecker (`typecheck/`). |
-| **`src/vm/`** | **Virtual Machine**: Bytecode compiler (`compiler.rs`), register evaluation loop (`execute.rs`), tagged values (`value.rs`), mark-and-sweep GC with map pooling (`gc.rs`), and uWebSockets C++ FFI (`er_http.rs`, `er_http.cpp`). |
+| **`crates/eronom-core/`** | **Core Primitives & GC**: Tagged `Value` (`value.rs`), GC pointers and map pooling (`gc/`), bytecode chunk definitions (`bytecode.rs`), shapes (`shape.rs`), memory scavenging (`alloc.rs`). |
+| **`crates/eronom-frontend/`** | **Frontend Compiler**: Lexer (`lexer.rs`), recursive-descent parser (`parser/`), AST nodes (`ast.rs`), static typechecker (`typecheck/`), and JS transpiler (`transpile.rs`). |
+| **`crates/eronom-net/`** | **Native Networking & FFI**: C++ `uWebSockets` & `uSockets` build (`build.rs`), `libuv` integration, zero-copy socket FFI bindings (`ffi.rs`). |
+| **`crates/eronom-runner/`** | **Standalone Micro-Runner**: Lightweight binary (`eronom-runner`) for executing standalone application bundles and direct script runs without developer tooling. |
+| **`crates/eronom-cranelift/`** | **AOT Compiler Toolchain**: Standalone Cranelift AOT code generator backend. |
+| **`src/vm/`** | **Virtual Machine**: Bytecode compiler (`compiler/`), register evaluation loop (`execute/`), HTTP handlers (`er_http/`), router (`router.rs`). |
 | **`src/jit/`** | **Execution Backends**: Vladimir Makarov's MIR JIT generator (`compiler/`), standalone native AOT code generators (`aot/` for ELF, PE64, Mach-O). |
-| **`src/toolchain/`** | **Toolchain Manager**: Cranelift AOT code generator backend and optional toolchain discovery. |
+| **`src/toolchain/`** | **Toolchain Manager**: Toolchain discovery, installation, and invocation (`mod.rs`). |
 | **`src/cli/`** | **Command-Line Interface**: Subcommand routing (`commands.rs`), project scaffolding (`init.rs`), bundle builder (`build.rs`). |
 | **`libs/erm/`** | **ERM Component Framework**: Template compiler (`compiler/`), SSR/SSG/PPR web server (`server/`), reactivity runtime, and router (`router.rs`). |
 | **`std/`** | **Standard Libraries**: Built-in HTTP router & response primitives (`std/http.er`), file & I/O management (`std/io.er`). |

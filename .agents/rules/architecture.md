@@ -6,22 +6,35 @@ trigger: always_on
 
 AI agents working on this codebase should orient themselves using the following structural layout and module boundaries:
 
-## 1. Core Executable Subsystems (`src/`)
+## 1. Modular Workspace Subsystems (`crates/`, `src/`)
 
-### A. Frontend Compiler (`src/frontend/`)
+### A. Core Primitives (`crates/eronom-core/`)
+- Tagged `Value` & NaN-tagging (`value.rs`), GC heap pointers & map pooling (`gc/`), bytecode instruction definitions (`bytecode.rs`), shapes (`shape.rs`), and memory scavenging (`alloc.rs`).
+
+### B. Frontend Compiler (`crates/eronom-frontend/`)
 - **`lexer.rs`**: Tokenizes `.er` source files into lexical tokens (`Token` enum).
-- **`parser.rs`**: Consumes tokens and constructs the Abstract Syntax Tree (`ASTNode`). Supports expressions, control flow, struct declarations, imports, and function signatures.
+- **`parser/`**: Consumes tokens and constructs the AST (`ASTNode`). Supports expressions, control flow, struct declarations, imports, and function signatures.
 - **`ast.rs`**: Definitions for all AST node variants (literals, binary ops, function defs, struct definitions, composition, embedding).
+- **`typecheck/`**: Static typechecker, type inference, effect inference (`effects.rs`), and async/sync checker (`sync.rs`).
+- **`transpile.rs`**: Transpiler for client-side reactive components.
 
-### B. Virtual Machine & Runtime (`src/vm/`)
-- **`compiler.rs`**: Translates AST nodes into custom VM bytecode instructions (`Chunk`, `Instruction`, `OpCode`).
-- **`execute.rs`**: Core VM bytecode execution loop. Handles register manipulation, function calls, control flow jumps, standard FFI, and error handling.
-- **`value.rs`**: Runtime dynamic value representation (`Value` enum: `Number`, `Boolean`, `String`, `Object`, `Array`, `Struct`, `Null`).
-- **`gc.rs`**: Mark-and-sweep Garbage Collector for heap values. Controls object allocation, GC cycles, and map pooling.
-- **`er_http.rs` & `er_http.cpp`**: Native FFI wrapper bridging the uWebSockets C++ HTTP engine with Eronom closures and router callbacks.
+### C. Native Networking & FFI (`crates/eronom-net/`)
+- High-performance C++ `uWebSockets` & `uSockets` build orchestration (`build.rs`), `libuv` integration on Windows, and zero-copy C FFI bindings (`ffi.rs`).
 
-### C. Just-In-Time Compiler (`src/jit/`)
-- **`compiler.rs` & `bindings.rs`**: Generates MIR intermediate representation (Medium-Level Intermediate Representation) from bytecode chunks and compiles hotspot functions to native machine code.
+### D. Standalone Micro-Runner (`crates/eronom-runner/`)
+- Lean execution binary (`eronom-runner`) for standalone compiled application bundles and direct script runs without developer tooling.
+
+### E. AOT Toolchain Backend (`crates/eronom-cranelift/`)
+- Cranelift AOT code generator backend compiled as an independent toolchain binary.
+
+### F. Virtual Machine & Execution (`src/vm/`)
+- **`compiler/`**: Translates AST nodes into custom VM bytecode instructions (`Chunk`, `Instruction`, `OpCode`).
+- **`execute/`**: Core VM bytecode execution loop. Handles register manipulation, function calls, control flow jumps, standard FFI, fibers, and error handling.
+- **`er_http/`**: Native HTTP server integration, request/response abstractions, WebSocket handlers, and HMR.
+
+### G. Just-In-Time Compiler (`src/jit/`)
+- **`compiler/` & `bindings.rs`**: Generates MIR intermediate representation from bytecode chunks and compiles hotspot functions to native machine code.
+- **`aot/`**: Standalone native object generators (ELF, PE64, Mach-O).
 
 ---
 
