@@ -149,6 +149,99 @@ pub fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
     }).into_owned()
 }
 
+fn is_ignored_build_file(name_str: &str, path: &Path) -> bool {
+    name_str.starts_with('.') || 
+    name_str == "target" || 
+    name_str == "build" || 
+    name_str == "dist" ||
+    name_str == "deps" ||
+    name_str == "graphify-out" ||
+    name_str == "example-er" ||
+    name_str == "node_modules" || 
+    name_str == "src" ||
+    name_str == "libs" ||
+    name_str == "external" ||
+    name_str == "std" ||
+    name_str == "Cargo.toml" ||
+    name_str == "Cargo.lock" ||
+    name_str == "cargo.log" ||
+    name_str == "build.rs" ||
+    name_str == "temp_compiled.mir" ||
+    name_str == "eronom" ||
+    name_str == "LICENSE" ||
+    name_str == "README.md" ||
+    path.extension().map_or(false, |ext| ext == "rs" || ext == "py" || ext == "log" || ext == "mir" || ext == "exe")
+}
+
+pub fn process_static_assets(
+    root: &Path,
+    current: &Path,
+    build_root: &Path,
+    manifest: &mut std::collections::HashMap<String, String>,
+) -> anyhow::Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if is_ignored_build_file(&name_str, &path) {
+            continue;
+        }
+
+        if path.is_dir() {
+            process_static_assets(root, &path, build_root, manifest)?;
+        } else {
+            let rel_path = path.strip_prefix(root)?;
+            let dest_path = build_root.join(rel_path);
+
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext == "css" {
+                if let Ok(css_content) = fs::read_to_string(&path) {
+                    let minified = compiler::minify_css(&css_content);
+                    let hash = compiler::compute_asset_hash(minified.as_bytes());
+                    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                    let hashed_name = format!("{}-{}.css", stem, hash);
+                    let assets_dir = build_root.join("assets");
+                    fs::create_dir_all(&assets_dir)?;
+                    fs::write(assets_dir.join(&hashed_name), &minified)?;
+                    fs::write(&dest_path, &minified)?;
+
+                    let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+                    let logical_path = if rel_str.starts_with('/') { rel_str } else { format!("/{}", rel_str) };
+                    manifest.insert(logical_path, format!("/assets/{}", hashed_name));
+                } else {
+                    fs::copy(&path, &dest_path)?;
+                }
+            } else if ext == "js" && !rel_path.starts_with("server/") {
+                if let Ok(js_content) = fs::read_to_string(&path) {
+                    let minified = compiler::minify_js(&js_content);
+                    let hash = compiler::compute_asset_hash(minified.as_bytes());
+                    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                    let hashed_name = format!("{}-{}.js", stem, hash);
+                    let assets_dir = build_root.join("assets");
+                    fs::create_dir_all(&assets_dir)?;
+                    fs::write(assets_dir.join(&hashed_name), &minified)?;
+                    fs::write(&dest_path, &minified)?;
+
+                    let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+                    let logical_path = if rel_str.starts_with('/') { rel_str } else { format!("/{}", rel_str) };
+                    manifest.insert(logical_path, format!("/assets/{}", hashed_name));
+                } else {
+                    fs::copy(&path, &dest_path)?;
+                }
+            } else if ext != "erm" && ext != "er" {
+                fs::copy(&path, &dest_path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn build_dir_recursive(
     root: &Path,
     current: &Path,
@@ -163,28 +256,7 @@ pub fn build_dir_recursive(
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        if name_str.starts_with('.') || 
-           name_str == "target" || 
-           name_str == "build" || 
-           name_str == "dist" ||
-           name_str == "deps" ||
-           name_str == "graphify-out" ||
-           name_str == "example-er" ||
-           name_str == "node_modules" || 
-           name_str == "src" ||
-           name_str == "libs" ||
-           name_str == "external" ||
-           name_str == "std" ||
-           name_str == "Cargo.toml" ||
-           name_str == "Cargo.lock" ||
-           name_str == "cargo.log" ||
-           name_str == "build.rs" ||
-           name_str == "temp_compiled.mir" ||
-           name_str == "eronom" ||
-           name_str == "LICENSE" ||
-           name_str == "README.md" ||
-           path.extension().map_or(false, |ext| ext == "rs" || ext == "py" || ext == "log" || ext == "mir" || ext == "exe")
-        {
+        if is_ignored_build_file(&name_str, &path) {
             continue;
         }
 
@@ -200,7 +272,7 @@ pub fn build_dir_recursive(
 
             if name_str.ends_with(".erm") {
                 if mode == BuildMode::Ssr {
-                    // SSR mode: just copy the .erm file
+                    // SSR mode: copy the .erm file
                     fs::copy(&path, &dest_path)?;
                     if let Some(r) = get_page_route(&rel_path.to_string_lossy()) {
                         routes.push(r);
@@ -256,8 +328,8 @@ pub fn build_dir_recursive(
                 } else {
                     fs::copy(&path, &dest_path)?;
                 }
-            } else {
-                // Copy assets
+            } else if !dest_path.exists() {
+                // Copy any other static assets not processed in pass 1
                 fs::copy(&path, &dest_path)?;
             }
         }
@@ -287,7 +359,39 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
 
     let base_path = fs::canonicalize(dir)?;
 
+    let assets_dir = build_dir.join("assets");
+    fs::create_dir_all(&assets_dir)?;
 
+    let mut manifest = std::collections::HashMap::new();
+
+    // Bundle and minify runtime.js
+    let runtime_src = if base_path.join("modules/erm/runtime.js").exists() {
+        fs::read_to_string(base_path.join("modules/erm/runtime.js")).unwrap_or_default()
+    } else {
+        include_str!("../../libs/init/modules/erm/runtime.js").to_string()
+    };
+    let minified_runtime = compiler::minify_js(&runtime_src);
+    let runtime_hash = compiler::compute_asset_hash(minified_runtime.as_bytes());
+    let hashed_runtime_name = format!("runtime-{}.js", runtime_hash);
+    fs::write(assets_dir.join(&hashed_runtime_name), &minified_runtime)?;
+
+    let modules_erm = build_dir.join("modules").join("erm");
+    fs::create_dir_all(&modules_erm)?;
+    fs::write(modules_erm.join("runtime.js"), &minified_runtime)?;
+
+    manifest.insert("/modules/erm/runtime.js".to_string(), format!("/assets/{}", hashed_runtime_name));
+
+    // Pass 1: Process and bundle all static assets (CSS, JS, images)
+    process_static_assets(&base_path, &base_path, &build_dir, &mut manifest)?;
+
+    // Update in-memory manifest for component compilation
+    *crate::server::types::ASSET_MANIFEST.lock().unwrap() = manifest.clone();
+
+    // Write manifest.json
+    let manifest_json = serde_json::to_string_pretty(&manifest)?;
+    fs::write(build_dir.join("manifest.json"), manifest_json)?;
+
+    // Pass 2: Compile routes, templates, and API endpoints
     let mut routes = Vec::new();
     let mut api_routes = Vec::new();
     build_dir_recursive(&base_path, &base_path, &build_dir, mode, &mut routes, &mut api_routes)?;
@@ -311,3 +415,5 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+
