@@ -283,7 +283,14 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut style_assets = String::new();
     if !result.styles.is_empty() {
         style_assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
-        for s in &result.styles { style_assets.push_str(s); style_assets.push('\n'); }
+        for s in &result.styles {
+            if is_prod {
+                style_assets.push_str(&crate::compiler::minify_css(s));
+            } else {
+                style_assets.push_str(s);
+            }
+            style_assets.push('\n');
+        }
         style_assets.push_str("</style>\n");
     }
 
@@ -378,23 +385,45 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
+        let runtime_path = if is_prod {
+            let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+            manifest.get("/modules/erm/runtime.js")
+                .cloned()
+                .unwrap_or_else(|| "/modules/erm/runtime.js".to_string())
+        } else {
+            "/modules/erm/runtime.js".to_string()
+        };
+
+        let mut script_body = String::new();
+        script_body.push_str(&format!("import {{\n  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n  onMount, onCleanup, batch, untrack,\n  useState, useEffect, useProps, useFetch, unwrap, useParams, setParams, effect,\n  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n  Show, For, setCurrentPageDispose,\n  erm\n}} from '{}';\n", runtime_path));
+        script_body.push_str("createRoot(async (dispose) => {\n");
+        script_body.push_str("  setCurrentPageDispose(dispose);\n");
+        for s in &scripts_to_inject {
+            script_body.push_str(s);
+            script_body.push('\n');
+        }
+        script_body.push_str("});\n");
+
+        if is_prod {
+            script_body = crate::compiler::inline_public_env_vars(&script_body);
+            script_body = crate::compiler::minify_js(&script_body);
+        }
+
         script_assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
-        script_assets.push_str("import {\n");
-        script_assets.push_str("  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n");
-        script_assets.push_str("  onMount, onCleanup, batch, untrack,\n");
-        script_assets.push_str("  useState, useEffect, useProps, useFetch, unwrap, useParams, setParams, effect,\n");
-        script_assets.push_str("  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n");
-        script_assets.push_str("  Show, For, setCurrentPageDispose,\n");
-        script_assets.push_str("  erm\n");
-        script_assets.push_str("} from '/modules/erm/runtime.js';\n");
-        script_assets.push_str("createRoot(async (dispose) => {\n");
-        script_assets.push_str("  setCurrentPageDispose(dispose);\n");
-        for s in &scripts_to_inject { script_assets.push_str(s); script_assets.push('\n'); }
-        script_assets.push_str("});\n");
-        script_assets.push_str("</script>\n");
+        script_assets.push_str(&script_body);
+        script_assets.push_str("\n</script>\n");
     }
 
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
+    if is_prod {
+        output = crate::compiler::inline_public_env_vars(&output);
+        let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+        if !manifest.is_empty() {
+            for (orig, hashed) in manifest.iter() {
+                output = output.replace(orig, hashed);
+            }
+        }
+    }
 
     if !output.contains("<html") {
         let mut final_res = String::new();
