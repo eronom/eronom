@@ -39,12 +39,35 @@ pub extern "C" fn dev_http_callback(
     };
 
     if let Err(e) = handle_dev_request(res, method, path, headers, body) {
-        let err_msg = format!("Internal Server Error: {}", e);
-        send_response(res, "500 Internal Server Error", "text/plain; charset=utf-8", err_msg.as_bytes());
+        eprintln!("[ERROR] Internal Server Error: {}", e);
+        if *IS_PROD.lock().unwrap() {
+            let html = r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>500 Internal Server Error</title><style>body{background:#0b0b0d;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui,-apple-system,sans-serif;}h1{font-size:3rem;margin:0 0 0.5rem;}p{color:#888;margin:0;}</style></head><body><div style="text-align:center"><h1>500</h1><p>Internal Server Error</p></div></body></html>"#;
+            send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html.as_bytes());
+        } else {
+            let err_msg = format!("Internal Server Error: {}", e);
+            send_response(res, "500 Internal Server Error", "text/plain; charset=utf-8", err_msg.as_bytes());
+        }
     }
 }
 
-pub fn send_response(res: *mut c_void, status: &str, content_type: &str, body: &[u8]) {
+pub fn extract_header<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+    for line in headers.lines() {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case(name) {
+                return Some(v.trim());
+            }
+        }
+    }
+    None
+}
+
+pub fn send_response_with_headers(
+    res: *mut c_void,
+    status: &str,
+    content_type: &str,
+    extra_headers: &[(&str, &str)],
+    body: &[u8],
+) {
     unsafe {
         let status_c = CString::new(status).unwrap_or_else(|_| CString::new("500 Internal Server Error").unwrap());
         er_http_response_write_status(res, status_c.as_ptr(), status_c.as_bytes().len());
@@ -57,8 +80,40 @@ pub fn send_response(res: *mut c_void, status: &str, content_type: &str, body: &
             ct_val.as_ptr(),
             ct_val.as_bytes().len(),
         );
+        for (k, v) in extra_headers {
+            if let (Ok(k_c), Ok(v_c)) = (CString::new(*k), CString::new(*v)) {
+                er_http_response_write_header(
+                    res,
+                    k_c.as_ptr(),
+                    k_c.as_bytes().len(),
+                    v_c.as_ptr(),
+                    v_c.as_bytes().len(),
+                );
+            }
+        }
         er_http_response_end(res, body.as_ptr() as *const c_char, body.len());
     }
+}
+
+pub fn send_not_modified(res: *mut c_void, etag: &str) {
+    unsafe {
+        let status = c"304 Not Modified";
+        er_http_response_write_status(res, status.as_ptr(), status.to_bytes().len());
+        let etag_key = c"ETag";
+        let etag_val = CString::new(etag).unwrap_or_else(|_| CString::new("\"\"").unwrap());
+        er_http_response_write_header(
+            res,
+            etag_key.as_ptr(),
+            etag_key.to_bytes().len(),
+            etag_val.as_ptr(),
+            etag_val.as_bytes().len(),
+        );
+        er_http_response_end(res, std::ptr::null(), 0);
+    }
+}
+
+pub fn send_response(res: *mut c_void, status: &str, content_type: &str, body: &[u8]) {
+    send_response_with_headers(res, status, content_type, &[], body);
 }
 
 pub extern "C" fn dev_ws_open_callback(
@@ -143,6 +198,31 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
     } else {
         (raw_target, None)
     };
+
+    // In production, check in-memory static asset cache first
+    if is_prod {
+        let cache = STATIC_ASSET_CACHE.lock().unwrap();
+        if let Some(cached) = cache.get(target) {
+            if let Some(client_etag) = extract_header(headers, "if-none-match") {
+                let norm_client = client_etag.trim().trim_matches('"');
+                let norm_server = cached.etag.trim().trim_matches('"');
+                if norm_client == norm_server {
+                    send_not_modified(res, &cached.etag);
+                    return Ok(());
+                }
+            }
+
+            let mut extra = Vec::new();
+            extra.push(("ETag", cached.etag.as_str()));
+            if cached.is_immutable {
+                extra.push(("Cache-Control", "public, max-age=31536000, immutable"));
+            } else {
+                extra.push(("Cache-Control", "public, max-age=3600, must-revalidate"));
+            }
+            send_response_with_headers(res, "200 OK", cached.content_type, &extra, &cached.content);
+            return Ok(());
+        }
+    }
 
     if target.starts_with("/__erm_src/") {
         let rel_file = &target["/__erm_src/".len()..];
@@ -278,6 +358,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                     send_response(res, "200 OK", "text/html; charset=utf-8", processed.as_bytes());
                 }
                 Err(e) => {
+                    eprintln!("[ERROR] Failed to compile {}: {}", file_path.display(), e);
                     let rel_path = file_path.strip_prefix(&base_path)
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
@@ -327,23 +408,36 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
         } else {
             let content = fs::read(&file_path)?;
             let mime = if let Some(ext) = file_path.extension() {
-                let ext_str = ext.to_string_lossy().to_lowercase();
-                match ext_str.as_str() {
-                    "html" => Some("text/html; charset=utf-8"),
-                    "css" => Some("text/css; charset=utf-8"),
-                    "js" => Some("application/javascript; charset=utf-8"),
-                    "json" => Some("application/json; charset=utf-8"),
-                    "png" => Some("image/png"),
-                    "jpg" | "jpeg" => Some("image/jpeg"),
-                    "gif" => Some("image/gif"),
-                    "svg" => Some("image/svg+xml"),
-                    "ico" => Some("image/x-icon"),
-                    _ => None,
-                }
+                let ext_str = ext.to_string_lossy();
+                guess_mime_type(&ext_str)
             } else {
-                None
+                "application/octet-stream"
             };
-            send_response(res, "200 OK", mime.unwrap_or("application/octet-stream"), &content);
+
+            if is_prod {
+                let hash = crate::compiler::compute_asset_hash(&content);
+                let etag = format!("\"{}\"", hash);
+                if let Some(client_etag) = extract_header(headers, "if-none-match") {
+                    let norm_client = client_etag.trim().trim_matches('"');
+                    if norm_client == hash {
+                        send_not_modified(res, &etag);
+                        return Ok(());
+                    }
+                }
+                let is_immutable = target.starts_with("/assets/");
+                let cache_ctrl = if is_immutable {
+                    "public, max-age=31536000, immutable"
+                } else {
+                    "public, max-age=3600, must-revalidate"
+                };
+                let extra = [
+                    ("ETag", etag.as_str()),
+                    ("Cache-Control", cache_ctrl),
+                ];
+                send_response_with_headers(res, "200 OK", mime, &extra, &content);
+            } else {
+                send_response(res, "200 OK", mime, &content);
+            }
         }
     } else {
         unsafe {
@@ -354,4 +448,18 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_header_case_insensitive() {
+        let headers = "Host: localhost:3000\r\nUser-Agent: curl/7.68.0\r\nIf-None-Match: \"12345678\"\r\nAccept: */*\r\n";
+        assert_eq!(extract_header(headers, "if-none-match"), Some("\"12345678\""));
+        assert_eq!(extract_header(headers, "IF-NONE-MATCH"), Some("\"12345678\""));
+        assert_eq!(extract_header(headers, "host"), Some("localhost:3000"));
+        assert_eq!(extract_header(headers, "non-existent"), None);
+    }
 }

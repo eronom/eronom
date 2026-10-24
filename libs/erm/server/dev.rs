@@ -42,6 +42,10 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
     *DEFAULT_FILE.lock().unwrap() = default_file;
     *IS_PROD.lock().unwrap() = is_prod;
 
+    if is_prod {
+        preload_static_assets(&base_path);
+    }
+
     crate::vm::er_http::context::set_render_hooks(
         super::render::native_render,
         super::render::native_render_string,
@@ -169,6 +173,95 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
 
 pub use crate::vm::er_http::utils::{is_port_in_use, find_available_port};
 
+pub fn preload_static_assets(root: &std::path::Path) {
+    let mut cache = STATIC_ASSET_CACHE.lock().unwrap();
+    let mut manifest = ASSET_MANIFEST.lock().unwrap();
+    cache.clear();
+    manifest.clear();
+
+    // Check for manifest.json in root or root/build
+    let manifest_path = if root.join("manifest.json").exists() {
+        Some(root.join("manifest.json"))
+    } else if root.join("build/manifest.json").exists() {
+        Some(root.join("build/manifest.json"))
+    } else {
+        None
+    };
+
+    if let Some(m_path) = manifest_path {
+        if let Ok(content) = fs::read_to_string(&m_path) {
+            if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&content) {
+                *manifest = parsed;
+            }
+        }
+    }
+
+    // Preload runtime.js from disk or embedded template
+    let runtime_content = if root.join("modules/erm/runtime.js").exists() {
+        fs::read_to_string(root.join("modules/erm/runtime.js")).unwrap_or_default()
+    } else {
+        include_str!("../../init/modules/erm/runtime.js").to_string()
+    };
+    let minified_runtime = crate::compiler::minify_js(&runtime_content);
+    let runtime_hash = crate::compiler::compute_asset_hash(minified_runtime.as_bytes());
+    let runtime_etag = format!("\"{}\"", runtime_hash);
+
+    let runtime_cached = CachedAsset {
+        content: std::sync::Arc::new(minified_runtime.into_bytes()),
+        content_type: "application/javascript; charset=utf-8",
+        etag: runtime_etag.clone(),
+        is_immutable: false,
+    };
+    cache.insert("/modules/erm/runtime.js".to_string(), runtime_cached.clone());
+    cache.insert(format!("/assets/runtime-{}.js", runtime_hash), CachedAsset {
+        content: runtime_cached.content.clone(),
+        content_type: runtime_cached.content_type,
+        etag: runtime_etag,
+        is_immutable: true,
+    });
+
+    fn walk_assets(base: &std::path::Path, dir: &std::path::Path, cache: &mut HashMap<String, CachedAsset>) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.') || name_str == "target" || name_str == "deps" {
+                    continue;
+                }
+                if path.is_dir() {
+                    walk_assets(base, &path, cache);
+                } else if path.is_file() {
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if ext == "erm" || ext == "er" {
+                        continue;
+                    }
+                    if let Ok(rel) = path.strip_prefix(base) {
+                        let rel_str = rel.to_string_lossy().replace('\\', "/");
+                        let route_key = if rel_str.starts_with('/') {
+                            rel_str
+                        } else {
+                            format!("/{}", rel_str)
+                        };
+                        if let Ok(data) = fs::read(&path) {
+                            let hash = crate::compiler::compute_asset_hash(&data);
+                            let is_immutable = route_key.starts_with("/assets/");
+                            let mime = guess_mime_type(ext);
+                            cache.insert(route_key, CachedAsset {
+                                content: std::sync::Arc::new(data),
+                                content_type: mime,
+                                etag: format!("\"{}\"", hash),
+                                is_immutable,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    walk_assets(root, root, &mut cache);
+}
 
 #[cfg(test)]
 mod tests {
