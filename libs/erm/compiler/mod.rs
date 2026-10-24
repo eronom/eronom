@@ -8,6 +8,7 @@ pub mod components;
 pub mod tree;
 pub mod page;
 pub mod eds;
+pub mod minify;
 
 #[cfg(test)]
 pub mod tests;
@@ -22,3 +23,4 @@ pub use components::*;
 pub use tree::*;
 pub use page::*;
 pub use eds::*;
+pub use minify::*;
