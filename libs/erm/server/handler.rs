@@ -225,6 +225,10 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
     }
 
     if target.starts_with("/__erm_src/") {
+        if is_prod {
+            send_response(res, "403 Forbidden", "text/plain; charset=utf-8", b"Forbidden");
+            return Ok(());
+        }
         let rel_file = &target["/__erm_src/".len()..];
         let file_path = base_path.join(rel_file);
         if file_path.exists() && file_path.is_file() {
@@ -359,22 +363,26 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                 }
                 Err(e) => {
                     eprintln!("[ERROR] Failed to compile {}: {}", file_path.display(), e);
-                    let rel_path = file_path.strip_prefix(&base_path)
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
+                    if is_prod {
+                        let html = r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>500 Internal Server Error</title><style>body{background:#0b0b0d;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui,-apple-system,sans-serif;}h1{font-size:3rem;margin:0 0 0.5rem;}p{color:#888;margin:0;}</style></head><body><div style="text-align:center"><h1>500</h1><p>Internal Server Error</p></div></body></html>"#;
+                        send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html.as_bytes());
+                    } else {
+                        let rel_path = file_path.strip_prefix(&base_path)
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_else(|_| file_path.to_string_lossy().into_owned());
 
-                    let escape_html = |s: &str| -> String {
-                        s.replace('&', "&amp;")
-                         .replace('<', "&lt;")
-                         .replace('>', "&gt;")
-                         .replace('"', "&quot;")
-                         .replace('\'', "&#39;")
-                    };
+                        let escape_html = |s: &str| -> String {
+                            s.replace('&', "&amp;")
+                             .replace('<', "&lt;")
+                             .replace('>', "&gt;")
+                             .replace('"', "&quot;")
+                             .replace('\'', "&#39;")
+                        };
 
-                    let err_msg_escaped = escape_html(&format!("{}", e));
-                    let rel_path_escaped = escape_html(&rel_path);
+                        let err_msg_escaped = escape_html(&format!("{}", e));
+                        let rel_path_escaped = escape_html(&rel_path);
 
-                    let html_content = format!(r#"<!DOCTYPE html>
+                        let html_content = format!(r#"<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -393,12 +401,18 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
 </body>
 </html>"#, rel_path_escaped, err_msg_escaped);
 
-                    send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html_content.as_bytes());
+                        send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html_content.as_bytes());
+                    }
                 }
             }
         } else if file_path.extension().map_or(false, |ext| ext == "er") {
             if let Err(e) = execute_api_route(res, method, target, headers, body, &file_path) {
-                let err_msg = format!("Error running route: {}", e);
+                eprintln!("[ERROR] Route error on {}: {}", file_path.display(), e);
+                let err_msg = if is_prod {
+                    "Internal Server Error".to_string()
+                } else {
+                    format!("Error running route: {}", e)
+                };
                 unsafe {
                     let status = CString::new("500 Internal Server Error").unwrap();
                     er_http_response_write_status(res, status.as_ptr(), status.as_bytes().len());

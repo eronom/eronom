@@ -416,4 +416,74 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_build_project_production_manifest_and_assets() {
+        let temp_dir = std::env::temp_dir().join(format!("eronom_build_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(temp_dir.join("app/pages")).unwrap();
+
+        // Write index.erm and styles.css
+        let erm_content = r#"
+        <script>
+            let count = useState(0);
+        </script>
+        <h1>Hello Production</h1>
+        "#;
+        fs::write(temp_dir.join("app/pages/index.erm"), erm_content).unwrap();
+
+        let css_content = r#"
+        /* Header CSS */
+        body {
+            background-color: #000000;
+            margin: 0;
+        }
+        "#;
+        fs::write(temp_dir.join("styles.css"), css_content).unwrap();
+
+        // Run build in SSG mode
+        let build_res = build_project(temp_dir.to_str().unwrap(), BuildMode::Ssg);
+        assert!(build_res.is_ok(), "build_project failed: {:?}", build_res.err());
+
+        let build_dir = temp_dir.join("build");
+        assert!(build_dir.exists());
+
+        // Check manifest.json
+        let manifest_path = build_dir.join("manifest.json");
+        assert!(manifest_path.exists());
+        let manifest_str = fs::read_to_string(&manifest_path).unwrap();
+        let manifest: std::collections::HashMap<String, String> = serde_json::from_str(&manifest_str).unwrap();
+
+        assert!(manifest.contains_key("/modules/erm/runtime.js"));
+        let runtime_hashed = manifest.get("/modules/erm/runtime.js").unwrap();
+        assert!(runtime_hashed.starts_with("/assets/runtime-"));
+
+        assert!(manifest.contains_key("/styles.css"));
+        let styles_hashed = manifest.get("/styles.css").unwrap();
+        assert!(styles_hashed.starts_with("/assets/styles-"));
+
+        // Verify hashed assets exist on disk in build/assets/
+        let runtime_file = build_dir.join(runtime_hashed.trim_start_matches('/'));
+        assert!(runtime_file.exists());
+
+        let styles_file = build_dir.join(styles_hashed.trim_start_matches('/'));
+        assert!(styles_file.exists());
+        let styles_data = fs::read_to_string(&styles_file).unwrap();
+        assert!(!styles_data.contains("/* Header CSS */"), "CSS comments should be minified");
+        assert!(styles_data.contains("background-color:#000000"));
+
+        // Check preloaded static assets in server cache
+        crate::server::dev::preload_static_assets(&build_dir);
+        let cache = crate::server::types::STATIC_ASSET_CACHE.lock().unwrap();
+        assert!(cache.contains_key(runtime_hashed));
+        assert!(cache.contains_key(styles_hashed));
+        let cached_style = cache.get(styles_hashed).unwrap();
+        assert!(cached_style.is_immutable);
+        assert_eq!(cached_style.content_type, "text/css; charset=utf-8");
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+}
