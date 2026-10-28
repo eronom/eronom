@@ -168,6 +168,7 @@ fn is_ignored_build_file(name_str: &str, path: &Path) -> bool {
     name_str == "build.rs" ||
     name_str == "temp_compiled.mir" ||
     name_str == "eronom" ||
+    name_str == "hmr.js" ||
     name_str == "LICENSE" ||
     name_str == "README.md" ||
     path.extension().map_or(false, |ext| ext == "rs" || ext == "py" || ext == "log" || ext == "mir" || ext == "exe")
@@ -217,7 +218,7 @@ pub fn process_static_assets(
                 } else {
                     fs::copy(&path, &dest_path)?;
                 }
-            } else if ext == "js" && !rel_path.starts_with("server/") {
+            } else if ext == "js" && !rel_path.starts_with("server/") && rel_path != Path::new("modules/erm/runtime.js") && rel_path != Path::new("modules/erm/hmr.js") {
                 if let Ok(js_content) = fs::read_to_string(&path) {
                     let minified = compiler::minify_js(&js_content);
                     let hash = compiler::compute_asset_hash(minified.as_bytes());
@@ -370,7 +371,10 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     } else {
         include_str!("../../libs/init/modules/erm/runtime.js").to_string()
     };
-    let minified_runtime = compiler::minify_js(&runtime_src);
+    // Strip HMR development dependency from production runtime
+    let re_hmr_import = regex::Regex::new(r#"import\s*\{\s*createHotContext\s*,\s*showError\s*\}\s*from\s*['"]\./hmr\.js['"];?"#).unwrap();
+    let prod_runtime = re_hmr_import.replace(&runtime_src, "const createHotContext = () => ({ data: {} }); const showError = (e) => { console.error(e); };");
+    let minified_runtime = compiler::minify_js(&prod_runtime);
     let runtime_hash = compiler::compute_asset_hash(minified_runtime.as_bytes());
     let hashed_runtime_name = format!("runtime-{}.js", runtime_hash);
     fs::write(assets_dir.join(&hashed_runtime_name), &minified_runtime)?;

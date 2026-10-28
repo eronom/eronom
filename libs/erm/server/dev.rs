@@ -202,7 +202,11 @@ pub fn preload_static_assets(root: &std::path::Path) {
     } else {
         include_str!("../../init/modules/erm/runtime.js").to_string()
     };
-    let minified_runtime = crate::compiler::minify_js(&runtime_content);
+    let prod_runtime = runtime_content.replace(
+        "import { createHotContext, showError } from './hmr.js';",
+        "const createHotContext = () => ({ data: {} }); const showError = (e) => { console.error(e); };",
+    );
+    let minified_runtime = crate::compiler::minify_js(&prod_runtime);
     let runtime_hash = crate::compiler::compute_asset_hash(minified_runtime.as_bytes());
     let runtime_etag = format!("\"{}\"", runtime_hash);
 
@@ -226,7 +230,7 @@ pub fn preload_static_assets(root: &std::path::Path) {
                 let path = entry.path();
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') || name_str == "target" || name_str == "deps" {
+                if name_str.starts_with('.') || name_str == "target" || name_str == "deps" || name_str == "hmr.js" {
                     continue;
                 }
                 if path.is_dir() {
