@@ -413,6 +413,8 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
         }
     }
 
+    println!("✓ Successfully built project to \"{}\"", build_dir.display());
+
     Ok(())
 }
 
