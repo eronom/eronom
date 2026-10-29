@@ -698,4 +698,17 @@ fn test_render_params_ssr_and_client_bindings() {
     assert!(!res.contains("window.__erm_params"));
 }
 
+#[test]
+fn test_template_cloning_and_node_primitives_availability() {
+    let content = r#"
+    <script>
+        let count = 0;
+    </script>
+    <button on:click={() => count++}>{count}</button>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("template, child, sibling"));
+}
+
 

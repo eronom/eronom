@@ -476,6 +476,37 @@ export function For(props) {
   return createMemo(mapArray(() => props.each, props.children, fallback));
 }
 
+// --- Template Cloning & Node Traversal Primitives ---
+export function template(html) {
+  let cachedNode = null;
+  return () => {
+    if (!cachedNode && BROWSER) {
+      const t = document.createElement('template');
+      t.innerHTML = html;
+      cachedNode = t.content.firstElementChild || t.content.firstChild;
+    }
+    return cachedNode ? cachedNode.cloneNode(true) : null;
+  };
+}
+
+export function child(node, index = 0) {
+  let curr = node ? node.firstChild : null;
+  while (curr && index > 0) {
+    curr = curr.nextSibling;
+    index--;
+  }
+  return curr;
+}
+
+export function sibling(node, count = 1) {
+  let curr = node;
+  while (curr && count > 0) {
+    curr = curr.nextSibling;
+    count--;
+  }
+  return curr;
+}
+
 // --- High-Performance Fine-Grained DOM Bindings
 export function bindText(target, accessor) {
   createRenderEffect(() => {
