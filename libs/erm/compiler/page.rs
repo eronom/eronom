@@ -294,7 +294,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         style_assets.push_str("</style>\n");
     }
 
-    let mut params_js = String::from("window.__erm_params = {");
+    let mut params_obj = String::from("{");
     for (k, v) in params {
         let is_json_literal = (v.starts_with('{') && v.ends_with('}'))
             || (v.starts_with('[') && v.ends_with(']'))
@@ -304,12 +304,13 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             || v.parse::<f64>().is_ok();
             
         if is_json_literal {
-            params_js.push_str(&format!("{}: {},", k, v));
+            params_obj.push_str(&format!("{}: {},", k, v));
         } else {
-            params_js.push_str(&format!("{}: {},", k, serde_json::to_string(v).unwrap_or_else(|_| format!("\"{}\"", v.replace('"', "\\\"")))));
+            params_obj.push_str(&format!("{}: {},", k, serde_json::to_string(v).unwrap_or_else(|_| format!("\"{}\"", v.replace('"', "\\\"")))));
         }
     }
-    params_js.push_str("};\nif (typeof setParams === 'function') setParams(window.__erm_params);");
+    params_obj.push('}');
+    let params_js = format!("setParams({});\nlet __params = useParams();", params_obj);
 
     let combined_scripts = result.scripts.join("\n");
     let mut declarations = String::from("let anchorId = \"\";\n");
@@ -318,7 +319,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         if is_valid_js_identifier(k) {
             if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(k))) {
                 if !re_decl.is_match(&combined_scripts) && !result.state_vars.contains(k) {
-                    declarations.push_str(&format!("let {} = window.__erm_params[\"{}\"];\n", k, k));
+                    declarations.push_str(&format!("let {} = __params[\"{}\"];\n", k, k));
                 }
             }
         }
@@ -336,7 +337,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
                     "submitted" => "false".to_string(),
                     _ => {
                         if params.contains_key(v) {
-                            format!("window.__erm_params[\"{}\"]", v)
+                            format!("__params[\"{}\"]", v)
                         } else {
                             "null".to_string()
                         }

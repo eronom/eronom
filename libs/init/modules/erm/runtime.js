@@ -1,7 +1,9 @@
 // Eronom Reactive Runtime - Fine-Grained Reactivity
 // Pure reactive graph, dependency tracking, zero-polling DOM bindings
 
-import { createHotContext, showError } from './hmr.js';
+import { createHotContext, showError, clearError } from './hmr.js';
+
+export const BROWSER = typeof document !== 'undefined';
 
 // --- HMR State Store ---
 const hot = typeof import.meta !== 'undefined' && import.meta.hot
@@ -695,6 +697,9 @@ function createArrayProxy(arr, setter, name) {
     set(target, prop, newVal) {
       target[prop] = newVal;
       setter([...target]);
+      if (name) {
+        setHmrState(name, target);
+      }
       return true;
     }
   });
@@ -879,8 +884,7 @@ export function unwrap(v) {
 }
 
 export function useProps(rawProps) {
-  const p = rawProps || (typeof props !== 'undefined' ? props : {});
-  if (!p) return {};
+  const p = rawProps || {};
   if (p.__isPropsProxy) return p;
   return new Proxy(p, {
     get(target, prop) {
@@ -966,13 +970,10 @@ export function useEffect(callback, depsFn) {
 
 export const effect = createEffect;
 
-let currentParams = {};
-export function setParams(p) { currentParams = p; }
+const [paramsSignal, setParamsSignal] = createSignal({});
+export function setParams(p) { setParamsSignal(p || {}); }
 export function useParams() {
-  if (typeof window !== 'undefined' && window.__erm_params && Object.keys(window.__erm_params).length > 0) {
-    return window.__erm_params;
-  }
-  return currentParams;
+  return paramsSignal();
 }
 
 export async function useFetch(url, options = {}) {
@@ -1203,8 +1204,8 @@ export async function applyErmHmr(targetPath, timestamp) {
       return;
     }
 
-    if (typeof window !== 'undefined' && window.hmrClient && typeof window.hmrClient.clearError === 'function') {
-      window.hmrClient.clearError();
+    if (typeof clearError === 'function') {
+      clearError();
     }
 
     const html = await res.text();

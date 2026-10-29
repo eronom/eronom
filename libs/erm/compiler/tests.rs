@@ -688,11 +688,14 @@ fn test_render_params_ssr_and_client_bindings() {
     assert!(res.contains("269"), "Expected SSR HTML to contain originalPrice");
     assert!(res.contains("30"), "Expected SSR HTML to contain discount");
 
-    // 2. Client script declarations should define each param from window.__erm_params
-    assert!(res.contains("let originalPrice = window.__erm_params[\"originalPrice\"];"));
-    assert!(res.contains("let price = window.__erm_params[\"price\"];"));
-    assert!(res.contains("let title = window.__erm_params[\"title\"];"));
-    assert!(res.contains("let discount = window.__erm_params[\"discount\"];"));
+    // 2. Client script declarations should define each param from __params
+    assert!(res.contains("let originalPrice = __params[\"originalPrice\"];"));
+    assert!(res.contains("let price = __params[\"price\"];"));
+    assert!(res.contains("let title = __params[\"title\"];"));
+    assert!(res.contains("let discount = __params[\"discount\"];"));
+    assert!(res.contains("setParams({"));
+    assert!(res.contains("let __params = useParams();"));
+    assert!(!res.contains("window.__erm_params"));
 }
 
 
