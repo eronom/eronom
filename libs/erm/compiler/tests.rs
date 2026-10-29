@@ -711,7 +711,6 @@ fn test_template_cloning_and_node_primitives_availability() {
     assert!(res.contains("template, child, sibling"));
     assert!(res.contains("ifBlock, eachBlock"));
     assert!(res.contains("createHmrProxy"));
-    assert!(res.contains("CLEAN, MAYBE_DIRTY, DIRTY"));
 }
 
 

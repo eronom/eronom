@@ -248,7 +248,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
             include_bytes!("../../init/modules/erm/hmr.js").as_slice().into()
         };
 
-        send_response(res, "200 OK", "application/javascript; charset=utf-8", &content);
+        send_response_with_headers(res, "200 OK", "application/javascript; charset=utf-8", &[("Cache-Control", "no-cache")], &content);
         return Ok(());
     }
 
@@ -261,7 +261,7 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
             include_bytes!("../../init/modules/erm/runtime.js").as_slice().into()
         };
 
-        send_response(res, "200 OK", "application/javascript; charset=utf-8", &content);
+        send_response_with_headers(res, "200 OK", "application/javascript; charset=utf-8", &[("Cache-Control", "no-cache")], &content);
         return Ok(());
     }
 
