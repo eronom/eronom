@@ -39,7 +39,10 @@ export function escapeHtml(val) {
 
 // --- Reactive Graph Core ---
 const equalFn = (a, b) => a === b;
-const STALE = 1;
+export const CLEAN = 0;
+export const MAYBE_DIRTY = 1;
+export const DIRTY = 2;
+export const STALE = 2;
 
 let Listener = null;
 let Owner = null;
@@ -133,6 +136,8 @@ function runUpdates(fn, init) {
     if (!wait) Effects = null;
     Updates = null;
     handleError(err);
+  } finally {
+    if (!wait && !Updates) Effects = null;
   }
 }
 
@@ -185,6 +190,18 @@ function runComputation(node, value, time) {
 
 function updateComputation(node) {
   if (!node.fn) return;
+  if (node.state === MAYBE_DIRTY) {
+    if (node.sources) {
+      for (let i = 0; i < node.sources.length; i++) {
+        const source = node.sources[i];
+        if (source.fn) {
+          if (source.state) updateComputation(source);
+          if (node.state === DIRTY) break;
+        }
+      }
+    }
+  }
+  if (node.state === CLEAN) return;
   cleanNode(node);
   const time = ExecCount;
   runComputation(node, node.value, time);
@@ -252,13 +269,27 @@ export function writeSignal(node, value, isComp) {
           if (!o.state) {
             if (o.pure) Updates.push(o);
             else Effects.push(o);
+            if (o.observers) markDownstream(o);
           }
-          o.state = STALE;
+          o.state = DIRTY;
         }
       }, false);
     }
   }
   return value;
+}
+
+function markDownstream(node) {
+  if (!node.observers) return;
+  for (let i = 0; i < node.observers.length; i++) {
+    const o = node.observers[i];
+    if (!o.state) {
+      o.state = MAYBE_DIRTY;
+      if (o.pure) Updates.push(o);
+      else Effects.push(o);
+      if (o.observers) markDownstream(o);
+    }
+  }
 }
 
 export function createSignal(value, options) {
@@ -1006,6 +1037,19 @@ export const erm = {
   mutate(signal, value) {
     erm.set(signal, untrack(() => erm.get(signal)));
     return value;
+  },
+
+  notify(signal) {
+    return erm.set(signal, untrack(() => erm.get(signal)));
+  },
+
+  inc(signal, step = 1) {
+    const current = Number(erm.get(signal)) || 0;
+    return erm.set(signal, current + step);
+  },
+
+  dec(signal, step = 1) {
+    return erm.inc(signal, -step);
   },
 
   useProps(rawProps) {
