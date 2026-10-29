@@ -1159,23 +1159,81 @@ async function navigate(path, push = true) {
   }
 }
 
-document.addEventListener('click', e => {
-  const link = e.target.closest('a');
-  if (link &&
-    link.href &&
-    !link.target &&
-    !link.hasAttribute('download') &&
-    new URL(link.href).origin === location.origin) {
-    const targetPath = new URL(link.href).pathname;
-    if (targetPath.startsWith('/api/')) return;
-    e.preventDefault();
-    navigate(targetPath);
-  }
-});
+// --- Client Router & Application Mount ---
+export function createRouter({ target, navigate: navFn }) {
+  let controller = null;
 
-addEventListener('popstate', () => {
-  navigate(location.pathname, false);
-});
+  function handleLinkClick(e) {
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+
+    const link = e.target.closest('a');
+    if (!link || !link.href) return;
+    if (link.target || link.hasAttribute('download')) return;
+
+    const url = new URL(link.href);
+    if (url.origin !== location.origin) return;
+    if (url.pathname.startsWith('/api/')) return;
+
+    e.preventDefault();
+    navFn(url.pathname + url.search + url.hash, true);
+  }
+
+  function handlePopState() {
+    navFn(location.pathname + location.search + location.hash, false);
+  }
+
+  return {
+    start() {
+      if (controller) return;
+      controller = new AbortController();
+      const { signal } = controller;
+
+      const root = (typeof target === 'function' ? target() : target) || (BROWSER ? (document.body || document) : null);
+      if (root) {
+        root.addEventListener('click', handleLinkClick, { signal });
+      }
+      if (typeof window !== 'undefined') {
+        window.addEventListener('popstate', handlePopState, { signal });
+      }
+    },
+    stop() {
+      controller?.abort();
+      controller = null;
+    }
+  };
+}
+
+export function mount(Component, { target, props = {} } = {}) {
+  return createRoot((dispose) => {
+    const nodes = Component(props);
+    const container = (typeof target === 'string' ? document.querySelector(target) : target) || (BROWSER ? document.body : null);
+    if (container && nodes) {
+      const list = Array.isArray(nodes) ? nodes : [nodes];
+      list.forEach(n => {
+        if (n instanceof Node) container.appendChild(n);
+      });
+      onCleanup(() => {
+        list.forEach(n => {
+          if (n instanceof Node && n.parentNode) n.parentNode.removeChild(n);
+        });
+      });
+    }
+    return dispose;
+  });
+}
+
+export { navigate };
+
+export const defaultRouter = BROWSER
+  ? createRouter({ target: () => document.body || document, navigate })
+  : null;
+
+if (defaultRouter) {
+  defaultRouter.start();
+}
+
+hot?.dispose(() => defaultRouter?.stop());
 
 // --- In-Place ERM Hot Module Replacement (HMR) ---
 export async function applyErmHmr(targetPath, timestamp) {

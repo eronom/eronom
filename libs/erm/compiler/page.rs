@@ -396,7 +396,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         };
 
         let mut script_body = String::new();
-        script_body.push_str(&format!("import {{\n  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n  onMount, onCleanup, batch, untrack,\n  useState, useEffect, useProps, useFetch, unwrap, useParams, setParams, effect,\n  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n  Show, For, setCurrentPageDispose,\n  erm\n}} from '{}';\n", runtime_path));
+        script_body.push_str(&format!("import {{\n  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n  onMount, onCleanup, batch, untrack,\n  useState, useEffect, useProps, useFetch, unwrap, useParams, setParams, effect,\n  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n  Show, For, setCurrentPageDispose, mount, createRouter, navigate,\n  erm\n}} from '{}';\n", runtime_path));
         script_body.push_str("createRoot(async (dispose) => {\n");
         script_body.push_str("  setCurrentPageDispose(dispose);\n");
         for s in &scripts_to_inject {
