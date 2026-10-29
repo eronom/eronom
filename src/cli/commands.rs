@@ -93,6 +93,10 @@ pub enum Commands {
         /// Use pure-Rust Cranelift backend for native AOT code generation
         #[arg(long)]
         cranelift: bool,
+
+        /// Use Vladimir Makarov's MIR engine for native AOT code generation
+        #[arg(long)]
+        mir: bool,
     },
     /// Start the server in production mode
     Start {

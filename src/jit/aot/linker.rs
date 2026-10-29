@@ -347,6 +347,67 @@ pub fn build_aot_binary_with_target_and_options(
     build_aot_binary_full(script_path, output_path, target, prefer_in_process, custom_stub)
 }
 
+/// Build an Eronom script ahead-of-time directly using Vladimir Makarov's MIR engine.
+pub fn build_aot_binary_with_mir(
+    script_path: &Path,
+    output_path: &Path,
+    target: Option<&str>,
+) -> anyhow::Result<()> {
+    if !script_path.exists() {
+        anyhow::bail!("Source script not found: {}", script_path.display());
+    }
+
+    // 1. Parse and resolve module imports
+    let stmts = match parse_and_resolve_imports(script_path) {
+        Ok(s) => s,
+        Err(e) => anyhow::bail!("Compile/Import error in {}: {}", script_path.display(), e),
+    };
+
+    // 2. Compile AST statements into bytecode function
+    let compiler = Compiler::new();
+    let function = match compiler.compile(&stmts) {
+        Ok(f) => f,
+        Err(e) => anyhow::bail!("Bytecode lowering error: {}", e),
+    };
+
+    // 3. Lower bytecode function to typed E-IR module
+    let module_name = script_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "er_module".to_string());
+    let eir_module = lower_program(&function, &module_name);
+
+    let target_platform = if let Some(target_str) = target {
+        super::object_builder::TargetPlatform::from_str(target_str)
+    } else {
+        super::object_builder::TargetPlatform::host()
+    };
+
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    let bytes = super::object_builder::build_aot_native_executable(&eir_module, target_platform)?;
+
+    if matches!(target_platform, super::object_builder::TargetPlatform::LinuxX86_64 | super::object_builder::TargetPlatform::LinuxAarch64) {
+        if super::elf_writer::link_object_to_static_elf64(&bytes, output_path).is_err() {
+            std::fs::write(output_path, &bytes)?;
+        }
+    } else {
+        std::fs::write(output_path, &bytes)?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(output_path, std::fs::Permissions::from_mode(0o755));
+    }
+
+    Ok(())
+}
+
 fn build_aot_binary_full(
     script_path: &Path,
     output_path: &Path,
@@ -467,7 +528,7 @@ fn build_aot_binary_full(
         }
 
         // 2. Try Cranelift backend first for pure-Rust native code generation
-        let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1").unwrap_or(false);
+        let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
         if !no_clif {
             if crate::toolchain::run_cranelift_build(script_path, &final_out, target).is_ok() {
                 #[cfg(unix)]
@@ -484,7 +545,7 @@ fn build_aot_binary_full(
         }
 
         // 3. Fallback: If a runner stub is available and not in pure-native mode, use it to ensure runnability
-        let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1").unwrap_or(false);
+        let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1" || v == "true").unwrap_or(false);
         if !pure_native {
             if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
                 crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
@@ -501,7 +562,13 @@ fn build_aot_binary_full(
         };
 
         let bytes = super::object_builder::build_aot_native_executable(&eir_module, target_platform)?;
-        std::fs::write(&final_out, &bytes)?;
+        if matches!(target_platform, super::object_builder::TargetPlatform::LinuxX86_64 | super::object_builder::TargetPlatform::LinuxAarch64) {
+            if super::elf_writer::link_object_to_static_elf64(&bytes, &final_out).is_err() {
+                std::fs::write(&final_out, &bytes)?;
+            }
+        } else {
+            std::fs::write(&final_out, &bytes)?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

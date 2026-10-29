@@ -47,6 +47,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             aot,
             in_process,
             cranelift,
+            mir,
         } => {
             if dir.starts_with("target=") || dir.starts_with("target:") {
                 let _val = dir.split_once('=').or_else(|| dir.split_once(':')).unwrap().1;
@@ -55,7 +56,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
 
             let path = Path::new(&dir);
             let is_script = dir.ends_with(".er") || path.is_file();
-            let wants_binary = aot || cranelift || output.is_some() || target.is_some() || runner_stub.is_some() || is_script;
+            let wants_binary = aot || cranelift || mir || output.is_some() || target.is_some() || runner_stub.is_some() || is_script;
 
             let stem = if is_script {
                 path.file_stem().unwrap_or_default()
@@ -76,9 +77,21 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             }
 
             if is_script {
-                if cranelift || (aot && in_process) {
+                let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
+                let use_cranelift = (cranelift || (aot && in_process && !mir)) && !no_clif && !mir;
+                if use_cranelift {
                     println!("Compiling {} into native standalone binary with Cranelift: {}", path.display(), out_path.display());
                     crate::toolchain::run_cranelift_build(path, &out_path, target.as_deref())?;
+                    println!("✓ Successfully built native executable: {}", out_path.display());
+                    return Ok(());
+                }
+                if mir || (aot && in_process && no_clif) {
+                    println!("Compiling {} into native standalone binary with MIR: {}", path.display(), out_path.display());
+                    crate::jit::aot::build_aot_binary_with_mir(
+                        path,
+                        &out_path,
+                        target.as_deref(),
+                    )?;
                     println!("✓ Successfully built native executable: {}", out_path.display());
                     return Ok(());
                 }
@@ -129,9 +142,19 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
                     path.join("main.er")
                 };
 
-                if cranelift {
+                let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
+                if cranelift && !no_clif && !mir {
                     println!("Compiling {} into native standalone binary with Cranelift: {}", script_to_compile.display(), out_path.display());
                     crate::toolchain::run_cranelift_build(&script_to_compile, &out_path, target.as_deref())?;
+                    println!("✓ Successfully built native executable: {}", out_path.display());
+                    return Ok(());
+                } else if mir || (aot && in_process && no_clif) {
+                    println!("Compiling {} into native standalone binary with MIR: {}", script_to_compile.display(), out_path.display());
+                    crate::jit::aot::build_aot_binary_with_mir(
+                        &script_to_compile,
+                        &out_path,
+                        target.as_deref(),
+                    )?;
                     println!("✓ Successfully built native executable: {}", out_path.display());
                     return Ok(());
                 } else if aot {
