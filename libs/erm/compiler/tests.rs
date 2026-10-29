@@ -709,6 +709,7 @@ fn test_template_cloning_and_node_primitives_availability() {
     let params = std::collections::HashMap::new();
     let res = process_erm_component(".", content, false, &params).unwrap();
     assert!(res.contains("template, child, sibling"));
+    assert!(res.contains("ifBlock, eachBlock"));
 }
 
 

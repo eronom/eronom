@@ -621,6 +621,105 @@ export function renderFor(anchorId, getCollection, renderItem) {
   });
 }
 
+// --- Comment-Anchored Fine-Grained Blocks ---
+export function ifBlock(anchor, conditionFn, renderTrue, renderFalse) {
+  const marker = typeof anchor === 'string' && BROWSER ? document.getElementById(anchor) : anchor;
+  if (!marker || !marker.parentNode) return;
+
+  let currentDispose = null;
+  let currentNodes = [];
+  let currentBranch = null;
+
+  createRenderEffect(() => {
+    const cond = Boolean(conditionFn());
+    if (cond === currentBranch) return;
+    currentBranch = cond;
+
+    if (currentDispose) {
+      currentDispose();
+      currentDispose = null;
+    }
+    currentNodes.forEach(n => {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
+    currentNodes = [];
+
+    const render = cond ? renderTrue : renderFalse;
+    if (typeof render === 'function') {
+      createRoot((dispose) => {
+        currentDispose = dispose;
+        const rendered = render();
+        if (rendered) {
+          const list = Array.isArray(rendered) ? rendered : [rendered];
+          list.forEach(n => {
+            if (n instanceof Node) {
+              marker.parentNode.insertBefore(n, marker);
+              currentNodes.push(n);
+            }
+          });
+        }
+      });
+    }
+  });
+
+  onCleanup(() => {
+    if (currentDispose) currentDispose();
+    currentNodes.forEach(n => {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
+  });
+}
+
+export function eachBlock(anchor, getItems, renderItem) {
+  const marker = typeof anchor === 'string' && BROWSER ? document.getElementById(anchor) : anchor;
+  if (!marker || !marker.parentNode) return;
+
+  const parent = marker.parentNode;
+  const mappedHelper = mapArray(
+    () => {
+      const items = getItems();
+      return Array.isArray(items) ? items : [];
+    },
+    (item, index) => {
+      const rendered = renderItem(item, index);
+      return Array.isArray(rendered) ? rendered : [rendered];
+    }
+  );
+
+  let prevNodes = [];
+
+  createRenderEffect(() => {
+    const nestedNodes = mappedHelper();
+    const newNodes = [];
+    nestedNodes.forEach(arr => {
+      if (Array.isArray(arr)) {
+        arr.forEach(n => { if (n instanceof Node) newNodes.push(n); });
+      } else if (arr instanceof Node) {
+        newNodes.push(arr);
+      }
+    });
+
+    const newSet = new Set(newNodes);
+    prevNodes.forEach(n => {
+      if (!newSet.has(n) && n.parentNode) {
+        n.parentNode.removeChild(n);
+      }
+    });
+
+    newNodes.forEach(n => {
+      parent.insertBefore(n, marker);
+    });
+
+    prevNodes = newNodes;
+  });
+
+  onCleanup(() => {
+    prevNodes.forEach(n => {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
+  });
+}
+
 let nextDynamicEventId = 0;
 const dynamicEvents = {};
 export function registerEvent(event, handler) {
