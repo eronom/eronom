@@ -520,12 +520,26 @@ export function bindAttr(target, attrName, accessor) {
   });
 }
 
+// --- Owner-Tree Context ---
+export function setContext(key, value) {
+  if (Owner) {
+    Owner.context = Object.assign(Object.create(Owner.context || null), { [key]: value });
+  }
+}
+
+export function getContext(key) {
+  return Owner?.context ? Owner.context[key] : undefined;
+}
+
 export function bindProvider(target, contextVar, accessor) {
+  const key = contextVar && (contextVar.id || contextVar);
+  setContext(key, accessor);
   createRenderEffect(() => {
-    const el = typeof target === 'string' ? document.getElementById(target) : target;
-    if (!el) return;
-    if (!el.__erm_providers) el.__erm_providers = {};
-    el.__erm_providers[contextVar.id || contextVar] = accessor();
+    const el = typeof target === 'string' && typeof document !== 'undefined' ? document.getElementById(target) : target;
+    if (el) {
+      if (!el.__erm_providers) el.__erm_providers = {};
+      el.__erm_providers[key] = accessor();
+    }
   });
 }
 
@@ -976,88 +990,122 @@ export function useParams() {
   return paramsSignal();
 }
 
-export async function useFetch(url, options = {}) {
-  const fetchOptions = (typeof options === 'object' && options !== null) ? options : {};
-  const name = typeof options === 'string' ? options : (options && options.name);
-  try {
-    const res = await fetch(url, fetchOptions);
-    if (!res.ok) {
-      console.warn(`useFetch: HTTP ${res.status} for ${url}`);
-      return erm.init(null, name);
+// --- Reactive Resources & Loading Boundaries ---
+let pendingResources = 0;
+const [hasPendingResources, setHasPendingResources] = createSignal(false);
+
+export function trackPromise(promise) {
+  if (!promise || typeof promise.finally !== 'function') return promise;
+  pendingResources++;
+  setHasPendingResources(true);
+  promise.finally(() => {
+    pendingResources--;
+    if (pendingResources <= 0) {
+      pendingResources = 0;
+      setHasPendingResources(false);
+      dismissLoadingFallback();
     }
-    const contentType = res.headers && typeof res.headers.get === 'function' ? res.headers.get('content-type') : '';
-    const data = contentType && contentType.includes('application/json')
-      ? await res.json()
-      : await res.json().catch(() => res.text());
-    return erm.init(data, name);
-  } catch (err) {
-    console.error(`useFetch error for ${url}:`, err);
-    return erm.init(null, name);
-  }
+  });
+  return promise;
 }
 
-// --- Suspense & Loading Swap ---
-function initLoadingSwap() {
+export function dismissLoadingFallback() {
+  if (!BROWSER) return;
   const fallback = document.getElementById('erm-loading-fallback');
   const content = document.getElementById('erm-loading-content');
-  const suspenses = document.querySelectorAll('.erm-suspense-container');
-
-  if (!fallback && suspenses.length === 0) return;
-
   if (fallback && content) {
-    fallback.style.display = 'block';
-    content.style.display = 'none';
+    fallback.style.display = 'none';
+    content.style.display = 'contents';
   }
-  suspenses.forEach(s => {
+  document.querySelectorAll('.erm-suspense-container').forEach(s => {
     const fb = s.querySelector('.erm-suspense-fallback');
     const ct = s.querySelector('.erm-suspense-content');
     if (fb && ct) {
-      fb.style.display = 'block';
-      ct.style.display = 'none';
+      fb.style.display = 'none';
+      ct.style.display = 'contents';
     }
   });
-
-  const originalFetch = globalThis.fetch;
-  let activeInitFetches = 0;
-  let finished = false;
-
-  function checkLoadingFinished() {
-    if (finished) return;
-    setTimeout(() => {
-      if (activeInitFetches <= 0) {
-        finished = true;
-        globalThis.fetch = originalFetch;
-        if (fallback && content) {
-          fallback.style.display = 'none';
-          content.style.display = 'contents';
-        }
-        suspenses.forEach(s => {
-          const fb = s.querySelector('.erm-suspense-fallback');
-          const ct = s.querySelector('.erm-suspense-content');
-          if (fb && ct) {
-            fb.style.display = 'none';
-            ct.style.display = 'contents';
-          }
-        });
-      }
-    }, 20);
-  }
-
-  globalThis.fetch = function (...args) {
-    if (finished) return originalFetch(...args);
-    activeInitFetches++;
-    return originalFetch(...args).finally(() => {
-      activeInitFetches--;
-      queueMicrotask(checkLoadingFinished);
-    });
-  };
-
-  setTimeout(() => {
-    checkLoadingFinished();
-  }, 300);
 }
 
-initLoadingSwap();
+if (BROWSER) {
+  queueMicrotask(() => {
+    if (pendingResources === 0) {
+      dismissLoadingFallback();
+    }
+  });
+}
+
+export async function useFetch(url, options = {}) {
+  const fetchOptions = (typeof options === 'object' && options !== null) ? options : {};
+  const name = typeof options === 'string' ? options : (options && options.name);
+  const p = (async () => {
+    try {
+      const res = await fetch(url, fetchOptions);
+      if (!res.ok) {
+        console.warn(`useFetch: HTTP ${res.status} for ${url}`);
+        return erm.init(null, name);
+      }
+      const contentType = res.headers && typeof res.headers.get === 'function' ? res.headers.get('content-type') : '';
+      const data = contentType && contentType.includes('application/json')
+        ? await res.json()
+        : await res.json().catch(() => res.text());
+      return erm.init(data, name);
+    } catch (err) {
+      console.error(`useFetch error for ${url}:`, err);
+      return erm.init(null, name);
+    }
+  })();
+  trackPromise(p);
+  return p;
+}
+
+export function createResource(source, fetcher) {
+  if (arguments.length === 1) {
+    fetcher = source;
+    source = true;
+  }
+  const [data, setData] = createSignal(undefined);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal(undefined);
+
+  let activePromise = null;
+
+  async function load() {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const src = typeof source === 'function' ? source() : source;
+      if (!src) {
+        setLoading(false);
+        return;
+      }
+      const p = fetcher(src);
+      activePromise = p;
+      trackPromise(p);
+      const res = await p;
+      if (activePromise === p) {
+        setData(res);
+        setLoading(false);
+      }
+    } catch (err) {
+      setError(err);
+      setLoading(false);
+    }
+  }
+
+  if (typeof source === 'function') {
+    createEffect(load);
+  } else {
+    load();
+  }
+
+  return [data, {
+    loading,
+    error,
+    refetch: load,
+    mutate: (v) => setData(v)
+  }];
+}
 
 // --- Client-Side Router / Navigation Interceptor ---
 let currentPageRootDispose = null;
@@ -1119,7 +1167,7 @@ async function navigate(path, push = true) {
     scriptElements.forEach(s => s.remove());
 
     reconcileNodes(document.body, Array.from(doc.body.childNodes));
-    initLoadingSwap();
+    if (pendingResources === 0) dismissLoadingFallback();
 
     // Clean up previous dynamically injected page scripts
     document.querySelectorAll('head script.__erm_script').forEach(s => s.remove());
@@ -1164,6 +1212,7 @@ export function createRouter({ target, navigate: navFn }) {
   let controller = null;
 
   function handleLinkClick(e) {
+    // Let browser handle modified clicks (new window/tab) or auxiliary clicks
     if (e.defaultPrevented || e.button !== 0) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
 
@@ -1185,7 +1234,7 @@ export function createRouter({ target, navigate: navFn }) {
 
   return {
     start() {
-      if (controller) return;
+      if (controller) return; // Idempotent: safe against double registration
       controller = new AbortController();
       const { signal } = controller;
 
@@ -1330,7 +1379,7 @@ export async function applyErmHmr(targetPath, timestamp) {
 
     // 5. Reconcile DOM in-place without page reload
     reconcileNodes(document.body, Array.from(doc.body.childNodes));
-    initLoadingSwap();
+    if (pendingResources === 0) dismissLoadingFallback();
 
     // 6. Execute updated page scripts
     for (const item of scriptData) {
