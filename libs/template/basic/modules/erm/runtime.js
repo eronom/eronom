@@ -1243,10 +1243,44 @@ export function setCurrentPageDispose(dispose) {
   currentPageRootDispose = dispose;
 }
 
+// --- Component-Level HMR Proxy ---
+export function createHmrProxy(initialComponent, modulePath) {
+  const [componentSignal, setComponentSignal] = createSignal(() => initialComponent);
+
+  if (hot) {
+    hot.accept((newMod) => {
+      const updated = newMod && (newMod.default || newMod);
+      if (typeof updated === 'function') {
+        setComponentSignal(() => updated);
+      }
+    });
+  }
+
+  return function HmrProxyComponent(props) {
+    return createMemo(() => {
+      const Comp = componentSignal();
+      return Comp ? Comp(props) : null;
+    });
+  };
+}
+
 async function navigate(path, push = true) {
   try {
     clearHmrState();
-    const res = await fetch(path);
+    const res = await fetch(path, {
+      headers: { 'Accept': 'application/json, text/html' }
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      if (typeof setParams === 'function') {
+        setParams(data.params || data);
+      }
+      if (data.title) document.title = data.title;
+      if (push) history.pushState(null, '', path);
+      return;
+    }
+
     const html = await res.text();
 
     const parser = new DOMParser();
