@@ -688,7 +688,6 @@ pub fn clif_compile_function(_vm: &mut VM, func_obj: *mut GcObject) -> *const c_
     let code = &func.chunk.code;
     let cached = CLIF_JIT_CACHE.with(|cache| cache.borrow().get(code).copied());
     if let Some(ptr) = cached {
-        eprintln!("[CLIF CACHE HIT] func arity={} code len={}", func.arity, code.len());
         func.jit_ptr.set(Some(ptr));
         return ptr;
     }
