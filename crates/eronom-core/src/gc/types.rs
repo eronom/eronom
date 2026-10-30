@@ -201,6 +201,7 @@ pub struct GcUpvalue {
     pub location: UpvalueLocation,
 }
 
+#[repr(C)]
 #[derive(Clone)]
 pub struct GcClosure {
     pub function: *mut GcObject,

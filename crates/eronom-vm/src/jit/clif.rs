@@ -14,7 +14,7 @@ use target_lexicon::Triple;
 use crate::vm::bytecode::{Function, OpCode};
 use crate::vm::execute::VM;
 use crate::vm::gc::{GcData, GcObject};
-use crate::vm::value::{TAG_FALSE, TAG_NULL, TAG_TRUE};
+use crate::vm::value::{TAG_FALSE, TAG_NULL, TAG_TRUE, TAG_FUNCTION, TAG_METHOD_PUSH, TAG_METHOD_POP};
 use crate::vm::value::Value;
 
 pub type JitFn = unsafe extern "C" fn(
@@ -71,7 +71,7 @@ impl CraneliftJitEngine {
         })
     }
 
-    pub fn compile_function(&mut self, func: &Function) -> anyhow::Result<*const c_void> {
+    pub fn compile_function(&mut self, func: &Function, func_obj: Option<*mut GcObject>) -> anyhow::Result<*const c_void> {
         let id = self.func_counter;
         self.func_counter += 1;
         let func_name = format!("clif_jit_fn_{}", id);
@@ -96,6 +96,8 @@ impl CraneliftJitEngine {
                 let f_ref = self.module.declare_func_in_func(fid, builder.func);
                 helper_refs.insert(name.as_str(), f_ref);
             }
+
+            let self_fref = self.module.declare_func_in_func(func_id, builder.func);
 
             let call_helper = |b: &mut FunctionBuilder, name: &str, args: &[cranelift_codegen::ir::Value]| {
                 let f_ref = helper_refs[name];
@@ -459,12 +461,189 @@ impl CraneliftJitEngine {
                         terminated = true;
                     }
                     OpCode::Call => {
-                        // 1. Flush registers back to frame_slots
+                        let callee = builder.use_var(reg_vars[rb]);
+                        let tag_mask = builder.ins().iconst(types::I64, 0xffff_0000_0000_0000u64 as i64);
+                        let callee_tag = builder.ins().band(callee, tag_mask);
+                        let ptr_mask = builder.ins().iconst(types::I64, 0x0000_ffff_ffff_ffffu64 as i64);
+
+                        let merge_block = builder.create_block();
+
+                        // Fast-path: Inline Array Push if operand == 1
+                        let check_pop_or_self_block = if operand == 1 {
+                            let push_tag = builder.ins().iconst(types::I64, TAG_METHOD_PUSH as i64);
+                            let is_push = builder.ins().icmp(IntCC::Equal, callee_tag, push_tag);
+                            let push_block = builder.create_block();
+                            let next_check_block = builder.create_block();
+                            builder.ins().brif(is_push, push_block, &[], next_check_block, &[]);
+
+                            builder.switch_to_block(push_block);
+                            let obj_ptr = builder.ins().band(callee, ptr_mask);
+                            let len = builder.ins().load(types::I64, MemFlags::new(), obj_ptr, 40);
+                            let cap = builder.ins().load(types::I64, MemFlags::new(), obj_ptr, 24);
+                            let can_fit = builder.ins().icmp(IntCC::SignedLessThan, len, cap);
+                            let fast_push_block = builder.create_block();
+                            let fallback_push_block = builder.create_block();
+                            builder.ins().brif(can_fit, fast_push_block, &[], fallback_push_block, &[]);
+
+                            builder.switch_to_block(fast_push_block);
+                            let buf_ptr = builder.ins().load(types::I64, MemFlags::new(), obj_ptr, 32);
+                            let elem_offset = builder.ins().ishl_imm_u(len, 3);
+                            let elem_addr = builder.ins().iadd(buf_ptr, elem_offset);
+                            let arg = builder.use_var(reg_vars[rb + 1]);
+                            builder.ins().store(MemFlags::new(), arg, elem_addr, 0);
+                            let new_len = builder.ins().iadd_imm_s(len, 1);
+                            builder.ins().store(MemFlags::new(), new_len, obj_ptr, 40);
+
+                            let color_byte = builder.ins().load(types::I8, MemFlags::new(), obj_ptr, 0);
+                            let black_val = builder.ins().iconst(types::I8, 2);
+                            let is_black = builder.ins().icmp(IntCC::Equal, color_byte, black_val);
+                            let wb_block = builder.create_block();
+                            let after_wb_block = builder.create_block();
+                            builder.ins().brif(is_black, wb_block, &[], after_wb_block, &[]);
+
+                            builder.switch_to_block(wb_block);
+                            call_helper(&mut builder, "er_jit_write_barrier", &[obj_ptr, arg]);
+                            builder.ins().jump(after_wb_block, &[]);
+
+                            builder.switch_to_block(after_wb_block);
+                            let f_len = builder.ins().fcvt_from_sint(types::F64, new_len);
+                            let res_push = builder.ins().bitcast(types::I64, MemFlags::new(), f_len);
+                            builder.def_var(reg_vars[ra], res_push);
+                            builder.ins().jump(merge_block, &[]);
+
+                            builder.switch_to_block(fallback_push_block);
+                            let res_fallback = call_helper(&mut builder, "er_jit_array_push", &[callee, arg]);
+                            builder.def_var(reg_vars[ra], res_fallback);
+                            builder.ins().jump(merge_block, &[]);
+
+                            next_check_block
+                        } else {
+                            builder.current_block().unwrap()
+                        };
+
+                        // Fast-path: Inline Array Pop if operand == 0
+                        let check_self_block = if operand == 0 {
+                            if builder.current_block() != Some(check_pop_or_self_block) {
+                                builder.switch_to_block(check_pop_or_self_block);
+                            }
+                            let pop_tag = builder.ins().iconst(types::I64, TAG_METHOD_POP as i64);
+                            let is_pop = builder.ins().icmp(IntCC::Equal, callee_tag, pop_tag);
+                            let pop_block = builder.create_block();
+                            let next_check_block = builder.create_block();
+                            builder.ins().brif(is_pop, pop_block, &[], next_check_block, &[]);
+
+                            builder.switch_to_block(pop_block);
+                            let obj_ptr = builder.ins().band(callee, ptr_mask);
+                            let len = builder.ins().load(types::I64, MemFlags::new(), obj_ptr, 40);
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let has_elems = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
+                            let pop_has_block = builder.create_block();
+                            let pop_empty_block = builder.create_block();
+                            builder.ins().brif(has_elems, pop_has_block, &[], pop_empty_block, &[]);
+
+                            builder.switch_to_block(pop_has_block);
+                            let new_len = builder.ins().iadd_imm_s(len, -1);
+                            builder.ins().store(MemFlags::new(), new_len, obj_ptr, 40);
+                            let buf_ptr = builder.ins().load(types::I64, MemFlags::new(), obj_ptr, 32);
+                            let elem_offset = builder.ins().ishl_imm_u(new_len, 3);
+                            let elem_addr = builder.ins().iadd(buf_ptr, elem_offset);
+                            let pop_val = builder.ins().load(types::I64, MemFlags::new(), elem_addr, 0);
+                            builder.def_var(reg_vars[ra], pop_val);
+                            builder.ins().jump(merge_block, &[]);
+
+                            builder.switch_to_block(pop_empty_block);
+                            let null_val = builder.ins().iconst(types::I64, TAG_NULL as i64);
+                            builder.def_var(reg_vars[ra], null_val);
+                            builder.ins().jump(merge_block, &[]);
+
+                            next_check_block
+                        } else {
+                            check_pop_or_self_block
+                        };
+
+                        if builder.current_block() != Some(check_self_block) {
+                            builder.switch_to_block(check_self_block);
+                        }
+
+                        let is_self_recurse_candidate = operand == func.arity && !func.is_async && func_obj.is_some();
+                        let not_self_call_block = builder.create_block();
+
+                        if is_self_recurse_candidate {
+                            let f_obj = func_obj.unwrap();
+                            let self_val = Value::function(f_obj).0 as i64;
+                            let func_obj_addr = f_obj as usize as i64;
+
+                            let self_const = builder.ins().iconst(types::I64, self_val);
+                            let is_self_direct = builder.ins().icmp(IntCC::Equal, callee, self_const);
+
+                            let check_closure_block = builder.create_block();
+                            let self_call_block = builder.create_block();
+
+                            builder.ins().brif(is_self_direct, self_call_block, &[], check_closure_block, &[]);
+
+                            builder.switch_to_block(check_closure_block);
+                            let fn_tag = builder.ins().iconst(types::I64, TAG_FUNCTION as i64);
+                            let is_fn = builder.ins().icmp(IntCC::Equal, callee_tag, fn_tag);
+                            let check_data_block = builder.create_block();
+                            builder.ins().brif(is_fn, check_data_block, &[], not_self_call_block, &[]);
+
+                            builder.switch_to_block(check_data_block);
+                            let callee_ptr = builder.ins().band(callee, ptr_mask);
+                            let data_tag = builder.ins().load(types::I8, MemFlags::new(), callee_ptr, 16);
+                            let closure_tag_val = builder.ins().iconst(types::I8, 10);
+                            let is_closure = builder.ins().icmp(IntCC::Equal, data_tag, closure_tag_val);
+                            let check_inner_fn_block = builder.create_block();
+                            builder.ins().brif(is_closure, check_inner_fn_block, &[], not_self_call_block, &[]);
+
+                            builder.switch_to_block(check_inner_fn_block);
+                            let inner_fn = builder.ins().load(types::I64, MemFlags::new(), callee_ptr, 24);
+                            let expected_fn = builder.ins().iconst(types::I64, func_obj_addr);
+                            let is_same_fn = builder.ins().icmp(IntCC::Equal, inner_fn, expected_fn);
+                            builder.ins().brif(is_same_fn, self_call_block, &[], not_self_call_block, &[]);
+
+                            builder.switch_to_block(self_call_block);
+                            for i in 0..operand {
+                                let arg_v = builder.use_var(reg_vars[rb + 1 + i]);
+                                let offset = ((rb + 1 + i) * 8) as i32;
+                                builder.ins().store(MemFlags::new(), arg_v, frame_slots_val, offset);
+                            }
+                            let callee_slots = builder.ins().iadd_imm_s(frame_slots_val, ((rb + 1) * 8) as i64);
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let call_inst = builder.ins().call(self_fref, &[
+                                vm_val,
+                                callee_slots,
+                                constants_ptr_val,
+                                zero,
+                                ip_out_val,
+                                dest_reg_out_val,
+                                func_reg_out_val,
+                                arg_count_out_val,
+                                ret_val_out_val,
+                            ]);
+                            let status = builder.inst_results(call_inst)[0];
+
+                            let one = builder.ins().iconst(types::I64, 1);
+                            let is_normal_ret = builder.ins().icmp(IntCC::Equal, status, one);
+                            let normal_ret_block = builder.create_block();
+                            let not_normal_ret_block = builder.create_block();
+                            builder.ins().brif(is_normal_ret, normal_ret_block, &[], not_normal_ret_block, &[]);
+
+                            builder.switch_to_block(normal_ret_block);
+                            let ret_val = builder.ins().load(types::I64, MemFlags::new(), ret_val_out_val, 0);
+                            builder.def_var(reg_vars[ra], ret_val);
+                            builder.ins().jump(merge_block, &[]);
+
+                            builder.switch_to_block(not_normal_ret_block);
+                            builder.ins().return_(&[status]);
+                        } else {
+                            builder.ins().jump(not_self_call_block, &[]);
+                        }
+
+                        builder.switch_to_block(not_self_call_block);
                         for i in 0..num_regs {
                             let v = builder.use_var(reg_vars[i]);
                             builder.ins().store(MemFlags::new(), v, frame_slots_val, (i * 8) as i32);
                         }
-                        // 2. Set yield metadata
                         let ip_c = builder.ins().iconst(types::I64, pc as i64);
                         builder.ins().store(MemFlags::new(), ip_c, ip_out_val, 0);
                         let dest_c = builder.ins().iconst(types::I64, ra as i64);
@@ -473,10 +652,11 @@ impl CraneliftJitEngine {
                         builder.ins().store(MemFlags::new(), func_c, func_reg_out_val, 0);
                         let args_c = builder.ins().iconst(types::I64, inst.operand as i64);
                         builder.ins().store(MemFlags::new(), args_c, arg_count_out_val, 0);
-                        // 3. Return status 0 (YieldCall)
                         let ret_status = builder.ins().iconst(types::I64, 0);
                         builder.ins().return_(&[ret_status]);
-                        terminated = true;
+
+                        builder.switch_to_block(merge_block);
+                        terminated = false;
                     }
                     OpCode::Return => {
                         let ret_val = builder.use_var(reg_vars[ra]);
@@ -550,10 +730,23 @@ fn declare_vm_helpers(module: &mut JITModule) -> anyhow::Result<HashMap<String, 
         map.insert(name.to_string(), fid);
     }
 
+    let helpers_1_arg = [
+        "er_jit_array_pop",
+    ];
+
+    for name in helpers_1_arg {
+        let mut sig = module.make_signature();
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        let fid = module.declare_function(name, Linkage::Import, &sig)?;
+        map.insert(name.to_string(), fid);
+    }
+
     let helpers_2_args = [
         "er_jit_negate", "er_jit_not", "er_jit_bit_not", "er_jit_typeof", "er_jit_to_iter",
         "er_jit_array_len_op", "er_jit_get_global", "er_jit_get_upvalue",
         "er_jit_make_closure", "er_jit_close_upvalues",
+        "er_jit_array_push", "er_jit_write_barrier",
     ];
 
     for name in helpers_2_args {
@@ -698,7 +891,7 @@ pub fn clif_compile_function(_vm: &mut VM, func_obj: *mut GcObject) -> *const c_
             *borrow = Some(CraneliftJitEngine::new().expect("Failed to initialize Cranelift JIT engine"));
         }
         let engine = borrow.as_mut().unwrap();
-        let code_ptr = engine.compile_function(func).expect("Failed to compile function with Cranelift JIT");
+        let code_ptr = engine.compile_function(func, Some(func_obj)).expect("Failed to compile function with Cranelift JIT");
         func.jit_ptr.set(Some(code_ptr));
         CLIF_JIT_CACHE.with(|cache| cache.borrow_mut().insert(code.clone(), code_ptr));
         code_ptr

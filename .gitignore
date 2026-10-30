@@ -44,6 +44,8 @@ hello
 graphify-out/
 
 # Temporary / Scratch Files
+CHAT_HISTORY.md
+benchmarks/
 dist/
 others/
 exampleapp/
