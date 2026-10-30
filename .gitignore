@@ -46,6 +46,7 @@ dist/
 others/
 exampleapp/
 servernew/
+benchmarks/
 fib.js
 fibcranelift
 servercranelift
