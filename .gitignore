@@ -40,3 +40,18 @@ hello
 # Graphify
 graphify-out/
 
+# Temporary / Scratch Files
+dist/
+others/
+exampleapp/
+servernew/
+fib.js
+fibcranelift
+servercranelift
+mirfib
+mirserver*
+hello*.er
+clean_code.md
+eronom_native_architecture_plan.md
+
+

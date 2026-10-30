@@ -18,12 +18,12 @@ Eronom is a high-performance, JIT-compiled scripting language runtime, template 
 | **`crates/eronom-runner/`** | **Standalone Micro-Runner**: Lightweight binary (`eronom-runner`) for executing standalone application bundles and direct script runs without developer tooling. |
 | **`crates/eronom-cranelift/`** | **AOT Compiler Toolchain**: Standalone Cranelift AOT code generator backend. |
 | **`src/vm/`** | **Virtual Machine**: Bytecode compiler (`compiler/`), register evaluation loop (`execute/`), HTTP handlers (`er_http/`), router (`router.rs`). |
-| **`src/jit/`** | **Execution Backends**: Vladimir Makarov's MIR JIT generator (`compiler/`), standalone native AOT code generators (`aot/` for ELF, PE64, Mach-O). |
+| **`src/jit/`** | **Execution Backends**: Cranelift JIT compiler backend (`clif.rs`), standalone native AOT code generators (`aot/` for ELF, PE64, Mach-O). |
 | **`src/toolchain/`** | **Toolchain Manager**: Toolchain discovery, installation, and invocation (`mod.rs`). |
 | **`src/cli/`** | **Command-Line Interface**: Subcommand routing (`commands.rs`), project scaffolding (`init.rs`), bundle builder (`build.rs`). |
 | **`libs/erm/`** | **ERM Component Framework**: Template compiler (`compiler/`), SSR/SSG/PPR web server (`server/`), reactivity runtime, and router (`router.rs`). |
 | **`std/`** | **Standard Libraries**: Built-in HTTP router & response primitives (`std/http.er`), file & I/O management (`std/io.er`). |
-| **`deps/`** | **Native Dependencies**: Vendored C/C++ libraries (`mir`, `uWebSockets`, `libuv`). |
+| **`deps/`** | **Native Dependencies**: Vendored C/C++ libraries (`uWebSockets`, `libuv`). |
 
 ---
 

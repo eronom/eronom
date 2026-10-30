@@ -17,6 +17,8 @@ use eronom::jit::aot::ir::{EirBinaryOp, EirFunction, EirInst, EirModule, EirType
 use eronom::frontend::parse_and_resolve_imports;
 use eronom::vm::Compiler;
 
+pub mod jit;
+
 pub fn map_eir_type_to_clif(ty: EirType) -> types::Type {
     match ty {
         EirType::F64 => types::F64,

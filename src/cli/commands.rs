@@ -94,7 +94,7 @@ pub enum Commands {
         #[arg(long)]
         cranelift: bool,
 
-        /// Use Vladimir Makarov's MIR engine for native AOT code generation
+        /// [Deprecated] Legacy alias for native code generation
         #[arg(long)]
         mir: bool,
     },

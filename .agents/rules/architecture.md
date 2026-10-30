@@ -32,8 +32,8 @@ AI agents working on this codebase should orient themselves using the following 
 - **`execute/`**: Core VM bytecode execution loop. Handles register manipulation, function calls, control flow jumps, standard FFI, fibers, and error handling.
 - **`er_http/`**: Native HTTP server integration, request/response abstractions, WebSocket handlers, and HMR.
 
-### G. Just-In-Time Compiler (`src/jit/`)
-- **`compiler/` & `bindings.rs`**: Generates MIR intermediate representation from bytecode chunks and compiles hotspot functions to native machine code.
+### G. Just-In-Time Compiler (`crates/eronom-vm/src/jit/`, `src/jit/`)
+- **`clif.rs`**: Generates Cranelift SSA intermediate representation from bytecode chunks and compiles hotspot functions to native machine code.
 - **`aot/`**: Standalone native object generators (ELF, PE64, Mach-O).
 
 ---

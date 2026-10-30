@@ -125,7 +125,7 @@ pub extern "C" fn er_jit_await(vm: *mut VM, await_val: Value, dest: *mut Value) 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_reset_context() {
-    crate::jit::compiler::reset_jit_state();
+    crate::jit::reset_jit_state();
 }
 
 #[unsafe(no_mangle)]

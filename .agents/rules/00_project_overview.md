@@ -8,7 +8,7 @@ Eronom (⚡) is a high-performance, JIT-compiled scripting language runtime, tem
 
 ## 1. Core Purpose & Capabilities
 - **High-Performance Scripting**: Dynamic, dynamically-typed scripting language designed for low-latency web application execution.
-- **JIT Compilation (MIR)**: Compiles VM bytecode into native machine code on-the-fly using Vladimir Makarov's MIR JIT framework (`src/jit/`).
+- **JIT Compilation (Cranelift)**: Compiles VM bytecode into native machine code on-the-fly using pure-Rust Cranelift JIT (`crates/eronom-vm/src/jit/clif.rs`).
 - **uWebSockets HTTP Engine**: High-throughput HTTP web server powered by native C++ `uWebSockets` FFI bindings (`src/vm/er_http.cpp` & `src/vm/er_http.rs`).
 - **Dynamic Connection-Preserving Hot-Reloading (HMR)**: Reloads script routes and virtual machine logic instantaneously on file change *without* dropping open TCP connections or restarting the main OS process.
 - **ERM Component Framework**: Template engine compiling reactive component templates (`.erm`) into reactive client/server Web applications with hot module replacement (`libs/erm/`).
@@ -22,7 +22,7 @@ Eronom (⚡) is a high-performance, JIT-compiled scripting language runtime, tem
 ## 3. Directory & Subsystem Overview
 - **`src/frontend/`**: Lexer (`lexer.rs`), Recursive Descent Parser (`parser.rs`), and AST nodes (`ast.rs`).
 - **`src/vm/`**: Bytecode compiler (`compiler.rs`), Bytecode Interpreter (`execute.rs`), Tagged Value types (`value.rs`), Mark-and-Sweep GC (`gc.rs`), and uWebSockets FFI (`er_http.rs`/`er_http.cpp`).
-- **`src/jit/`**: MIR intermediate representation generator and native JIT binder (`compiler.rs`, `bindings.rs`).
+- **`src/jit/`**: Cranelift JIT SSA IR generator, native runtime binder (`crates/eronom-vm/src/jit/clif.rs`), and AOT code generators.
 - **`libs/erm/`**: ERM component compiler, dev/prod web server engine (`server.rs`), and CLI commands (`cli.rs`).
 - **`libs/init/`**: Template files for project initialization (`eronom init`), client-side reactivity (`runtime.js`), and HMR client (`hmr.js`).
 - **`std/`**: Built-in Eronom standard library scripts (`std/http.er`, `std/io.er`).

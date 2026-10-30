@@ -9,7 +9,7 @@ pub fn find_test_files_in_dir(dir: &Path, out: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if !name.starts_with('.') && name != "target" {
+                if !name.starts_with('.') && name != "target" && name != "deps" && name != "crates" && name != "my-api" {
                     find_test_files_in_dir(&path, out);
                 }
             } else if path.is_file() {
@@ -49,10 +49,14 @@ pub fn run_test_command(file_opt: Option<PathBuf>) -> anyhow::Result<()> {
     } else {
         let mut files = Vec::new();
         let tests_dir = Path::new("tests");
+        let example_tests_dir = Path::new("example-er/tests");
         if tests_dir.exists() && tests_dir.is_dir() {
             find_test_files_in_dir(tests_dir, &mut files);
+        } else if example_tests_dir.exists() && example_tests_dir.is_dir() {
+            find_test_files_in_dir(example_tests_dir, &mut files);
+        } else {
+            find_test_files_in_dir(Path::new("."), &mut files);
         }
-        find_test_files_in_dir(Path::new("."), &mut files);
         files.sort();
         files.dedup();
         if files.is_empty() {
@@ -82,7 +86,13 @@ pub fn run_test_command(file_opt: Option<PathBuf>) -> anyhow::Result<()> {
         if let Some(dir) = original_dir {
             let _ = std::env::set_current_dir(dir);
         }
-        if let Err(e) = res {
+        let expects_error = file_name.starts_with("test_err_") || file_name.contains("invalid");
+        if expects_error {
+            if res.is_ok() {
+                eprintln!("Test failed in {}: Expected error but execution succeeded", test_file.display());
+                std::process::exit(1);
+            }
+        } else if let Err(e) = res {
             eprintln!("Test failed in {}: {}", test_file.display(), e);
             std::process::exit(1);
         }

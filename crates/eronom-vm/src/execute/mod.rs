@@ -46,6 +46,7 @@ impl VM {
         };
         crate::vm::alloc::init_allocator_options();
         types::trigger_jit_reset_ic();
+        crate::jit::init_jit_hooks();
         Self {
             has_error_flag: 0,
             frames: Vec::new(),

@@ -1,7 +1,33 @@
 use fnv::FnvHashMap;
 use crate::vm::bytecode::{Function, OpCode};
-use crate::jit::compiler::emit_header::calculate_max_regs;
 use super::ir::{EirBinaryOp, EirFunction, EirInst, EirModule, EirType, EirUnaryOp};
+
+fn calculate_max_regs(func: &Function) -> usize {
+    let mut num_regs = func.arity;
+    for inst in &func.chunk.code {
+        let max_accessed = match inst.op {
+            OpCode::MakeArray => inst.rb as usize + inst.operand as usize,
+            OpCode::MakeObject => inst.rb as usize + 2 * (inst.operand as usize),
+            OpCode::Call => inst.rb as usize + 1 + inst.operand as usize,
+            OpCode::DefineStruct | OpCode::CloseUpvalue => 0,
+            OpCode::GetUpvalue | OpCode::Closure | OpCode::SetUpvalue => inst.ra as usize + 1,
+            OpCode::Await => {
+                let m = (inst.ra as usize).max(inst.rb as usize);
+                m + 1
+            }
+            _ => {
+                let mut m = inst.ra as usize;
+                if inst.rb as usize > m { m = inst.rb as usize; }
+                if inst.rc as usize > m { m = inst.rc as usize; }
+                m + 1
+            }
+        };
+        if max_accessed > num_regs {
+            num_regs = max_accessed;
+        }
+    }
+    num_regs
+}
 
 fn aot_analyze_types(func: &Function, num_regs: usize) -> Vec<Vec<EirType>> {
     let code = &func.chunk.code;

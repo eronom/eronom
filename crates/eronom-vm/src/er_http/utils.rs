@@ -295,24 +295,16 @@ pub fn value_to_json(val: Value) -> serde_json::Value {
 }
 
 pub fn is_port_in_use(port: u16) -> bool {
-    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
 
     let v4 = SocketAddr::from(([127, 0, 0, 1], port));
-    if TcpStream::connect_timeout(&v4, Duration::from_millis(50)).is_ok() {
+    if TcpStream::connect_timeout(&v4, Duration::from_millis(20)).is_ok() {
         return true;
     }
 
     let v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port));
-    if TcpStream::connect_timeout(&v6, Duration::from_millis(50)).is_ok() {
-        return true;
-    }
-
-    if TcpListener::bind(("0.0.0.0", port)).is_err() {
-        return true;
-    }
-
-    if TcpListener::bind(("127.0.0.1", port)).is_err() {
+    if TcpStream::connect_timeout(&v6, Duration::from_millis(20)).is_ok() {
         return true;
     }
 

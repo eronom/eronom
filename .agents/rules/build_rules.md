@@ -8,7 +8,7 @@ Follow these mandatory rules when building, compiling, running, or deploying the
 
 ## 1. Build Performance
 - **Prefer Fast Debug Builds**: Always run `cargo build` instead of `cargo build --release`. 
-- **Release Build Warning**: Eronom release builds require heavy optimization steps for native uWebSockets C++ code and MIR JIT compilation, making `cargo build --release` time-consuming.
+- **Release Build Warning**: Eronom release builds require heavy optimization steps for native uWebSockets C++ code, making `cargo build --release` time-consuming.
 
 ## 2. Running & Executing Scripts
 - **Execute Raw Eronom Scripts**: Use `cargo run -- path/to/script.er` to test scripts without installing the CLI globally.

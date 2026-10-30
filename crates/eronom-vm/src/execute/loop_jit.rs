@@ -188,6 +188,7 @@ impl VM {
                         reload_stack!();
                         ip_val = 0;
                     } else if callee.is_native_function() {
+                        frame.ip = ip_out;
                         let native = callee.as_native_fn();
                         let mut args = Vec::with_capacity(arg_count_out);
                         for i in 0..arg_count_out {
@@ -196,9 +197,6 @@ impl VM {
                         let result = native(args);
                         reload_stack!();
                         if self.stack.is_empty() {
-                            if !self.frames.is_empty() {
-                                frame.ip = ip_out - 1;
-                            }
                             return Ok(Value::null());
                         }
                         *frame_slots.add(dest_reg_out) = result;
@@ -257,6 +255,38 @@ impl VM {
                         *frame_slots.add(dest_reg_out) = result;
                         frame.ip = ip_out + 1;
                         ip_val = frame.ip;
+                    } else if callee.is_method_send_json() {
+                        let res_ptr = (callee.0 & crate::vm::value::PTR_MASK) as *mut std::ffi::c_void;
+                        if !res_ptr.is_null() {
+                            let arg = if arg_count_out > 0 {
+                                *frame_slots.add(func_reg_out + 1)
+                            } else {
+                                Value::null()
+                            };
+                            let json_val = crate::vm::er_http::value_to_json(arg);
+                            let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+                            crate::vm::er_http::end_http_response_json(res_ptr, &json_str);
+                        }
+                        reload_stack!();
+                        *frame_slots.add(dest_reg_out) = Value::null();
+                        frame.ip = ip_out + 1;
+                        ip_val = frame.ip;
+                    } else if callee.is_method_resolve() {
+                        let promise_ptr = callee.as_gc_ptr();
+                        let arg = if arg_count_out > 0 {
+                            *frame_slots.add(func_reg_out + 1)
+                        } else {
+                            Value::null()
+                        };
+                        self.event_loop.enqueue_task(crate::vm::execute::EventLoopTask {
+                            callback: Value::null(),
+                            args: Vec::new(),
+                            result: crate::vm::execute::AsyncResult::ResolvePromise(promise_ptr, arg),
+                        });
+                        reload_stack!();
+                        *frame_slots.add(dest_reg_out) = Value::null();
+                        frame.ip = ip_out + 1;
+                        ip_val = frame.ip;
                     } else if callee.is_array_method_push() || callee.is_array_method_pop() {
                         let ptr = callee.as_gc_ptr();
                         let result = match &mut (*ptr).data {
@@ -274,6 +304,22 @@ impl VM {
                             }
                             _ => unreachable!(),
                         };
+                        reload_stack!();
+                        *frame_slots.add(dest_reg_out) = result;
+                        frame.ip = ip_out + 1;
+                        ip_val = frame.ip;
+                    } else if callee.is_object() && matches!(&(*callee.as_gc_ptr()).data, GcData::StructConstructor(_)) {
+                        let ptr = callee.as_gc_ptr();
+                        let descriptor = match &(*ptr).data {
+                            GcData::StructConstructor(desc) => desc.clone(),
+                            _ => unreachable!(),
+                        };
+                        let mut args = Vec::with_capacity(arg_count_out);
+                        for i in 0..arg_count_out {
+                            args.push(*frame_slots.add(func_reg_out + 1 + i));
+                        }
+                        frame.ip = ip_out;
+                        let result = crate::vm::alloc::construct_struct_from_args(&descriptor, args)?;
                         reload_stack!();
                         *frame_slots.add(dest_reg_out) = result;
                         frame.ip = ip_out + 1;
