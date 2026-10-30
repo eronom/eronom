@@ -17,6 +17,8 @@ temp_compiled.mir
 **/eronom-runner
 **/eronom-cranelift
 **/eronom-mir
+bench-cranelift
+bench-mir
 !crates/**
 
 # Logs & Test Scratch Artifacts
@@ -46,7 +48,6 @@ dist/
 others/
 exampleapp/
 servernew/
-benchmarks/
 fib.js
 fibcranelift
 servercranelift
