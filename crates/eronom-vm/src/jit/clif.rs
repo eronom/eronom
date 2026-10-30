@@ -407,8 +407,8 @@ impl CraneliftJitEngine {
                     }
                     OpCode::SetIndex => {
                         let obj = builder.use_var(reg_vars[ra]);
-                        let idx = builder.use_var(reg_vars[rc]);
-                        let val = builder.use_var(reg_vars[rb]);
+                        let idx = builder.use_var(reg_vars[rb]);
+                        let val = builder.use_var(reg_vars[rc]);
                         call_helper(&mut builder, "er_jit_set_index", &[vm_val, obj, idx, val]);
                     }
                     OpCode::DefineStruct => {
@@ -645,7 +645,7 @@ fn calculate_num_regs(func: &Function) -> usize {
             max_reg = max_reg.max(inst.rb as usize + (inst.operand as usize * 2));
         }
     }
-    (max_reg + 1).max(func.arity).max(32)
+    (max_reg + 1).max(func.arity).max(1)
 }
 
 fn calculate_resume_targets(func: &Function) -> Vec<bool> {

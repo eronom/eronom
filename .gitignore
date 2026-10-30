@@ -16,6 +16,7 @@ temp_compiled.mir
 **/eronom
 **/eronom-runner
 **/eronom-cranelift
+**/eronom-mir
 !crates/**
 
 # Logs & Test Scratch Artifacts
