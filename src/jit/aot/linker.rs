@@ -71,131 +71,30 @@ pub fn resolve_runner_stub(custom_stub: Option<&Path>) -> Option<std::path::Path
         }
     }
 
-    // 1. Direct micro-runner candidates relative to CWD
-    for candidate in &[
+    #[cfg(windows)]
+    let candidates = &[
+        "target/release/eronom-runner.exe",
+        "target/debug/eronom-runner.exe",
+        "stubs/eronom-runner-win-x64.exe",
+        "stubs/eronom-runner.exe",
+        "stubs/windows/eronom-runner.exe",
+        "stubs/er_runner.exe",
+        "stubs/windows/er_runner.exe",
+        "target/release/eronom.exe",
+        "target/debug/eronom.exe",
+    ];
+
+    #[cfg(not(windows))]
+    let candidates = &[
+        "target/release/eronom-runner",
+        "target/debug/eronom-runner",
         "stubs/eronom-runner",
         "stubs/er_runner",
-        "target/release/eronom-runner",
-        "target/release/er_runner",
-        "target/debug/eronom-runner",
-        "target/debug/er_runner",
-        "stubs/eronom-runner.exe",
-        "stubs/er_runner.exe",
-    ] {
-        let p = std::path::PathBuf::from(candidate);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    // 2. Relative to current_exe and its ancestors
-    if let Ok(p) = std::env::current_exe() {
-        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
-        let name = canonical.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if (name == "eronom-runner" || name == "eronom-runner.exe" || name == "er_runner" || name == "er_runner.exe") && canonical.exists() {
-            return Some(canonical);
-        }
-
-        let mut curr = canonical.parent();
-        while let Some(parent) = curr {
-            let direct0 = parent.join("eronom-runner");
-            if direct0.exists() {
-                return Some(direct0);
-            }
-            let direct1 = parent.join("er_runner");
-            if direct1.exists() {
-                return Some(direct1);
-            }
-            let stub0 = parent.join("stubs/eronom-runner");
-            if stub0.exists() {
-                return Some(stub0);
-            }
-            let stub1 = parent.join("stubs/er_runner");
-            if stub1.exists() {
-                return Some(stub1);
-            }
-            let tr0 = parent.join("target/release/eronom-runner");
-            if tr0.exists() {
-                return Some(tr0);
-            }
-            let td0 = parent.join("target/debug/eronom-runner");
-            if td0.exists() {
-                return Some(td0);
-            }
-            curr = parent.parent();
-        }
-    }
-
-    // 3. Walk ancestors of current_dir
-    if let Ok(cwd) = std::env::current_dir() {
-        let mut curr = Some(cwd.as_path());
-        while let Some(parent) = curr {
-            let direct0 = parent.join("eronom-runner");
-            if direct0.exists() {
-                return Some(direct0);
-            }
-            let direct1 = parent.join("er_runner");
-            if direct1.exists() {
-                return Some(direct1);
-            }
-            let stub0 = parent.join("stubs/eronom-runner");
-            if stub0.exists() {
-                return Some(stub0);
-            }
-            let stub1 = parent.join("stubs/er_runner");
-            if stub1.exists() {
-                return Some(stub1);
-            }
-            let tr0 = parent.join("target/release/eronom-runner");
-            if tr0.exists() {
-                return Some(tr0);
-            }
-            let td0 = parent.join("target/debug/eronom-runner");
-            if td0.exists() {
-                return Some(td0);
-            }
-            curr = parent.parent();
-        }
-    }
-
-    // 4. HOME directory
-    if let Ok(home) = std::env::var("HOME") {
-        let home_stub1 = std::path::PathBuf::from(&home).join(".eronom/stubs/eronom-runner");
-        if home_stub1.exists() {
-            return Some(home_stub1);
-        }
-        let home_stub = std::path::PathBuf::from(&home).join(".eronom/stubs/er_runner");
-        if home_stub.exists() {
-            return Some(home_stub);
-        }
-        let home_bin1 = std::path::PathBuf::from(&home).join("eronom/eronom-runner");
-        if home_bin1.exists() {
-            return Some(home_bin1);
-        }
-    }
-
-    // 5. Last resort fallback to full CLI only if no micro-runner exists
-    for candidate in &[
         "target/release/eronom",
         "target/debug/eronom",
-    ] {
-        let p = std::path::PathBuf::from(candidate);
-        if p.exists() {
-            return Some(p);
-        }
-    }
+    ];
 
-    if let Ok(p) = std::env::current_exe() {
-        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
-        if let Some(parent) = canonical.parent() {
-            let candidate = parent.join("eronom");
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    None
+    find_target_candidate_in_hierarchy(candidates)
 }
 
 fn find_target_candidate_in_hierarchy(candidates: &[&str]) -> Option<std::path::PathBuf> {
@@ -233,7 +132,7 @@ fn find_target_candidate_in_hierarchy(candidates: &[&str]) -> Option<std::path::
         }
     }
 
-    if let Ok(home) = std::env::var("HOME") {
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
         let home_dir = std::path::PathBuf::from(&home);
         for cand in candidates {
             let p1 = home_dir.join(".eronom").join(cand);
@@ -256,36 +155,54 @@ pub fn resolve_target_stub(custom_stub: Option<&Path>, target: Option<&str>) -> 
             return Some(s.to_path_buf());
         }
     }
-    if let Some(target_str) = target {
-        let (_, os_kind) = resolve_target_triple(target_str);
-        if os_kind == "windows" {
-            return find_target_candidate_in_hierarchy(&[
-                "stubs/eronom-runner-win-x64.exe",
-                "stubs/eronom-runner.exe",
-                "stubs/windows/eronom-runner.exe",
-                "stubs/er_runner.exe",
-                "stubs/windows/er_runner.exe",
-            ]);
-        } else if os_kind == "macos" {
-            return find_target_candidate_in_hierarchy(&[
-                "stubs/eronom-runner-mac-arm64",
-                "stubs/eronom-runner-mac",
-                "stubs/macos/eronom-runner",
-                "stubs/er_runner_mac",
-                "stubs/macos/er_runner",
-            ]);
-        } else if os_kind == "linux" {
-            if let Some(stub) = find_target_candidate_in_hierarchy(&[
-                "stubs/eronom-runner",
-                "stubs/eronom-runner-linux",
-                "stubs/linux/eronom-runner",
-                "stubs/er_runner",
-                "stubs/linux/er_runner",
-            ]) {
-                return Some(stub);
-            }
-        }
+    let os_kind = if let Some(target_str) = target {
+        resolve_target_triple(target_str).1
+    } else if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+
+    if os_kind == "windows" {
+        return find_target_candidate_in_hierarchy(&[
+            "target/release/eronom-runner.exe",
+            "target/debug/eronom-runner.exe",
+            "stubs/eronom-runner-win-x64.exe",
+            "stubs/eronom-runner.exe",
+            "stubs/windows/eronom-runner.exe",
+            "stubs/er_runner.exe",
+            "stubs/windows/er_runner.exe",
+            "target/release/eronom.exe",
+            "target/debug/eronom.exe",
+        ]);
+    } else if os_kind == "macos" {
+        return find_target_candidate_in_hierarchy(&[
+            "target/release/eronom-runner",
+            "target/debug/eronom-runner",
+            "stubs/eronom-runner-mac-arm64",
+            "stubs/eronom-runner-mac",
+            "stubs/macos/eronom-runner",
+            "stubs/er_runner_mac",
+            "stubs/macos/er_runner",
+            "target/release/eronom",
+            "target/debug/eronom",
+        ]);
+    } else if os_kind == "linux" {
+        return find_target_candidate_in_hierarchy(&[
+            "target/release/eronom-runner",
+            "target/debug/eronom-runner",
+            "stubs/eronom-runner",
+            "stubs/eronom-runner-linux",
+            "stubs/linux/eronom-runner",
+            "stubs/er_runner",
+            "stubs/linux/er_runner",
+            "target/release/eronom",
+            "target/debug/eronom",
+        ]);
     }
+
     resolve_runner_stub(custom_stub)
 }
 
@@ -351,17 +268,20 @@ fn build_aot_binary_full(
 
     // 3. Ensure parent output directory exists and handle platform extensions
     let mut final_out = output_path.to_path_buf();
-    if let Some(target_str) = target {
+    let is_windows = if let Some(target_str) = target {
         let (_, os_kind) = resolve_target_triple(target_str);
-        if os_kind == "windows" {
-            let file_name = final_out
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if !file_name.ends_with(".exe") {
-                final_out = final_out.with_file_name(format!("{}.exe", file_name));
-            }
+        os_kind == "windows"
+    } else {
+        cfg!(windows)
+    };
+    if is_windows {
+        let file_name = final_out
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if !file_name.ends_with(".exe") {
+            final_out = final_out.with_file_name(format!("{}.exe", file_name));
         }
     }
 
@@ -374,6 +294,12 @@ fn build_aot_binary_full(
     let sync_final_out = |final_out: &Path| {
         if final_out != output_path && final_out.exists() {
             let _ = std::fs::copy(final_out, output_path);
+            #[cfg(windows)]
+            {
+                if !output_path.to_string_lossy().ends_with(".exe") {
+                    let _ = std::fs::copy(final_out, output_path.with_extension("exe"));
+                }
+            }
         }
     };
 
@@ -460,6 +386,21 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    fn get_actual_bin(bin_path: &Path) -> std::path::PathBuf {
+        if cfg!(windows) {
+            let exe_path = bin_path.with_extension("exe");
+            if exe_path.exists() {
+                exe_path
+            } else {
+                bin_path.to_path_buf()
+            }
+        } else if bin_path.exists() {
+            bin_path.to_path_buf()
+        } else {
+            bin_path.with_extension("exe")
+        }
+    }
+
     #[test]
     fn test_build_aot_binary_end_to_end() {
         let temp_dir = std::env::temp_dir();
@@ -473,11 +414,7 @@ mod tests {
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary should succeed: {:?}", res.err());
-        let actual_bin = if bin_path.exists() {
-            bin_path.clone()
-        } else {
-            bin_path.with_extension("exe")
-        };
+        let actual_bin = get_actual_bin(&bin_path);
         assert!(actual_bin.exists(), "Binary file should exist on disk");
 
         // Execute the compiled native binary
@@ -507,11 +444,7 @@ test()
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let actual_bin = if bin_path.exists() {
-            bin_path.clone()
-        } else {
-            bin_path.with_extension("exe")
-        };
+        let actual_bin = get_actual_bin(&bin_path);
         assert!(actual_bin.exists());
         let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
@@ -541,12 +474,8 @@ print(arr[1]);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let actual_bin = if bin_path.exists() {
-            bin_path.clone()
-        } else {
-            bin_path.with_extension("exe")
-        };
-        assert!(actual_bin.exists());
+        let actual_bin = get_actual_bin(&bin_path);
+        assert!(actual_bin.exists(), "Binary file should exist at {}", actual_bin.display());
         let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
         let _ = std::fs::remove_file(bin_path.with_extension("exe"));
@@ -568,11 +497,7 @@ print(arr[1]);
         let bin_path = temp_dir.join(format!("test_fib_bin_{}", std::process::id()));
         let res = build_aot_binary(Path::new("fib.er"), &bin_path);
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let actual_bin = if bin_path.exists() {
-            bin_path.clone()
-        } else {
-            bin_path.with_extension("exe")
-        };
+        let actual_bin = get_actual_bin(&bin_path);
         assert!(actual_bin.exists());
         let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
@@ -595,11 +520,7 @@ print(arr[1]);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary in-process failed: {:?}", res.err());
-        let actual_bin = if bin_path.exists() {
-            bin_path.clone()
-        } else {
-            bin_path.with_extension("exe")
-        };
+        let actual_bin = get_actual_bin(&bin_path);
         assert!(actual_bin.exists(), "Binary file should exist on disk");
 
         let output = Command::new(&actual_bin).output().expect("Failed to execute in-process binary");
