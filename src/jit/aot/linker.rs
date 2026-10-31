@@ -84,7 +84,24 @@ pub fn resolve_runner_stub(custom_stub: Option<&Path>) -> Option<std::path::Path
         "target/debug/eronom.exe",
     ];
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let candidates = &[
+        "target/aarch64-apple-darwin/release/eronom-runner",
+        "target/aarch64-apple-darwin/debug/eronom-runner",
+        "target/release/eronom-runner",
+        "target/debug/eronom-runner",
+        "stubs/eronom-runner-mac-arm64",
+        "stubs/eronom-runner-mac",
+        "stubs/macos/eronom-runner",
+        "stubs/er_runner_mac",
+        "stubs/macos/er_runner",
+        "target/aarch64-apple-darwin/release/eronom",
+        "target/aarch64-apple-darwin/debug/eronom",
+        "target/release/eronom",
+        "target/debug/eronom",
+    ];
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     let candidates = &[
         "target/release/eronom-runner",
         "target/debug/eronom-runner",
@@ -179,6 +196,8 @@ pub fn resolve_target_stub(custom_stub: Option<&Path>, target: Option<&str>) -> 
         ]);
     } else if os_kind == "macos" {
         return find_target_candidate_in_hierarchy(&[
+            "target/aarch64-apple-darwin/release/eronom-runner",
+            "target/aarch64-apple-darwin/debug/eronom-runner",
             "target/release/eronom-runner",
             "target/debug/eronom-runner",
             "stubs/eronom-runner-mac-arm64",
@@ -186,6 +205,8 @@ pub fn resolve_target_stub(custom_stub: Option<&Path>, target: Option<&str>) -> 
             "stubs/macos/eronom-runner",
             "stubs/er_runner_mac",
             "stubs/macos/er_runner",
+            "target/aarch64-apple-darwin/release/eronom",
+            "target/aarch64-apple-darwin/debug/eronom",
             "target/release/eronom",
             "target/debug/eronom",
         ]);
@@ -340,9 +361,15 @@ fn build_aot_binary_full(
         }
     }
 
-    // 2. Try Cranelift backend first for pure-Rust native code generation
+    // 2. Try Cranelift backend first for pure-Rust native code generation (x86_64 ELF/PE)
+    let is_macos = if let Some(t) = target {
+        let lower = t.to_lowercase();
+        lower == "macos" || lower == "mac" || lower == "darwin" || lower.contains("apple-darwin")
+    } else {
+        cfg!(target_os = "macos")
+    };
     let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
-    if !no_clif {
+    if !no_clif && !is_macos {
         if crate::toolchain::run_cranelift_build(script_path, &final_out, target).is_ok() {
             #[cfg(unix)]
             {

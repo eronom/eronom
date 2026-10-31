@@ -1217,6 +1217,12 @@ pub fn build_cranelift_binary(
                         .status();
                     if matches!(status, Ok(s) if s.success()) {
                         true
+                    } else if target.is_none() {
+                        if let Some(stub_path) = eronom::jit::aot::resolve_target_stub(None, Some("macos")) {
+                            eronom::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
+                        } else {
+                            eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
+                        }
                     } else {
                         eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
                     }
@@ -1224,12 +1230,12 @@ pub fn build_cranelift_binary(
                 #[cfg(not(target_os = "macos"))]
                 {
                     // Pure-Rust Mach-O 64-bit Synthesizer: emits standalone macOS binary without ld64 or runner stub
-                    if eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok() {
-                        true
+                    if target.is_some() {
+                        eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
                     } else if let Some(stub_path) = eronom::jit::aot::resolve_target_stub(None, Some("macos")) {
                         eronom::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
                     } else {
-                        false
+                        eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
                     }
                 }
             }
