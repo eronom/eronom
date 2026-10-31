@@ -1,30 +1,5 @@
 use std::path::Path;
-use std::process::Command;
 use crate::frontend::parse_and_resolve_imports;
-use crate::vm::compiler::Compiler;
-use super::lower::lower_program;
-use super::generator::generate_native_c;
-
-fn find_zig() -> Option<std::path::PathBuf> {
-    if let Ok(output) = Command::new("zig").arg("version").output() {
-        if output.status.success() {
-            return Some(std::path::PathBuf::from("zig"));
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        let p = std::path::PathBuf::from(home).join(".zvm/bin/zig");
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        let p = std::path::PathBuf::from(home).join(".eronom/toolchain/bin/zig");
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    None
-}
 
 fn get_aot_cache_dir() -> Option<std::path::PathBuf> {
     if std::env::var("ERONOM_NO_CACHE").map(|v| v == "1" || v == "true").unwrap_or(false)
@@ -360,37 +335,21 @@ fn build_aot_binary_full(
     script_path: &Path,
     output_path: &Path,
     target: Option<&str>,
-    prefer_in_process: bool,
+    _prefer_in_process: bool,
     custom_stub: Option<&Path>,
 ) -> anyhow::Result<()> {
     if !script_path.exists() {
         anyhow::bail!("Source script not found: {}", script_path.display());
     }
 
-    // 1. Parse and resolve module imports
-    let stmts = match parse_and_resolve_imports(script_path) {
-        Ok(s) => s,
-        Err(e) => anyhow::bail!("Compile/Import error in {}: {}", script_path.display(), e),
-    };
+    // 1. Verify source script exists and read bytes
+    let script_bytes = std::fs::read(script_path)?;
 
-    // 2. Compile AST statements into bytecode function
-    let compiler = Compiler::new();
-    let function = match compiler.compile(&stmts) {
-        Ok(f) => f,
-        Err(e) => anyhow::bail!("Bytecode lowering error: {}", e),
-    };
+    // 2. Validate script syntax
+    let _ = parse_and_resolve_imports(script_path)
+        .map_err(|e| anyhow::anyhow!("Compile/Import error in {}: {}", script_path.display(), e))?;
 
-    // 3. Lower bytecode function to typed E-IR module
-    let module_name = script_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "er_module".to_string());
-    let eir_module = lower_program(&function, &module_name);
-
-    // 4. Generate native C / MIR machine code representation
-    let c_source = generate_native_c(&eir_module);
-
-    // 5. Ensure parent output directory exists and handle platform extensions
+    // 3. Ensure parent output directory exists and handle platform extensions
     let mut final_out = output_path.to_path_buf();
     if let Some(target_str) = target {
         let (_, os_kind) = resolve_target_triple(target_str);
@@ -418,19 +377,13 @@ fn build_aot_binary_full(
         }
     };
 
-    let env_in_process = std::env::var("ERONOM_AOT_IN_PROCESS")
-        .map(|v| v == "1" || v == "true")
-        .unwrap_or(false);
-    let use_in_process = prefer_in_process || env_in_process;
-
     // Content-addressed AOT binary caching
     let cache_dir = get_aot_cache_dir();
     let cache_file = if let Some(ref cdir) = cache_dir {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
-        hasher.update(c_source.as_bytes());
+        hasher.update(&script_bytes);
         hasher.update(target.unwrap_or("host").as_bytes());
-        hasher.update((if use_in_process { "in_process" } else { "cc" }).as_bytes());
         let hash_hex = format!("{:x}", hasher.finalize());
         let _ = std::fs::create_dir_all(cdir);
         Some(cdir.join(hash_hex))
@@ -452,186 +405,60 @@ fn build_aot_binary_full(
         }
     }
 
-    if use_in_process {
-        let _is_cross = if let Some(target_str) = target {
-            let (_, os_kind) = resolve_target_triple(target_str);
-            #[cfg(target_os = "linux")]
-            let host_os = "linux";
-            #[cfg(target_os = "windows")]
-            let host_os = "windows";
-            #[cfg(target_os = "macos")]
-            let host_os = "macos";
-            os_kind != host_os
-        } else {
-            false
-        };
-
-        // 1. If custom runner stub is provided, always use it
-        if let Some(custom) = custom_stub {
-            if custom.exists() {
-                crate::cli::bundle::create_standalone_binary(custom, script_path, None, &final_out)?;
-                sync_final_out(&final_out);
-                return Ok(());
-            }
-        }
-
-        // 2. Try Cranelift backend first for pure-Rust native code generation
-        let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
-        if !no_clif {
-            if crate::toolchain::run_cranelift_build(script_path, &final_out, target).is_ok() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
-                }
-                if let Some(ref cfile) = cache_file {
-                    let _ = std::fs::copy(&final_out, cfile);
-                }
-                sync_final_out(&final_out);
-                return Ok(());
-            }
-        }
-
-        // 3. Fallback: If a runner stub is available and not in pure-native mode, use it to ensure runnability
-        let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1" || v == "true").unwrap_or(false);
-        if !pure_native {
-            if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
-                crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
-                sync_final_out(&final_out);
-                return Ok(());
-            }
-        }
-
-        // 3. Otherwise (cross-platform with zero external toolchains or pure native mode), build in-process via Cranelift
-        crate::toolchain::run_cranelift_build(script_path, &final_out, target)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
-        }
-        if let Some(ref cfile) = cache_file {
-            let _ = std::fs::copy(&final_out, cfile);
-        }
-        sync_final_out(&final_out);
-        return Ok(());
-    }
-
-    // 6. Write temporary native source and invoke platform/target linker
-    let temp_dir = std::env::temp_dir();
-    let temp_c = temp_dir.join(format!("er_aot_{}_{}.c", module_name, std::process::id()));
-    std::fs::write(&temp_c, &c_source)?;
-
-    let status = if let Some(target_str) = target {
-        let (zig_target, _) = resolve_target_triple(target_str);
-        let target_triple = if zig_target == "custom" { target_str } else { zig_target };
-
-        if let Some(zig) = find_zig() {
-            Command::new(zig)
-                .arg("cc")
-                .arg("-O3")
-                .arg("-fomit-frame-pointer")
-                .arg("-s")
-                .arg("-target")
-                .arg(target_triple)
-                .arg(&temp_c)
-                .arg("-o")
-                .arg(&final_out)
-                .status()?
-        } else {
-            #[cfg(target_os = "linux")]
-            let is_host = target_str == "linux" || target_str.contains("linux");
-            #[cfg(target_os = "macos")]
-            let is_host = target_str == "macos" || target_str.contains("darwin");
-            #[cfg(target_os = "windows")]
-            let is_host = target_str == "windows";
-
-            if is_host && Command::new("cc").arg("--version").output().is_ok() {
-                Command::new("cc")
-                    .arg("-O3")
-                    .arg("-fomit-frame-pointer")
-                    .arg("-fno-math-errno")
-                    .arg(&temp_c)
-                    .arg("-o")
-                    .arg(&final_out)
-                    .status()?
-            } else if is_host {
-                if let Some(stub_path) = resolve_runner_stub(custom_stub) {
-                    let _ = std::fs::remove_file(&temp_c);
-                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
-                    sync_final_out(&final_out);
-                    return Ok(());
-                } else {
-                    let _ = std::fs::remove_file(&temp_c);
-                    anyhow::bail!("No native C compiler found and runner stub unavailable.");
-                }
-            } else {
-                let _ = std::fs::remove_file(&temp_c);
-                anyhow::bail!(
-                    "Cross-compilation for target '{}' requires 'zig' to be installed on your system.\nPlease install zig or ensure it is in PATH.",
-                    target_str
-                );
-            }
-        }
-    } else {
-        // Native build: prefer host cc, fallback to zig cc, or zero-dependency in-process builder
-        let has_cc = Command::new("cc")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        if has_cc {
-            Command::new("cc")
-                .arg("-O3")
-                .arg("-fomit-frame-pointer")
-                .arg("-fno-math-errno")
-                .arg(&temp_c)
-                .arg("-o")
-                .arg(&final_out)
-                .status()?
-        } else if find_zig().is_some() {
-            let zig = find_zig().unwrap();
-            Command::new(zig)
-                .arg("cc")
-                .arg("-O3")
-                .arg("-fomit-frame-pointer")
-                .arg("-s")
-                .arg(&temp_c)
-                .arg("-o")
-                .arg(&final_out)
-                .status()?
-        } else if crate::toolchain::run_cranelift_build(script_path, &final_out, None).is_ok() {
-            let _ = std::fs::remove_file(&temp_c);
+    // 1. If custom runner stub is provided, always use it
+    if let Some(custom) = custom_stub {
+        if custom.exists() {
+            crate::cli::bundle::create_standalone_binary(custom, script_path, None, &final_out)?;
             sync_final_out(&final_out);
             return Ok(());
-        } else if let Some(stub_path) = resolve_runner_stub(custom_stub) {
-            let _ = std::fs::remove_file(&temp_c);
+        }
+    }
+
+    // 2. Try Cranelift backend first for pure-Rust native code generation
+    let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
+    if !no_clif {
+        if crate::toolchain::run_cranelift_build(script_path, &final_out, target).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
+            }
+            if let Some(ref cfile) = cache_file {
+                let _ = std::fs::copy(&final_out, cfile);
+            }
+            sync_final_out(&final_out);
+            return Ok(());
+        }
+    }
+
+    // 3. Fallback: If a runner stub is available and not in pure-native mode, use it to ensure runnability
+    let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1" || v == "true").unwrap_or(false);
+    if !pure_native {
+        if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
             crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
             sync_final_out(&final_out);
             return Ok(());
-        } else {
-            let _ = std::fs::remove_file(&temp_c);
-            anyhow::bail!("No native C compiler found. Please install 'cc' (gcc/clang) or 'zig'.");
         }
-    };
-
-    let _ = std::fs::remove_file(&temp_c);
-
-    if !status.success() {
-        anyhow::bail!("Native compilation failed with exit code: {:?}", status.code());
     }
 
+    // 4. Otherwise, build via Cranelift directly (surfacing error if it fails)
+    crate::toolchain::run_cranelift_build(script_path, &final_out, target)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
+    }
     if let Some(ref cfile) = cache_file {
         let _ = std::fs::copy(&final_out, cfile);
     }
     sync_final_out(&final_out);
-
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn test_build_aot_binary_end_to_end() {

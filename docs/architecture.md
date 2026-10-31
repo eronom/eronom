@@ -81,7 +81,7 @@ flowchart TD
   - **`elf_writer.rs`**: Generates standalone ELF executables for Linux.
   - **`pe_writer.rs`**: Generates standalone PE64 executables for Windows.
   - **`macho_writer.rs`**: Generates standalone Mach-O executables for macOS.
-  - **`linker.rs` & `generator.rs`**: Lowers bytecode directly into target machine code, enabling single-binary deployments without requiring an installed runtime.
+  - **`linker.rs`**: Coordinates native AOT machine code generation and executable linking without requiring an installed runtime.
 
 ### Cranelift Toolchain (`src/toolchain/`)
 - Optional pure-Rust native code generation backend accessed via `eronom toolchain add cranelift` and `eronom build --cranelift`.

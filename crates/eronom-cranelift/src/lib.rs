@@ -1070,6 +1070,13 @@ pub fn build_cranelift_binary(
         f.instructions.iter().any(|i| matches!(i, EirInst::GetGlobal { name, .. } if name == "serve" || name == "er_http_create_server"))
     });
 
+    let requires_runtime = !is_server && eir_module.functions.iter().any(|f| {
+        f.instructions.iter().any(|i| matches!(i, EirInst::MakeObject { .. } | EirInst::MakeArray { .. } | EirInst::ArrayGet { .. } | EirInst::ArraySet { .. }))
+    });
+    if requires_runtime {
+        anyhow::bail!("Objects and arrays in standalone mode require runtime runner");
+    }
+
     let mut backend = CraneliftBackend::new(&module_name, target)?;
     backend.is_server = is_server;
     let target_os = backend.target_triple.operating_system;
