@@ -25,6 +25,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
 
     steps:
       - name: Checkout repository
@@ -69,6 +71,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: eronom-linux-x64
+          path: |
+            server_clif
+            target/${{ matrix.target }}/debug/eronom
+            target/${{ matrix.target }}/debug/eronom-cranelift
+
+      # macOS: Verify Pure Native Cranelift Server Binary
+      - name: Verify Pure Native Cranelift Server (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo run -- build server.er --cranelift -o server_clif
+          ls -lh server_clif
+          test -f server_clif
+
+      - name: Upload macOS Artifacts
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eronom-macos-arm64
           path: |
             server_clif
             target/${{ matrix.target }}/debug/eronom
