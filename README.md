@@ -1,135 +1,230 @@
 # Eronom ⚡
 
-Eronom is a high-performance, JIT-compiled scripting language runtime and virtual machine written in Rust. It features a custom interpreter, an on-the-fly JIT compiler built on Vladimir Makarov's MIR JIT compiler, and an ultra-fast HTTP networking layer powered by native C++ `uWebSockets`.
+<p align="center">
+  <img src="eronom_logo.png" alt="Eronom Logo" width="180" />
+</p>
 
-Designed for building light and blazing-fast web services, Eronom supports dynamic hot-reloading: it can detect file modifications on-the-fly and reload routing/VM logic instantly *without* dropping active TCP connections or restarting the process.
+<p align="center">
+  <strong>High-performance, JIT-compiled scripting language runtime, reactive template engine, and web server framework.</strong>
+</p>
+
+<p align="center">
+  <a href="#-quickstart-in-60-seconds">Quickstart</a> •
+  <a href="#-key-features">Key Features</a> •
+  <a href="#-syntax-showcase">Syntax Showcase</a> •
+  <a href="#-cli-commands">CLI Commands</a> •
+  <a href="#-architecture--deep-dive-docs">Documentation</a> •
+  <a href="AGENTS.md">AI Agent Guide</a>
+</p>
+
+---
+
+## 💡 What is Eronom?
+
+**Eronom** is an all-in-one execution platform engineered for low-latency web services, reactive applications, and standalone native binary compilation:
+
+1. **Custom Virtual Machine & JIT Engine**: Combines a register-based bytecode VM with Vladimir Makarov's lightweight **MIR JIT compiler** and a pure-Rust **Cranelift AOT backend**.
+2. **Native C++ Networking with Dynamic HMR**: Powered by native C++ `uWebSockets` bindings. Reloads routing and VM logic on-the-fly *without* terminating active TCP connections or restarting the main OS process.
+3. **Colorless Structured Concurrency**: Executes non-blocking I/O and asynchronous tasks directly inside ordinary functions without the viral infectiousness of async/await function coloring.
+4. **ERM Reactive Component Engine**: Single-file component framework (`.erm`) combining server-rendered HTML, scoped CSS, and client-side reactive state binding (`useState`).
+5. **Standalone Native Machine Binaries**: Direct ahead-of-time (AOT) machine code generation for Linux (ELF), Windows (PE64), and macOS (Mach-O) without requiring an external runtime installation.
+
+---
+
+## ⚡ Quickstart in 60 Seconds
+
+### 1. Prerequisites
+Ensure you have Rust (`cargo`), a C/C++ compiler (GCC, Clang, or MSVC), and CMake installed.
+
+### 2. Build Eronom
+```bash
+# Clone the repository
+git clone https://github.com/eronom/eronom.git
+cd eronom
+
+# Build debug binary
+cargo build
+```
+
+### 3. Create & Run Your First HTTP Service
+Create `server.er`:
+
+```rust
+import { serve, Response } from "std/http"
+
+serve({
+    port: 3000,
+    fetch: (req) => {
+        if (req.path == "/health") {
+            return Response.text("OK", { status: 200 })
+        }
+        return Response.json({
+            status: "online",
+            path: req.path,
+            method: req.method,
+            timestamp: "2026-10-20"
+        })
+    }
+})
+```
+
+Run the server:
+```bash
+cargo run -- server.er
+```
+Visit `http://localhost:3000/health`. Edit `server.er` while the server is running—Eronom automatically swaps in the new logic on the next incoming request!
 
 ---
 
 ## 🚀 Key Features
 
-* **High Performance**: Engineered for high-throughput, low-latency web services, delivering tens of thousands of requests per second with sub-millisecond response times.
-* **Ultra-Low Memory Footprint**: Minimal RAM overhead powered by a lightweight Rust runtime, GC object pooling, and kernel-level I/O event demultiplexing (epoll/kqueue).
-* **Hybrid Execution Engine**:
-  * **Bytecode Interpreter**: Standard VM executing custom Eronom bytecode.
-  * **JIT Compiler**: Compile bytecode directly to native machine code on-the-fly via the integrated **MIR JIT compiler** (C backend).
-* **Native C++ Networking**: Integrates **uWebSockets** and **uSockets** via custom FFI bindings for maximum performance.
-* **Dynamic Hot-Reloading**: Automatically detects source code changes (in the main script or `eronom.toml`) and re-evaluates the VM script state without dropping network socket connections.
-* **Modern Syntax**:
-  * Variable declarations with optional types (`let name : string = "value"`) or constants (`const age = 7`).
-  * String interpolation: `"Hello {name}"`.
-  * Arrow functions / closures: `(c) => { return c.json(todos) }`.
-  * Dynamic arrays, objects, and bracket-assign/access (`arr[0] = val`, `obj.key = val`).
-  * Range-based loops (`for i in 1..1000`).
-* **Automated GC**: Custom Garbage Collector managing allocations for VM values (Objects, Arrays, Strings).
-* **Colorless Async & Native Structured Concurrency**:
-  * **No Function Color Problem**: Performs asynchronous I/O (`fetch`, timers, socket operations) inside ordinary functions without `async` or `await` modifiers.
-  * **Structured Concurrency Block**: Native `concurrent { taskA(); taskB(); }` construct that automatically spawns concurrent tasks and joins them before exiting the scope.
-
-## 📁 Repository Structure
-
-* **`src/frontend/`**: The language parsing frontend.
-  * `lexer.rs`: Tokenizes Eronom source strings.
-  * `parser.rs`: Recursive descent parser converting tokens into AST nodes.
-  * `ast.rs`: AST nodes representing statements, variables, conditions, loops, and functions.
-  * `token.rs`: Token types for Eronom grammar.
-* **`src/vm/`**: Bytecode compiler, VM execution, and core runtimes.
-  * `compiler.rs`: Compiles the AST into VM bytecode.
-  * `execute.rs`: Evaluates bytecode inside the VM stack loop.
-  * `gc.rs`: Mark-and-sweep style Garbage Collector.
-  * `value.rs`: Representation of runtime values (numbers, strings, booleans, objects, arrays).
-  * `er_http.rs` & `er_http.cpp`: Rust FFI and C++ wrappers bridging Eronom callbacks with uWebSockets.
-* **`src/jit/`**: Just-In-Time compiler.
-  * `compiler.rs`: Generates MIR intermediate representation from Eronom bytecode.
-  * `bindings.rs` & `helpers.rs`: Rust interfaces to the C-based MIR engine.
-* **`deps/`**: Vendored native C/C++ dependencies:
-  * `mir`: Vladimir Makarov's lightweight JIT compiler.
-  * `uWebSockets`: The high-performance C++ uWebSockets & uSockets library.
-  * `libuv`: Windows eventing backend for uSockets.
-* **`example-er/`**: Reference scripts and comparable API server implementations.
+* **High-Throughput, Low-Latency Networking**: Integrates kernel-level I/O event demultiplexing (`epoll` on Linux, `kqueue` on macOS/BSD, and `libuv` on Windows) via native C++ `uWebSockets` FFI.
+* **Connection-Preserving Hot Reloading (HMR)**: Live-reloads script routes instantly upon file save while keeping open TCP socket connections intact.
+* **Zero Async Function Coloring**: Non-blocking I/O without the burden of marking entire call stacks as `async`/`await`.
+* **Scoped Reactivity & Server Rendering**: Full support for Server-Side Rendering (SSR), Static Site Generation (SSG), and Partial Prerendering (PPR) using `.erm` component files.
+* **Mark-and-Sweep GC with Map Pooling**: Custom Garbage Collector equipped with pre-allocated pooled HashMaps to eliminate heap churn and allocator fragmentation under high HTTP loads.
+* **Ahead-of-Time Native Binary Compilation**: Compile `.er` scripts straight into standalone native executables (`eronom build --aot`).
 
 ---
 
-## 📝 Syntax Examples
+## 📝 Syntax Showcase
 
-### 1. Variables and Print
+### 1. Colorless Structured Concurrency
 ```rust
-let name : string = "Eronom"
-const version = "0.9.2"
+import { fetch } from "std/http"
 
-print("Welcome to {name} v{version}!")
-```
-
-### 2. Loops and Conditions
-```rust
-let sum = 0
-
-for i in 1..1000 {
-    if (i + i > 500) {
-        sum = sum + i
-    }
-}
-print("Sum is: {sum}")
-```
-
-### 3. HTTP Server
-```javascript
-let app = router()
-let todos = [
-  { id: 1, text: "Learn Eronom", done: false }
-]
-
-// GET all todos
-app.get('/todos', (c) => {
-  return c.json(todos)
-})
-```
-
-### 4. Colorless Structured Concurrency
-```javascript
-import { Io } from "std/io"
-
-const fetchTask = (url) => {
-    print("Fetching URL...")
-    const res = fetch(url) // Non-blocking I/O without async/await!
-    print("Done fetching!")
+const fetchEndpoint = (endpoint) => {
+    print("Initiating request to {endpoint}")
+    const res = fetch("https://api.example.com/{endpoint}") // Non-blocking without async/await!
+    print("Received {endpoint} response")
+    return res
 }
 
-// Structured Concurrency Scope: Automatically joins all spawned tasks
+// Structured Concurrency: Automatically joins both concurrent branches
 concurrent {
-    fetchTask("https://jsonplaceholder.typicode.com/todos/1")
-    fetchTask("https://jsonplaceholder.typicode.com/todos/2")
+    fetchEndpoint("metrics")
+    fetchEndpoint("health")
 }
 
-print("Both concurrent tasks completed!")
+print("Both tasks completed successfully!")
 ```
 
-## 🛠️ Getting Started
+### 2. Struct Composition & Flattened Embedding
+Eronom supports explicit nested composition as well as zero-overhead flattened embedding via the `embed` keyword:
 
-### Prerequisites
+```rust
+struct Transform {
+    x: int,
+    y: int,
+}
 
-You need standard C/C++ build tools (GCC/Clang/MSVC) and Rust installed on your machine.
+// Embeds Transform: Promotes fields x and y directly into Player
+struct Player embed Transform {
+    name: string,
+    health: int,
+}
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/eronom/eronom.git
-   cd eronom
-   ```
-2. Build the project:
-   ```bash
-   cargo build
-   ```
+// Flat initialization
+let hero = Player {
+    x: 100,
+    y: 250,
+    name: "Knight",
+    health: 100,
+}
 
-### Running Eronom Scripts
-
-You can execute any `.er` script directly:
-```bash
-cargo run -- path/to/script.er
+// Direct field access (single continuous heap layout)
+print("Position: {hero.x}, {hero.y} | Hero: {hero.name}")
 ```
 
-To run the included HTTP API example:
-```bash
-cargo run -- example-er/my-api/server.er
-```
-The server will start on port `3000` (or as configured in `example-er/my-api/eronom.toml`). You can edit `server.er` at any time, and the runtime will automatically reload the code on the next HTTP request!
+### 3. Reactive Single-File Components (`.erm`)
+Single-file component combining server rendering, scoped styling, and client-side reactive state:
 
+```html
+<script>
+    let count = useState(0)
+
+    const increment = () => {
+        count++
+    }
+</script>
+
+<div class="counter-box">
+    <h3>Current Count: {count}</h3>
+    <button onClick={increment}>Increment Count</button>
+</div>
+
+<style>
+    .counter-box {
+        padding: 20px;
+        background: #18181b;
+        color: #fafafa;
+        border-radius: 8px;
+    }
+    button {
+        background: #3b82f6;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+</style>
+```
+
+---
+
+## 🛠️ CLI Commands
+
+The `eronom` CLI provides an integrated suite for full-stack development:
+
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| **`eronom <script.er>`** | Execute a script directly | `eronom server.er` |
+| **`eronom init`** | Scaffold a new Eronom application | `eronom init my-app --git` |
+| **`eronom dev`** | Start local dev server with WebSocket HMR | `eronom dev -p 3000` |
+| **`eronom build`** | Compile for SSR, SSG, or standalone native binary | `eronom build --aot -o dist/server` |
+| **`eronom start`** | Run production server | `eronom start -p 8080` |
+| **`eronom check`** | Statically type-check scripts (supports `--json`) | `eronom check server.er --json` |
+| **`eronom test`** | Run integrated test suites | `eronom test tests/` |
+| **`eronom transpile`**| Transpile `.er` script to JavaScript | `eronom transpile main.er` |
+| **`eronom toolchain`**| Manage optional native compilers | `eronom toolchain add cranelift` |
+
+---
+
+## 📁 Repository Directory Map
+
+```text
+eronom/
+├── src/
+│   ├── frontend/         # Lexer, recursive-descent parser, AST, static type checker
+│   ├── vm/               # Stack bytecode VM, Garbage Collector, uWebSockets C++ FFI
+│   ├── jit/              # Vladimir Makarov's MIR JIT and native AOT compiler (ELF/PE/Mach-O)
+│   ├── toolchain/        # Toolchain discovery and Cranelift native backend
+│   └── cli/              # CLI argument parser and commands
+├── libs/
+│   └── erm/              # Reactive component template compiler, SSR/SSG engine, HMR server
+├── std/                  # Standard libraries (std/http.er, std/io.er)
+├── deps/                 # Vendored native C/C++ dependencies (mir, uWebSockets, libuv)
+├── docs/                 # In-depth architectural and developer documentation
+├── AGENTS.md             # Developer & AI coding agent architecture manual
+└── README.md             # Project landing page and quickstart
+```
+
+---
+
+## 📚 Architecture & Deep-Dive Docs
+
+Dive deeper into Eronom's internals and guides:
+
+* 🏗️ **[Architecture & Internals](docs/architecture.md)**: Virtual machine, instruction set, MIR JIT, AOT machine code gen, GC map pooling, and C++ FFI networking.
+* 📖 **[Language Tour & Syntax Guide](docs/language-tour.md)**: Comprehensive language specification, types, structs, embedding, and concurrency.
+* 🧩 **[ERM Component Framework](docs/erm-framework.md)**: Component syntax, `useState`, template blocks, scoped CSS, and SSR/SSG/PPR.
+* ⚙️ **[CLI Reference & Config](docs/cli-reference.md)**: Detailed command options, `eronom.toml` schema, and environment variables.
+* 🤝 **[Contributing Guide](docs/contributing.md)**: Development setup, build rules, testing, and Git workflow.
+* 🤖 **[AI Agent Guide (AGENTS.md)](AGENTS.md)**: Complete guide and invariants for autonomous AI coding agents.
+
+---
+
+## 📄 License
+
+Eronom is open-source software licensed under the [MIT License](LICENSE).

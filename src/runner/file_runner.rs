@@ -38,19 +38,13 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     if has_http_import(&stmts) {
         let mut port = find_listen_port(&stmts);
         if port.is_none() {
-            let main_path = std::path::Path::new(path);
-            if let Some(parent_dir) = main_path.parent() {
-                let toml_path = parent_dir.join("eronom.toml");
-                if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
-                    if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                        if let Some(server) = toml_val.get("server") {
-                            if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
-                                port = Some(p as i32);
-                            }
-                        }
-                    }
-                }
-            }
+            port = std::path::Path::new(path)
+                .parent()
+                .map(|p| p.join("eronom.toml"))
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .and_then(|c| toml::from_str::<toml::Value>(&c).ok())
+                .and_then(|v| v.get("server")?.get("port")?.as_integer())
+                .map(|p| p as i32);
         }
         let final_port = port.unwrap_or(3000);
         backend::er_http::LISTEN_PORT.with(|p| p.set(Some(final_port)));
@@ -87,19 +81,16 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     backend::std_json::register_json_natives(&mut vm);
     backend::std_system::register_system_natives(&mut vm);
     backend::er_http::set_target_script_path(path);
-    let main_path = std::path::Path::new(path);
-    if let Some(parent_dir) = main_path.parent() {
-        let toml_path = parent_dir.join("eronom.toml");
-        if toml_path.exists() {
-            if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
-                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    if let Ok(json_val) = serde_json::to_value(toml_val) {
-                        let config_val = backend::gc::json_to_value(json_val);
-                        vm.register_global("config", config_val);
-                    }
-                }
-            }
-        }
+    if let Some(config_val) = std::path::Path::new(path)
+        .parent()
+        .map(|p| p.join("eronom.toml"))
+        .filter(|p| p.exists())
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|c| toml::from_str::<toml::Value>(&c).ok())
+        .and_then(|v| serde_json::to_value(v).ok())
+        .map(backend::gc::json_to_value)
+    {
+        vm.register_global("config", config_val);
     }
 
     let compiler = Compiler::new();

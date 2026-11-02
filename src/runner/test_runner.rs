@@ -9,15 +9,18 @@ pub fn find_test_files_in_dir(dir: &Path, out: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if !name.starts_with('.') && name != "target" {
+                if !name.starts_with('.') && name != "target" && name != "deps" && name != "crates" && name != "my-api" {
                     find_test_files_in_dir(&path, out);
                 }
             } else if path.is_file() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name.ends_with(".er") {
-                    if name.starts_with("test_") || name.ends_with(".test.er") || name.ends_with("_test.er") || path.parent().map_or(false, |p| p.ends_with("tests")) {
-                        out.push(path);
-                    }
+                if name.ends_with(".er")
+                    && (name.starts_with("test_")
+                        || name.ends_with(".test.er")
+                        || name.ends_with("_test.er")
+                        || path.parent().is_some_and(|p| p.ends_with("tests")))
+                {
+                    out.push(path);
                 }
             }
         }
@@ -46,10 +49,14 @@ pub fn run_test_command(file_opt: Option<PathBuf>) -> anyhow::Result<()> {
     } else {
         let mut files = Vec::new();
         let tests_dir = Path::new("tests");
+        let example_tests_dir = Path::new("example-er/tests");
         if tests_dir.exists() && tests_dir.is_dir() {
             find_test_files_in_dir(tests_dir, &mut files);
+        } else if example_tests_dir.exists() && example_tests_dir.is_dir() {
+            find_test_files_in_dir(example_tests_dir, &mut files);
+        } else {
+            find_test_files_in_dir(Path::new("."), &mut files);
         }
-        find_test_files_in_dir(Path::new("."), &mut files);
         files.sort();
         files.dedup();
         if files.is_empty() {
@@ -68,7 +75,24 @@ pub fn run_test_command(file_opt: Option<PathBuf>) -> anyhow::Result<()> {
         if total_files > 1 {
             println!("\n> {}", test_file.display());
         }
-        if let Err(e) = run_file(path_str) {
+        let original_dir = std::env::current_dir().ok();
+        if let Some(parent) = test_file.parent() {
+            if parent != Path::new("") && parent != Path::new(".") {
+                let _ = std::env::set_current_dir(parent);
+            }
+        }
+        let file_name = test_file.file_name().and_then(|f| f.to_str()).unwrap_or(path_str);
+        let res = run_file(file_name);
+        if let Some(dir) = original_dir {
+            let _ = std::env::set_current_dir(dir);
+        }
+        let expects_error = file_name.starts_with("test_err_") || file_name.contains("invalid");
+        if expects_error {
+            if res.is_ok() {
+                eprintln!("Test failed in {}: Expected error but execution succeeded", test_file.display());
+                std::process::exit(1);
+            }
+        } else if let Err(e) = res {
             eprintln!("Test failed in {}: {}", test_file.display(), e);
             std::process::exit(1);
         }

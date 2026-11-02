@@ -10,19 +10,6 @@ pub enum EirType {
     Dynamic,
 }
 
-impl EirType {
-    pub fn mir_type_str(&self) -> &'static str {
-        match self {
-            EirType::I64 => "i64",
-            EirType::F64 => "d",
-            EirType::Bool => "i64",
-            EirType::Ptr => "i64",
-            EirType::Void => "",
-            EirType::Dynamic => "i64",
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EirBinaryOp {
     Add,

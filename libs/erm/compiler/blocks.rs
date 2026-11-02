@@ -7,18 +7,17 @@ pub fn find_tag_end(content: &str, start_pos: usize) -> Option<usize> {
     let mut brace_depth = 0;
     let mut in_quotes = false;
     let mut in_squotes = false;
-    let chars: Vec<char> = content[start_pos..].chars().collect();
-    for (idx, c) in chars.iter().enumerate() {
-        if *c == '"' && !in_squotes {
+    for (idx, c) in content[start_pos..].char_indices() {
+        if c == '"' && !in_squotes {
             in_quotes = !in_quotes;
-        } else if *c == '\'' && !in_quotes {
+        } else if c == '\'' && !in_quotes {
             in_squotes = !in_squotes;
         } else if !in_quotes && !in_squotes {
-            if *c == '{' {
+            if c == '{' {
                 brace_depth += 1;
-            } else if *c == '}' {
+            } else if c == '}' {
                 if brace_depth > 0 { brace_depth -= 1; }
-            } else if *c == '>' && brace_depth == 0 {
+            } else if c == '>' && brace_depth == 0 {
                 return Some(start_pos + idx);
             }
         }

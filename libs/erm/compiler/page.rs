@@ -283,11 +283,18 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut style_assets = String::new();
     if !result.styles.is_empty() {
         style_assets.push_str("\n<style id=\"__erm_scoped_styles\">\n");
-        for s in &result.styles { style_assets.push_str(s); style_assets.push('\n'); }
+        for s in &result.styles {
+            if is_prod {
+                style_assets.push_str(&crate::compiler::minify_css(s));
+            } else {
+                style_assets.push_str(s);
+            }
+            style_assets.push('\n');
+        }
         style_assets.push_str("</style>\n");
     }
 
-    let mut params_js = String::from("window.__erm_params = {");
+    let mut params_obj = String::from("{");
     for (k, v) in params {
         let is_json_literal = (v.starts_with('{') && v.ends_with('}'))
             || (v.starts_with('[') && v.ends_with(']'))
@@ -297,12 +304,13 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
             || v.parse::<f64>().is_ok();
             
         if is_json_literal {
-            params_js.push_str(&format!("{}: {},", k, v));
+            params_obj.push_str(&format!("{}: {},", k, v));
         } else {
-            params_js.push_str(&format!("{}: {},", k, serde_json::to_string(v).unwrap_or_else(|_| format!("\"{}\"", v.replace('"', "\\\"")))));
+            params_obj.push_str(&format!("{}: {},", k, serde_json::to_string(v).unwrap_or_else(|_| format!("\"{}\"", v.replace('"', "\\\"")))));
         }
     }
-    params_js.push_str("};\nif (typeof setParams === 'function') setParams(window.__erm_params);");
+    params_obj.push('}');
+    let params_js = format!("setParams({});\nlet __params = useParams();", params_obj);
 
     let combined_scripts = result.scripts.join("\n");
     let mut declarations = String::from("let anchorId = \"\";\n");
@@ -311,7 +319,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         if is_valid_js_identifier(k) {
             if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(k))) {
                 if !re_decl.is_match(&combined_scripts) && !result.state_vars.contains(k) {
-                    declarations.push_str(&format!("let {} = window.__erm_params[\"{}\"];\n", k, k));
+                    declarations.push_str(&format!("let {} = __params[\"{}\"];\n", k, k));
                 }
             }
         }
@@ -320,7 +328,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     for v in &result.state_vars {
         if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(v))) {
             if !re_decl.is_match(&combined_scripts) {
-                let fallback_val = match v.as_str() {
+                let mut fallback_val = match v.as_str() {
                     "activeTheme" => "'light'".to_string(),
                     "count" => "0".to_string(),
                     "timer" => "0".to_string(),
@@ -329,12 +337,20 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
                     "submitted" => "false".to_string(),
                     _ => {
                         if params.contains_key(v) {
-                            format!("window.__erm_params[\"{}\"]", v)
+                            format!("__params[\"{}\"]", v)
                         } else {
                             "null".to_string()
                         }
                     }
                 };
+
+                if let Some(source_file) = state_var_sources.get(v) {
+                    if let Ok(src_content) = std::fs::read_to_string(source_file) {
+                        if let Some(extracted) = extract_state_variable_init(&src_content, v) {
+                            fallback_val = extracted;
+                        }
+                    }
+                }
                 let scoped_name = if let Some(source_file) = state_var_sources.get(v) {
                     let rel_path = if let Ok(cwd) = std::env::current_dir() {
                         if let Ok(rel) = std::path::Path::new(source_file).strip_prefix(&cwd) {
@@ -370,23 +386,45 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
+        let runtime_path = if is_prod {
+            let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+            manifest.get("/modules/erm/runtime.js")
+                .cloned()
+                .unwrap_or_else(|| "/modules/erm/runtime.js".to_string())
+        } else {
+            "/modules/erm/runtime.js".to_string()
+        };
+
+        let mut script_body = String::new();
+        script_body.push_str(&format!("import {{\n  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n  onMount, onCleanup, batch, untrack,\n  useState, useEffect, useProps, useFetch, unwrap, useParams, setParams, effect,\n  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n  Show, For, setCurrentPageDispose, mount, createRouter, navigate, setContext, getContext, createResource, template, child, sibling, ifBlock, eachBlock, createHmrProxy,\n  erm\n}} from '{}';\n", runtime_path));
+        script_body.push_str("createRoot(async (dispose) => {\n");
+        script_body.push_str("  setCurrentPageDispose(dispose);\n");
+        for s in &scripts_to_inject {
+            script_body.push_str(s);
+            script_body.push('\n');
+        }
+        script_body.push_str("});\n");
+
+        if is_prod {
+            script_body = crate::compiler::inline_public_env_vars(&script_body);
+            script_body = crate::compiler::minify_js(&script_body);
+        }
+
         script_assets.push_str("<script type=\"module\" class=\"__erm_script\">\n");
-        script_assets.push_str("import {\n");
-        script_assets.push_str("  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n");
-        script_assets.push_str("  onMount, onCleanup, batch, untrack,\n");
-        script_assets.push_str("  useState, useEffect, useParams, setParams, effect,\n");
-        script_assets.push_str("  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n");
-        script_assets.push_str("  Show, For, setCurrentPageDispose,\n");
-        script_assets.push_str("  erm\n");
-        script_assets.push_str("} from '/modules/erm/runtime.js';\n");
-        script_assets.push_str("createRoot((dispose) => {\n");
-        script_assets.push_str("  setCurrentPageDispose(dispose);\n");
-        for s in &scripts_to_inject { script_assets.push_str(s); script_assets.push('\n'); }
-        script_assets.push_str("});\n");
-        script_assets.push_str("</script>\n");
+        script_assets.push_str(&script_body);
+        script_assets.push_str("\n</script>\n");
     }
 
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
+    if is_prod {
+        output = crate::compiler::inline_public_env_vars(&output);
+        let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+        if !manifest.is_empty() {
+            for (orig, hashed) in manifest.iter() {
+                output = output.replace(orig, hashed);
+            }
+        }
+    }
 
     if !output.contains("<html") {
         let mut final_res = String::new();

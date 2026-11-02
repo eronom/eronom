@@ -1,30 +1,5 @@
 use std::path::Path;
-use std::process::Command;
 use crate::frontend::parse_and_resolve_imports;
-use crate::vm::compiler::Compiler;
-use super::lower::lower_program;
-use super::generator::generate_native_c;
-
-fn find_zig() -> Option<std::path::PathBuf> {
-    if let Ok(output) = Command::new("zig").arg("version").output() {
-        if output.status.success() {
-            return Some(std::path::PathBuf::from("zig"));
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        let p = std::path::PathBuf::from(home).join(".zvm/bin/zig");
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        let p = std::path::PathBuf::from(home).join(".eronom/toolchain/bin/zig");
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    None
-}
 
 fn get_aot_cache_dir() -> Option<std::path::PathBuf> {
     if std::env::var("ERONOM_NO_CACHE").map(|v| v == "1" || v == "true").unwrap_or(false)
@@ -96,131 +71,47 @@ pub fn resolve_runner_stub(custom_stub: Option<&Path>) -> Option<std::path::Path
         }
     }
 
-    // 1. Direct micro-runner candidates relative to CWD
-    for candidate in &[
-        "stubs/eronom-runner",
-        "stubs/er_runner",
-        "target/release/eronom-runner",
-        "target/release/er_runner",
-        "target/debug/eronom-runner",
-        "target/debug/er_runner",
+    #[cfg(windows)]
+    let candidates = &[
+        "target/release/eronom-runner.exe",
+        "target/debug/eronom-runner.exe",
+        "stubs/eronom-runner-win-x64.exe",
         "stubs/eronom-runner.exe",
+        "stubs/windows/eronom-runner.exe",
         "stubs/er_runner.exe",
-    ] {
-        let p = std::path::PathBuf::from(candidate);
-        if p.exists() {
-            return Some(p);
-        }
-    }
+        "stubs/windows/er_runner.exe",
+        "target/release/eronom.exe",
+        "target/debug/eronom.exe",
+    ];
 
-    // 2. Relative to current_exe and its ancestors
-    if let Ok(p) = std::env::current_exe() {
-        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
-        let name = canonical.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if (name == "eronom-runner" || name == "eronom-runner.exe" || name == "er_runner" || name == "er_runner.exe") && canonical.exists() {
-            return Some(canonical);
-        }
-
-        let mut curr = canonical.parent();
-        while let Some(parent) = curr {
-            let direct0 = parent.join("eronom-runner");
-            if direct0.exists() {
-                return Some(direct0);
-            }
-            let direct1 = parent.join("er_runner");
-            if direct1.exists() {
-                return Some(direct1);
-            }
-            let stub0 = parent.join("stubs/eronom-runner");
-            if stub0.exists() {
-                return Some(stub0);
-            }
-            let stub1 = parent.join("stubs/er_runner");
-            if stub1.exists() {
-                return Some(stub1);
-            }
-            let tr0 = parent.join("target/release/eronom-runner");
-            if tr0.exists() {
-                return Some(tr0);
-            }
-            let td0 = parent.join("target/debug/eronom-runner");
-            if td0.exists() {
-                return Some(td0);
-            }
-            curr = parent.parent();
-        }
-    }
-
-    // 3. Walk ancestors of current_dir
-    if let Ok(cwd) = std::env::current_dir() {
-        let mut curr = Some(cwd.as_path());
-        while let Some(parent) = curr {
-            let direct0 = parent.join("eronom-runner");
-            if direct0.exists() {
-                return Some(direct0);
-            }
-            let direct1 = parent.join("er_runner");
-            if direct1.exists() {
-                return Some(direct1);
-            }
-            let stub0 = parent.join("stubs/eronom-runner");
-            if stub0.exists() {
-                return Some(stub0);
-            }
-            let stub1 = parent.join("stubs/er_runner");
-            if stub1.exists() {
-                return Some(stub1);
-            }
-            let tr0 = parent.join("target/release/eronom-runner");
-            if tr0.exists() {
-                return Some(tr0);
-            }
-            let td0 = parent.join("target/debug/eronom-runner");
-            if td0.exists() {
-                return Some(td0);
-            }
-            curr = parent.parent();
-        }
-    }
-
-    // 4. HOME directory
-    if let Ok(home) = std::env::var("HOME") {
-        let home_stub1 = std::path::PathBuf::from(&home).join(".eronom/stubs/eronom-runner");
-        if home_stub1.exists() {
-            return Some(home_stub1);
-        }
-        let home_stub = std::path::PathBuf::from(&home).join(".eronom/stubs/er_runner");
-        if home_stub.exists() {
-            return Some(home_stub);
-        }
-        let home_bin1 = std::path::PathBuf::from(&home).join("eronom/eronom-runner");
-        if home_bin1.exists() {
-            return Some(home_bin1);
-        }
-    }
-
-    // 5. Last resort fallback to full CLI only if no micro-runner exists
-    for candidate in &[
+    #[cfg(target_os = "macos")]
+    let candidates = &[
+        "target/aarch64-apple-darwin/release/eronom-runner",
+        "target/aarch64-apple-darwin/debug/eronom-runner",
+        "target/release/eronom-runner",
+        "target/debug/eronom-runner",
+        "stubs/eronom-runner-mac-arm64",
+        "stubs/eronom-runner-mac",
+        "stubs/macos/eronom-runner",
+        "stubs/er_runner_mac",
+        "stubs/macos/er_runner",
+        "target/aarch64-apple-darwin/release/eronom",
+        "target/aarch64-apple-darwin/debug/eronom",
         "target/release/eronom",
         "target/debug/eronom",
-    ] {
-        let p = std::path::PathBuf::from(candidate);
-        if p.exists() {
-            return Some(p);
-        }
-    }
+    ];
 
-    if let Ok(p) = std::env::current_exe() {
-        let canonical = p.canonicalize().unwrap_or_else(|_| p.clone());
-        if let Some(parent) = canonical.parent() {
-            let candidate = parent.join("eronom");
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let candidates = &[
+        "target/release/eronom-runner",
+        "target/debug/eronom-runner",
+        "stubs/eronom-runner",
+        "stubs/er_runner",
+        "target/release/eronom",
+        "target/debug/eronom",
+    ];
 
-    None
+    find_target_candidate_in_hierarchy(candidates)
 }
 
 fn find_target_candidate_in_hierarchy(candidates: &[&str]) -> Option<std::path::PathBuf> {
@@ -258,7 +149,7 @@ fn find_target_candidate_in_hierarchy(candidates: &[&str]) -> Option<std::path::
         }
     }
 
-    if let Ok(home) = std::env::var("HOME") {
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
         let home_dir = std::path::PathBuf::from(&home);
         for cand in candidates {
             let p1 = home_dir.join(".eronom").join(cand);
@@ -281,36 +172,58 @@ pub fn resolve_target_stub(custom_stub: Option<&Path>, target: Option<&str>) -> 
             return Some(s.to_path_buf());
         }
     }
-    if let Some(target_str) = target {
-        let (_, os_kind) = resolve_target_triple(target_str);
-        if os_kind == "windows" {
-            return find_target_candidate_in_hierarchy(&[
-                "stubs/eronom-runner-win-x64.exe",
-                "stubs/eronom-runner.exe",
-                "stubs/windows/eronom-runner.exe",
-                "stubs/er_runner.exe",
-                "stubs/windows/er_runner.exe",
-            ]);
-        } else if os_kind == "macos" {
-            return find_target_candidate_in_hierarchy(&[
-                "stubs/eronom-runner-mac-arm64",
-                "stubs/eronom-runner-mac",
-                "stubs/macos/eronom-runner",
-                "stubs/er_runner_mac",
-                "stubs/macos/er_runner",
-            ]);
-        } else if os_kind == "linux" {
-            if let Some(stub) = find_target_candidate_in_hierarchy(&[
-                "stubs/eronom-runner",
-                "stubs/eronom-runner-linux",
-                "stubs/linux/eronom-runner",
-                "stubs/er_runner",
-                "stubs/linux/er_runner",
-            ]) {
-                return Some(stub);
-            }
-        }
+    let os_kind = if let Some(target_str) = target {
+        resolve_target_triple(target_str).1
+    } else if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+
+    if os_kind == "windows" {
+        return find_target_candidate_in_hierarchy(&[
+            "target/release/eronom-runner.exe",
+            "target/debug/eronom-runner.exe",
+            "stubs/eronom-runner-win-x64.exe",
+            "stubs/eronom-runner.exe",
+            "stubs/windows/eronom-runner.exe",
+            "stubs/er_runner.exe",
+            "stubs/windows/er_runner.exe",
+            "target/release/eronom.exe",
+            "target/debug/eronom.exe",
+        ]);
+    } else if os_kind == "macos" {
+        return find_target_candidate_in_hierarchy(&[
+            "target/aarch64-apple-darwin/release/eronom-runner",
+            "target/aarch64-apple-darwin/debug/eronom-runner",
+            "target/release/eronom-runner",
+            "target/debug/eronom-runner",
+            "stubs/eronom-runner-mac-arm64",
+            "stubs/eronom-runner-mac",
+            "stubs/macos/eronom-runner",
+            "stubs/er_runner_mac",
+            "stubs/macos/er_runner",
+            "target/aarch64-apple-darwin/release/eronom",
+            "target/aarch64-apple-darwin/debug/eronom",
+            "target/release/eronom",
+            "target/debug/eronom",
+        ]);
+    } else if os_kind == "linux" {
+        return find_target_candidate_in_hierarchy(&[
+            "target/release/eronom-runner",
+            "target/debug/eronom-runner",
+            "stubs/eronom-runner",
+            "stubs/eronom-runner-linux",
+            "stubs/linux/eronom-runner",
+            "stubs/er_runner",
+            "stubs/linux/er_runner",
+            "target/release/eronom",
+            "target/debug/eronom",
+        ]);
     }
+
     resolve_runner_stub(custom_stub)
 }
 
@@ -347,53 +260,49 @@ pub fn build_aot_binary_with_target_and_options(
     build_aot_binary_full(script_path, output_path, target, prefer_in_process, custom_stub)
 }
 
+/// Build an Eronom script ahead-of-time.
+pub fn build_aot_binary_with_mir(
+    script_path: &Path,
+    output_path: &Path,
+    target: Option<&str>,
+) -> anyhow::Result<()> {
+    crate::toolchain::run_cranelift_build(script_path, output_path, target)
+}
+
 fn build_aot_binary_full(
     script_path: &Path,
     output_path: &Path,
     target: Option<&str>,
-    prefer_in_process: bool,
+    _prefer_in_process: bool,
     custom_stub: Option<&Path>,
 ) -> anyhow::Result<()> {
     if !script_path.exists() {
         anyhow::bail!("Source script not found: {}", script_path.display());
     }
 
-    // 1. Parse and resolve module imports
-    let stmts = match parse_and_resolve_imports(script_path) {
-        Ok(s) => s,
-        Err(e) => anyhow::bail!("Compile/Import error in {}: {}", script_path.display(), e),
-    };
+    // 1. Verify source script exists and read bytes
+    let script_bytes = std::fs::read(script_path)?;
 
-    // 2. Compile AST statements into bytecode function
-    let compiler = Compiler::new();
-    let function = match compiler.compile(&stmts) {
-        Ok(f) => f,
-        Err(e) => anyhow::bail!("Bytecode lowering error: {}", e),
-    };
+    // 2. Validate script syntax
+    let _ = parse_and_resolve_imports(script_path)
+        .map_err(|e| anyhow::anyhow!("Compile/Import error in {}: {}", script_path.display(), e))?;
 
-    // 3. Lower bytecode function to typed E-IR module
-    let module_name = script_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "er_module".to_string());
-    let eir_module = lower_program(&function, &module_name);
-
-    // 4. Generate native C / MIR machine code representation
-    let c_source = generate_native_c(&eir_module);
-
-    // 5. Ensure parent output directory exists and handle platform extensions
+    // 3. Ensure parent output directory exists and handle platform extensions
     let mut final_out = output_path.to_path_buf();
-    if let Some(target_str) = target {
+    let is_windows = if let Some(target_str) = target {
         let (_, os_kind) = resolve_target_triple(target_str);
-        if os_kind == "windows" {
-            let file_name = final_out
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if !file_name.ends_with(".exe") {
-                final_out = final_out.with_file_name(format!("{}.exe", file_name));
-            }
+        os_kind == "windows"
+    } else {
+        cfg!(windows)
+    };
+    if is_windows {
+        let file_name = final_out
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if !file_name.ends_with(".exe") {
+            final_out = final_out.with_file_name(format!("{}.exe", file_name));
         }
     }
 
@@ -403,19 +312,25 @@ fn build_aot_binary_full(
         }
     }
 
-    let env_in_process = std::env::var("ERONOM_AOT_IN_PROCESS")
-        .map(|v| v == "1" || v == "true")
-        .unwrap_or(false);
-    let use_in_process = prefer_in_process || env_in_process;
+    let sync_final_out = |final_out: &Path| {
+        if final_out != output_path && final_out.exists() {
+            let _ = std::fs::copy(final_out, output_path);
+            #[cfg(windows)]
+            {
+                if !output_path.to_string_lossy().ends_with(".exe") {
+                    let _ = std::fs::copy(final_out, output_path.with_extension("exe"));
+                }
+            }
+        }
+    };
 
     // Content-addressed AOT binary caching
     let cache_dir = get_aot_cache_dir();
     let cache_file = if let Some(ref cdir) = cache_dir {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
-        hasher.update(c_source.as_bytes());
+        hasher.update(&script_bytes);
         hasher.update(target.unwrap_or("host").as_bytes());
-        hasher.update((if use_in_process { "in_process" } else { "cc" }).as_bytes());
         let hash_hex = format!("{:x}", hasher.finalize());
         let _ = std::fs::create_dir_all(cdir);
         Some(cdir.join(hash_hex))
@@ -431,187 +346,87 @@ fn build_aot_binary_full(
                     use std::os::unix::fs::PermissionsExt;
                     let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
                 }
+                sync_final_out(&final_out);
                 return Ok(());
             }
         }
     }
 
-    if use_in_process {
-        let _is_cross = if let Some(target_str) = target {
-            let (_, os_kind) = resolve_target_triple(target_str);
-            #[cfg(target_os = "linux")]
-            let host_os = "linux";
-            #[cfg(target_os = "windows")]
-            let host_os = "windows";
-            #[cfg(target_os = "macos")]
-            let host_os = "macos";
-            os_kind != host_os
-        } else {
-            false
-        };
-
-        // 1. If custom runner stub is provided, always use it
-        if let Some(custom) = custom_stub {
-            if custom.exists() {
-                crate::cli::bundle::create_standalone_binary(custom, script_path, None, &final_out)?;
-                return Ok(());
-            }
-        }
-
-        // 2. Try Cranelift backend first for pure-Rust native code generation
-        let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1").unwrap_or(false);
-        if !no_clif {
-            if super::cranelift::build_cranelift_binary(script_path, &final_out, target).is_ok() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
-                }
-                if let Some(ref cfile) = cache_file {
-                    let _ = std::fs::copy(&final_out, cfile);
-                }
-                return Ok(());
-            }
-        }
-
-        // 3. Fallback: If a runner stub is available and not in pure-native mode, use it to ensure runnability
-        let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1").unwrap_or(false);
-        if !pure_native {
-            if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
-                crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
-                return Ok(());
-            }
-        }
-
-        // 3. Otherwise (cross-platform with zero external toolchains or pure native mode), build in-process via MIR + object crate
-        let target_platform = if let Some(target_str) = target {
-            super::object_builder::TargetPlatform::from_str(target_str)
-        } else {
-            super::object_builder::TargetPlatform::host()
-        };
-
-        let bytes = super::object_builder::build_aot_native_executable(&eir_module, target_platform)?;
-        std::fs::write(&final_out, &bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
-        }
-        if let Some(ref cfile) = cache_file {
-            let _ = std::fs::copy(&final_out, cfile);
-        }
-        return Ok(());
-    }
-
-    // 6. Write temporary native source and invoke platform/target linker
-    let temp_dir = std::env::temp_dir();
-    let temp_c = temp_dir.join(format!("er_aot_{}_{}.c", module_name, std::process::id()));
-    std::fs::write(&temp_c, &c_source)?;
-
-    let status = if let Some(target_str) = target {
-        let (zig_target, _) = resolve_target_triple(target_str);
-        let target_triple = if zig_target == "custom" { target_str } else { zig_target };
-
-        if let Some(zig) = find_zig() {
-            Command::new(zig)
-                .arg("cc")
-                .arg("-O3")
-                .arg("-fomit-frame-pointer")
-                .arg("-s")
-                .arg("-target")
-                .arg(target_triple)
-                .arg(&temp_c)
-                .arg("-o")
-                .arg(&final_out)
-                .status()?
-        } else {
-            #[cfg(target_os = "linux")]
-            let is_host = target_str == "linux" || target_str.contains("linux");
-            #[cfg(target_os = "macos")]
-            let is_host = target_str == "macos" || target_str.contains("darwin");
-            #[cfg(target_os = "windows")]
-            let is_host = target_str == "windows";
-
-            if is_host && Command::new("cc").arg("--version").output().is_ok() {
-                Command::new("cc")
-                    .arg("-O3")
-                    .arg("-fomit-frame-pointer")
-                    .arg("-fno-math-errno")
-                    .arg(&temp_c)
-                    .arg("-o")
-                    .arg(&final_out)
-                    .status()?
-            } else if is_host {
-                if let Some(stub_path) = resolve_runner_stub(custom_stub) {
-                    let _ = std::fs::remove_file(&temp_c);
-                    crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
-                    return Ok(());
-                } else {
-                    let _ = std::fs::remove_file(&temp_c);
-                    anyhow::bail!("No native C compiler found and runner stub unavailable.");
-                }
-            } else {
-                let _ = std::fs::remove_file(&temp_c);
-                anyhow::bail!(
-                    "Cross-compilation for target '{}' requires 'zig' to be installed on your system.\nPlease install zig or ensure it is in PATH.",
-                    target_str
-                );
-            }
-        }
-    } else {
-        // Native build: prefer host cc, fallback to zig cc, or zero-dependency in-process builder
-        let has_cc = Command::new("cc")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        if has_cc {
-            Command::new("cc")
-                .arg("-O3")
-                .arg("-fomit-frame-pointer")
-                .arg("-fno-math-errno")
-                .arg(&temp_c)
-                .arg("-o")
-                .arg(&final_out)
-                .status()?
-        } else if find_zig().is_some() {
-            let zig = find_zig().unwrap();
-            Command::new(zig)
-                .arg("cc")
-                .arg("-O3")
-                .arg("-fomit-frame-pointer")
-                .arg("-s")
-                .arg(&temp_c)
-                .arg("-o")
-                .arg(&final_out)
-                .status()?
-        } else if let Some(stub_path) = resolve_runner_stub(custom_stub) {
-            let _ = std::fs::remove_file(&temp_c);
-            crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
+    // 1. If custom runner stub is provided, always use it
+    if let Some(custom) = custom_stub {
+        if custom.exists() {
+            crate::cli::bundle::create_standalone_binary(custom, script_path, None, &final_out)?;
+            sync_final_out(&final_out);
             return Ok(());
-        } else {
-            let _ = std::fs::remove_file(&temp_c);
-            anyhow::bail!("No native C compiler found. Please install 'cc' (gcc/clang) or 'zig'.");
         }
-    };
-
-    let _ = std::fs::remove_file(&temp_c);
-
-    if !status.success() {
-        anyhow::bail!("Native compilation failed with exit code: {:?}", status.code());
     }
 
+    // 2. Try Cranelift backend first for pure-Rust native code generation (x86_64 ELF/PE)
+    let is_macos = if let Some(t) = target {
+        let lower = t.to_lowercase();
+        lower == "macos" || lower == "mac" || lower == "darwin" || lower.contains("apple-darwin")
+    } else {
+        cfg!(target_os = "macos")
+    };
+    let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
+    if !no_clif && !is_macos {
+        if crate::toolchain::run_cranelift_build(script_path, &final_out, target).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
+            }
+            if let Some(ref cfile) = cache_file {
+                let _ = std::fs::copy(&final_out, cfile);
+            }
+            sync_final_out(&final_out);
+            return Ok(());
+        }
+    }
+
+    // 3. Fallback: If a runner stub is available and not in pure-native mode, use it to ensure runnability
+    let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1" || v == "true").unwrap_or(false);
+    if !pure_native {
+        if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
+            crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
+            sync_final_out(&final_out);
+            return Ok(());
+        }
+    }
+
+    // 4. Otherwise, build via Cranelift directly (surfacing error if it fails)
+    crate::toolchain::run_cranelift_build(script_path, &final_out, target)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&final_out, std::fs::Permissions::from_mode(0o755));
+    }
     if let Some(ref cfile) = cache_file {
         let _ = std::fs::copy(&final_out, cfile);
     }
-
+    sync_final_out(&final_out);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    fn get_actual_bin(bin_path: &Path) -> std::path::PathBuf {
+        if cfg!(windows) {
+            let exe_path = bin_path.with_extension("exe");
+            if exe_path.exists() {
+                exe_path
+            } else {
+                bin_path.to_path_buf()
+            }
+        } else if bin_path.exists() {
+            bin_path.to_path_buf()
+        } else {
+            bin_path.with_extension("exe")
+        }
+    }
 
     #[test]
     fn test_build_aot_binary_end_to_end() {
@@ -626,11 +441,13 @@ mod tests {
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary should succeed: {:?}", res.err());
-        assert!(bin_path.exists(), "Binary file should exist on disk");
+        let actual_bin = get_actual_bin(&bin_path);
+        assert!(actual_bin.exists(), "Binary file should exist on disk");
 
         // Execute the compiled native binary
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success(), "Compiled binary exited with status {:?}", output.status);
     }
@@ -654,8 +471,11 @@ test()
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let actual_bin = get_actual_bin(&bin_path);
+        assert!(actual_bin.exists());
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -681,8 +501,11 @@ print(arr[1]);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let actual_bin = get_actual_bin(&bin_path);
+        assert!(actual_bin.exists(), "Binary file should exist at {}", actual_bin.display());
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(
             output.status.success(),
@@ -701,8 +524,11 @@ print(arr[1]);
         let bin_path = temp_dir.join(format!("test_fib_bin_{}", std::process::id()));
         let res = build_aot_binary(Path::new("fib.er"), &bin_path);
         assert!(res.is_ok(), "build_aot_binary failed: {:?}", res.err());
-        let output = Command::new(&bin_path).output().expect("Failed to execute binary");
+        let actual_bin = get_actual_bin(&bin_path);
+        assert!(actual_bin.exists());
+        let output = Command::new(&actual_bin).output().expect("Failed to execute binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -721,10 +547,12 @@ print(arr[1]);
         let _ = std::fs::remove_file(&script_path);
 
         assert!(res.is_ok(), "build_aot_binary in-process failed: {:?}", res.err());
-        assert!(bin_path.exists(), "Binary file should exist on disk");
+        let actual_bin = get_actual_bin(&bin_path);
+        assert!(actual_bin.exists(), "Binary file should exist on disk");
 
-        let output = Command::new(&bin_path).output().expect("Failed to execute in-process binary");
+        let output = Command::new(&actual_bin).output().expect("Failed to execute in-process binary");
         let _ = std::fs::remove_file(&bin_path);
+        let _ = std::fs::remove_file(bin_path.with_extension("exe"));
 
         assert!(output.status.success(), "In-process binary exited with status {:?}", output.status);
         let stdout = String::from_utf8_lossy(&output.stdout);

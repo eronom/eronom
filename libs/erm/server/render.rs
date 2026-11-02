@@ -123,23 +123,24 @@ pub fn native_render(args: Vec<Value>) -> Value {
         // PPR/SSG Path: Bypass compiler entirely
         let content = fs::read_to_string(&path).unwrap_or_default();
 
-        // Construct parameters string: window.__erm_params = {...};
-        let mut params_js = String::from("window.__erm_params = {");
+        // Construct parameters string: setParams({...});
+        let mut params_obj = String::from("{");
         for (i, (k, v)) in params_map.iter().enumerate() {
             if i > 0 {
-                params_js.push_str(", ");
+                params_obj.push_str(", ");
             }
             let is_numeric = v.parse::<f64>().is_ok();
             let is_boolean = v == "true" || v == "false";
             if is_numeric || is_boolean {
-                params_js.push_str(&format!("\"{}\": {}", k, v));
+                params_obj.push_str(&format!("\"{}\": {}", k, v));
             } else {
-                params_js.push_str(&format!("\"{}\": \"{}\"", k, v.replace('"', "\\\"")));
+                params_obj.push_str(&format!("\"{}\": \"{}\"", k, v.replace('"', "\\\"")));
             }
         }
-        params_js.push_str("};");
+        params_obj.push('}');
+        let params_js = format!("setParams({});", params_obj);
 
-        let processed = content.replace("window.__erm_params = {};", &params_js);
+        let processed = content.replace("setParams({});", &params_js);
         let ptr = crate::vm::gc::get_or_create_string(&processed);
         Value::string(ptr)
     } else {

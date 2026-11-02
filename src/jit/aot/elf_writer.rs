@@ -143,11 +143,11 @@ pub fn link_object_to_static_elf64(
         data_bytes.extend_from_slice(d);
     }
 
-    // 3. Locate _start symbol offset
+    // 3. Locate _start or main symbol offset
     let mut start_offset = 0u64;
     for sym in file.symbols() {
         if let Ok(name) = sym.name() {
-            if name == "_start" {
+            if name == "_start" || name == "main" {
                 start_offset = sym.address();
                 break;
             }

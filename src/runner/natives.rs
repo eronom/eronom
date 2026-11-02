@@ -247,12 +247,16 @@ pub fn native_render(args: Vec<Value>) -> Value {
     if is_html {
         let mut final_content = content;
         if !params_map.is_empty() {
-            let mut params_js = String::from("window.__erm_params = {");
-            for (k, v) in &params_map {
-                params_js.push_str(&format!("{}: \"{}\",", k, v.replace("\"", "\\\"")));
+            let mut params_obj = String::from("{");
+            for (i, (k, v)) in params_map.iter().enumerate() {
+                if i > 0 {
+                    params_obj.push_str(", ");
+                }
+                params_obj.push_str(&format!("{}: \"{}\"", k, v.replace("\"", "\\\"")));
             }
-            params_js.push_str("};");
-            final_content = final_content.replace("window.__erm_params = {};", &params_js);
+            params_obj.push('}');
+            let params_js = format!("setParams({});", params_obj);
+            final_content = final_content.replace("setParams({});", &params_js);
         }
         let ptr = backend::gc::gc_alloc_string(&final_content);
         return Value::string(ptr);

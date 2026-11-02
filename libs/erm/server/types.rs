@@ -1,11 +1,43 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, LazyLock, Mutex};
+
+#[derive(Clone, Debug)]
+pub struct CachedAsset {
+    pub content: Arc<Vec<u8>>,
+    pub content_type: &'static str,
+    pub etag: String,
+    pub is_immutable: bool,
+}
 
 pub static BASE_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 pub static DEFAULT_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
 pub static IS_PROD: Mutex<bool> = Mutex::new(false);
 pub static HMR_QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+pub static STATIC_ASSET_CACHE: LazyLock<Mutex<HashMap<String, CachedAsset>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static ASSET_MANIFEST: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn guess_mime_type(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "ico" => "image/x-icon",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
 
 pub struct GcGuard;
 impl Drop for GcGuard {

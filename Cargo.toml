@@ -1,3 +1,15 @@
+[workspace]
+members = [
+    ".",
+    "crates/eronom-core",
+    "crates/eronom-frontend",
+    "crates/eronom-net",
+    "crates/eronom-vm",
+    "crates/eronom-runner",
+    "crates/eronom-cranelift",
+]
+default-members = ["."]
+
 [package]
 name = "eronom"
 version = "0.9.4"
@@ -6,10 +18,14 @@ default-run = "eronom"
 
 [lib]
 name = "eronom"
-path = "libs/erm/lib.rs"
+path = "src/lib.rs"
 
 
 [dependencies]
+eronom-core = { path = "crates/eronom-core" }
+eronom-frontend = { path = "crates/eronom-frontend" }
+eronom-net = { path = "crates/eronom-net" }
+eronom-vm = { path = "crates/eronom-vm" }
 anyhow = "1.0.102"
 fnv = "1.0.7"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -23,17 +39,7 @@ hmac = "0.12"
 getrandom = "0.2"
 mimalloc = { version = "0.1", default-features = false }
 object = { version = "0.40.0", features = ["write", "std"] }
-cranelift-codegen = { version = "0.135.5", features = ["all-arch", "std"] }
-cranelift-frontend = "0.135.5"
-cranelift-module = "0.135.5"
-cranelift-object = "0.135.5"
 target-lexicon = "0.13.5"
-
-[[bin]]
-name = "eronom-runner"
-path = "src/runner/main.rs"
-[build-dependencies]
-cc = "1.0"
 
 [profile.release]
 opt-level = "z"

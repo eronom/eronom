@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-and-build:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc g++ clang libssl-dev
+
+      - name: Setup MSVC developer command prompt
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Run Test Suite
+        run: cargo test --workspace --target ${{ matrix.target }}
+
+      - name: Build Debug Binary
+        run: cargo build --workspace --target ${{ matrix.target }}
+
+      # Linux: Verify Pure Native Cranelift Server Binary
+      - name: Verify Pure Native Cranelift Server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo run -- build server.er --cranelift -o server_clif
+          ls -lh server_clif
+          test -f server_clif
+
+      - name: Upload Linux Artifacts
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eronom-linux-x64
+          path: |
+            server_clif
+            target/${{ matrix.target }}/debug/eronom
+            target/${{ matrix.target }}/debug/eronom-cranelift
+
+      # macOS: Verify Pure Native Cranelift Server Binary
+      - name: Verify Pure Native Cranelift Server (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo run -- build server.er --cranelift -o server_clif
+          ls -lh server_clif
+          test -f server_clif
+
+      - name: Upload macOS Artifacts
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eronom-macos-arm64
+          path: |
+            server_clif
+            target/${{ matrix.target }}/debug/eronom
+            target/${{ matrix.target }}/debug/eronom-cranelift
+
+      # Windows: Verify Pure Native Cranelift Server Binary (MSVC link.exe)
+      - name: Verify Pure Native Cranelift Server (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo run -- build server.er --cranelift -o server_native.exe
+          $item = Get-Item server_native.exe
+          Write-Host "Built native Windows binary: $($item.Length) bytes"
+          if ($item.Length -gt 1500000) {
+            throw "Binary size $($item.Length) bytes exceeds 1.5MB! Expected pure native binary (~250KB)."
+          }
+
+      - name: Upload Windows Artifacts
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eronom-windows-x64
+          path: |
+            server_native.exe
+            target/${{ matrix.target }}/debug/eronom.exe
+            target/${{ matrix.target }}/debug/eronom-cranelift.exe

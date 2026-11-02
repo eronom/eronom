@@ -259,14 +259,76 @@ fn test_createroot_module_generation() {
     "#;
     let params = std::collections::HashMap::new();
     let res = process_erm_component(".", content, false, &params).unwrap();
-    assert!(res.contains("createRoot((dispose) => {"));
+    assert!(res.contains("createRoot(async (dispose) => {"));
     assert!(res.contains("import {"));
     assert!(res.contains("createSignal"));
     assert!(res.contains("createEffect"));
     assert!(res.contains("bindText"));
+    assert!(res.contains("useFetch"));
     assert!(!res.contains("window.__erm_init_reactivity"));
     assert!(!res.contains("window.__erm_update"));
 }
+
+#[test]
+fn test_use_fetch_and_loading_boundary() {
+    let content = r#"
+    <script>
+        const deal = await useFetch('/api/deal');
+    </script>
+    <Loading fallback={<div class="skeleton">Loading...</div>}>
+        <div class="deal-card">
+            <h3>{deal.title}</h3>
+            <p>${deal.price}</p>
+        </div>
+    </Loading>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("createRoot(async (dispose) => {"));
+    assert!(res.contains("useFetch(") && res.contains("/api/deal"));
+    assert!(res.contains("class=\"erm-suspense-container\""));
+    assert!(res.contains("class=\"erm-suspense-fallback\""));
+    assert!(res.contains("class=\"erm-suspense-content\""));
+    assert!(res.contains("class=\"skeleton\"") && res.contains("Loading..."));
+    assert!(res.contains("bindText("));
+}
+
+#[test]
+fn test_use_fetch_state_extraction_and_injection() {
+    let store_content = r#"
+    <script>
+        export const deal = await useFetch('/api/deal');
+    </script>
+    "#;
+    let extracted = extract_state_variable_init(store_content, "deal");
+    assert_eq!(extracted, Some("await useFetch('/api/deal')".to_string()));
+
+    let script = "const deal = await useFetch('/api/deal');";
+    let injected = inject_state_name(script, "deal", "store_deal");
+    assert!(injected.contains("await useFetch('/api/deal', \"store_deal\")"));
+
+    let script_no_await = "const deal = useFetch('/api/deal');";
+    let injected_no_await = inject_state_name(script_no_await, "deal", "store_deal");
+    assert!(injected_no_await.contains("await useFetch('/api/deal', \"store_deal\")"));
+}
+
+#[test]
+fn test_use_fetch_optional_await() {
+    let content = r#"
+    <script>
+        export const deal = useFetch('/api/deal');
+    </script>
+    <h1>{deal.title}</h1>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("await useFetch("));
+
+    let direct_export = "export const deal = useFetch('/api/deal');";
+    let injected = inject_state_name(direct_export, "deal", "store_deal");
+    assert!(injected.contains("await useFetch("));
+}
+
 
 #[test]
 fn test_clean_blocks_compilation() {
@@ -626,11 +688,29 @@ fn test_render_params_ssr_and_client_bindings() {
     assert!(res.contains("269"), "Expected SSR HTML to contain originalPrice");
     assert!(res.contains("30"), "Expected SSR HTML to contain discount");
 
-    // 2. Client script declarations should define each param from window.__erm_params
-    assert!(res.contains("let originalPrice = window.__erm_params[\"originalPrice\"];"));
-    assert!(res.contains("let price = window.__erm_params[\"price\"];"));
-    assert!(res.contains("let title = window.__erm_params[\"title\"];"));
-    assert!(res.contains("let discount = window.__erm_params[\"discount\"];"));
+    // 2. Client script declarations should define each param from __params
+    assert!(res.contains("let originalPrice = __params[\"originalPrice\"];"));
+    assert!(res.contains("let price = __params[\"price\"];"));
+    assert!(res.contains("let title = __params[\"title\"];"));
+    assert!(res.contains("let discount = __params[\"discount\"];"));
+    assert!(res.contains("setParams({"));
+    assert!(res.contains("let __params = useParams();"));
+    assert!(!res.contains("window.__erm_params"));
+}
+
+#[test]
+fn test_template_cloning_and_node_primitives_availability() {
+    let content = r#"
+    <script>
+        let count = 0;
+    </script>
+    <button on:click={() => count++}>{count}</button>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("template, child, sibling"));
+    assert!(res.contains("ifBlock, eachBlock"));
+    assert!(res.contains("createHmrProxy"));
 }
 
 
