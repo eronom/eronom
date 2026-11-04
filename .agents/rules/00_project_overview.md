@@ -4,7 +4,7 @@ trigger: always_on
 
 # Eronom Project Overview & Context Guide
 
-Eronom (⚡) is a high-performance, JIT-compiled scripting language runtime, template engine, and web server framework written in Rust with C++ FFI bindings.
+Eronom (⚡) is a high-performance, JIT & AOT-compiled scripting language runtime, reactive template engine, and web server framework written in Rust with C++ FFI bindings.
 
 ## 1. Core Purpose & Capabilities
 - **High-Performance Scripting**: Dynamic, dynamically-typed scripting language designed for low-latency web application execution.

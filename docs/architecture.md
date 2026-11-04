@@ -1,6 +1,6 @@
 # Eronom Architectural Overview & Internals
 
-Eronom is a high-performance, JIT-compiled scripting runtime, web framework, and reactive template engine written in Rust with native C++ FFI networking bindings.
+Eronom is a high-performance, JIT & AOT-compiled scripting language runtime, reactive template engine, and web server framework written in Rust with native C++ FFI networking bindings.
 
 ```mermaid
 flowchart TD

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>High-performance, JIT-compiled scripting language runtime, reactive template engine, and web server framework.</strong>
+  <strong>High-performance, JIT & AOT-compiled scripting language runtime, reactive template engine, and web server framework.</strong>
 </p>
 
 <p align="center">

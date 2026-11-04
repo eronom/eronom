@@ -6,7 +6,7 @@ This guide provides instructions, structural maps, and runtime invariants for au
 
 ## 1. What is Eronom?
 
-Eronom is a high-performance, JIT-compiled scripting language runtime, template engine, and web framework written in Rust with native C++ networking FFI bindings.
+Eronom is a high-performance, JIT & AOT-compiled scripting language runtime, reactive template engine, and web server framework written in Rust with native C++ networking FFI bindings.
 
 ### Core Subsystems Directory Map
 
