@@ -2,8 +2,8 @@ export num = 5
 
 name = "Eronom"
 
-print = "new"
+print("new")
 
 name = "vs"
 
-print(print)
+print(name)

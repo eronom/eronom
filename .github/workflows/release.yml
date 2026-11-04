@@ -30,6 +30,10 @@ on:
         description: "Build and package the VS Code extension (.vsix)"
         type: boolean
         default: true
+      run-tests:
+        description: "Run workspace test suite before packaging"
+        type: boolean
+        default: true
 
 concurrency:
   group: release-${{ github.ref }}
@@ -108,6 +112,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential gcc g++ clang libssl-dev
+
+      - name: Setup MSVC developer command prompt
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Run Test Suite
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.run-tests != 'false' }}
+        run: cargo test --workspace --target ${{ matrix.target }}
 
       - name: Build Release Binary
         run: cargo build --release --target ${{ matrix.target }}
