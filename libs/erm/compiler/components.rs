@@ -311,7 +311,7 @@ pub fn extract_local_components(content: &str) -> HashMap<String, LocalFunctionC
         if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
             let body = &content[body_start..body_start + cb];
 
-            if !m.as_str().contains("Component") && !body.contains('<') && !body.contains('@') {
+            if !body.contains('<') && !body.contains('@') {
                 continue;
             }
 
