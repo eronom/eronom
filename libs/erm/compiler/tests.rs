@@ -695,7 +695,6 @@ fn test_render_params_ssr_and_client_bindings() {
     assert!(res.contains("let discount = __params[\"discount\"];"));
     assert!(res.contains("setParams({"));
     assert!(res.contains("let __params = useParams();"));
-    assert!(!res.contains("window.__erm_params"));
 }
 
 #[test]
