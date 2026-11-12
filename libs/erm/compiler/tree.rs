@@ -6,7 +6,7 @@ use super::utils::*;
 use super::css::{scope_css, scope_html};
 use super::transform::{preprocess_erm_template, transform_use_effect};
 use super::reactivity::parse_reactivity;
-use super::blocks::{find_last_for_block, find_last_if_block, find_tag_end, process_for_block_at, process_if_block_at};
+use super::blocks::{find_last_for_block, find_last_if_block, find_tag_end, process_for_block_at, process_if_block_at, validate_template_directives};
 use super::components::{resolve_custom_component, resolve_suspense_loading};
 
 pub struct ProcessResult {
@@ -130,6 +130,7 @@ pub fn process_component_tree(
     }
     // 3. Compile all blocks (new if syntax and new for syntax) from inside out
     let mut compiled_content = content.to_string();
+    validate_template_directives(&compiled_content, file_path)?;
     let mut block_logic = Vec::new();
     loop {
         let last_if = find_last_if_block(&compiled_content);
@@ -478,7 +479,7 @@ pub fn process_component_tree(
 
     let mut bindings = Vec::new();
     let mut events = Vec::new();
-    let reactive_html = parse_reactivity(&html_buf, &mut bindings, &mut events, &state_vars);
+    let reactive_html = parse_reactivity(&html_buf, &mut bindings, &mut events, &state_vars)?;
     let scoped_html = scope_html(&reactive_html, &scope_id)?;
 
     scripts.append(&mut bindings);

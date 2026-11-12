@@ -615,7 +615,8 @@ export function renderIf(anchorId, branchesFn) {
     } catch (e) {
       console.error("[renderIf error]", e);
     }
-    if (anchor.__erm_last_html !== newHtml) {
+    const currentInner = anchor.innerHTML;
+    if (anchor.__erm_last_html !== newHtml || currentInner.trim() !== newHtml.trim()) {
       anchor.__erm_last_html = newHtml;
       // Reconcile or update innerHTML
       const temp = document.createElement('div');
@@ -625,7 +626,7 @@ export function renderIf(anchorId, branchesFn) {
   });
 }
 
-export function renderFor(anchorId, getCollection, renderItem) {
+export function renderFor(anchorId, getCollection, renderItem, renderEmpty) {
   createRenderEffect(() => {
     const anchor = document.getElementById(anchorId);
     if (!anchor) return;
@@ -635,21 +636,30 @@ export function renderFor(anchorId, getCollection, renderItem) {
     } catch (e) { }
     if (!Array.isArray(items)) items = [];
     const itemsJson = JSON.stringify(items);
-    if (anchor.__erm_last_items !== itemsJson) {
+    if (anchor.__erm_last_items !== itemsJson || anchor.__erm_rendered !== true) {
       anchor.__erm_last_items = itemsJson;
+      anchor.__erm_rendered = true;
       const temp = document.createElement('div');
-      let html = '';
-      items.forEach((item, index) => {
-        try {
-          html += renderItem(item, index);
-        } catch (e) {
-          console.error("[renderFor item error]", e);
-        }
-      });
-      temp.innerHTML = html;
+      if (items.length === 0 && typeof renderEmpty === 'function') {
+        temp.innerHTML = renderEmpty();
+      } else {
+        let html = '';
+        items.forEach((item, index) => {
+          try {
+            html += renderItem(item, index);
+          } catch (e) {
+            console.error("[renderFor item error]", e);
+          }
+        });
+        temp.innerHTML = html;
+      }
       reconcileNodes(anchor, Array.from(temp.childNodes));
     }
   });
+}
+
+export function useStyle(styleObj) {
+  return styleObj;
 }
 
 // --- Comment-Anchored Fine-Grained Blocks ---
@@ -1588,6 +1598,14 @@ export async function applyErmHmr(targetPath, timestamp) {
     // 5. Reconcile DOM in-place without page reload
     reconcileNodes(document.body, Array.from(doc.body.childNodes));
     if (pendingResources === 0) dismissLoadingFallback();
+
+    // Reset cached directive state on existing anchors so that incoming scripts
+    // re-render immediately against preserved reactive signals rather than skipping.
+    document.querySelectorAll('[id^="erm-if-"], [id^="erm-for-"]').forEach(el => {
+      delete el.__erm_last_html;
+      delete el.__erm_last_items;
+      delete el.__erm_rendered;
+    });
 
     // 6. Execute updated page scripts
     for (const item of scriptData) {

@@ -458,3 +458,216 @@ pub fn process_if_block_at(
     res_html.replace_range(start_idx..block_end_idx, &anchor_html);
     Ok(())
 }
+
+pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::Result<()> {
+    let ranges = ScriptStyleRanges::new(content);
+    let mut i = 0;
+    let mut brace_depth: usize = 0;
+
+    while i < content.len() {
+        if let Some(skip_to) = ranges.get_skip_pos(i) {
+            i = skip_to;
+            continue;
+        }
+
+        let c = content[i..].chars().next().unwrap();
+
+        // Track template expression brace depth
+        if c == '{' {
+            brace_depth += 1;
+            i += 1;
+            continue;
+        } else if c == '}' {
+            if brace_depth > 0 {
+                brace_depth -= 1;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Only validate control flow keywords outside of { ... } expressions
+        if brace_depth == 0 {
+            // Check bare 'if'
+            if content[i..].starts_with("if") {
+                let is_preceded_by_at_else = {
+                    let mut check = i;
+                    while check > 0 {
+                        let bc = content[..check].chars().next_back().unwrap();
+                        if bc.is_whitespace() {
+                            check -= bc.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                    check >= 5 && &content[check - 5..check] == "@else"
+                };
+
+                let prev_ok = if is_preceded_by_at_else {
+                    false
+                } else if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.' && prev_c != '-'
+                };
+                let after_if = i + 2;
+                let next_ok = if after_if < content.len() {
+                    let next_c = content[after_if..].chars().next().unwrap();
+                    next_c.is_whitespace() || next_c == '('
+                } else {
+                    false
+                };
+
+                if prev_ok && next_ok {
+                    let mut scan = after_if;
+                    let mut found_brace = None;
+                    while scan < content.len() {
+                        let sc = content[scan..].chars().next().unwrap();
+                        if sc == '{' {
+                            found_brace = Some(scan);
+                            break;
+                        } else if content[scan..].starts_with("</") || sc == ';' || (sc == '\n' && scan > after_if + 120) {
+                            break;
+                        }
+                        scan += sc.len_utf8();
+                    }
+
+                    if let Some(brace_pos) = found_brace {
+                        let cond = content[after_if..brace_pos].trim();
+                        let after_brace = brace_pos + 1;
+                        if let Some(cb) = find_matching_close_brace(&content[after_brace..]) {
+                            let body = &content[after_brace..after_brace + cb];
+                            let has_markup = body.contains('<') || body.contains('@') || body.contains("class=");
+                            let rest = &content[after_brace + cb + 1..];
+                            let rest_trimmed = rest.trim_start();
+                            let has_else = rest_trimmed.starts_with("@else") || rest_trimmed.starts_with("else");
+                            let looks_like_cond = cond.contains('>') || cond.contains('<') || cond.contains("==")
+                                || cond.contains("!=") || cond.contains("&&") || cond.contains("||")
+                                || cond.contains(".value") || cond.starts_with('(');
+
+                            if has_markup || has_else || looks_like_cond {
+                                let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
+                                anyhow::bail!(
+                                    "SyntaxError in {} (line {}): Bare 'if' block detected in template markup:\n  --> if {} {{ ... }}\n  Directives in ERM templates must begin with '@'.\n  Fix: Change 'if {}' to '@if {}'.",
+                                    file_path, line_no, cond, cond, cond
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check bare 'for'
+            if content[i..].starts_with("for") {
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.' && prev_c != '-'
+                };
+                let after_for = i + 3;
+                let next_ok = if after_for < content.len() {
+                    let next_c = content[after_for..].chars().next().unwrap();
+                    next_c.is_whitespace() || next_c == '('
+                } else {
+                    false
+                };
+
+                if prev_ok && next_ok {
+                    let mut scan = after_for;
+                    let mut found_brace = None;
+                    while scan < content.len() {
+                        let sc = content[scan..].chars().next().unwrap();
+                        if sc == '{' {
+                            found_brace = Some(scan);
+                            break;
+                        } else if content[scan..].starts_with("</") || sc == ';' || (sc == '\n' && scan > after_for + 120) {
+                            break;
+                        }
+                        scan += sc.len_utf8();
+                    }
+
+                    if let Some(brace_pos) = found_brace {
+                        let header = content[after_for..brace_pos].trim();
+                        if header.contains(" in ") || header.contains(" of ") || header.contains("let ") {
+                            let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
+                            anyhow::bail!(
+                                "SyntaxError in {} (line {}): Bare 'for' loop detected in template markup:\n  --> for {} {{ ... }}\n  Directives in ERM templates must begin with '@'.\n  Fix: Change 'for {}' to '@for {}' or use expression mapping '{{{}.map(...)}}'.",
+                                file_path, line_no, header, header, header, header
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Check bare 'else'
+            if content[i..].starts_with("else") {
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.'
+                };
+                let after_else = i + 4;
+                let next_ok = if after_else < content.len() {
+                    let next_c = content[after_else..].chars().next().unwrap();
+                    next_c.is_whitespace() || next_c == '{'
+                } else {
+                    false
+                };
+
+                if prev_ok && next_ok {
+                    let mut before = i;
+                    let mut preceded_by_close = false;
+                    while before > 0 {
+                        let bc = content[..before].chars().next_back().unwrap();
+                        if bc.is_whitespace() {
+                            before -= bc.len_utf8();
+                        } else {
+                            if bc == '}' {
+                                preceded_by_close = true;
+                            }
+                            break;
+                        }
+                    }
+
+                    if preceded_by_close {
+                        let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
+                        anyhow::bail!(
+                            "SyntaxError in {} (line {}): Bare 'else' detected in template markup:\n  --> else ...\n  Hint: Transition directives in ERM templates must use '@else' or '@else if'.\n  Fix: Change 'else' to '@else'.",
+                            file_path, line_no
+                        );
+                    }
+                }
+            }
+
+            // Check bare '.map(' outside braces
+            if content[i..].starts_with(".map(") {
+                let mut before = i;
+                let mut id_chars = Vec::new();
+                while before > 0 {
+                    let bc = content[..before].chars().next_back().unwrap();
+                    if bc.is_alphanumeric() || bc == '_' || bc == '$' {
+                        id_chars.push(bc);
+                        before -= bc.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                if !id_chars.is_empty() {
+                    id_chars.reverse();
+                    let coll_name: String = id_chars.into_iter().collect();
+                    let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
+                    anyhow::bail!(
+                        "SyntaxError in {} (line {}): Array mapping '{}.map(...)' was found outside expression braces.\n  Hint: In ERM templates, functional expressions must be enclosed in braces.\n  Fix: Wrap the mapping in braces: '{{{}.map(...)}}'.",
+                        file_path, line_no, coll_name, coll_name
+                    );
+                }
+            }
+        }
+
+        i += c.len_utf8();
+    }
+
+    Ok(())
+}

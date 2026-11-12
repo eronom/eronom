@@ -868,6 +868,86 @@ fn test_full_newr_compilation() {
 }
 
 #[test]
+fn test_bare_if_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        if count > 5 {
+            <p>High</p>
+        } else {
+            <p>Low</p>
+        }
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    println!("ACTUAL ERR MSG:\n{}", err_msg);
+    assert!(err_msg.contains("Bare 'if' block detected in template markup"));
+    assert!(err_msg.contains("@if"));
+}
+
+#[test]
+fn test_bare_for_rejection_with_helpful_message() {
+    let content = r#"
+    <ul>
+        for item in items {
+            <li>{item}</li>
+        }
+    </ul>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare 'for' loop detected in template markup"));
+    assert!(err_msg.contains("@for"));
+}
+
+#[test]
+fn test_bare_else_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        @if count > 5 {
+            <p>High</p>
+        } else {
+            <p>Low</p>
+        }
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare 'else' detected in template markup"));
+    assert!(err_msg.contains("@else"));
+}
+
+#[test]
+fn test_bare_map_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        todos.map(todo => <p>{todo.text}</p>)
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Array mapping 'todos.map(...)' was found outside expression braces"));
+    assert!(err_msg.contains("{todos.map(...)}"));
+}
+
+#[test]
+fn test_raw_html_in_interpolation_rejection() {
+    let content = r#"
+    <div>
+        { <p>Invalid raw markup in interpolation</p> }
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("contains raw HTML markup '<...>'"));
+}
+
+#[test]
 fn test_english_prose_not_parsed_as_control_flow() {
     let content = r#"
     <section>

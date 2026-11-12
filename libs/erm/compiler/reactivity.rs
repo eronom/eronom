@@ -1,6 +1,6 @@
 use super::utils::get_re_attr_brace;
 
-pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<String>, states: &[String]) -> String {
+pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<String>, states: &[String]) -> anyhow::Result<String> {
     let mut out = String::new();
     let mut i = 0;
     let mut in_tag = false;
@@ -25,6 +25,39 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                 }
                 if depth == 0 {
                     let raw_expr = &html[i + 1..j - 1];
+                    let trimmed = raw_expr.trim();
+
+                    // Check for raw unquoted HTML tags inside interpolation braces
+                    let mut in_quote = false;
+                    let mut quote_c = ' ';
+                    let mut has_unquoted_tag = false;
+                    let chars: Vec<char> = trimmed.chars().collect();
+                    for idx in 0..chars.len() {
+                        let ch = chars[idx];
+                        if in_quote {
+                            if ch == quote_c && (idx == 0 || chars[idx - 1] != '\\') {
+                                in_quote = false;
+                            }
+                        } else if ch == '"' || ch == '\'' || ch == '`' {
+                            in_quote = true;
+                            quote_c = ch;
+                        } else if ch == '<' && idx + 1 < chars.len() {
+                            let next_ch = chars[idx + 1];
+                            if next_ch.is_ascii_alphabetic() || next_ch == '/' {
+                                has_unquoted_tag = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if has_unquoted_tag {
+                        let line_no = html[..i].chars().filter(|&ch| ch == '\n').count() + 1;
+                        anyhow::bail!(
+                            "SyntaxError in template (line {}): Invalid interpolation '{{{}}}' contains raw HTML markup '<...>'.\nHint: For conditional markup use '@if' and '@else'. For array mapping use '{{collection.map(item => (...))}}' or '@for item in collection'.",
+                            line_no, trimmed
+                        );
+                    }
+
                     let expr = crate::frontend::transpile_expr_reactivity(raw_expr, states)
                         .unwrap_or_else(|| raw_expr.to_string());
                     let id = format!("erm-bind-{}", j);
@@ -137,7 +170,7 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
         out.push(c);
         i += c.len_utf8();
     }
-    out
+    Ok(out)
 }
 
 pub fn get_event_attribute_name(prefix: &str) -> Option<String> {
