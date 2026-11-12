@@ -713,4 +713,142 @@ fn test_template_cloning_and_node_primitives_availability() {
     assert!(res.contains("createHmrProxy"));
 }
 
+#[test]
+fn test_at_for_and_empty_directive() {
+    let content_with_items = r#"
+    <script>
+        let todos = useState(["Task A", "Task B"]);
+    </script>
+    <ul>
+        @for todo in todos {
+            <li>{todo}</li>
+        } @empty {
+            <li>No todos yet</li>
+        }
+    </ul>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content_with_items, false, &params).unwrap();
+    assert!(res.contains("Task A"));
+    assert!(res.contains("Task B"));
+    assert!(res.contains(">Task A</li>"));
+    assert!(res.contains("renderFor("));
+
+    // Test with empty array
+    let content_empty = r#"
+    <script>
+        let todos = useState([]);
+    </script>
+    <ul>
+        @for todo in todos {
+            <li>{todo}</li>
+        } @empty {
+            <li>No todos yet</li>
+        }
+    </ul>
+    "#;
+    let res_empty = process_erm_component(".", content_empty, false, &params).unwrap();
+    assert!(res_empty.contains(">No todos yet</li>"));
+    assert!(res_empty.contains("renderFor("));
+}
+
+#[test]
+fn test_expression_mapping_desugaring() {
+    let content = r#"
+    <script>
+        let names = useState(["Alpha", "Beta"]);
+    </script>
+    <div>
+        {names.map(name => (
+            <p>{name}</p>
+        ))}
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Alpha</p>"));
+    assert!(res.contains("Beta</p>"));
+    assert!(res.contains("renderFor("));
+    assert!(!res.contains("@<span")); // Ensure @ was cleanly stripped
+}
+
+#[test]
+fn test_bare_script_preamble() {
+    let content = r#"
+    const num = useState(5);
+    const name = useState("Vishnu");
+
+    <h1>Hello {name}</h1>
+    <p>Num is {num}</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Vishnu"));
+    assert!(res.contains("5"));
+    assert!(res.contains("useState(5"));
+}
+
+#[test]
+fn test_use_style_compile_time_extraction() {
+    let content = r#"
+    <script>
+        const style = useStyle({
+            card: {
+                color: "red",
+                padding: "10px",
+                border: "1px solid black",
+                borderRadius: "5px"
+            }
+        });
+    </script>
+    <div class={style.card}>
+        <p>Card Content</p>
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains(".erm-card-"));
+    assert!(res.contains("border-radius: 5px;"));
+    assert!(res.contains("color: red;"));
+    assert!(res.contains("padding: 10px;"));
+    assert!(res.contains("class=\"erm-card-"));
+}
+
+#[test]
+fn test_user_index_erm_syntax() {
+    let content = r#"
+    const num = useState(5);
+    const name = useState("Vishnu");
+    const names = ["name1", "name2", "name3", "name4"];
+
+    <button onClick={() => {}}></button>
+    <h1>hello {name}</h1>
+
+    {names.map(n => (
+        <p>{n}</p>
+    ))}
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Vishnu"));
+    assert!(res.contains("name1</p>"));
+    assert!(res.contains("name4</p>"));
+}
+
+#[test]
+fn test_full_ermsyntax_file_compilation() {
+    let file_path = "ermsyntax/index.erm";
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(file_path, &content, false, &params).unwrap();
+        assert!(res.contains("hello"));
+        assert!(res.contains("function TodoList"));
+        assert!(res.contains("function Counter"));
+        assert!(res.contains("function Card"));
+        assert!(res.contains(".erm-card-"));
+        assert!(res.contains("name1</p>"));
+        assert!(res.contains("name4</p>"));
+    }
+}
+
 

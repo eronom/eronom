@@ -1,0 +1,71 @@
+<script>
+
+
+const num = useState(5)
+
+const name = useState("Vishnu")
+
+const names = ["name1","name2","name3","name4"]
+
+</script>
+
+<button onClick={}></button>
+
+<h1>hello</h1>
+
+{names.map(name => (
+    <p>{name}</p>
+))}
+
+
+
+export function TodoList({ todos, addTodo }: Props) : Component {
+   <div class="container">
+     <h2>Todo List</h2>
+     <ul>
+ @for todo in todos {
+    <p>{todo.text}</p>
+} @empty {
+    <p>No todos yet</p>
+}
+
+     </ul>
+
+     <Button onClick={addTodo} label="Add Todo" />
+   </div>
+ }
+
+ export function Counter() : Component {
+   const count = useState(0);
+   const double = useState(() => count * 2);
+
+   <div class="counter">
+     <h2>Counter</h2>
+     <p>Count: {count}</p>
+     <p>Double: {double}</p>
+     <Button onClick={() => count++} label="Increment" />
+   </div>
+ }
+
+<style>
+
+</style>
+
+export function Card() : Component {
+    
+    const style = useStyle({
+        card: {     
+            padding: "10px",
+            border: "1px solid black",
+            borderRadius: "5px"
+        },
+          text: {
+            color: "red",
+            fontWeight: "bold"
+        }
+    })
+    
+    <div class={style.card}>
+    <p class={style.text}>Card</p>
+    </div>
+}
