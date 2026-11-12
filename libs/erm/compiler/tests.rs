@@ -893,6 +893,8 @@ fn test_full_newr_compilation() {
         assert!(res.contains("Sub-component Badge"));
         assert!(res.contains(".erm-badge-"));
         assert!(res.contains("class=\"erm-badge-"));
+        assert!(res.contains("erm-ci-2-erm-bind-40"));
+        assert!(res.contains("erm-ci-3-erm-bind-40"));
     }
 }
 

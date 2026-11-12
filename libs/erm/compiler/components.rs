@@ -460,6 +460,12 @@ pub fn resolve_local_component(
     visited.remove(&comp_stack_key);
     let sub_res = sub_res?;
 
+    *if_counter += 1;
+    let instance_prefix = format!("erm-ci-{}-", *if_counter);
+    let mut sub_html = sub_res.html;
+    let mut sub_scripts = sub_res.scripts;
+    super::utils::scope_instance_ids(&mut sub_html, &mut sub_scripts, &instance_prefix);
+
     for s in sub_res.styles {
         if !styles.contains(&s) {
             styles.push(s);
@@ -470,12 +476,12 @@ pub fn resolve_local_component(
             state_vars.push(v);
         }
     }
-    for sc in sub_res.scripts {
+    for sc in sub_scripts {
         if !scripts.contains(&sc) {
             scripts.push(sc);
         }
     }
 
-    html_buf.push_str(&sub_res.html);
+    html_buf.push_str(&sub_html);
     Ok(())
 }

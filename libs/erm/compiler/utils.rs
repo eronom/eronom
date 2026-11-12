@@ -289,6 +289,35 @@ pub fn scope_component_ids(html: &mut String, scripts: &mut Vec<String>) {
     }
 }
 
+pub fn scope_instance_ids(html: &mut String, scripts: &mut Vec<String>, prefix: &str) {
+    static RE_ID: OnceLock<regex::Regex> = OnceLock::new();
+    let re_id = RE_ID.get_or_init(|| regex::Regex::new(r#"id\s*=\s*["']([^"']+)["']"#).unwrap());
+    let mut ids = Vec::new();
+    for cap in re_id.captures_iter(html) {
+        let id_val = cap.get(1).unwrap().as_str().to_string();
+        if !ids.contains(&id_val) {
+            ids.push(id_val);
+        }
+    }
+    for id in &ids {
+        let old_pattern_dq = format!("id=\"{}\"", id);
+        let new_pattern_dq = format!("id=\"{}{}\"", prefix, id);
+        *html = html.replace(&old_pattern_dq, &new_pattern_dq);
+        let old_pattern_sq = format!("id='{}'", id);
+        let new_pattern_sq = format!("id='{}{}'", prefix, id);
+        *html = html.replace(&old_pattern_sq, &new_pattern_sq);
+    }
+    for id in &ids {
+        let dq_pattern = format!("\"{}\"", id);
+        let dq_replace = format!("\"{}{}\"", prefix, id);
+        let sq_pattern = format!("'{}'", id);
+        let sq_replace = format!("'{}{}'", prefix, id);
+        for s in scripts.iter_mut() {
+            *s = s.replace(&dq_pattern, &dq_replace).replace(&sq_pattern, &sq_replace);
+        }
+    }
+}
+
 pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
     let mut result = String::new();
     let mut i = 0;
