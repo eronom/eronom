@@ -852,6 +852,35 @@ fn test_full_ermsyntax_file_compilation() {
 }
 
 #[test]
+fn test_same_file_sub_component_rendering() {
+    let content = r##"
+    <div class="page">
+        <h1>Dashboard</h1>
+        <CardBadge title="Alpha" />
+        <CardBadge title="Beta" />
+    </div>
+
+    export function CardBadge({ title }: { title: string }): Component {
+        const badgeStyle = useStyle({
+            pill: {
+                padding: "4px 8px",
+                borderRadius: "12px",
+                color: "#1e40af"
+            }
+        })
+
+        <span class={badgeStyle.pill}>Badge: {title}</span>
+    }
+    "##;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component("app/pages/dashboard.erm", content, false, &params).unwrap();
+    assert!(res.contains("Dashboard</h1>"));
+    assert!(res.contains(".erm-pill-"));
+    assert!(res.contains("class=\"erm-pill-"));
+    assert!(res.contains("Badge: <span"));
+}
+
+#[test]
 fn test_full_newr_compilation() {
     let file_path = "newerm/app/pages/newr.erm";
     if let Ok(content) = std::fs::read_to_string(file_path) {
@@ -859,11 +888,12 @@ fn test_full_newr_compilation() {
         let res = process_erm_component(file_path, &content, false, &params).unwrap();
         assert!(res.contains("Welcome, <span"));
         assert!(res.contains("Explore new syntax"));
-        assert!(res.contains("function Card"));
         assert!(res.contains(".erm-container-"));
         assert!(res.contains("class=\"erm-container-"));
         assert!(res.contains("class=\"erm-header-"));
-        assert!(res.contains("class=\"erm-card-"));
+        assert!(res.contains("Sub-component Badge"));
+        assert!(res.contains(".erm-badge-"));
+        assert!(res.contains("class=\"erm-badge-"));
     }
 }
 

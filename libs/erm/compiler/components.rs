@@ -281,3 +281,201 @@ pub fn resolve_custom_component(
         anyhow::bail!("Component '{}' not found in components/ or current directory.", tag_name);
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct LocalFunctionComponent {
+    pub name: String,
+    pub params: String,
+    pub script: String,
+    pub markup: String,
+    pub full_erm: String,
+}
+
+pub fn extract_local_components(content: &str) -> HashMap<String, LocalFunctionComponent> {
+    static RE_FN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE_FN.get_or_init(|| {
+        regex::Regex::new(r"(?m)^\s*(?:export\s+(?:default\s+)?)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
+    });
+
+    let mut local_map = HashMap::new();
+
+    for caps in re.captures_iter(content) {
+        let m = caps.get(0).unwrap();
+        let fn_name = caps.get(1).unwrap().as_str().to_string();
+        if !fn_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+            continue;
+        }
+
+        let params = caps.get(2).unwrap().as_str().to_string();
+        let body_start = m.end();
+        if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
+            let body = &content[body_start..body_start + cb];
+
+            if !m.as_str().contains("Component") && !body.contains('<') {
+                continue;
+            }
+
+            let trimmed_params = params.trim();
+            let clean_params = if trimmed_params.starts_with('{') {
+                if let Some(cb) = super::utils::find_matching_close_brace(&trimmed_params[1..]) {
+                    trimmed_params[..=cb + 1].trim()
+                } else {
+                    trimmed_params
+                }
+            } else if let Some(colon_pos) = trimmed_params.find(':') {
+                trimmed_params[..colon_pos].trim()
+            } else {
+                trimmed_params
+            };
+
+            let mut script_lines = Vec::new();
+            let mut markup_lines = Vec::new();
+
+            if body.contains("return `") {
+                let mut in_return_template = false;
+                for line in body.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("return `") {
+                        in_return_template = true;
+                        let after = trimmed[8..].trim();
+                        if !after.is_empty() && after != "`" && after != "`;" {
+                            markup_lines.push(after.trim_end_matches(';').trim_end_matches('`'));
+                        }
+                        continue;
+                    }
+                    if in_return_template {
+                        if trimmed == "`" || trimmed == "`;" || trimmed.ends_with("`;") {
+                            in_return_template = false;
+                            continue;
+                        }
+                        markup_lines.push(line);
+                    } else {
+                        script_lines.push(line);
+                    }
+                }
+            } else {
+                let mut script_mode = true;
+                for line in body.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if script_mode {
+                        let starts_with_markup = trimmed.starts_with('<')
+                            || trimmed.starts_with('@')
+                            || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"));
+                        if starts_with_markup {
+                            script_mode = false;
+                        }
+                    }
+                    if script_mode {
+                        script_lines.push(line);
+                    } else {
+                        markup_lines.push(line);
+                    }
+                }
+            }
+
+            let mut full_erm = String::new();
+            full_erm.push_str("<script>\n");
+            if !clean_params.is_empty() {
+                if clean_params.starts_with('{') {
+                    full_erm.push_str(&format!("const {} = useProps();\n", clean_params));
+                } else {
+                    full_erm.push_str(&format!("const {} = useProps();\n", clean_params));
+                }
+            } else {
+                full_erm.push_str("const props = useProps();\n");
+            }
+            for s in &script_lines {
+                full_erm.push_str(s);
+                full_erm.push('\n');
+            }
+            full_erm.push_str("</script>\n");
+            for m in &markup_lines {
+                full_erm.push_str(m);
+                full_erm.push('\n');
+            }
+
+            local_map.insert(
+                fn_name.clone(),
+                LocalFunctionComponent {
+                    name: fn_name,
+                    params,
+                    script: script_lines.join("\n"),
+                    markup: markup_lines.join("\n"),
+                    full_erm,
+                },
+            );
+        }
+    }
+
+    local_map
+}
+
+pub fn resolve_local_component(
+    tag_name: &str,
+    tag_content: &str,
+    local_comp: &LocalFunctionComponent,
+    file_path: &str,
+    visited: &mut HashMap<String, String>,
+    params: &HashMap<String, String>,
+    if_counter: &mut usize,
+    for_counter: &mut usize,
+    state_var_sources: &mut HashMap<String, String>,
+    scripts: &mut Vec<String>,
+    styles: &mut Vec<String>,
+    state_vars: &mut Vec<String>,
+    html_buf: &mut String,
+) -> anyhow::Result<()> {
+    let comp_stack_key = format!("stack:{}:{}", file_path, tag_name);
+    if visited.get(&comp_stack_key).map_or(false, |v| v == "IN_PROGRESS") {
+        return Ok(());
+    }
+    visited.insert(comp_stack_key.clone(), "IN_PROGRESS".to_string());
+
+    let attrs = parse_tag_attributes(tag_content);
+
+    let mut comp_params = params.clone();
+    for (k, v) in &attrs {
+        let clean_v = if (v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\'')) {
+            v[1..v.len() - 1].to_string()
+        } else {
+            v.clone()
+        };
+        comp_params.insert(k.clone(), clean_v);
+    }
+
+    let sub_res = process_component_tree(
+        file_path,
+        &local_comp.full_erm,
+        visited,
+        None,
+        &comp_params,
+        if_counter,
+        for_counter,
+        state_var_sources,
+    );
+
+    visited.remove(&comp_stack_key);
+    let sub_res = sub_res?;
+
+    for s in sub_res.styles {
+        if !styles.contains(&s) {
+            styles.push(s);
+        }
+    }
+    for v in sub_res.state_vars {
+        if !state_vars.contains(&v) {
+            state_vars.push(v);
+        }
+    }
+    for sc in sub_res.scripts {
+        if !scripts.contains(&sc) {
+            scripts.push(sc);
+        }
+    }
+
+    html_buf.push_str(&sub_res.html);
+    Ok(())
+}

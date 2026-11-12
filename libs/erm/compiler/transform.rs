@@ -306,10 +306,17 @@ pub fn extract_exported_function_components(content: &str) -> String {
     let mut result = content.to_string();
 
     for (start, end, fn_name, params_str, body) in fns_to_extract.into_iter().rev() {
-        let clean_params = if let Some(colon_pos) = params_str.rfind(':') {
-            params_str[..colon_pos].trim()
+        let trimmed_params = params_str.trim();
+        let clean_params = if trimmed_params.starts_with('{') {
+            if let Some(cb) = super::utils::find_matching_close_brace(&trimmed_params[1..]) {
+                trimmed_params[..=cb + 1].trim()
+            } else {
+                trimmed_params
+            }
+        } else if let Some(colon_pos) = trimmed_params.find(':') {
+            trimmed_params[..colon_pos].trim()
         } else {
-            params_str.trim()
+            trimmed_params
         };
 
         let mut script_lines = Vec::new();
@@ -565,10 +572,17 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
             }
         }
 
-        let clean_params = if let Some(colon_pos) = params_str.rfind(':') {
-            params_str[..colon_pos].trim()
+        let trimmed_params = params_str.trim();
+        let clean_params = if trimmed_params.starts_with('{') {
+            if let Some(cb) = super::utils::find_matching_close_brace(&trimmed_params[1..]) {
+                trimmed_params[..=cb + 1].trim()
+            } else {
+                trimmed_params
+            }
+        } else if let Some(colon_pos) = trimmed_params.find(':') {
+            trimmed_params[..colon_pos].trim()
         } else {
-            params_str.trim()
+            trimmed_params
         };
         let param_binding = if !clean_params.is_empty() {
             format!("let {} = useParams();\n", clean_params)
