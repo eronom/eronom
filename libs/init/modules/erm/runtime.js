@@ -625,7 +625,7 @@ export function renderIf(anchorId, branchesFn) {
   });
 }
 
-export function renderFor(anchorId, getCollection, renderItem) {
+export function renderFor(anchorId, getCollection, renderItem, renderEmpty) {
   createRenderEffect(() => {
     const anchor = document.getElementById(anchorId);
     if (!anchor) return;
@@ -638,15 +638,19 @@ export function renderFor(anchorId, getCollection, renderItem) {
     if (anchor.__erm_last_items !== itemsJson) {
       anchor.__erm_last_items = itemsJson;
       const temp = document.createElement('div');
-      let html = '';
-      items.forEach((item, index) => {
-        try {
-          html += renderItem(item, index);
-        } catch (e) {
-          console.error("[renderFor item error]", e);
-        }
-      });
-      temp.innerHTML = html;
+      if (items.length === 0 && typeof renderEmpty === 'function') {
+        temp.innerHTML = renderEmpty();
+      } else {
+        let html = '';
+        items.forEach((item, index) => {
+          try {
+            html += renderItem(item, index);
+          } catch (e) {
+            console.error("[renderFor item error]", e);
+          }
+        });
+        temp.innerHTML = html;
+      }
       reconcileNodes(anchor, Array.from(temp.childNodes));
     }
   });
