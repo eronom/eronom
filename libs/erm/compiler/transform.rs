@@ -270,7 +270,7 @@ pub fn desugar_expression_mapping(content: &str) -> String {
 pub fn extract_exported_function_components(content: &str) -> String {
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
+        regex::Regex::new(r"(?m)^\s*(?:export\s+(?:default\s+)?)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
     });
 
     let ranges = super::template_js::ScriptStyleRanges::new(content);
@@ -288,10 +288,17 @@ pub fn extract_exported_function_components(content: &str) -> String {
         }
         if !inside_script {
             let fn_name = caps.get(1).unwrap().as_str().to_string();
+            let is_component_name = fn_name.chars().next().map_or(false, |c| c.is_ascii_uppercase());
+            if !is_component_name {
+                continue;
+            }
             let params = caps.get(2).unwrap().as_str().to_string();
             let body_start = m.end();
             if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
                 let body = content[body_start..body_start + cb].to_string();
+                if !m.as_str().contains("Component") && !body.contains('<') && !body.contains('@') {
+                    continue;
+                }
                 let total_end = body_start + cb + 1;
                 fns_to_extract.push((start, total_end, fn_name, params, body));
             }
