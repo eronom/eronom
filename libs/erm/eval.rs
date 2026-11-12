@@ -112,23 +112,33 @@ impl ErmEval {
                     }
                     if j < script.len() && script.as_bytes()[j] == b'=' {
                         j += 1;
-                        let mut end_pos = j;
-                        while end_pos < script.len() && script.as_bytes()[end_pos] != b';' && script.as_bytes()[end_pos] != b'\n' {
-                            end_pos += 1;
+                        while j < script.len() && script.as_bytes()[j].is_ascii_whitespace() {
+                            j += 1;
                         }
-                        let expr_str = script[j..end_pos].trim();
-                        let (val, _) = parse_js_value(expr_str, Some(&self.vars))?;
-                        if let Some(v) = val {
+                        if let Ok((Some(v), consumed)) = parse_js_value(&script[j..], Some(&self.vars)) {
                             self.set(name, v);
-                        } else if let Ok(v) = self.eval(expr_str) {
-                            self.set(name, v);
+                            i = j + consumed;
+                            while i < script.len() && (script.as_bytes()[i].is_ascii_whitespace() || script.as_bytes()[i] == b';') {
+                                i += 1;
+                            }
+                            found = true;
+                            break;
+                        } else {
+                            let mut end_pos = j;
+                            while end_pos < script.len() && script.as_bytes()[end_pos] != b';' && script.as_bytes()[end_pos] != b'\n' {
+                                end_pos += 1;
+                            }
+                            let expr_str = script[j..end_pos].trim();
+                            if let Ok(v) = self.eval(expr_str) {
+                                self.set(name, v);
+                            }
+                            i = end_pos;
+                            if i < script.len() && script.as_bytes()[i] == b';' {
+                                i += 1;
+                            }
+                            found = true;
+                            break;
                         }
-                        i = end_pos;
-                        if i < script.len() && script.as_bytes()[i] == b';' {
-                            i += 1;
-                        }
-                        found = true;
-                        break;
                     }
                 }
             }
@@ -524,6 +534,9 @@ pub fn parse_js_value(s: &str, vars: Option<&HashMap<String, Value>>) -> anyhow:
         let mut map = HashMap::new();
         while p < s.len() && s.as_bytes()[p] != b'}' {
             while p < s.len() && s.as_bytes()[p].is_ascii_whitespace() { p += 1; }
+            if p >= s.len() || s.as_bytes()[p] == b'}' {
+                break;
+            }
             let key = if s[p..].starts_with('"') || s[p..].starts_with('\'') || s[p..].starts_with('`') {
                 let quote = s[p..].chars().next().unwrap();
                 p += quote.len_utf8();

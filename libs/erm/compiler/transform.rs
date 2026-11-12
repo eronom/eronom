@@ -1,18 +1,77 @@
 use std::sync::OnceLock;
 
 pub fn is_function_template(content: &str) -> bool {
-    if content.contains("<script") || content.contains("<SCRIPT") {
+    if has_real_script_tag(content) {
         return false;
     }
-    static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
-    });
-    re.is_match(content)
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+            continue;
+        }
+        if trimmed.starts_with("import ") {
+            continue;
+        }
+        if trimmed.starts_with("export default function")
+            || trimmed.starts_with("export default fn")
+            || trimmed.starts_with("export function")
+            || trimmed.starts_with("export fn")
+        {
+            return true;
+        }
+        return false;
+    }
+    false
+}
+
+pub fn has_real_script_tag(content: &str) -> bool {
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if in_line_comment {
+            if chars[i] == '\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                in_block_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+        if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            in_block_comment = true;
+            i += 2;
+            continue;
+        }
+        if chars[i] == '<' && i + 6 < chars.len() {
+            let slice: String = chars[i..i + 7].iter().collect();
+            let slice_lower = slice.to_lowercase();
+            if slice_lower == "<script" {
+                if i + 7 == chars.len() || chars[i + 7] == '>' || chars[i + 7].is_whitespace() {
+                    return true;
+                }
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 pub fn is_bare_script_template(content: &str) -> bool {
-    if content.contains("<script") || content.contains("<SCRIPT") || is_function_template(content) {
+    if has_real_script_tag(content) || is_function_template(content) {
         return false;
     }
     for line in content.lines() {
@@ -44,6 +103,8 @@ pub fn preprocess_bare_script_template(content: &str) -> anyhow::Result<String> 
     let mut script_lines = Vec::new();
     let mut markup_lines = Vec::new();
     let mut script_mode = true;
+    let mut paren_depth = 0;
+    let mut bracket_depth = 0;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -57,18 +118,64 @@ pub fn preprocess_bare_script_template(content: &str) -> anyhow::Result<String> 
         }
 
         if script_mode {
-            let starts_with_markup = (trimmed.starts_with('<') && !trimmed.starts_with("<style") && !trimmed.starts_with("</style"))
+            let is_expression_markup = trimmed.starts_with('{') && (trimmed.contains(".map(") || trimmed.contains('<'));
+            let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+                (trimmed.starts_with('<') && !trimmed.starts_with("<style") && !trimmed.starts_with("</style"))
                 || trimmed.starts_with("@for")
                 || trimmed.starts_with("@if")
-                || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"));
+                || is_expression_markup
+            );
             if starts_with_markup {
                 script_mode = false;
+            } else {
+                let mut in_str = false;
+                let mut str_char = ' ';
+                let mut in_line_comm = false;
+                let chars: Vec<char> = line.chars().collect();
+                let mut ci = 0;
+                while ci < chars.len() {
+                    let ch = chars[ci];
+                    if in_line_comm {
+                        break;
+                    }
+                    if in_str {
+                        if ch == str_char && (ci == 0 || chars[ci - 1] != '\\') {
+                            in_str = false;
+                        }
+                        ci += 1;
+                        continue;
+                    }
+                    if (ch == '"' || ch == '\'' || ch == '`') && (ci == 0 || chars[ci - 1] != '\\') {
+                        in_str = true;
+                        str_char = ch;
+                        ci += 1;
+                        continue;
+                    }
+                    if ch == '/' && ci + 1 < chars.len() && chars[ci + 1] == '/' {
+                        in_line_comm = true;
+                        ci += 2;
+                        continue;
+                    }
+                    if ch == '(' {
+                        paren_depth += 1;
+                    } else if ch == ')' && paren_depth > 0 {
+                        paren_depth -= 1;
+                    } else if ch == '[' {
+                        bracket_depth += 1;
+                    } else if ch == ']' && bracket_depth > 0 {
+                        bracket_depth -= 1;
+                    }
+                    ci += 1;
+                }
             }
         }
 
         if script_mode {
             script_lines.push(line);
         } else {
+            if trimmed.starts_with("//") || (trimmed.starts_with("/*") && trimmed.ends_with("*/")) {
+                continue;
+            }
             markup_lines.push(line);
         }
     }
@@ -420,8 +527,6 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
 
             if script_mode {
                 let starts_with_markup = trimmed.starts_with('<')
-                    || trimmed.starts_with("if ")
-                    || trimmed.starts_with("for ")
                     || trimmed.starts_with("@if")
                     || trimmed.starts_with("@for")
                     || trimmed.starts_with("return");

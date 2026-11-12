@@ -88,7 +88,7 @@ fn test_for_loop_compilation() {
     <script>
         let items = useState([1, 2, 3]);
     </script>
-    for item, i in items {
+    @for item, i in items {
         <p>Item key as {i} : {item}</p>
     }
     "#;
@@ -151,11 +151,11 @@ fn test_new_if_syntax_compiler() {
     <script>
         let porridge = { temperature: 90 };
     </script>
-    if porridge.temperature > 100 {
+    @if porridge.temperature > 100 {
         <p>too hot!</p>
-    } else if 80 > porridge.temperature {
+    } @else if 80 > porridge.temperature {
         <p>too cold!</p>
-    } else {
+    } @else {
         <p>just right!</p>
     }
     "#;
@@ -176,10 +176,10 @@ fn test_nested_if_syntax_compiler() {
         let outer = true;
         let inner = false;
     </script>
-    if outer {
-        if inner {
+    @if outer {
+        @if inner {
             <p>Inner True</p>
-        } else {
+        } @else {
             <p>Inner False</p>
         }
     }
@@ -337,10 +337,10 @@ fn test_clean_blocks_compilation() {
         let items = useState([1, 2]);
         let show = useState(true);
     </script>
-    if show {
+    @if show {
         <p>Visible</p>
     }
-    for item in items {
+    @for item in items {
         <span>Item: {item}</span>
     }
     "#;
@@ -849,6 +849,38 @@ fn test_full_ermsyntax_file_compilation() {
         assert!(res.contains("name1</p>"));
         assert!(res.contains("name4</p>"));
     }
+}
+
+#[test]
+fn test_full_newr_compilation() {
+    let file_path = "newerm/app/pages/newr.erm";
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(file_path, &content, false, &params).unwrap();
+        assert!(res.contains("Welcome, <span"));
+        assert!(res.contains("Explore new syntax"));
+        assert!(res.contains("function Card"));
+        assert!(res.contains(".erm-container-"));
+        assert!(res.contains("class=\"erm-container-"));
+        assert!(res.contains("class=\"erm-header-"));
+        assert!(res.contains("class=\"erm-card-"));
+    }
+}
+
+#[test]
+fn test_english_prose_not_parsed_as_control_flow() {
+    let content = r#"
+    <section>
+        <p>Search for discounts if available and save today!</p>
+        <p>Wait for 5 minutes if you can.</p>
+    </section>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Search for discounts if available and save today!"));
+    assert!(res.contains("Wait for 5 minutes if you can."));
+    assert!(!res.contains("renderIf("));
+    assert!(!res.contains("renderFor("));
 }
 
 

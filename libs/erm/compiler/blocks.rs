@@ -31,40 +31,10 @@ pub enum ElseTransition {
 }
 
 pub fn try_parse_if_header(content: &str, start_pos: usize) -> Option<(String, usize)> {
-    let (is_at_if, if_len) = if content[start_pos..].starts_with("@if") {
-        (true, 3)
-    } else if content[start_pos..].starts_with("if") {
-        (false, 2)
-    } else {
+    if !content[start_pos..].starts_with("@if") {
         return None;
-    };
-    if !is_at_if && start_pos > 0 {
-        let prev_c = content[..start_pos].chars().next_back().unwrap();
-        if prev_c.is_alphanumeric() || prev_c == '_' || prev_c == '@' {
-            return None;
-        }
-        let mut check = start_pos;
-        while check > 0 {
-            let c = content[..check].chars().next_back().unwrap();
-            if c.is_whitespace() {
-                check -= c.len_utf8();
-            } else {
-                break;
-            }
-        }
-        if check >= 4 && &content[check - 4..check] == "else" {
-            if check - 4 == 0 || {
-                let prev_else = content[..check - 4].chars().next_back().unwrap();
-                !prev_else.is_alphanumeric() && prev_else != '_'
-            } {
-                return None;
-            }
-        }
-        if check >= 5 && &content[check - 5..check] == "@else" {
-            return None;
-        }
     }
-    let after_if = start_pos + if_len;
+    let after_if = start_pos + 3;
     if after_if < content.len() {
         let next_c = content[after_if..].chars().next().unwrap();
         if next_c.is_alphanumeric() || next_c == '_' {
@@ -103,15 +73,29 @@ pub fn find_else_transition(content: &str, start_pos: usize) -> Option<ElseTrans
             break;
         }
     }
-    let (is_else, else_len) = if content[j..].starts_with("@else") {
-        (true, 5)
-    } else if content[j..].starts_with("else") {
-        (true, 4)
-    } else {
-        (false, 0)
-    };
-    if is_else {
-        let after_else = j + else_len;
+    if content[j..].starts_with("@elseif") {
+        let after_elseif = j + 7;
+        let mut scan = after_elseif;
+        while scan < content.len() {
+            let c = content[scan..].chars().next().unwrap();
+            if c == '{' {
+                let mut cond = content[after_elseif..scan].trim().to_string();
+                if cond.starts_with('(') && cond.ends_with(')') {
+                    cond = cond[1..cond.len() - 1].trim().to_string();
+                }
+                return Some(ElseTransition::ElseIf(cond, scan + 1));
+            } else if c == '<' {
+                if scan + 1 < content.len() {
+                    let next_c = content[scan + 1..].chars().next().unwrap();
+                    if next_c == '/' || next_c.is_ascii_alphabetic() {
+                        return None;
+                    }
+                }
+            }
+            scan += c.len_utf8();
+        }
+    } else if content[j..].starts_with("@else") {
+        let after_else = j + 5;
         if after_else < content.len() {
             let next_c = content[after_else..].chars().next().unwrap();
             if next_c.is_alphanumeric() || next_c == '_' {
@@ -178,20 +162,10 @@ pub fn find_else_transition(content: &str, start_pos: usize) -> Option<ElseTrans
 }
 
 pub fn try_parse_for_header(content: &str, start_pos: usize) -> Option<(String, usize)> {
-    let (is_at_for, for_len) = if content[start_pos..].starts_with("@for") {
-        (true, 4)
-    } else if content[start_pos..].starts_with("for") {
-        (false, 3)
-    } else {
+    if !content[start_pos..].starts_with("@for") {
         return None;
-    };
-    if !is_at_for && start_pos > 0 {
-        let prev_c = content[..start_pos].chars().next_back().unwrap();
-        if prev_c.is_alphanumeric() || prev_c == '_' || prev_c == '@' {
-            return None;
-        }
     }
-    let after_for = start_pos + for_len;
+    let after_for = start_pos + 4;
     if after_for < content.len() {
         let next_c = content[after_for..].chars().next().unwrap();
         if next_c.is_alphanumeric() || next_c == '_' {
@@ -300,7 +274,7 @@ pub fn process_for_block_at(
         collection_expr_raw
     };
 
-    // Check for @empty { ... } or empty { ... } or @else { ... } or else { ... }
+    // Check for @empty { ... } or @else { ... }
     let mut actual_end_idx = absolute_close_idx + 1;
     let mut empty_body = None;
     let mut scan_empty = absolute_close_idx + 1;
@@ -316,12 +290,8 @@ pub fn process_for_block_at(
         let rest = &res_html[scan_empty..];
         let empty_kw_len = if rest.starts_with("@empty") {
             Some(6)
-        } else if rest.starts_with("empty") {
-            Some(5)
         } else if rest.starts_with("@else") {
             Some(5)
-        } else if rest.starts_with("else") {
-            Some(4)
         } else {
             None
         };

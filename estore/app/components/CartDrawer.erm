@@ -107,7 +107,7 @@
     </div>
 
     <div class="cart-items-container">
-        if cartCount == 0 {
+        @if cartCount == 0 {
             <div class="cart-empty-state">
                 <div class="empty-icon">🛒</div>
                 <h3 style="color: #ffffff; margin-bottom: 8px;">Your cart is empty</h3>
@@ -116,7 +116,7 @@
         }
 
         <div class="cart-items-list">
-            for item in cartItems {
+            @for item in cartItems {
                 <div class="cart-item-row">
                     <div class="cart-item-icon">{item.emoji}</div>
                     <div class="cart-item-details">
