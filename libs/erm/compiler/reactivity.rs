@@ -51,11 +51,14 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
                     }
 
                     if has_unquoted_tag {
-                        let line_no = html[..i].chars().filter(|&ch| ch == '\n').count() + 1;
-                        anyhow::bail!(
-                            "SyntaxError in template (line {}): Invalid interpolation '{{{}}}' contains raw HTML markup '<...>'.\nHint: For conditional markup use '@if' and '@else'. For array mapping use '{{collection.map(item => (...))}}' or '@for item in collection'.",
-                            line_no, trimmed
-                        );
+                        return Err(crate::compiler::errors::CompileError::new(
+                            "template",
+                            html,
+                            i,
+                            (j + 1).saturating_sub(i),
+                            format!("Invalid interpolation '{{{}}}' contains raw HTML markup '<...>'", trimmed),
+                            Some("For conditional markup use '@if' and '@else'. For array mapping use '{collection.map(item => (...))}' or '@for item in collection'.".to_string()),
+                        ).into());
                     }
 
                     let expr = crate::frontend::transpile_expr_reactivity(raw_expr, states)

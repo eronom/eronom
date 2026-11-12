@@ -484,11 +484,17 @@ export class HMRClient {
 
     const errorFile = body.getAttribute('data-compile-error-file');
     const errorMessage = body.getAttribute('data-compile-error-message');
+    const errorFrame = body.getAttribute('data-compile-error-frame') || '';
+    const errorLine = body.getAttribute('data-compile-error-line');
+    const errorCol = body.getAttribute('data-compile-error-col');
+
     if (errorFile && errorMessage) {
+      const displayFile = errorLine ? `${errorFile} (${errorLine}:${errorCol || 1})` : errorFile;
       this.showError({
         type: 'Build Error',
-        file: errorFile,
+        file: displayFile,
         message: errorMessage,
+        frame: errorFrame,
         id: errorFile
       });
     }

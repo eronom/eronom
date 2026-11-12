@@ -884,6 +884,8 @@ fn test_bare_if_rejection_with_helpful_message() {
     println!("ACTUAL ERR MSG:\n{}", err_msg);
     assert!(err_msg.contains("Bare 'if' block detected in template markup"));
     assert!(err_msg.contains("@if"));
+    assert!(err_msg.contains("> 3 |"));
+    assert!(err_msg.contains("^^"));
 }
 
 #[test]
@@ -900,6 +902,8 @@ fn test_bare_for_rejection_with_helpful_message() {
     let err_msg = err.to_string();
     assert!(err_msg.contains("Bare 'for' loop detected in template markup"));
     assert!(err_msg.contains("@for"));
+    assert!(err_msg.contains("> 3 |"));
+    assert!(err_msg.contains("^^^"));
 }
 
 #[test]

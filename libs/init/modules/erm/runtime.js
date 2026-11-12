@@ -1520,10 +1520,15 @@ export async function applyErmHmr(targetPath, timestamp) {
       const doc = new DOMParser().parseFromString(errText, 'text/html');
       const errFile = doc.body?.getAttribute('data-compile-error-file') || targetPath;
       const errMsg = doc.body?.getAttribute('data-compile-error-message') || `Server error (${res.status})`;
+      const errFrame = doc.body?.getAttribute('data-compile-error-frame') || '';
+      const errLine = doc.body?.getAttribute('data-compile-error-line');
+      const errCol = doc.body?.getAttribute('data-compile-error-col');
+      const displayFile = errLine ? `${errFile} (${errLine}:${errCol || 1})` : errFile;
       showError({
         type: 'Build Error',
-        file: errFile,
+        file: displayFile,
         message: errMsg,
+        frame: errFrame,
         id: errFile
       });
       return;

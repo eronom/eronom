@@ -379,8 +379,33 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                              .replace('\'', "&#39;")
                         };
 
-                        let err_msg_escaped = escape_html(&format!("{}", e));
-                        let rel_path_escaped = escape_html(&rel_path);
+                        let (err_file, err_line, err_col, err_msg, err_frame) = if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                            (
+                                ce.file.clone(),
+                                ce.line.to_string(),
+                                ce.col.to_string(),
+                                if let Some(ref hint) = ce.hint {
+                                    format!("{}\n\n{}", ce.message, hint)
+                                } else {
+                                    ce.message.clone()
+                                },
+                                ce.frame.clone(),
+                            )
+                        } else {
+                            (
+                                rel_path.clone(),
+                                String::new(),
+                                String::new(),
+                                format!("{}", e),
+                                String::new(),
+                            )
+                        };
+
+                        let err_file_escaped = escape_html(&err_file);
+                        let err_line_escaped = escape_html(&err_line);
+                        let err_col_escaped = escape_html(&err_col);
+                        let err_msg_escaped = escape_html(&err_msg);
+                        let err_frame_escaped = escape_html(&err_frame);
 
                         let html_content = format!(r#"<!DOCTYPE html>
 <html>
@@ -397,9 +422,9 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
   </style>
   <script src="/modules/erm/hmr.js"></script>
 </head>
-<body data-compile-error-file="{}" data-compile-error-message="{}">
+<body data-compile-error-file="{}" data-compile-error-line="{}" data-compile-error-col="{}" data-compile-error-message="{}" data-compile-error-frame="{}">
 </body>
-</html>"#, rel_path_escaped, err_msg_escaped);
+</html>"#, err_file_escaped, err_line_escaped, err_col_escaped, err_msg_escaped, err_frame_escaped);
 
                         send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html_content.as_bytes());
                     }

@@ -1,5 +1,7 @@
 use crate::eval;
 use super::utils::*;
+use super::errors::CompileError;
+use super::transform::is_bare_script_template;
 use super::css::scope_html;
 use super::template_js::{compile_template_to_js, ScriptStyleRanges};
 
@@ -459,8 +461,59 @@ pub fn process_if_block_at(
     Ok(())
 }
 
+pub fn find_bare_script_markup_start(content: &str) -> Option<usize> {
+    if !is_bare_script_template(content) {
+        return None;
+    }
+    let mut paren_depth = 0;
+    let mut bracket_depth = 0;
+    let mut offset = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+            offset += line.len() + 1;
+            continue;
+        }
+
+        let is_expression_markup = trimmed.starts_with('{') && (trimmed.contains(".map(") || trimmed.contains('<'));
+        let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+            (trimmed.starts_with('<') && !trimmed.starts_with("<style") && !trimmed.starts_with("</style"))
+            || trimmed.starts_with("@for")
+            || trimmed.starts_with("@if")
+            || is_expression_markup
+        );
+
+        if starts_with_markup {
+            return Some(offset);
+        }
+
+        let mut in_str = false;
+        let mut str_char = ' ';
+        for c in line.chars() {
+            if in_str {
+                if c == str_char { in_str = false; }
+            } else if c == '"' || c == '\'' || c == '`' {
+                in_str = true;
+                str_char = c;
+            } else if c == '(' {
+                paren_depth += 1;
+            } else if c == ')' {
+                if paren_depth > 0 { paren_depth -= 1; }
+            } else if c == '[' {
+                bracket_depth += 1;
+            } else if c == ']' {
+                if bracket_depth > 0 { bracket_depth -= 1; }
+            }
+        }
+        offset += line.len() + 1;
+    }
+    None
+}
+
 pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::Result<()> {
     let ranges = ScriptStyleRanges::new(content);
+    let markup_start = find_bare_script_markup_start(content).unwrap_or(0);
     let mut i = 0;
     let mut brace_depth: usize = 0;
 
@@ -471,6 +524,12 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
         }
 
         let c = content[i..].chars().next().unwrap();
+
+        // Skip script preamble in bare-script templates
+        if i < markup_start {
+            i += c.len_utf8();
+            continue;
+        }
 
         // Track template expression brace depth
         if c == '{' {
@@ -546,11 +605,14 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
                                 || cond.contains(".value") || cond.starts_with('(');
 
                             if has_markup || has_else || looks_like_cond {
-                                let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
-                                anyhow::bail!(
-                                    "SyntaxError in {} (line {}): Bare 'if' block detected in template markup:\n  --> if {} {{ ... }}\n  Directives in ERM templates must begin with '@'.\n  Fix: Change 'if {}' to '@if {}'.",
-                                    file_path, line_no, cond, cond, cond
-                                );
+                                return Err(CompileError::new(
+                                    file_path,
+                                    content,
+                                    i,
+                                    2,
+                                    format!("Bare 'if' block detected in template markup: 'if {}'", cond),
+                                    Some(format!("Directives in ERM templates must begin with '@'.\nFix: Change 'if {}' to '@if {}'.", cond, cond)),
+                                ).into());
                             }
                         }
                     }
@@ -590,11 +652,14 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
                     if let Some(brace_pos) = found_brace {
                         let header = content[after_for..brace_pos].trim();
                         if header.contains(" in ") || header.contains(" of ") || header.contains("let ") {
-                            let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
-                            anyhow::bail!(
-                                "SyntaxError in {} (line {}): Bare 'for' loop detected in template markup:\n  --> for {} {{ ... }}\n  Directives in ERM templates must begin with '@'.\n  Fix: Change 'for {}' to '@for {}' or use expression mapping '{{{}.map(...)}}'.",
-                                file_path, line_no, header, header, header, header
-                            );
+                            return Err(CompileError::new(
+                                file_path,
+                                content,
+                                i,
+                                3,
+                                format!("Bare 'for' loop detected in template markup: 'for {}'", header),
+                                Some(format!("Directives in ERM templates must begin with '@'.\nFix: Change 'for {}' to '@for {}' or use expression mapping '{{{}.map(...)}}'.", header, header, header)),
+                            ).into());
                         }
                     }
                 }
@@ -632,11 +697,14 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
                     }
 
                     if preceded_by_close {
-                        let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
-                        anyhow::bail!(
-                            "SyntaxError in {} (line {}): Bare 'else' detected in template markup:\n  --> else ...\n  Hint: Transition directives in ERM templates must use '@else' or '@else if'.\n  Fix: Change 'else' to '@else'.",
-                            file_path, line_no
-                        );
+                        return Err(CompileError::new(
+                            file_path,
+                            content,
+                            i,
+                            4,
+                            "Bare 'else' detected in template markup".to_string(),
+                            Some("Transition directives in ERM templates must use '@else' or '@else if'.\nFix: Change 'else' to '@else'.".to_string()),
+                        ).into());
                     }
                 }
             }
@@ -657,11 +725,14 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
                 if !id_chars.is_empty() {
                     id_chars.reverse();
                     let coll_name: String = id_chars.into_iter().collect();
-                    let line_no = content[..i].chars().filter(|&ch| ch == '\n').count() + 1;
-                    anyhow::bail!(
-                        "SyntaxError in {} (line {}): Array mapping '{}.map(...)' was found outside expression braces.\n  Hint: In ERM templates, functional expressions must be enclosed in braces.\n  Fix: Wrap the mapping in braces: '{{{}.map(...)}}'.",
-                        file_path, line_no, coll_name, coll_name
-                    );
+                    return Err(CompileError::new(
+                        file_path,
+                        content,
+                        before,
+                        i + 5 - before,
+                        format!("Array mapping '{}.map(...)' was found outside expression braces", coll_name),
+                        Some(format!("In ERM templates, functional expressions must be enclosed in braces.\nFix: Wrap the mapping in braces: '{{{}.map(...)}}'.", coll_name)),
+                    ).into());
                 }
             }
         }

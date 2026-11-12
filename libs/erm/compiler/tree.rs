@@ -26,6 +26,7 @@ pub fn process_component_tree(
     for_counter: &mut usize,
     state_var_sources: &mut HashMap<String, String>,
 ) -> anyhow::Result<ProcessResult> {
+    validate_template_directives(content, file_path)?;
     let preprocessed = preprocess_erm_template(content)?;
     let content = &preprocessed;
     
@@ -130,7 +131,6 @@ pub fn process_component_tree(
     }
     // 3. Compile all blocks (new if syntax and new for syntax) from inside out
     let mut compiled_content = content.to_string();
-    validate_template_directives(&compiled_content, file_path)?;
     let mut block_logic = Vec::new();
     loop {
         let last_if = find_last_if_block(&compiled_content);
