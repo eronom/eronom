@@ -11,6 +11,76 @@ pub fn is_function_template(content: &str) -> bool {
     re.is_match(content)
 }
 
+pub fn desugar_expression_mapping(content: &str) -> String {
+    let ranges = super::template_js::ScriptStyleRanges::new(content);
+    let mut result = String::new();
+    let mut i = 0;
+    while i < content.len() {
+        if let Some(skip_to) = ranges.get_skip_pos(i) {
+            result.push_str(&content[i..skip_to]);
+            i = skip_to;
+            continue;
+        }
+
+        if content[i..].starts_with('{') {
+            let mut j = i + 1;
+            while j < content.len() && content[j..].chars().next().unwrap().is_whitespace() {
+                j += 1;
+            }
+            let after_ws = &content[j..];
+            if let Some(map_pos) = after_ws.find(".map(") {
+                let collection = after_ws[..map_pos].trim();
+                if !collection.is_empty() && collection.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.') {
+                    let after_map = j + map_pos + 5;
+                    if let Some(arrow_pos) = content[after_map..].find("=>") {
+                        let params_raw = content[after_map..after_map + arrow_pos].trim();
+                        let params = if params_raw.starts_with('(') && params_raw.ends_with(')') {
+                            params_raw[1..params_raw.len() - 1].trim()
+                        } else {
+                            params_raw
+                        };
+
+                        let after_arrow = after_map + arrow_pos + 2;
+                        if let Some(close_idx) = super::utils::find_matching_close_brace(&content[i + 1..]) {
+                            let total_close = i + 1 + close_idx;
+                            let mut body = content[after_arrow..total_close].trim();
+                            if body.ends_with(')') {
+                                body = body[..body.len() - 1].trim();
+                            }
+                            if body.starts_with('(') && body.ends_with(')') {
+                                body = body[1..body.len() - 1].trim();
+                            }
+                            if body.starts_with('{') && body.ends_with('}') {
+                                let inner = body[1..body.len() - 1].trim();
+                                if inner.starts_with("return ") {
+                                    body = inner["return ".len()..].trim();
+                                    if body.ends_with(';') {
+                                        body = body[..body.len() - 1].trim();
+                                    }
+                                }
+                            }
+                            if body.starts_with('(') && body.ends_with(')') {
+                                body = body[1..body.len() - 1].trim();
+                            }
+
+                            if body.starts_with('<') {
+                                result.push_str(&format!("@for {} in {} {{\n{}\n}}", params, collection, body));
+                                i = total_close + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let c = content[i..].chars().next().unwrap();
+        result.push(c);
+        i += c.len_utf8();
+    }
+    result
+}
+
 pub fn inject_line_attr(markup: &str, line_num: usize) -> String {
     if markup.starts_with('<') {
         if let Some(first_tag_char) = markup.chars().nth(1) {
