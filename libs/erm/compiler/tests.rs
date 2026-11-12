@@ -859,7 +859,7 @@ fn test_same_file_sub_component_rendering() {
         <CardBadge title="Beta" />
     </div>
 
-    export function CardBadge({ title }: { title: string }): Component {
+    export function CardBadge({ title }: { title: string }) {
         const badgeStyle = useStyle({
             pill: {
                 padding: "4px 8px",

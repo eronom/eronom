@@ -19,7 +19,7 @@ const names = ["name1","name2","name3","name4"]
 
 
 
-export function TodoList({ todos, addTodo }: Props) : Component {
+export function TodoList({ todos, addTodo }: Props) {
    <div class="container">
      <h2>Todo List</h2>
      <ul>
@@ -35,7 +35,7 @@ export function TodoList({ todos, addTodo }: Props) : Component {
    </div>
  }
 
- export function Counter() : Component {
+ export function Counter() {
    const count = useState(0);
    const double = useState(() => count * 2);
 
@@ -51,7 +51,7 @@ export function TodoList({ todos, addTodo }: Props) : Component {
 
 </style>
 
-export function Card() : Component {
+export function Card() {
     
     const style = useStyle({
         card: {     
