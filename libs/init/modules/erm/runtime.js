@@ -656,6 +656,10 @@ export function renderFor(anchorId, getCollection, renderItem, renderEmpty) {
   });
 }
 
+export function useStyle(styleObj) {
+  return styleObj;
+}
+
 // --- Comment-Anchored Fine-Grained Blocks ---
 export function ifBlock(anchor, conditionFn, renderTrue, renderFalse) {
   const marker = typeof anchor === 'string' && BROWSER ? document.getElementById(anchor) : anchor;

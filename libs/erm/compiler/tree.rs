@@ -50,6 +50,10 @@ pub fn process_component_tree(
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect();
 
+    let mut hasher = FnvHasher::default();
+    hasher.write(content.as_bytes());
+    let scope_id = format!("data-e-{:x}", hasher.finish());
+
     // 1. Initialize local ErmEval and parse parameters/scripts for SSR block evaluation
     let mut ev = ErmEval::new();
     let mut params_map = HashMap::new();
@@ -73,7 +77,8 @@ pub fn process_component_tree(
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = &script_tag[content_start..script_tag.len() - 9];
             let script_for_eval = script_content.replace("useParams()", "__erm_params");
-            let _ = ev.parse_script_vars(&script_for_eval);
+            let (script_for_eval_cleaned, _) = crate::compiler::css::extract_use_style(&script_for_eval, &scope_id);
+            let _ = ev.parse_script_vars(&script_for_eval_cleaned);
             temp_search = script_end + 9;
         } else {
             break;
@@ -123,10 +128,6 @@ pub fn process_component_tree(
             break;
         }
     }
-    let mut hasher = FnvHasher::default();
-    hasher.write(content.as_bytes());
-    let scope_id = format!("data-e-{:x}", hasher.finish());
-
     // 3. Compile all blocks (new if syntax and new for syntax) from inside out
     let mut compiled_content = content.to_string();
     let mut block_logic = Vec::new();
@@ -257,7 +258,11 @@ pub fn process_component_tree(
                 cleaned_script.push_str(&processed_line);
                 cleaned_script.push('\n');
             }
-            scripts.push(cleaned_script.trim().to_string());
+            let (cleaned_script_use_style, use_style_css) = crate::compiler::css::extract_use_style(&cleaned_script, &scope_id);
+            for c in use_style_css {
+                styles.push(c);
+            }
+            scripts.push(cleaned_script_use_style.trim().to_string());
             i += end + 9;
         } else if content[i..].starts_with("<style") {
             let end = match content[i..].find("</style>") {
