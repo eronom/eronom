@@ -4,7 +4,7 @@ use std::hash::Hasher;
 use crate::eval::{self, ErmEval};
 use super::utils::*;
 use super::css::{scope_css, scope_html};
-use super::transform::{is_function_template, preprocess_function_template, transform_use_effect};
+use super::transform::{preprocess_erm_template, transform_use_effect};
 use super::reactivity::parse_reactivity;
 use super::blocks::{find_last_for_block, find_last_if_block, find_tag_end, process_for_block_at, process_if_block_at};
 use super::components::{resolve_custom_component, resolve_suspense_loading};
@@ -26,13 +26,8 @@ pub fn process_component_tree(
     for_counter: &mut usize,
     state_var_sources: &mut HashMap<String, String>,
 ) -> anyhow::Result<ProcessResult> {
-    let preprocessed;
-    let content = if is_function_template(content) {
-        preprocessed = preprocess_function_template(content)?;
-        &preprocessed
-    } else {
-        content
-    };
+    let preprocessed = preprocess_erm_template(content)?;
+    let content = &preprocessed;
     
     let path = std::path::Path::new(file_path);
     let base_dir = if path.is_file() {

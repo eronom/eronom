@@ -6,9 +6,85 @@ pub fn is_function_template(content: &str) -> bool {
     }
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
+        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
     });
     re.is_match(content)
+}
+
+pub fn is_bare_script_template(content: &str) -> bool {
+    if content.contains("<script") || content.contains("<SCRIPT") || is_function_template(content) {
+        return false;
+    }
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+            continue;
+        }
+        if trimmed.starts_with('<') || trimmed.starts_with("@for") || trimmed.starts_with("@if") {
+            return false;
+        }
+        if trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("var ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("function ")
+            || trimmed.starts_with("async ")
+            || trimmed.starts_with("fn ")
+            || trimmed.starts_with("type ")
+            || trimmed.starts_with("interface ")
+        {
+            return true;
+        }
+        return false;
+    }
+    false
+}
+
+pub fn preprocess_bare_script_template(content: &str) -> anyhow::Result<String> {
+    let mut script_lines = Vec::new();
+    let mut markup_lines = Vec::new();
+    let mut script_mode = true;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if script_mode {
+                script_lines.push(line);
+            } else {
+                markup_lines.push(line);
+            }
+            continue;
+        }
+
+        if script_mode {
+            let starts_with_markup = (trimmed.starts_with('<') && !trimmed.starts_with("<style") && !trimmed.starts_with("</style"))
+                || trimmed.starts_with("@for")
+                || trimmed.starts_with("@if")
+                || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"));
+            if starts_with_markup {
+                script_mode = false;
+            }
+        }
+
+        if script_mode {
+            script_lines.push(line);
+        } else {
+            markup_lines.push(line);
+        }
+    }
+
+    let mut result = String::new();
+    result.push_str("<script>\n");
+    for s in script_lines {
+        result.push_str(s);
+        result.push('\n');
+    }
+    result.push_str("</script>\n");
+    for m in markup_lines {
+        result.push_str(m);
+        result.push('\n');
+    }
+    Ok(result)
 }
 
 pub fn desugar_expression_mapping(content: &str) -> String {
@@ -44,12 +120,15 @@ pub fn desugar_expression_mapping(content: &str) -> String {
                         if let Some(close_idx) = super::utils::find_matching_close_brace(&content[i + 1..]) {
                             let total_close = i + 1 + close_idx;
                             let mut body = content[after_arrow..total_close].trim();
+                            // Strip closing ')' of .map(...)
                             if body.ends_with(')') {
                                 body = body[..body.len() - 1].trim();
                             }
+                            // Strip outer parentheses if body was wrapped in (...)
                             if body.starts_with('(') && body.ends_with(')') {
                                 body = body[1..body.len() - 1].trim();
                             }
+                            // If wrapped in { return ... }, strip that
                             if body.starts_with('{') && body.ends_with('}') {
                                 let inner = body[1..body.len() - 1].trim();
                                 if inner.starts_with("return ") {
@@ -81,6 +160,125 @@ pub fn desugar_expression_mapping(content: &str) -> String {
     result
 }
 
+pub fn extract_exported_function_components(content: &str) -> String {
+    static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE_FN.get_or_init(|| {
+        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
+    });
+
+    let ranges = super::template_js::ScriptStyleRanges::new(content);
+    let mut fns_to_extract = Vec::new();
+
+    for caps in re.captures_iter(content) {
+        let m = caps.get(0).unwrap();
+        let start = m.start();
+        let mut inside_script = false;
+        for r in &ranges.ranges {
+            if r.contains(&start) {
+                inside_script = true;
+                break;
+            }
+        }
+        if !inside_script {
+            let fn_name = caps.get(1).unwrap().as_str().to_string();
+            let params = caps.get(2).unwrap().as_str().to_string();
+            let body_start = m.end();
+            if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
+                let body = content[body_start..body_start + cb].to_string();
+                let total_end = body_start + cb + 1;
+                fns_to_extract.push((start, total_end, fn_name, params, body));
+            }
+        }
+    }
+
+    if fns_to_extract.is_empty() {
+        return content.to_string();
+    }
+
+    let mut generated_fns = Vec::new();
+    let mut result = content.to_string();
+
+    for (start, end, fn_name, params_str, body) in fns_to_extract.into_iter().rev() {
+        let clean_params = if let Some(colon_pos) = params_str.rfind(':') {
+            params_str[..colon_pos].trim()
+        } else {
+            params_str.trim()
+        };
+
+        let mut script_lines = Vec::new();
+        let mut markup_lines = Vec::new();
+        let mut script_mode = true;
+
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if script_mode {
+                let starts_with_markup = trimmed.starts_with('<')
+                    || trimmed.starts_with('@')
+                    || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"));
+                if starts_with_markup {
+                    script_mode = false;
+                }
+            }
+            if script_mode {
+                script_lines.push(line);
+            } else {
+                markup_lines.push(line);
+            }
+        }
+
+        let mut fn_code = format!("export function {}(props) {{\n", fn_name);
+        if !clean_params.is_empty() {
+            if clean_params.starts_with('{') {
+                fn_code.push_str(&format!("  const {} = props || {{}};\n", clean_params));
+            } else {
+                fn_code.push_str(&format!("  const {} = props;\n", clean_params));
+            }
+        }
+        for s in script_lines {
+            fn_code.push_str("  ");
+            fn_code.push_str(s.trim());
+            fn_code.push('\n');
+        }
+        let markup_joined = markup_lines.join("\n");
+        fn_code.push_str(&format!("  return `\n{}\n`;\n", markup_joined));
+        fn_code.push_str("}\n");
+
+        generated_fns.push(fn_code);
+        result.replace_range(start..end, "");
+    }
+
+    if !generated_fns.is_empty() {
+        let fns_block = generated_fns.join("\n");
+        if let Some(pos) = result.find("<script") {
+            if let Some(tag_end) = result[pos..].find('>') {
+                let insert_at = pos + tag_end + 1;
+                result.insert_str(insert_at, &format!("\n{}\n", fns_block));
+            } else {
+                result.push_str(&format!("<script>\n{}\n</script>\n", fns_block));
+            }
+        } else {
+            result.insert_str(0, &format!("<script>\n{}\n</script>\n", fns_block));
+        }
+    }
+
+    result
+}
+
+pub fn preprocess_erm_template(content: &str) -> anyhow::Result<String> {
+    let intermediate = if is_bare_script_template(content) {
+        preprocess_bare_script_template(content)?
+    } else if is_function_template(content) {
+        preprocess_function_template(content)?
+    } else {
+        content.to_string()
+    };
+    let with_extracted_fns = extract_exported_function_components(&intermediate);
+    Ok(desugar_expression_mapping(&with_extracted_fns))
+}
+
 pub fn inject_line_attr(markup: &str, line_num: usize) -> String {
     if markup.starts_with('<') {
         if let Some(first_tag_char) = markup.chars().nth(1) {
@@ -104,7 +302,7 @@ pub fn inject_line_attr(markup: &str, line_num: usize) -> String {
 pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
+        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
     });
 
     if let Some(captures) = re.captures(content) {
@@ -224,6 +422,8 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
                 let starts_with_markup = trimmed.starts_with('<')
                     || trimmed.starts_with("if ")
                     || trimmed.starts_with("for ")
+                    || trimmed.starts_with("@if")
+                    || trimmed.starts_with("@for")
                     || trimmed.starts_with("return");
                 if starts_with_markup {
                     script_mode = false;
@@ -260,8 +460,13 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
             }
         }
 
-        let param_binding = if !params_str.trim().is_empty() {
-            format!("let {} = useParams();\n", params_str.trim())
+        let clean_params = if let Some(colon_pos) = params_str.rfind(':') {
+            params_str[..colon_pos].trim()
+        } else {
+            params_str.trim()
+        };
+        let param_binding = if !clean_params.is_empty() {
+            format!("let {} = useParams();\n", clean_params)
         } else {
             "".to_string()
         };
