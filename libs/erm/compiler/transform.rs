@@ -79,7 +79,7 @@ pub fn is_bare_script_template(content: &str) -> bool {
         if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
             continue;
         }
-        if trimmed.starts_with('<') || trimmed.starts_with("@for") || trimmed.starts_with("@if") {
+        if super::utils::starts_with_html_tag(trimmed) || trimmed.starts_with("@for") || trimmed.starts_with("@if") {
             return false;
         }
         if trimmed.starts_with("const ")
@@ -120,7 +120,7 @@ pub fn preprocess_bare_script_template(content: &str) -> anyhow::Result<String> 
         if script_mode {
             let is_expression_markup = trimmed.starts_with('{') && (trimmed.contains(".map(") || trimmed.contains('<'));
             let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
-                (trimmed.starts_with('<') && !trimmed.starts_with("<style") && !trimmed.starts_with("</style"))
+                super::utils::starts_with_html_tag(trimmed)
                 || trimmed.starts_with("@for")
                 || trimmed.starts_with("@if")
                 || is_expression_markup
@@ -322,6 +322,8 @@ pub fn extract_exported_function_components(content: &str) -> String {
         let mut script_lines = Vec::new();
         let mut markup_lines = Vec::new();
         let mut script_mode = true;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
 
         for line in body.lines() {
             let trimmed = line.trim();
@@ -329,14 +331,22 @@ pub fn extract_exported_function_components(content: &str) -> String {
                 continue;
             }
             if script_mode {
-                let starts_with_markup = trimmed.starts_with('<')
+                let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+                    super::utils::starts_with_html_tag(trimmed)
                     || trimmed.starts_with('@')
-                    || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"));
+                    || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"))
+                );
                 if starts_with_markup {
                     script_mode = false;
                 }
             }
             if script_mode {
+                for c in line.chars() {
+                    if c == '(' { paren_depth += 1; }
+                    else if c == ')' && paren_depth > 0 { paren_depth -= 1; }
+                    else if c == '[' { bracket_depth += 1; }
+                    else if c == ']' && bracket_depth > 0 { bracket_depth -= 1; }
+                }
                 script_lines.push(line);
             } else {
                 markup_lines.push(line);
@@ -523,6 +533,8 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
         let mut script_lines = Vec::new();
         let mut markup_lines = Vec::new();
         let mut script_mode = true;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
 
         for (line_idx, line) in body_str.lines().enumerate() {
             let line_num = body_start_line + line_idx;
@@ -537,16 +549,24 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
             }
 
             if script_mode {
-                let starts_with_markup = trimmed.starts_with('<')
+                let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+                    super::utils::starts_with_html_tag(trimmed)
                     || trimmed.starts_with("@if")
                     || trimmed.starts_with("@for")
-                    || trimmed.starts_with("return");
+                    || trimmed.starts_with("return")
+                );
                 if starts_with_markup {
                     script_mode = false;
                 }
             }
 
             if script_mode {
+                for c in line.chars() {
+                    if c == '(' { paren_depth += 1; }
+                    else if c == ')' && paren_depth > 0 { paren_depth -= 1; }
+                    else if c == '[' { bracket_depth += 1; }
+                    else if c == ']' && bracket_depth > 0 { bracket_depth -= 1; }
+                }
                 script_lines.push((line.to_string(), line_num));
             } else {
                 markup_lines.push((line.to_string(), line_num));

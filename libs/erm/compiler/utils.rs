@@ -674,3 +674,28 @@ pub fn wrap_unquoted_braces(html: &str) -> String {
     }
     out
 }
+
+pub fn starts_with_html_tag(s: &str) -> bool {
+    let trimmed = s.trim();
+    if !trimmed.starts_with('<') {
+        return false;
+    }
+    if trimmed.starts_with("<style") || trimmed.starts_with("</style") {
+        return false;
+    }
+    let rest = &trimmed[1..];
+    if rest.is_empty() {
+        return false;
+    }
+    if rest.starts_with('/') || rest.starts_with('>') || rest.starts_with('!') || rest.starts_with('@') {
+        return true;
+    }
+    let first_char = rest.chars().next().unwrap();
+    if !first_char.is_ascii_alphabetic() && first_char != '_' {
+        return false;
+    }
+    if trimmed.ends_with(';') && !trimmed.contains('>') {
+        return false;
+    }
+    true
+}

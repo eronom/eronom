@@ -355,20 +355,30 @@ pub fn extract_local_components(content: &str) -> HashMap<String, LocalFunctionC
                 }
             } else {
                 let mut script_mode = true;
+                let mut paren_depth = 0;
+                let mut bracket_depth = 0;
                 for line in body.lines() {
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
                     }
                     if script_mode {
-                        let starts_with_markup = trimmed.starts_with('<')
+                        let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+                            super::utils::starts_with_html_tag(trimmed)
                             || trimmed.starts_with('@')
-                            || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"));
+                            || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"))
+                        );
                         if starts_with_markup {
                             script_mode = false;
                         }
                     }
                     if script_mode {
+                        for c in line.chars() {
+                            if c == '(' { paren_depth += 1; }
+                            else if c == ')' && paren_depth > 0 { paren_depth -= 1; }
+                            else if c == '[' { bracket_depth += 1; }
+                            else if c == ']' && bracket_depth > 0 { bracket_depth -= 1; }
+                        }
                         script_lines.push(line);
                     } else {
                         markup_lines.push(line);

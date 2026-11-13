@@ -478,7 +478,7 @@ pub fn find_bare_script_markup_start(content: &str) -> Option<usize> {
 
         let is_expression_markup = trimmed.starts_with('{') && (trimmed.contains(".map(") || trimmed.contains('<'));
         let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
-            (trimmed.starts_with('<') && !trimmed.starts_with("<style") && !trimmed.starts_with("</style"))
+            super::utils::starts_with_html_tag(trimmed)
             || trimmed.starts_with("@for")
             || trimmed.starts_with("@if")
             || is_expression_markup

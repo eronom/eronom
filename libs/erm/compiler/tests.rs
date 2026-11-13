@@ -998,4 +998,47 @@ fn test_english_prose_not_parsed_as_control_flow() {
     assert!(!res.contains("renderFor("));
 }
 
+#[test]
+fn test_multiline_less_than_in_bare_script() {
+    let content = r#"
+    const minThreshold = 100;
+    const isLow = (
+        < minThreshold
+    );
+    const limit = 50;
+    const isBelow =
+        < limit;
+
+    <h1>Threshold Status</h1>
+    <p>Status: OK</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Threshold Status"));
+    assert!(res.contains("< minThreshold"));
+    assert!(res.contains("< limit"));
+}
+
+#[test]
+fn test_multiline_less_than_in_local_component() {
+    let content = r#"
+    function StatusCard(props) {
+        const threshold = 10;
+        const isAlert = (
+            < threshold
+        );
+        return <div class="status">Alert Level</div>;
+    }
+
+    <main>
+        <StatusCard />
+    </main>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Alert Level"));
+    assert!(res.contains("<main"));
+}
+
+
 
