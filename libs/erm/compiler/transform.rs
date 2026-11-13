@@ -71,7 +71,7 @@ pub fn has_real_script_tag(content: &str) -> bool {
 }
 
 pub fn is_bare_script_template(content: &str) -> bool {
-    if has_real_script_tag(content) || is_function_template(content) {
+    if is_function_template(content) {
         return false;
     }
     for line in content.lines() {
@@ -347,13 +347,17 @@ pub fn extract_exported_function_components(content: &str) -> String {
         if !clean_params.is_empty() {
             if clean_params.starts_with('{') {
                 fn_code.push_str(&format!("  const {} = props || {{}};\n", clean_params));
-            } else {
+            } else if clean_params != "props" {
                 fn_code.push_str(&format!("  const {} = props;\n", clean_params));
             }
         }
         for s in script_lines {
+            let s_trim = s.trim();
+            if s_trim.starts_with("const props =") || s_trim.starts_with("let props =") || s_trim.starts_with("var props =") {
+                continue;
+            }
             fn_code.push_str("  ");
-            fn_code.push_str(s.trim());
+            fn_code.push_str(s_trim);
             fn_code.push('\n');
         }
         let markup_joined = markup_lines.join("\n");
