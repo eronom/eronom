@@ -292,6 +292,9 @@ pub fn extract_exported_function_components(content: &str) -> String {
             let body_start = m.end();
             if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
                 let body = content[body_start..body_start + cb].to_string();
+                if body.contains("return `") {
+                    continue;
+                }
                 let total_end = body_start + cb + 1;
                 fns_to_extract.push((start, total_end, fn_name, params, body));
             }
@@ -380,9 +383,11 @@ pub fn extract_exported_function_components(content: &str) -> String {
 
     if !generated_fns.is_empty() {
         let fns_block = generated_fns.join("\n");
-        if let Some(pos) = result.find("<script") {
-            if let Some(tag_end) = result[pos..].find('>') {
-                let insert_at = pos + tag_end + 1;
+        let script_ranges = super::template_js::find_real_tag_ranges(&result, "script");
+        if let Some(first_range) = script_ranges.first() {
+            let start = first_range.start;
+            if let Some(tag_end) = result[start..].find('>') {
+                let insert_at = start + tag_end + 1;
                 result.insert_str(insert_at, &format!("\n{}\n", fns_block));
             } else {
                 result.push_str(&format!("<script>\n{}\n</script>\n", fns_block));
