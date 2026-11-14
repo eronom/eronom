@@ -28,6 +28,8 @@ fn is_valid_js_identifier(name: &str) -> bool {
 }
 
 pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
+    let cleaned = super::transform::strip_template_comments(content);
+    let content = &cleaned;
     validate_template_directives(content, file_path)?;
     let preprocessed = preprocess_erm_template(content)?;
     let content = &preprocessed;

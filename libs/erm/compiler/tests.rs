@@ -1008,6 +1008,37 @@ fn test_bare_variable_rejection_with_helpful_message() {
 }
 
 #[test]
+fn test_template_markup_comments_stripped() {
+    let content = r#"
+    <script>
+    const title = useState("Hello");
+    </script>
+
+    // 1. Header Section
+    <header>
+        <h1>{title}</h1>
+        // Sub-header comment
+        <p>Subtitle</p>
+    </header>
+
+    /* Block comment in markup */
+    <main>
+        {/* JSX style comment */}
+        <p>Main content</p>
+    </main>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component("test.erm", content, false, &params).unwrap();
+    assert!(!res.contains("// 1. Header Section"));
+    assert!(!res.contains("// Sub-header comment"));
+    assert!(!res.contains("Block comment in markup"));
+    assert!(!res.contains("JSX style comment"));
+    assert!(res.contains("<header"));
+    assert!(res.contains("Subtitle"));
+    assert!(res.contains("Main content"));
+}
+
+#[test]
 fn test_raw_html_in_interpolation_rejection() {
     let content = r#"
     <div>

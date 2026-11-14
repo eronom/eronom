@@ -400,13 +400,59 @@ pub fn extract_exported_function_components(content: &str) -> String {
     result
 }
 
+pub fn strip_template_comments(content: &str) -> String {
+    let ranges = super::template_js::ScriptStyleRanges::new(content);
+    let mut result = String::new();
+    let mut offset = 0;
+    let mut in_block_comment = false;
+
+    for line in content.lines() {
+        let line_len = line.len();
+        let trimmed = line.trim();
+        let is_in_script_or_style = ranges.ranges.iter().any(|r| r.contains(&offset));
+
+        if !is_in_script_or_style {
+            if in_block_comment {
+                if trimmed.ends_with("*/") || trimmed.contains("*/") {
+                    in_block_comment = false;
+                }
+                offset += line_len + 1;
+                continue;
+            }
+
+            if trimmed.starts_with("/*") {
+                if !trimmed.ends_with("*/") {
+                    in_block_comment = true;
+                }
+                offset += line_len + 1;
+                continue;
+            }
+
+            if trimmed.starts_with("//")
+                || trimmed.starts_with("{//")
+                || (trimmed.starts_with("{/*") && trimmed.ends_with("*/}"))
+            {
+                offset += line_len + 1;
+                continue;
+            }
+        }
+
+        result.push_str(line);
+        result.push('\n');
+        offset += line_len + 1;
+    }
+
+    result
+}
+
 pub fn preprocess_erm_template(content: &str) -> anyhow::Result<String> {
-    let intermediate = if is_bare_script_template(content) {
-        preprocess_bare_script_template(content)?
-    } else if is_function_template(content) {
-        preprocess_function_template(content)?
+    let stripped = strip_template_comments(content);
+    let intermediate = if is_bare_script_template(&stripped) {
+        preprocess_bare_script_template(&stripped)?
+    } else if is_function_template(&stripped) {
+        preprocess_function_template(&stripped)?
     } else {
-        content.to_string()
+        stripped
     };
     let with_extracted_fns = extract_exported_function_components(&intermediate);
     Ok(desugar_expression_mapping(&with_extracted_fns))
