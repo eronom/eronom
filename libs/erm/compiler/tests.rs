@@ -772,7 +772,7 @@ fn test_expression_mapping_desugaring() {
 }
 
 #[test]
-fn test_bare_script_preamble() {
+fn test_bare_script_rejection_with_helpful_message() {
     let content = r#"
     const num = useState(5);
     const name = useState("Vishnu");
@@ -781,10 +781,10 @@ fn test_bare_script_preamble() {
     <p>Num is {num}</p>
     "#;
     let params = std::collections::HashMap::new();
-    let res = process_erm_component(".", content, false, &params).unwrap();
-    assert!(res.contains("Vishnu"));
-    assert!(res.contains("5"));
-    assert!(res.contains("useState(5"));
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare variable declaration detected in template markup: 'const num'"));
+    assert!(err_msg.contains("<script>"));
 }
 
 #[test]
@@ -816,9 +816,11 @@ fn test_use_style_compile_time_extraction() {
 #[test]
 fn test_user_index_erm_syntax() {
     let content = r#"
+    <script>
     const num = useState(5);
     const name = useState("Vishnu");
     const names = ["name1", "name2", "name3", "name4"];
+    </script>
 
     <button onClick={() => {}}></button>
     <h1>hello {name}</h1>
@@ -1008,6 +1010,42 @@ fn test_bare_variable_rejection_with_helpful_message() {
 }
 
 #[test]
+fn test_bare_exported_function_helper_rejection() {
+    let content = r#"
+    <div>
+        <h1>My Page</h1>
+    </div>
+
+    export function formatCurrency(amount) {
+        return "$" + amount.toFixed(2);
+    }
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare function declaration detected in template markup: 'export function formatCurrency'"));
+    assert!(err_msg.contains("<script>"));
+}
+
+#[test]
+fn test_bare_import_and_export_rejection() {
+    let content1 = r#"
+    import { something } from "./lib";
+    <div>Hello</div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err1 = process_erm_component("test.erm", content1, false, &params).unwrap_err();
+    assert!(err1.to_string().contains("Bare import statement detected outside of <script> tag"));
+
+    let content2 = r#"
+    export const PI = 3.14159;
+    <div>Hello</div>
+    "#;
+    let err2 = process_erm_component("test.erm", content2, false, &params).unwrap_err();
+    assert!(err2.to_string().contains("Bare export statement detected outside of <script> tag"));
+}
+
+#[test]
 fn test_template_markup_comments_stripped() {
     let content = r#"
     <script>
@@ -1068,8 +1106,9 @@ fn test_english_prose_not_parsed_as_control_flow() {
 }
 
 #[test]
-fn test_multiline_less_than_in_bare_script() {
+fn test_multiline_less_than_in_script_tag() {
     let content = r#"
+    <script>
     const minThreshold = 100;
     const isLow = (
         < minThreshold
@@ -1077,6 +1116,7 @@ fn test_multiline_less_than_in_bare_script() {
     const limit = 50;
     const isBelow =
         < limit;
+    </script>
 
     <h1>Threshold Status</h1>
     <p>Status: OK</p>
@@ -1091,17 +1131,17 @@ fn test_multiline_less_than_in_bare_script() {
 #[test]
 fn test_multiline_less_than_in_local_component() {
     let content = r#"
-    function StatusCard(props) {
+    <main>
+        <StatusCard />
+    </main>
+
+    export function StatusCard(props) {
         const threshold = 10;
         const isAlert = (
             < threshold
         );
         return <div class="status">Alert Level</div>;
     }
-
-    <main>
-        <StatusCard />
-    </main>
     "#;
     let params = std::collections::HashMap::new();
     let res = process_erm_component(".", content, false, &params).unwrap();

@@ -513,7 +513,6 @@ pub fn find_bare_script_markup_start(content: &str) -> Option<usize> {
 
 pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::Result<()> {
     let ranges = ScriptStyleRanges::new(content);
-    let markup_start = find_bare_script_markup_start(content).unwrap_or(0);
     let mut i = 0;
     let mut brace_depth: usize = 0;
 
@@ -524,12 +523,6 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
         }
 
         let c = content[i..].chars().next().unwrap();
-
-        // Skip script preamble in bare-script templates
-        if i < markup_start {
-            i += c.len_utf8();
-            continue;
-        }
 
         // Track template expression brace depth
         if c == '{' {
@@ -755,53 +748,73 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
                         before >= 6 && &content[before - 6..before] == "export"
                     };
 
-                    let kw_len = if content[i..].starts_with("async function ") { 15 } else if content[i..].starts_with("function ") { 9 } else { 3 };
-                    if is_exported {
-                        i += kw_len;
-                        continue;
-                    }
-
+                    let kw_len = if content[i..].starts_with("async function ") {
+                        15
+                    } else if content[i..].starts_with("async fn ") {
+                        9
+                    } else if content[i..].starts_with("function ") {
+                        9
+                    } else {
+                        3
+                    };
                     let after_kw = i + kw_len;
                     let mut found_brace = None;
+                    let mut fn_name_str = String::new();
                     if let Some(open_paren) = content[after_kw..].find('(') {
-                        let paren_start = after_kw + open_paren;
-                        let mut p_depth = 1;
-                        let mut p_scan = paren_start + 1;
-                        while p_scan < content.len() && p_depth > 0 {
-                            let pc = content[p_scan..].chars().next().unwrap();
-                            if pc == '(' { p_depth += 1; }
-                            else if pc == ')' { p_depth -= 1; }
-                            p_scan += pc.len_utf8();
-                        }
-
-                        let mut scan = p_scan;
-                        while scan < content.len() {
-                            let sc = content[scan..].chars().next().unwrap();
-                            if sc == '{' {
-                                found_brace = Some(scan);
-                                break;
-                            } else if content[scan..].starts_with("</") || sc == ';' || sc == '<' {
-                                break;
+                        let between = &content[after_kw..after_kw + open_paren];
+                        let candidate_name = between.trim();
+                        let is_valid_ident = candidate_name.is_empty()
+                            || (candidate_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                                && !candidate_name.chars().next().unwrap().is_ascii_digit());
+                        if is_valid_ident && !between.contains('<') && !between.contains('>') && !between.contains('\n') {
+                            fn_name_str = candidate_name.to_string();
+                            let paren_start = after_kw + open_paren;
+                            let mut p_depth = 1;
+                            let mut p_scan = paren_start + 1;
+                            while p_scan < content.len() && p_depth > 0 {
+                                let pc = content[p_scan..].chars().next().unwrap();
+                                if pc == '(' { p_depth += 1; }
+                                else if pc == ')' { p_depth -= 1; }
+                                p_scan += pc.len_utf8();
                             }
-                            scan += sc.len_utf8();
+
+                            let mut scan = p_scan;
+                            while scan < content.len() {
+                                let sc = content[scan..].chars().next().unwrap();
+                                if sc == '{' {
+                                    found_brace = Some(scan);
+                                    break;
+                                } else if content[scan..].starts_with("</") || sc == ';' || sc == '<' {
+                                    break;
+                                }
+                                scan += sc.len_utf8();
+                            }
                         }
                     }
 
                     if let Some(brace_pos) = found_brace {
-                        let fn_name = content[after_kw..brace_pos].split('(').next().unwrap_or("").trim();
+                        let fn_name = fn_name_str.as_str();
                         let after_brace = brace_pos + 1;
                         if let Some(cb) = find_matching_close_brace(&content[after_brace..]) {
                             let body = &content[after_brace..after_brace + cb];
-                            let is_component = body.contains('<') || body.contains('@');
+                            let is_uppercase = fn_name.chars().next().map_or(false, |c| c.is_ascii_uppercase());
+                            let is_component = is_uppercase && (body.contains('<') || body.contains('@'));
                             if !is_component {
+                                let decl_prefix = if is_exported { "export function" } else { "function" };
+                                let err_start = if is_exported { i.saturating_sub(7) } else { i };
+                                let err_len = kw_len + fn_name.len() + if is_exported { 7 } else { 0 };
                                 return Err(CompileError::new(
                                     file_path,
                                     content,
-                                    i,
-                                    kw_len + fn_name.len(),
-                                    format!("Bare function declaration detected in template markup: 'function {}'", fn_name),
+                                    err_start,
+                                    err_len,
+                                    format!("Bare function declaration detected in template markup: '{} {}'", decl_prefix, fn_name),
                                     Some(format!("JavaScript functions and helper logic must be placed inside a <script> block or component function.\nFix: Wrap the function in a <script> tag:\n<script>\nfunction {}(...) {{ ... }}\n</script>", fn_name)),
                                 ).into());
+                            } else {
+                                // Valid component function (e.g. export function CardBadge() { ... })
+                                i = after_brace + cb + 1;
+                                continue;
                             }
                         }
                     }
@@ -847,6 +860,93 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
                             ).into());
                         }
                     }
+                }
+            }
+
+            // Check bare import statement outside script
+            let is_import = content[i..].starts_with("import ");
+            if is_import {
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.' && prev_c != '-'
+                };
+                if prev_ok {
+                    return Err(CompileError::new(
+                        file_path,
+                        content,
+                        i,
+                        6,
+                        "Bare import statement detected outside of <script> tag".to_string(),
+                        Some("Imports must be placed inside a <script> tag.\nFix: Move import statements into <script>:\n<script>\nimport ...\n</script>".to_string()),
+                    ).into());
+                }
+            }
+
+            // Check bare export statement outside script
+            let is_export = content[i..].starts_with("export ");
+            if is_export {
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.' && prev_c != '-'
+                };
+                if prev_ok {
+                    let after_export = content[i + 7..].trim_start();
+                    let is_fn = after_export.starts_with("function ")
+                        || after_export.starts_with("fn ")
+                        || after_export.starts_with("async function ")
+                        || after_export.starts_with("async fn ");
+                    if !is_fn {
+                        let line_end = content[i..].find('\n').map(|idx| i + idx).unwrap_or(content.len());
+                        let export_line = &content[i..line_end];
+                        let looks_like_export = export_line.contains("const ")
+                            || export_line.contains("let ")
+                            || export_line.contains("var ")
+                            || export_line.contains("default ")
+                            || export_line.contains('{')
+                            || export_line.contains("type ")
+                            || export_line.contains("interface ")
+                            || export_line.contains("class ");
+                        if looks_like_export {
+                            return Err(CompileError::new(
+                                file_path,
+                                content,
+                                i,
+                                6,
+                                "Bare export statement detected outside of <script> tag".to_string(),
+                                Some("JavaScript exports must be placed inside a <script> tag (only component functions like 'export function ComponentName() { ... }' are allowed at the top level).\nFix: Move exports into a <script> tag:\n<script>\nexport ...\n</script>".to_string()),
+                            ).into());
+                        }
+                    }
+                }
+            }
+
+            // Check bare hook call outside script and outside template expressions
+            let is_hook_call = content[i..].starts_with("useState(")
+                || content[i..].starts_with("useEffect(")
+                || content[i..].starts_with("useStyle(")
+                || content[i..].starts_with("useProps(")
+                || content[i..].starts_with("useFetch(");
+            if is_hook_call {
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.' && prev_c != '-'
+                };
+                if prev_ok {
+                    let hook_name = content[i..].split('(').next().unwrap();
+                    return Err(CompileError::new(
+                        file_path,
+                        content,
+                        i,
+                        hook_name.len(),
+                        format!("Bare hook call detected in template markup: '{}()'", hook_name),
+                        Some(format!("Hooks must be called inside a <script> block or component function.\nFix: Move hook calls into a <script> tag:\n<script>\nconst state = {}();\n</script>", hook_name)),
+                    ).into());
                 }
             }
         }

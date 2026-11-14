@@ -26,9 +26,9 @@ pub fn process_component_tree(
     for_counter: &mut usize,
     state_var_sources: &mut HashMap<String, String>,
 ) -> anyhow::Result<ProcessResult> {
-    validate_template_directives(content, file_path)?;
     let local_components = extract_local_components(content);
     let preprocessed = preprocess_erm_template(content)?;
+    validate_template_directives(&preprocessed, file_path)?;
     let content = &preprocessed;
     
     let path = std::path::Path::new(file_path);

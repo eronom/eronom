@@ -339,7 +339,7 @@ pub fn extract_local_components(content: &str) -> HashMap<String, LocalFunctionC
                         in_return_template = true;
                         let after = trimmed[8..].trim();
                         if !after.is_empty() && after != "`" && after != "`;" {
-                            markup_lines.push(after.trim_end_matches(';').trim_end_matches('`'));
+                            markup_lines.push(after.trim_end_matches(';').trim_end_matches('`').to_string());
                         }
                         continue;
                     }
@@ -348,7 +348,7 @@ pub fn extract_local_components(content: &str) -> HashMap<String, LocalFunctionC
                             in_return_template = false;
                             continue;
                         }
-                        markup_lines.push(line);
+                        markup_lines.push(line.to_string());
                     } else {
                         script_lines.push(line);
                     }
@@ -381,7 +381,13 @@ pub fn extract_local_components(content: &str) -> HashMap<String, LocalFunctionC
                         }
                         script_lines.push(line);
                     } else {
-                        markup_lines.push(line);
+                        let trimmed = line.trim();
+                        let cleaned_line = if trimmed.starts_with("return ") {
+                            trimmed["return ".len()..].trim_start_matches('(').trim_end_matches(';').trim_end_matches(')').to_string()
+                        } else {
+                            line.to_string()
+                        };
+                        markup_lines.push(cleaned_line);
                     }
                 }
             }

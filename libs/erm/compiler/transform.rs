@@ -70,32 +70,7 @@ pub fn has_real_script_tag(content: &str) -> bool {
     false
 }
 
-pub fn is_bare_script_template(content: &str) -> bool {
-    if is_function_template(content) {
-        return false;
-    }
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
-            continue;
-        }
-        if super::utils::starts_with_html_tag(trimmed) || trimmed.starts_with("@for") || trimmed.starts_with("@if") {
-            return false;
-        }
-        if trimmed.starts_with("const ")
-            || trimmed.starts_with("let ")
-            || trimmed.starts_with("var ")
-            || trimmed.starts_with("import ")
-            || trimmed.starts_with("function ")
-            || trimmed.starts_with("async ")
-            || trimmed.starts_with("fn ")
-            || trimmed.starts_with("type ")
-            || trimmed.starts_with("interface ")
-        {
-            return true;
-        }
-        return false;
-    }
+pub fn is_bare_script_template(_content: &str) -> bool {
     false
 }
 
@@ -288,10 +263,16 @@ pub fn extract_exported_function_components(content: &str) -> String {
         }
         if !inside_script {
             let fn_name = caps.get(1).unwrap().as_str().to_string();
+            if !fn_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                continue;
+            }
             let params = caps.get(2).unwrap().as_str().to_string();
             let body_start = m.end();
             if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
                 let body = content[body_start..body_start + cb].to_string();
+                if !body.contains('<') && !body.contains('@') {
+                    continue;
+                }
                 if body.contains("return `") {
                     continue;
                 }
@@ -352,7 +333,13 @@ pub fn extract_exported_function_components(content: &str) -> String {
                 }
                 script_lines.push(line);
             } else {
-                markup_lines.push(line);
+                let trimmed = line.trim();
+                let cleaned_line = if trimmed.starts_with("return ") {
+                    trimmed["return ".len()..].trim_start_matches('(').trim_end_matches(';').trim_end_matches(')').to_string()
+                } else {
+                    line.to_string()
+                };
+                markup_lines.push(cleaned_line);
             }
         }
 
@@ -447,9 +434,7 @@ pub fn strip_template_comments(content: &str) -> String {
 
 pub fn preprocess_erm_template(content: &str) -> anyhow::Result<String> {
     let stripped = strip_template_comments(content);
-    let intermediate = if is_bare_script_template(&stripped) {
-        preprocess_bare_script_template(&stripped)?
-    } else if is_function_template(&stripped) {
+    let intermediate = if is_function_template(&stripped) {
         preprocess_function_template(&stripped)?
     } else {
         stripped
