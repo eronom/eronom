@@ -468,6 +468,7 @@ export class HMRClient {
       this.activeOverlay = null;
     }
     document.querySelectorAll('erm-error-overlay').forEach(el => el.remove());
+    document.querySelectorAll('.erm-error-backdrop').forEach(el => el.remove());
   }
 
   showError(err) {
@@ -479,24 +480,34 @@ export class HMRClient {
 
   checkInitialCompilerError() {
     if (typeof document === 'undefined') return;
-    const body = document.body;
-    if (!body) return;
 
-    const errorFile = body.getAttribute('data-compile-error-file');
-    const errorMessage = body.getAttribute('data-compile-error-message');
-    const errorFrame = body.getAttribute('data-compile-error-frame') || '';
-    const errorLine = body.getAttribute('data-compile-error-line');
-    const errorCol = body.getAttribute('data-compile-error-col');
+    const run = () => {
+      const body = document.body;
+      if (!body) return;
 
-    if (errorFile && errorMessage) {
-      const displayFile = errorLine ? `${errorFile} (${errorLine}:${errorCol || 1})` : errorFile;
-      this.showError({
-        type: 'Build Error',
-        file: displayFile,
-        message: errorMessage,
-        frame: errorFrame,
-        id: errorFile
-      });
+      const errorFile = body.getAttribute('data-compile-error-file');
+      const errorMessage = body.getAttribute('data-compile-error-message');
+      const errorFrame = body.getAttribute('data-compile-error-frame') || '';
+      const errorLine = body.getAttribute('data-compile-error-line');
+      const errorCol = body.getAttribute('data-compile-error-col');
+
+      if (errorMessage) {
+        const displayFile = errorLine ? `${errorFile || ''} (${errorLine}:${errorCol || 1})` : (errorFile || '');
+        this.showError({
+          type: 'SyntaxError',
+          file: displayFile,
+          message: errorMessage,
+          frame: errorFrame,
+          id: errorFile || ''
+        });
+      }
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run);
+      window.addEventListener('load', run);
+    } else {
+      run();
     }
   }
 

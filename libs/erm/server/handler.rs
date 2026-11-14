@@ -411,6 +411,29 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                         let err_msg_escaped = escape_html(&err_msg);
                         let err_frame_escaped = escape_html(&err_frame);
 
+                        let display_file = if !err_line.is_empty() {
+                            format!("{} ({}:{})", err_file, err_line, err_col)
+                        } else {
+                            err_file.clone()
+                        };
+                        let display_file_escaped = escape_html(&display_file);
+
+                        let frame_html = if !err_frame.is_empty() {
+                            let mut formatted_frame = String::new();
+                            for line in err_frame.lines() {
+                                let is_highlight = line.trim_start().starts_with('>') || line.contains('^');
+                                let escaped_line = escape_html(line);
+                                if is_highlight {
+                                    formatted_frame.push_str(&format!("<span class=\"frame-line highlight\">{}</span>\n", escaped_line));
+                                } else {
+                                    formatted_frame.push_str(&format!("<span class=\"frame-line\">{}</span>\n", escaped_line));
+                                }
+                            }
+                            format!("<div class=\"erm-error-code-block\">{}</div>", formatted_frame)
+                        } else {
+                            String::new()
+                        };
+
                         let html_content = format!(r#"<!DOCTYPE html>
 <html>
 <head>
@@ -422,13 +445,128 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
       margin: 0;
       padding: 0;
       min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #f3f3f6;
+    }}
+    .erm-error-backdrop {{
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      box-sizing: border-box;
+      z-index: 999999;
+      background: rgba(10, 10, 14, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      line-height: 1.5;
+    }}
+    .erm-error-card {{
+      background: #141418;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      width: 100%;
+      max-width: 900px;
+      max-height: 88vh;
+      overflow-y: auto;
+      padding: 28px;
+      position: relative;
+      box-sizing: border-box;
+    }}
+    .erm-error-header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }}
+    .erm-error-header-left {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }}
+    .erm-error-badge {{
+      background: rgba(224, 49, 49, 0.12);
+      color: #e03131;
+      border: 1px solid rgba(224, 49, 49, 0.3);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }}
+    .erm-error-file-path {{
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      color: #8e8e9f;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }}
+    .erm-error-message {{
+      font-size: 16px;
+      font-weight: 500;
+      color: #fff;
+      margin-bottom: 20px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }}
+    .erm-error-code-block {{
+      background: #0d0d11;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      overflow-x: auto;
+      margin-bottom: 20px;
+      white-space: pre;
+    }}
+    .erm-error-code-block .frame-line.highlight {{
+      color: #ff6b6b;
+      font-weight: 600;
+      background: rgba(255, 107, 107, 0.08);
+      display: block;
+      margin: 0 -16px;
+      padding: 0 16px;
+    }}
+    .erm-error-footer {{
+      margin-top: 20px;
+      font-size: 12px;
+      color: #8e8e9f;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }}
   </style>
-  <script src="/modules/erm/hmr.js"></script>
+  <script type="module" src="/modules/erm/hmr.js"></script>
 </head>
 <body data-compile-error-file="{}" data-compile-error-line="{}" data-compile-error-col="{}" data-compile-error-message="{}" data-compile-error-frame="{}">
+  <div class="erm-error-backdrop">
+    <div class="erm-error-card">
+      <div class="erm-error-header">
+        <div class="erm-error-header-left">
+          <span class="erm-error-badge">[eronom] SyntaxError</span>
+          <span class="erm-error-file-path">{}</span>
+        </div>
+      </div>
+      <div class="erm-error-message">{}</div>
+      {}
+      <div class="erm-error-footer">
+        <span>Fix the problem in your editor to clear this screen automatically.</span>
+      </div>
+    </div>
+  </div>
 </body>
-</html>"#, err_file_escaped, err_line_escaped, err_col_escaped, err_msg_escaped, err_frame_escaped);
+</html>"#, err_file_escaped, err_line_escaped, err_col_escaped, err_msg_escaped, err_frame_escaped, display_file_escaped, err_msg_escaped, frame_html);
 
                         send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html_content.as_bytes());
                     }
