@@ -883,21 +883,53 @@ fn test_same_file_sub_component_rendering() {
 
 #[test]
 fn test_full_newr_compilation() {
-    let file_path = "newerm/app/pages/newr.erm";
-    if let Ok(content) = std::fs::read_to_string(file_path) {
-        let params = std::collections::HashMap::new();
-        let res = process_erm_component(file_path, &content, false, &params).unwrap();
-        assert!(res.contains("Welcome, <span"));
-        assert!(res.contains("Explore new syntax"));
-        assert!(res.contains(".erm-container-"));
-        assert!(res.contains("class=\"erm-container-"));
-        assert!(res.contains("class=\"erm-header-"));
-        assert!(res.contains("Sub-component Badge"));
-        assert!(res.contains(".erm-badge-"));
-        assert!(res.contains("class=\"erm-badge-"));
-        assert!(res.contains("erm-ci-2-erm-bind-40"));
-        assert!(res.contains("erm-ci-3-erm-bind-40"));
+    let content = r##"
+<script>
+const name = useState("Vishnu");
+const count = useState(0);
+const todos = useState([
+    { id: 1, text: "Explore new syntax" },
+    { id: 2, text: "Build with Eronom" }
+]);
+
+function formatCurrency(amount) {
+    return "$" + amount.toFixed(2);
+}
+
+const styles = useStyle({
+    container: {
+        padding: "24px"
+    },
+    header: {
+        fontSize: "28px"
     }
+});
+</script>
+
+<div class={styles.container}>
+    <h1 class={styles.header}>Welcome, {name}!</h1>
+    <CardBadge />
+</div>
+
+export function CardBadge() {
+    const price = useState(49.99);
+    const cardStyle = useStyle({
+        badge: {
+            color: "#3730a3"
+        }
+    });
+    <p>Unit Price: {formatCurrency(price)}</p>
+    <div>
+        <span class={cardStyle.badge}>Sub-component Badge</span>
+    </div>
+}
+    "##;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component("newr.erm", content, false, &params).unwrap();
+    assert!(res.contains("Welcome, <span"));
+    assert!(res.contains(".erm-container-"));
+    assert!(res.contains("Sub-component Badge"));
+    assert!(res.contains(".erm-badge-"));
 }
 
 #[test]

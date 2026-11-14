@@ -438,7 +438,6 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Compiler Error</title>
   <style>
     body {{
       background-color: #0b0b0d;
