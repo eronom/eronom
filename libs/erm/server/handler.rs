@@ -362,7 +362,11 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                     send_response(res, "200 OK", "text/html; charset=utf-8", processed.as_bytes());
                 }
                 Err(e) => {
-                    eprintln!("[ERROR] Failed to compile {}: {}", file_path.display(), e);
+                    if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                        eprintln!("[browser] {}", ce.message);
+                    } else {
+                        eprintln!("[browser] {}", e);
+                    }
                     if is_prod {
                         let html = r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>500 Internal Server Error</title><style>body{background:#0b0b0d;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui,-apple-system,sans-serif;}h1{font-size:3rem;margin:0 0 0.5rem;}p{color:#888;margin:0;}</style></head><body><div style="text-align:center"><h1>500</h1><p>Internal Server Error</p></div></body></html>"#;
                         send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html.as_bytes());

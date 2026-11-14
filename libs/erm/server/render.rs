@@ -154,7 +154,11 @@ pub fn native_render(args: Vec<Value>) -> Value {
                         Value::string(ptr)
                     }
                     Err(e) => {
-                        eprintln!("[render] Compiler error: {:?}", e);
+                        if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                            eprintln!("[browser] {}", ce.message);
+                        } else {
+                            eprintln!("[browser] {:?}", e);
+                        }
                         Value::null()
                     }
                 }
@@ -210,7 +214,11 @@ pub fn native_render_string(args: Vec<Value>) -> Value {
             Value::string(ptr)
         }
         Err(e) => {
-            eprintln!("[renderString] Compiler error: {:?}", e);
+            if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                eprintln!("[browser] {}", ce.message);
+            } else {
+                eprintln!("[browser] {:?}", e);
+            }
             Value::null()
         }
     }
