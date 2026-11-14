@@ -16,6 +16,7 @@ class ErmErrorOverlay extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.err = err || {};
+    this.isMinimized = false;
     this.render();
   }
 
@@ -26,7 +27,9 @@ class ErmErrorOverlay extends HTMLElement {
   connectedCallback() {
     this.onKeyDown = (e) => {
       if (e.key === 'Escape') {
-        this.close();
+        if (!this.isMinimized) {
+          this.minimize();
+        }
       }
     };
     addEventListener('keydown', this.onKeyDown);
@@ -36,8 +39,24 @@ class ErmErrorOverlay extends HTMLElement {
     removeEventListener('keydown', this.onKeyDown);
   }
 
+  minimize() {
+    this.isMinimized = true;
+    const backdrop = this.shadowRoot.getElementById('backdrop');
+    const badge = this.shadowRoot.getElementById('minimized-badge');
+    if (backdrop) backdrop.style.display = 'none';
+    if (badge) badge.style.display = 'inline-flex';
+  }
+
+  maximize() {
+    this.isMinimized = false;
+    const backdrop = this.shadowRoot.getElementById('backdrop');
+    const badge = this.shadowRoot.getElementById('minimized-badge');
+    if (backdrop) backdrop.style.display = 'flex';
+    if (badge) badge.style.display = 'none';
+  }
+
   close() {
-    this.remove();
+    this.minimize();
   }
 
   escapeHtml(str) {
@@ -78,10 +97,8 @@ class ErmErrorOverlay extends HTMLElement {
           position: fixed;
           top: 0;
           left: 0;
-          width: 100vw;
-          height: 100vh;
-          box-sizing: border-box;
           z-index: 999999;
+          pointer-events: none;
           --bg-backdrop: rgba(10, 10, 14, 0.75);
           --card-bg: #141418;
           --card-border: rgba(255, 255, 255, 0.08);
@@ -93,6 +110,17 @@ class ErmErrorOverlay extends HTMLElement {
           --code-bg: #0d0d11;
           --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
           --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+          font-family: var(--font-sans);
+          line-height: 1.5;
+        }
+
+        .overlay-backdrop {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100vw;
+          height: 100vh;
+          box-sizing: border-box;
           background: var(--bg-backdrop);
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
@@ -100,9 +128,42 @@ class ErmErrorOverlay extends HTMLElement {
           align-items: center;
           justify-content: center;
           padding: 24px;
-          font-family: var(--font-sans);
           color: var(--text-main);
           line-height: 1.5;
+          pointer-events: auto;
+        }
+
+        .minimized-badge {
+          position: fixed;
+          bottom: 24px;
+          left: 24px;
+          z-index: 999999;
+          display: none;
+          align-items: center;
+          gap: 8px;
+          background: #e03131;
+          color: #ffffff;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 9999px;
+          padding: 8px 14px;
+          font-size: 13px;
+          font-weight: 600;
+          font-family: var(--font-sans);
+          box-shadow: 0 4px 16px rgba(224, 49, 49, 0.4), 0 2px 6px rgba(0, 0, 0, 0.3);
+          cursor: pointer;
+          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          user-select: none;
+          pointer-events: auto;
+        }
+
+        .minimized-badge:hover {
+          transform: scale(1.05);
+          background: #f03e3e;
+          box-shadow: 0 6px 20px rgba(224, 49, 49, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        .minimized-badge:active {
+          transform: scale(0.96);
         }
 
         * {
@@ -258,34 +319,51 @@ class ErmErrorOverlay extends HTMLElement {
         }
       </style>
 
-      <div class="overlay-card">
-        <div class="header">
-          <div class="header-left">
-            <span class="badge">[eronom] ${title}</span>
-            ${file ? `<span class="file-path">${file}</span>` : ''}
+      <div class="overlay-backdrop" id="backdrop">
+        <div class="overlay-card">
+          <div class="header">
+            <div class="header-left">
+              <span class="badge">[eronom] ${title}</span>
+              ${file ? `<span class="file-path">${file}</span>` : ''}
+            </div>
+            <button class="close-btn" id="close" title="Dismiss (Esc)">&times;</button>
           </div>
-          <button class="close-btn" id="close" title="Dismiss (Esc)">&times;</button>
-        </div>
 
-        <div class="message">${message}</div>
+          <div class="message">${message}</div>
 
-        ${frame ? `<div class="code-block">${frame}</div>` : ''}
+          ${frame ? `<div class="code-block">${frame}</div>` : ''}
 
-        ${stack ? `
-          <details class="stack-block">
-            <summary class="stack-summary">View Stack Trace</summary>
-            <div class="stack-content">${stack}</div>
-          </details>
-        ` : ''}
+          ${stack ? `
+            <details class="stack-block">
+              <summary class="stack-summary">View Stack Trace</summary>
+              <div class="stack-content">${stack}</div>
+            </details>
+          ` : ''}
 
-        <div class="footer">
-          <span>Fix the problem in your editor to clear this screen automatically.</span>
-          <span class="kbd-hint">Press <kbd>Esc</kbd> to dismiss</span>
+          <div class="footer">
+            <span>Fix the problem in your editor to clear this screen automatically.</span>
+            <span class="kbd-hint">Press <kbd>Esc</kbd> to dismiss</span>
+          </div>
         </div>
       </div>
+
+      <button class="minimized-badge" id="minimized-badge" title="Open compile error">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>1 Error</span>
+      </button>
     `;
 
-    this.shadowRoot.getElementById('close')?.addEventListener('click', () => this.close());
+    this.shadowRoot.getElementById('close')?.addEventListener('click', () => this.minimize());
+    this.shadowRoot.getElementById('backdrop')?.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) {
+        this.minimize();
+      }
+    });
+    this.shadowRoot.getElementById('minimized-badge')?.addEventListener('click', () => this.maximize());
   }
 }
 
@@ -469,6 +547,7 @@ export class HMRClient {
     }
     document.querySelectorAll('erm-error-overlay').forEach(el => el.remove());
     document.querySelectorAll('.erm-error-backdrop').forEach(el => el.remove());
+    document.querySelectorAll('.erm-error-minimized').forEach(el => el.remove());
   }
 
   showError(err) {

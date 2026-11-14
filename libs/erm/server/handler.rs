@@ -545,25 +545,109 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
       justify-content: space-between;
       align-items: center;
     }}
+    .erm-error-close-btn {{
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #8e8e9f;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0;
+      transition: all 0.15s ease;
+    }}
+    .erm-error-close-btn:hover {{
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }}
+    .erm-error-minimized {{
+      position: fixed;
+      bottom: 24px;
+      left: 24px;
+      z-index: 999999;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      background: #e03131;
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 9999px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      box-shadow: 0 4px 16px rgba(224, 49, 49, 0.4), 0 2px 6px rgba(0, 0, 0, 0.3);
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+    }}
+    .erm-error-minimized:hover {{
+      transform: scale(1.05);
+      background: #f03e3e;
+      box-shadow: 0 6px 20px rgba(224, 49, 49, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+    }}
+    .erm-error-minimized:active {{
+      transform: scale(0.96);
+    }}
   </style>
   <script type="module" src="/modules/erm/hmr.js"></script>
 </head>
 <body data-compile-error-file="{}" data-compile-error-line="{}" data-compile-error-col="{}" data-compile-error-message="{}" data-compile-error-frame="{}">
-  <div class="erm-error-backdrop">
+  <div class="erm-error-backdrop" id="erm-backdrop">
     <div class="erm-error-card">
       <div class="erm-error-header">
         <div class="erm-error-header-left">
           <span class="erm-error-badge">[eronom] SyntaxError</span>
           <span class="erm-error-file-path">{}</span>
         </div>
+        <button class="erm-error-close-btn" id="erm-close-btn" title="Dismiss (Esc)">&times;</button>
       </div>
       <div class="erm-error-message">{}</div>
       {}
       <div class="erm-error-footer">
         <span>Fix the problem in your editor to clear this screen automatically.</span>
+        <span style="font-family: ui-monospace, SFMono-Regular, monospace; background: rgba(255, 255, 255, 0.06); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.08);">Press <kbd style="color: #fff;">Esc</kbd> to dismiss</span>
       </div>
     </div>
   </div>
+  <button class="erm-error-minimized" id="erm-minimized-btn" title="Open compile error">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"></circle>
+      <line x1="12" y1="8" x2="12" y2="12"></line>
+      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+    </svg>
+    <span>1 Error</span>
+  </button>
+  <script>
+    (function() {{
+      const backdrop = document.getElementById('erm-backdrop');
+      const minBtn = document.getElementById('erm-minimized-btn');
+      const closeBtn = document.getElementById('erm-close-btn');
+      function minimize() {{
+        if (backdrop) backdrop.style.display = 'none';
+        if (minBtn) minBtn.style.display = 'inline-flex';
+      }}
+      function maximize() {{
+        if (backdrop) backdrop.style.display = 'flex';
+        if (minBtn) minBtn.style.display = 'none';
+      }}
+      if (closeBtn) closeBtn.addEventListener('click', minimize);
+      if (minBtn) minBtn.addEventListener('click', maximize);
+      if (backdrop) backdrop.addEventListener('click', (e) => {{
+        if (e.target === backdrop) minimize();
+      }});
+      window.addEventListener('keydown', (e) => {{
+        if (e.key === 'Escape' && backdrop && backdrop.style.display !== 'none') {{
+          minimize();
+        }}
+      }});
+    }})();
+  </script>
 </body>
 </html>"#, err_file_escaped, err_line_escaped, err_col_escaped, err_msg_escaped, err_frame_escaped, display_file_escaped, err_msg_escaped, frame_html);
 
