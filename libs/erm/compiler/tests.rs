@@ -970,6 +970,44 @@ fn test_bare_map_rejection_with_helpful_message() {
 }
 
 #[test]
+fn test_bare_function_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        <h1>My Page</h1>
+    </div>
+
+    function formatCurrency(amount) {
+        return "$" + amount.toFixed(2);
+    }
+
+    <p>Price: {formatCurrency(price)}</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare function declaration detected in template markup: 'function formatCurrency'"));
+    assert!(err_msg.contains("<script>"));
+}
+
+#[test]
+fn test_bare_variable_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        <h1>My Page</h1>
+    </div>
+
+    const discount = 15;
+
+    <p>Discount: {discount}%</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare variable declaration detected in template markup: 'const discount'"));
+    assert!(err_msg.contains("<script>"));
+}
+
+#[test]
 fn test_raw_html_in_interpolation_rejection() {
     let content = r#"
     <div>

@@ -735,6 +735,120 @@ pub fn validate_template_directives(content: &str, file_path: &str) -> anyhow::R
                     ).into());
                 }
             }
+
+            // Check bare function declaration in template markup
+            let is_fn = content[i..].starts_with("function ") || content[i..].starts_with("fn ") || content[i..].starts_with("async function ");
+            if is_fn {
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.' && prev_c != '-'
+                };
+                if prev_ok {
+                    // Check if preceded by 'export'
+                    let is_exported = {
+                        let mut before = i;
+                        while before > 0 && content[..before].chars().next_back().unwrap().is_whitespace() {
+                            before -= content[..before].chars().next_back().unwrap().len_utf8();
+                        }
+                        before >= 6 && &content[before - 6..before] == "export"
+                    };
+
+                    let kw_len = if content[i..].starts_with("async function ") { 15 } else if content[i..].starts_with("function ") { 9 } else { 3 };
+                    if is_exported {
+                        i += kw_len;
+                        continue;
+                    }
+
+                    let after_kw = i + kw_len;
+                    let mut found_brace = None;
+                    if let Some(open_paren) = content[after_kw..].find('(') {
+                        let paren_start = after_kw + open_paren;
+                        let mut p_depth = 1;
+                        let mut p_scan = paren_start + 1;
+                        while p_scan < content.len() && p_depth > 0 {
+                            let pc = content[p_scan..].chars().next().unwrap();
+                            if pc == '(' { p_depth += 1; }
+                            else if pc == ')' { p_depth -= 1; }
+                            p_scan += pc.len_utf8();
+                        }
+
+                        let mut scan = p_scan;
+                        while scan < content.len() {
+                            let sc = content[scan..].chars().next().unwrap();
+                            if sc == '{' {
+                                found_brace = Some(scan);
+                                break;
+                            } else if content[scan..].starts_with("</") || sc == ';' || sc == '<' {
+                                break;
+                            }
+                            scan += sc.len_utf8();
+                        }
+                    }
+
+                    if let Some(brace_pos) = found_brace {
+                        let fn_name = content[after_kw..brace_pos].split('(').next().unwrap_or("").trim();
+                        let after_brace = brace_pos + 1;
+                        if let Some(cb) = find_matching_close_brace(&content[after_brace..]) {
+                            let body = &content[after_brace..after_brace + cb];
+                            let is_component = body.contains('<') || body.contains('@');
+                            if !is_component {
+                                return Err(CompileError::new(
+                                    file_path,
+                                    content,
+                                    i,
+                                    kw_len + fn_name.len(),
+                                    format!("Bare function declaration detected in template markup: 'function {}'", fn_name),
+                                    Some(format!("JavaScript functions and helper logic must be placed inside a <script> block or component function.\nFix: Wrap the function in a <script> tag:\n<script>\nfunction {}(...) {{ ... }}\n</script>", fn_name)),
+                                ).into());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check bare variable declaration in template markup
+            let is_var_decl = content[i..].starts_with("const ") || content[i..].starts_with("let ") || content[i..].starts_with("var ");
+            if is_var_decl {
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    let prev_c = content[..i].chars().next_back().unwrap();
+                    !prev_c.is_alphanumeric() && prev_c != '_' && prev_c != '@' && prev_c != '.' && prev_c != '-'
+                };
+                if prev_ok {
+                    let kw_len = if content[i..].starts_with("const ") { 6 } else if content[i..].starts_with("let ") { 4 } else { 4 };
+                    let after_kw = i + kw_len;
+                    let mut scan = after_kw;
+                    let mut found_eq = None;
+                    while scan < content.len() {
+                        let sc = content[scan..].chars().next().unwrap();
+                        if sc == '=' {
+                            found_eq = Some(scan);
+                            break;
+                        } else if sc == ';' || sc == '\n' || content[scan..].starts_with("</") || sc == '<' {
+                            break;
+                        }
+                        scan += sc.len_utf8();
+                    }
+
+                    if let Some(eq_pos) = found_eq {
+                        let var_name = content[after_kw..eq_pos].trim();
+                        if !var_name.is_empty() && var_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                            let kw = &content[i..i + kw_len - 1];
+                            return Err(CompileError::new(
+                                file_path,
+                                content,
+                                i,
+                                kw_len + var_name.len(),
+                                format!("Bare variable declaration detected in template markup: '{} {}'", kw, var_name),
+                                Some(format!("JavaScript variable declarations and reactive state must be placed inside a <script> block or component function.\nFix: Move declarations into a <script> tag:\n<script>\n{} {} = ...;\n</script>", kw, var_name)),
+                            ).into());
+                        }
+                    }
+                }
+            }
         }
 
         i += c.len_utf8();
