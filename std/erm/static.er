@@ -1,0 +1,80 @@
+// Eronom Reactive Modules (ERM) - Static Site Generator (SSG) Engine
+// Written in native Eronom script (.er)
+
+import { exists, mkdir, writeFile } from "std/fs.er"
+import { join, resolve, dirname } from "std/path.er"
+import { Router } from "std/erm/router.er"
+import { Component } from "std/erm/component.er"
+import { Erm } from "std/erm.er"
+
+// Pre-renders discovered ERM routes into static HTML and CSS assets
+export const buildStatic = (options) => {
+  let opts = options || {}
+  let pagesDir = resolve(opts.pagesDir || "app/pages")
+  let outDir = resolve(opts.outDir || "dist")
+  let isProd = opts.isProd == null ? true : opts.isProd
+  let defaultTitle = opts.title || "Eronom App"
+
+  // Ensure output directory exists
+  if (!exists(outDir)) {
+    mkdir(outDir)
+  }
+
+  // Scan all page routes
+  let routes = Router.scan(pagesDir)
+  let generated = []
+
+  for route in routes {
+    // Only pre-render markup pages, not API endpoints
+    if (route.isApi) {
+      continue
+    }
+
+    // Render page
+    let pageHtml = Erm.render(route.filePath, {}, isProd)
+
+    // Wrap layouts
+    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, {}, isProd, Erm.render)
+
+    // Ensure document shell
+    let finalHtml = Component.ensureDocumentShell(wrappedHtml, defaultTitle)
+
+    // Determine target output path
+    let relPath = route.pattern
+    let outTarget = ""
+    if (relPath == "/" || relPath == "") {
+      outTarget = join(outDir, "index.html")
+    } else {
+      let cleanPattern = relPath.startsWith("/") ? relPath.slice(1) : relPath
+      let targetDir = join(outDir, cleanPattern)
+      if (!exists(targetDir)) {
+        mkdir(targetDir)
+      }
+      outTarget = join(targetDir, "index.html")
+    }
+
+    let targetParent = dirname(outTarget)
+    if (!exists(targetParent)) {
+      mkdir(targetParent)
+    }
+
+    writeFile(outTarget, finalHtml)
+
+    generated.push({
+      route: route.pattern,
+      source: route.filePath,
+      output: outTarget
+    })
+  }
+
+  return {
+    success: true,
+    outDir: outDir,
+    count: generated.length,
+    pages: generated
+  }
+}
+
+export const Static = {
+  build: buildStatic
+}

@@ -1,0 +1,110 @@
+// Eronom Reactive Modules (ERM) - Full-Stack SSR Request Dispatcher
+// Written in native Eronom script (.er)
+
+import { Response, serve } from "std/http.er"
+import { Router } from "std/erm/router.er"
+import { Component } from "std/erm/component.er"
+import { Erm } from "std/erm.er"
+
+// Creates an ERM application instance with SSR request dispatching and middleware
+export const createServer = (options) => {
+  let opts = options || {}
+  let pagesDir = opts.pagesDir || "app/pages"
+  let isProd = opts.isProd == null ? true : opts.isProd
+  let router = Router.create(pagesDir)
+  let middlewares = []
+
+  let dispatch = (req) => {
+    let urlPath = req ? req.path || "/" : "/"
+
+    // 1. Resolve route
+    let route = router.resolve(urlPath)
+    if (!route || !route.matched) {
+      if (opts.notFoundHandler) {
+        return opts.notFoundHandler(req)
+      }
+      return Response.html(
+        "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1><p>No route matched: " + urlPath + "</p></body></html>",
+        { status: 404 }
+      )
+    }
+
+    // Merge request parameters
+    let params = {}
+    if (route.params) {
+      for k in route.params {
+        params[k] = route.params[k]
+      }
+    }
+    if (req && req.query) {
+      for qk in req.query {
+        params[qk] = req.query[qk]
+      }
+    }
+
+    // 2. Handle API routes (.er)
+    if (route.isApi) {
+      return Response.json({
+        status: "ok",
+        route: route.routePattern,
+        params: params,
+        filePath: route.filePath
+      })
+    }
+
+    // 3. Render ERM page template (.erm or .html)
+    let pageHtml = Erm.render(route.filePath, params, isProd)
+
+    // 4. Wrap with layout chain (outermost layout to innermost)
+    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, params, isProd, Erm.render)
+
+    // 5. Ensure full HTML document shell
+    let finalDoc = Component.ensureDocumentShell(wrappedHtml, opts.title || "Eronom App")
+
+    return Response.html(finalDoc)
+  }
+
+  // Master request handler executing middleware pipeline
+  let handleRequest = (req) => {
+    if (middlewares.length == 0) {
+      return dispatch(req)
+    }
+
+    let i = 0
+    while (i < middlewares.length) {
+      let mw = middlewares[i]
+      let res = mw(req)
+      if (res && res._isResponse) {
+        return res
+      }
+      i = i + 1
+    }
+    return dispatch(req)
+  }
+
+  return {
+    handle: dispatch,
+    dispatch: dispatch,
+    use: (middleware) => {
+      middlewares.push(middleware)
+    },
+    routes: () => router.routes(),
+    listen: (port, callback) => {
+      let p = port || 3000
+      return serve({
+        port: p,
+        fetch: dispatch
+      })
+    }
+  }
+}
+
+export const createHandler = (options) => {
+  let app = createServer(options)
+  return app.dispatch
+}
+
+export const Server = {
+  createServer: createServer,
+  createHandler: createHandler
+}
