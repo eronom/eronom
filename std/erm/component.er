@@ -2,7 +2,7 @@
 // Written in native Eronom script (.er)
 
 import { exists } from "std/fs.er"
-import { Erm } from "std/erm.er"
+import { render } from "std/erm/render.er"
 
 // Helper: check if a string contains another string
 export const hasSubstr = (str, substr) => {
@@ -62,7 +62,7 @@ export const wrapWithLayoutChain = (pageHtml, layoutFiles, params, isProd, rende
     return pageHtml
   }
 
-  let renderer = renderFn || Erm.render
+  let renderer = renderFn || render
   let currentHtml = pageHtml
   let p = params || {}
   let prod = isProd == null ? true : isProd

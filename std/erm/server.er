@@ -6,7 +6,7 @@ import { exists, readFile, stat } from "std/fs.er"
 import { join, extname } from "std/path.er"
 import { Router } from "std/erm/router.er"
 import { Component } from "std/erm/component.er"
-import { Erm } from "std/erm.er"
+import { render } from "std/erm/render.er"
 
 let getMimeType = (ext) => {
   if (ext == ".js" || ext == ".mjs") {
@@ -119,10 +119,10 @@ export const createServer = (options) => {
     }
 
     // 3. Render ERM page template (.erm or .html)
-    let pageHtml = Erm.render(route.filePath, params, isProd)
+    let pageHtml = render(route.filePath, params, isProd)
 
     // 4. Wrap with layout chain (outermost layout to innermost)
-    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, params, isProd, Erm.render)
+    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, params, isProd, render)
 
     // 5. Ensure full HTML document shell
     let finalDoc = Component.ensureDocumentShell(wrappedHtml, opts.title || "Eronom App")

@@ -5,7 +5,7 @@ import { exists, mkdir, writeFile } from "std/fs.er"
 import { join, resolve, dirname } from "std/path.er"
 import { Router } from "std/erm/router.er"
 import { Component } from "std/erm/component.er"
-import { Erm } from "std/erm.er"
+import { render } from "std/erm/render.er"
 
 // Pre-renders discovered ERM routes into static HTML and CSS assets
 export const buildStatic = (options) => {
@@ -31,10 +31,10 @@ export const buildStatic = (options) => {
     }
 
     // Render page
-    let pageHtml = Erm.render(route.filePath, {}, isProd)
+    let pageHtml = render(route.filePath, {}, isProd)
 
     // Wrap layouts
-    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, {}, isProd, Erm.render)
+    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, {}, isProd, render)
 
     // Ensure document shell
     let finalHtml = Component.ensureDocumentShell(wrappedHtml, defaultTitle)
