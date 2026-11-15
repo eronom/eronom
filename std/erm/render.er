@@ -27,3 +27,4 @@ export const renderString = (templateString, params, isProd) => {
 
 export const compile = render
 export const compileString = renderString
+
