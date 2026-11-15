@@ -4,8 +4,8 @@
 import { Response, serve } from "std/http.er"
 import { exists, readFile, stat } from "std/fs.er"
 import { join, extname } from "std/path.er"
-import { Router } from "std/erm/router.er"
-import { Component } from "std/erm/component.er"
+import { createFileSystemRouter } from "std/erm/router.er"
+import { wrapWithLayoutChain, ensureDocumentShell } from "std/erm/component.er"
 import { render } from "std/erm/render.er"
 
 let getMimeType = (ext) => {
@@ -66,7 +66,7 @@ export const createServer = (options) => {
   let opts = options || {}
   let pagesDir = opts.pagesDir || "app/pages"
   let isProd = opts.isProd == null ? true : opts.isProd
-  let router = Router.create(pagesDir)
+  let router = createFileSystemRouter(pagesDir)
   let middlewares = []
 
   let dispatch = (req) => {
@@ -122,10 +122,10 @@ export const createServer = (options) => {
     let pageHtml = render(route.filePath, params, isProd)
 
     // 4. Wrap with layout chain (outermost layout to innermost)
-    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, params, isProd, render)
+    let wrappedHtml = wrapWithLayoutChain(pageHtml, route.layouts, params, isProd, render)
 
     // 5. Ensure full HTML document shell
-    let finalDoc = Component.ensureDocumentShell(wrappedHtml, opts.title || "Eronom App")
+    let finalDoc = ensureDocumentShell(wrappedHtml, opts.title || "Eronom App")
 
     return Response.html(finalDoc)
   }

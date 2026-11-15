@@ -3,8 +3,8 @@
 
 import { exists, mkdir, writeFile } from "std/fs.er"
 import { join, resolve, dirname } from "std/path.er"
-import { Router } from "std/erm/router.er"
-import { Component } from "std/erm/component.er"
+import { scanRoutes } from "std/erm/router.er"
+import { wrapWithLayoutChain, ensureDocumentShell } from "std/erm/component.er"
 import { render } from "std/erm/render.er"
 
 // Pre-renders discovered ERM routes into static HTML and CSS assets
@@ -21,7 +21,7 @@ export const buildStatic = (options) => {
   }
 
   // Scan all page routes
-  let routes = Router.scan(pagesDir)
+  let routes = scanRoutes(pagesDir)
   let generated = []
 
   for route in routes {
@@ -34,10 +34,10 @@ export const buildStatic = (options) => {
     let pageHtml = render(route.filePath, {}, isProd)
 
     // Wrap layouts
-    let wrappedHtml = Component.wrapWithLayoutChain(pageHtml, route.layouts, {}, isProd, render)
+    let wrappedHtml = wrapWithLayoutChain(pageHtml, route.layouts, {}, isProd, render)
 
     // Ensure document shell
-    let finalHtml = Component.ensureDocumentShell(wrappedHtml, defaultTitle)
+    let finalHtml = ensureDocumentShell(wrappedHtml, defaultTitle)
 
     // Determine target output path
     let relPath = route.pattern

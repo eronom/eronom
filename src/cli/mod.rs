@@ -184,6 +184,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             } else {
                 anyhow::bail!("No server script found in '{}'. Run 'eronom build' first to generate the production server.", dir);
             };
+            let server_script = server_script.canonicalize().unwrap_or(server_script);
 
             if dir != "." && dir_path.is_dir() {
                 let _ = std::env::set_current_dir(dir_path);
@@ -210,6 +211,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
             } else {
                 anyhow::bail!("No Eronom server or ERM app found in '{}'.", dir);
             };
+            let dev_script = dev_script.canonicalize().unwrap_or(dev_script);
 
             if dir != "." && dir_path.is_dir() {
                 let _ = std::env::set_current_dir(dir_path);
@@ -255,21 +257,29 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
 
 fn resolve_std_cli_dev() -> PathBuf {
     if Path::new("std/erm/cli_dev.er").exists() {
-        return Path::new("std/erm/cli_dev.er").to_path_buf();
+        if let Ok(canon) = Path::new("std/erm/cli_dev.er").canonicalize() {
+            return canon;
+        }
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let candidate = parent.join("std/erm/cli_dev.er");
             if candidate.exists() {
+                if let Ok(canon) = candidate.canonicalize() {
+                    return canon;
+                }
                 return candidate;
             }
             if let Some(grandparent) = parent.parent() {
                 let candidate = grandparent.join("std/erm/cli_dev.er");
                 if candidate.exists() {
+                    if let Ok(canon) = candidate.canonicalize() {
+                        return canon;
+                    }
                     return candidate;
                 }
             }
         }
     }
-    Path::new("std/erm/cli_dev.er").to_path_buf()
+    PathBuf::from("std/erm/cli_dev.er")
 }
