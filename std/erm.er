@@ -1,24 +1,28 @@
-// Standard Eronom Reactive Model (ERM) Template Engine
-// Bridges Eronom scripts (.er) with the native high-performance Rust ERM compiler.
+// Standard Eronom Reactive Modules (ERM) Full-Stack Framework Library
+// Bridges high-level .er framework abstractions with native high-performance Rust/C++ primitives.
 
-export const render = (filePath, params, isProd) => {
-  let p = params || {}
-  let prod = isProd == null ? true : isProd
-  return Eronom_nativeRender(filePath, p, prod)
-}
+import {
+  Erm,
+  Router,
+  Component,
+  Server,
+  Static,
+  Reactivity,
+  Dev,
+  render,
+  renderString,
+  compile,
+  compileString
+} from "std/erm/index.er"
 
-export const renderString = (templateString, params, isProd) => {
-  let p = params || {}
-  let prod = isProd == null ? true : isProd
-  return Eronom_nativeRenderString(templateString, p, prod)
-}
-
-export const compile = render
-export const compileString = renderString
-
-export const Erm = {
-  render: render,
-  compile: compile,
-  renderString: renderString,
-  compileString: compileString
-}
+export const Erm = Erm
+export const render = render
+export const renderString = renderString
+export const compile = compile
+export const compileString = compileString
+export const Router = Router
+export const Component = Component
+export const Server = Server
+export const Static = Static
+export const Reactivity = Reactivity
+export const Dev = Dev

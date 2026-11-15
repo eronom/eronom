@@ -1,0 +1,80 @@
+// Eronom Reactive Modules (ERM) - Standard Framework Library Index
+// Written in native Eronom script (.er)
+
+import { Router, createFileSystemRouter, resolveRoute, scanRoutes } from "std/erm/router.er"
+import { Component, injectSlot, wrapWithLayoutChain, ensureDocumentShell } from "std/erm/component.er"
+import { Server, createServer, createHandler } from "std/erm/server.er"
+import { Static, buildStatic } from "std/erm/static.er"
+import { Reactivity, extractStateDeclarations, lowerReactivity, generateHydrationScript } from "std/erm/reactivity.er"
+import { Dev, createSnapshot, diffSnapshots, buildHmrPayload, createDevServer } from "std/erm/dev.er"
+
+// Native compiler bindings
+export const render = (filePath, params, isProd) => {
+  let p = params || {}
+  let prod = isProd == null ? true : isProd
+  return Eronom_nativeRender(filePath, p, prod)
+}
+
+export const renderString = (templateString, params, isProd) => {
+  let p = params || {}
+  let prod = isProd == null ? true : isProd
+  return Eronom_nativeRenderString(templateString, p, prod)
+}
+
+export const compile = render
+export const compileString = renderString
+
+// Exports
+export const Router = Router
+export const Component = Component
+export const Server = Server
+export const Static = Static
+export const Reactivity = Reactivity
+export const Dev = Dev
+export const router = Router
+export const component = Component
+export const server = Server
+export const staticSite = Static
+export const reactivity = Reactivity
+export const dev = Dev
+
+export const Erm = {
+  // Native render primitives
+  render: render,
+  compile: compile,
+  renderString: renderString,
+  compileString: compileString,
+
+  // Router
+  Router: Router,
+  createRouter: createFileSystemRouter,
+  resolveRoute: resolveRoute,
+  scanRoutes: scanRoutes,
+
+  // Component & Layouts
+  Component: Component,
+  injectSlot: injectSlot,
+  wrapLayouts: wrapWithLayoutChain,
+  ensureShell: ensureDocumentShell,
+
+  // Server & SSR
+  Server: Server,
+  createServer: createServer,
+  createHandler: createHandler,
+
+  // SSG
+  Static: Static,
+  buildStatic: buildStatic,
+
+  // Reactivity
+  Reactivity: Reactivity,
+  extractState: extractStateDeclarations,
+  lowerReactivity: lowerReactivity,
+  generateHydration: generateHydrationScript,
+
+  // Dev & HMR
+  Dev: Dev,
+  createSnapshot: createSnapshot,
+  diffSnapshots: diffSnapshots,
+  createDevServer: createDevServer
+}
