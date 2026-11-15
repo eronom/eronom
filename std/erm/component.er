@@ -1,0 +1,115 @@
+// Eronom Reactive Modules (ERM) - Component Composition & Slot Projection Engine
+// Written in native Eronom script (.er)
+
+import { exists } from "std/fs.er"
+import { Erm } from "std/erm.er"
+
+// Helper: check if a string contains another string
+export const hasSubstr = (str, substr) => {
+  if (!str || !substr) {
+    return false
+  }
+  return str.indexOf(substr) != -1
+}
+
+// Injects child markup into a layout's slot boundary (<slot /> or <slot></slot>)
+export const injectSlot = (layoutHtml, childHtml) => {
+  if (!layoutHtml) {
+    return childHtml || ""
+  }
+  if (!childHtml) {
+    childHtml = ""
+  }
+
+  // 1. Check self-closing <slot /> and <slot/>
+  let slotIdx = layoutHtml.indexOf("<slot />")
+  if (slotIdx != -1) {
+    let before = layoutHtml.slice(0, slotIdx)
+    let after = layoutHtml.slice(slotIdx + 8)
+    return before + childHtml + after
+  }
+
+  let slotCompactIdx = layoutHtml.indexOf("<slot/>")
+  if (slotCompactIdx != -1) {
+    let before = layoutHtml.slice(0, slotCompactIdx)
+    let after = layoutHtml.slice(slotCompactIdx + 7)
+    return before + childHtml + after
+  }
+
+  // 2. Check open/close <slot></slot>
+  let slotPairIdx = layoutHtml.indexOf("<slot></slot>")
+  if (slotPairIdx != -1) {
+    let before = layoutHtml.slice(0, slotPairIdx)
+    let after = layoutHtml.slice(slotPairIdx + 13)
+    return before + childHtml + after
+  }
+
+  // 3. Fallback: if layout has </body>, inject before </body>
+  let bodyEndIdx = layoutHtml.indexOf("</body>")
+  if (bodyEndIdx != -1) {
+    let before = layoutHtml.slice(0, bodyEndIdx)
+    let after = layoutHtml.slice(bodyEndIdx)
+    return before + childHtml + after
+  }
+
+  // Otherwise append to end
+  return layoutHtml + childHtml
+}
+
+// Wraps a page markup string with a chain of layout files (outermost to innermost)
+export const wrapWithLayoutChain = (pageHtml, layoutFiles, params, isProd, renderFn) => {
+  if (!layoutFiles || layoutFiles.length == 0) {
+    return pageHtml
+  }
+
+  let renderer = renderFn || Erm.render
+  let currentHtml = pageHtml
+  let p = params || {}
+  let prod = isProd == null ? true : isProd
+
+  // Iterate from innermost layout back up to outermost layout
+  let idx = layoutFiles.length - 1
+  while (idx >= 0) {
+    let layoutPath = layoutFiles[idx]
+    if (exists(layoutPath)) {
+      let layoutRendered = renderer(layoutPath, p, prod)
+      currentHtml = injectSlot(layoutRendered, currentHtml)
+    }
+    idx = idx - 1
+  }
+
+  return currentHtml
+}
+
+// Ensures complete HTML5 document shell if missing
+export const ensureDocumentShell = (htmlContent, title) => {
+  if (!htmlContent) {
+    htmlContent = ""
+  }
+  let pageTitle = title || "Eronom App"
+
+  // If already contains DOCTYPE or <html>, do not double-wrap
+  if (hasSubstr(htmlContent, "<!DOCTYPE") || hasSubstr(htmlContent, "<html")) {
+    return htmlContent
+  }
+
+  let shell = "<!DOCTYPE html>\n" +
+    "<html lang=\"en\">\n" +
+    "<head>\n" +
+    "  <meta charset=\"utf-8\" />\n" +
+    "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n" +
+    "  <title>" + pageTitle + "</title>\n" +
+    "</head>\n" +
+    "<body>\n" +
+    htmlContent + "\n" +
+    "</body>\n" +
+    "</html>"
+
+  return shell
+}
+
+export const Component = {
+  injectSlot: injectSlot,
+  wrapWithLayoutChain: wrapWithLayoutChain,
+  ensureDocumentShell: ensureDocumentShell
+}
