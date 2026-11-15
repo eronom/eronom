@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use crate::eval::{self, ErmEval};
 use super::utils::*;
 use super::blocks::validate_template_directives;
 use super::transform::preprocess_erm_template;
 use super::tree::{process_component_tree, ProcessResult};
+
+pub static ASSET_MANIFEST: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn is_valid_js_identifier(name: &str) -> bool {
     if name.is_empty() {
@@ -386,7 +389,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
         let runtime_path = if is_prod {
-            let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+            let manifest = ASSET_MANIFEST.lock().unwrap();
             manifest.get("/modules/erm/runtime.js")
                 .cloned()
                 .unwrap_or_else(|| "/modules/erm/runtime.js".to_string())
@@ -417,7 +420,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
     if is_prod {
         output = crate::compiler::inline_public_env_vars(&output);
-        let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+        let manifest = ASSET_MANIFEST.lock().unwrap();
         if !manifest.is_empty() {
             for (orig, hashed) in manifest.iter() {
                 output = output.replace(orig, hashed);

@@ -1,6 +1,6 @@
-use eronom::vm as backend;
-use eronom::frontend;
-use eronom::jit;
+use crate::vm as backend;
+use crate::frontend;
+use crate::jit;
 use backend::{Compiler, VM, Value};
 use super::natives::*;
 use super::http_detect::{find_listen_port, has_http_import};

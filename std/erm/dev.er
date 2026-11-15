@@ -102,7 +102,11 @@ export const createDevServer = (options) => {
       }
       return changes
     },
-    buildPayload: buildHmrPayload
+    buildPayload: buildHmrPayload,
+    listen: (port, callback) => {
+      let p = port || 3000
+      return app.listen(p, callback)
+    }
   }
 }
 

@@ -2,7 +2,7 @@ pub use eronom::vm as backend;
 pub use eronom::frontend;
 pub use eronom::jit;
 
-mod runner;
+pub use eronom::runner;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

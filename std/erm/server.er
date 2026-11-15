@@ -2,9 +2,64 @@
 // Written in native Eronom script (.er)
 
 import { Response, serve } from "std/http.er"
+import { exists, readFile, stat } from "std/fs.er"
+import { join, extname } from "std/path.er"
 import { Router } from "std/erm/router.er"
 import { Component } from "std/erm/component.er"
 import { Erm } from "std/erm.er"
+
+let getMimeType = (ext) => {
+  if (ext == ".js" || ext == ".mjs") {
+    return "application/javascript; charset=utf-8"
+  }
+  if (ext == ".css") {
+    return "text/css; charset=utf-8"
+  }
+  if (ext == ".html" || ext == ".htm") {
+    return "text/html; charset=utf-8"
+  }
+  if (ext == ".json") {
+    return "application/json; charset=utf-8"
+  }
+  if (ext == ".svg") {
+    return "image/svg+xml"
+  }
+  if (ext == ".png") {
+    return "image/png"
+  }
+  if (ext == ".ico") {
+    return "image/x-icon"
+  }
+  if (ext == ".jpg" || ext == ".jpeg") {
+    return "image/jpeg"
+  }
+  if (ext == ".wasm") {
+    return "application/wasm"
+  }
+  return "text/plain; charset=utf-8"
+}
+
+let resolveStaticFile = (urlPath) => {
+  let cleanPath = urlPath.startsWith("/") ? urlPath.substring(1) : urlPath
+  if (cleanPath.length == 0) {
+    return null
+  }
+  let candidates = [
+    cleanPath,
+    join("app", cleanPath),
+    join("public", cleanPath),
+    join("build", cleanPath)
+  ]
+  for candidate in candidates {
+    if (exists(candidate)) {
+      let s = stat(candidate)
+      if (s && s.isFile) {
+        return candidate
+      }
+    }
+  }
+  return null
+}
 
 // Creates an ERM application instance with SSR request dispatching and middleware
 export const createServer = (options) => {
@@ -20,6 +75,17 @@ export const createServer = (options) => {
     // 1. Resolve route
     let route = router.resolve(urlPath)
     if (!route || !route.matched) {
+      let staticFile = resolveStaticFile(urlPath)
+      if (staticFile) {
+        let content = readFile(staticFile)
+        let ext = extname(staticFile)
+        let mime = getMimeType(ext)
+        return Response.text(content, {
+          status: 200,
+          headers: { "content-type": mime }
+        })
+      }
+
       if (opts.notFoundHandler) {
         return opts.notFoundHandler(req)
       }

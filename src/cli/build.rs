@@ -389,7 +389,7 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     process_static_assets(&base_path, &base_path, &build_dir, &mut manifest)?;
 
     // Update in-memory manifest for component compilation
-    *crate::server::types::ASSET_MANIFEST.lock().unwrap() = manifest.clone();
+    *crate::compiler::ASSET_MANIFEST.lock().unwrap() = manifest.clone();
 
     // Write manifest.json
     let manifest_json = serde_json::to_string_pretty(&manifest)?;
@@ -480,14 +480,11 @@ mod tests {
         assert!(!styles_data.contains("/* Header CSS */"), "CSS comments should be minified");
         assert!(styles_data.contains("background-color:#000000"));
 
-        // Check preloaded static assets in server cache
-        crate::server::dev::preload_static_assets(&build_dir);
-        let cache = crate::server::types::STATIC_ASSET_CACHE.lock().unwrap();
-        assert!(cache.contains_key(runtime_hashed));
-        assert!(cache.contains_key(styles_hashed));
-        let cached_style = cache.get(styles_hashed).unwrap();
-        assert!(cached_style.is_immutable);
-        assert_eq!(cached_style.content_type, "text/css; charset=utf-8");
+        // Verify server entrypoint script was generated
+        let server_er_file = build_dir.join("server.er");
+        assert!(server_er_file.exists());
+        let server_er_src = fs::read_to_string(&server_er_file).unwrap();
+        assert!(server_er_src.contains("std/http"));
 
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);
