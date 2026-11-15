@@ -1,0 +1,112 @@
+// Eronom Reactive Modules (ERM) - Client Reactivity Lowering & Hydration Emitter
+// Written in native Eronom script (.er)
+
+// Extract state variable names and initial values declared via useState
+// e.g. "let count = useState(0)" -> [{ name: "count", init: "0" }]
+export const extractStateDeclarations = (scriptContent) => {
+  let states = []
+  if (!scriptContent) {
+    return states
+  }
+
+  let marker = "useState("
+  let searchIdx = 0
+
+  while (searchIdx < scriptContent.length) {
+    let callIdx = scriptContent.indexOf(marker, searchIdx)
+    if (callIdx == -1) {
+      break
+    }
+
+    // Find opening paren
+    let openParen = callIdx + marker.length - 1
+    // Find closing paren matching useState(
+    let closeParen = scriptContent.indexOf(")", openParen)
+    if (closeParen == -1) {
+      break
+    }
+
+    let initVal = scriptContent.slice(openParen + 1, closeParen).trim()
+
+    // Look backward from callIdx to find '='
+    let beforeCall = scriptContent.slice(0, callIdx).trim()
+    let eqIdx = beforeCall.lastIndexOf("=")
+    if (eqIdx != -1) {
+      let beforeEq = beforeCall.slice(0, eqIdx).trim()
+      // Extract identifier before '='
+      let tokens = beforeEq.split(" ")
+      let varName = ""
+      if (tokens.length > 0) {
+        varName = tokens[tokens.length - 1].trim()
+      }
+
+      if (varName.length > 0) {
+        states.push({
+          name: varName,
+          init: initVal.length > 0 ? initVal : "null"
+        })
+      }
+    }
+
+    searchIdx = closeParen + 1
+  }
+
+  return states
+}
+
+// Lowers variable mutations to erm.update and erm.set calls
+export const lowerReactivity = (code, stateNames) => {
+  if (!code || !stateNames || stateNames.length == 0) {
+    return code || ""
+  }
+
+  let lowered = code
+
+  for name in stateNames {
+    // 1. Lower increment: name++ -> erm.update("name", (p) => p + 1)
+    let incTarget = name + "++"
+    while (lowered.indexOf(incTarget) != -1) {
+      let idx = lowered.indexOf(incTarget)
+      let before = lowered.slice(0, idx)
+      let after = lowered.slice(idx + incTarget.length)
+      lowered = before + "erm.update(\"" + name + "\", (p) => p + 1)" + after
+    }
+
+    // 2. Lower decrement: name-- -> erm.update("name", (p) => p - 1)
+    let decTarget = name + "--"
+    while (lowered.indexOf(decTarget) != -1) {
+      let idx = lowered.indexOf(decTarget)
+      let before = lowered.slice(0, idx)
+      let after = lowered.slice(idx + decTarget.length)
+      lowered = before + "erm.update(\"" + name + "\", (p) => p - 1)" + after
+    }
+  }
+
+  return lowered
+}
+
+// Emits client hydration module script for a component
+export const generateHydrationScript = (componentId, stateDeclarations, extraJs) => {
+  let cId = componentId || "erm-root"
+  let states = stateDeclarations || []
+
+  let script = "<script type=\"module\">\n" +
+    "  const erm = window.erm;\n"
+
+  for st in states {
+    script = script + "  erm.init(\"" + st.name + "\", " + st.init + ");\n"
+  }
+
+  if (extraJs && extraJs.length > 0) {
+    script = script + "  " + extraJs + "\n"
+  }
+
+  script = script + "</script>"
+  return script
+}
+
+export const Reactivity = {
+  extractState: extractStateDeclarations,
+  lower: lowerReactivity,
+  generateHydrationScript: generateHydrationScript
+}
