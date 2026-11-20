@@ -37,7 +37,7 @@ When generating or refactoring code in this repository, you **MUST** adhere to t
 
 ### B. Single-Threaded Event Loop & Networking
 - **No Tokio/Async Runtimes**: Eronom uses a single-threaded, blocking execution model for script handlers. Do **NOT** add heavy async dependencies like `tokio` or async HTTP clients like `reqwest` to the core VM runtime.
-- **Outbound HTTP Client**: Synchronous HTTP requests in native VM bindings use the synchronous `ureq` crate (`src/vm/er_http.rs`).
+- **Outbound HTTP Client**: Synchronous HTTP/HTTPS requests in native VM bindings use native BoringSSL bindings (`crates/eronom-net/cpp/er_fetch.cpp`).
 - **Inbound Server**: High-throughput HTTP web server powered by native C++ `uWebSockets` bindings (`src/vm/er_http.cpp` & `src/vm/er_http.rs`).
 
 ### C. Garbage Collector & Map Pooling

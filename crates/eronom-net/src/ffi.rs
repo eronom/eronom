@@ -52,4 +52,13 @@ unsafe extern "C" {
     pub fn er_app_num_subscribers(topic: *const c_char, topic_len: usize) -> u32;
 
     pub fn er_http_create_timer(ms: i32, cb: extern "C" fn(*mut c_void));
+
+    // Native outbound fetch client APIs (BoringSSL)
+    pub fn er_fetch(
+        url: *const c_char,
+        out_body: *mut *mut c_char,
+        out_body_len: *mut usize,
+        out_err: *mut *mut c_char,
+    ) -> i32;
+    pub fn er_fetch_free(ptr: *mut c_char);
 }

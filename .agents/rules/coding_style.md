@@ -8,7 +8,7 @@ Ensure all code changes adhere strictly to the following architectural constrain
 
 ## 1. Single-Threaded Event Loop & Networking Rules
 - **No Tokio/Async Runtimes**: Eronom uses a single-threaded, blocking execution model for script handlers. Do NOT add heavy async dependencies like `tokio` or async HTTP clients like `reqwest` to the core VM runtime.
-- **Outbound HTTP Client**: Use the `ureq` crate (with TLS features enabled) for synchronous HTTP requests inside native VM bindings (`src/vm/er_http.rs`).
+- **Outbound HTTP Client**: Use the native BoringSSL client (`er_fetch`) for synchronous HTTP/HTTPS requests inside native VM bindings.
 - **High-Performance Inbound Server**: The HTTP web server engine is powered by native C++ `uWebSockets` FFI bindings. Modifications to web server networking must be implemented in `src/vm/er_http.cpp` and `src/vm/er_http.rs`.
 
 ## 2. Memory Management & Garbage Collector Rules

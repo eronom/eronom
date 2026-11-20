@@ -151,9 +151,11 @@ fn main() {
     let u_websockets_dir = root_dir.join("deps").join("uWebSockets");
     let er_http_cpp = Path::new(&manifest_dir).join("cpp").join("er_http.cpp");
     let er_clif_cpp = Path::new(&manifest_dir).join("cpp").join("er_clif.cpp");
+    let er_fetch_cpp = Path::new(&manifest_dir).join("cpp").join("er_fetch.cpp");
 
     println!("cargo:rerun-if-changed={}", er_http_cpp.display());
     println!("cargo:rerun-if-changed={}", er_clif_cpp.display());
+    println!("cargo:rerun-if-changed={}", er_fetch_cpp.display());
 
     let mut u_websockets_build = cc::Build::new();
     u_websockets_build
@@ -161,6 +163,7 @@ fn main() {
         .std("c++17")
         .file(&er_http_cpp)
         .file(&er_clif_cpp)
+        .file(&er_fetch_cpp)
         .include(u_websockets_dir.join("src"))
         .include(u_sockets_dir.join("src"))
         .define("UWS_NO_ZLIB", None)
