@@ -57,15 +57,25 @@ pub fn end_http_response_json(res: *mut c_void, json: &str) {
 
 // ─── High-Performance ErServer Struct ───────────────────────────────────────
 
-pub struct ErServer<const SSL: bool = false> {
+pub struct ErServer {
     pub raw: *mut c_void,
     pub port: i32,
+    pub is_ssl: bool,
 }
 
-impl<const SSL: bool> ErServer<SSL> {
+impl ErServer {
     pub fn new(rust_server: *mut c_void) -> Self {
-        let raw = unsafe { er_server_create(if SSL { 1 } else { 0 }, rust_server) };
-        Self { raw, port: 0 }
+        let raw = unsafe { er_server_create(0, rust_server) };
+        Self { raw, port: 0, is_ssl: false }
+    }
+
+    pub fn new_ssl(cert: &str, key: &str, pass: Option<&str>, rust_server: *mut c_void) -> Self {
+        let cert_c = CString::new(cert).unwrap();
+        let key_c = CString::new(key).unwrap();
+        let pass_c = pass.map(|p| CString::new(p).unwrap());
+        let pass_ptr = pass_c.as_ref().map_or(std::ptr::null(), |p| p.as_ptr());
+        let raw = unsafe { er_server_create_ssl(cert_c.as_ptr(), key_c.as_ptr(), pass_ptr, rust_server) };
+        Self { raw, port: 0, is_ssl: true }
     }
 
     pub fn register_route(&self, method: &str, path: &str, route_id: u32) {
@@ -93,7 +103,7 @@ impl<const SSL: bool> ErServer<SSL> {
     }
 }
 
-impl<const SSL: bool> Drop for ErServer<SSL> {
+impl Drop for ErServer {
     fn drop(&mut self) {
         if !self.raw.is_null() {
             unsafe { er_server_destroy(self.raw) };
@@ -142,7 +152,7 @@ pub fn start_http_server_if_needed(vm: &mut VM) {
     }
     println!("[HTTP] Starting uWebSockets HTTP server on port {}...", port);
 
-    let mut server = ErServer::<false>::new(std::ptr::null_mut());
+    let mut server = ErServer::new(std::ptr::null_mut());
 
     ROUTES.with(|routes| {
         for (i, route) in routes.borrow().iter().enumerate() {
@@ -623,6 +633,10 @@ pub fn native_serve(args: Vec<Value>) -> Value {
     let mut ws_val: Option<WsRoute> = None;
     let mut error_val: Option<Value> = None;
 
+    let mut tls_cert: Option<String> = None;
+    let mut tls_key: Option<String> = None;
+    let mut tls_pass: Option<String> = None;
+
     if !args.is_empty() && args[0].is_object() {
         let opts = args[0];
         let port_key = get_or_create_string("port");
@@ -635,6 +649,27 @@ pub fn native_serve(args: Vec<Value>) -> Value {
         let host_prop = get_property_helper(opts, Value::string(host_key));
         if let Some(h) = host_prop.as_str() {
             hostname = h.to_string();
+        }
+
+        let tls_key_str = get_or_create_string("tls");
+        let tls_prop = get_property_helper(opts, Value::string(tls_key_str));
+        if tls_prop.is_object() {
+            let cert_k = get_or_create_string("cert");
+            let key_k = get_or_create_string("key");
+            let pass_k = get_or_create_string("passphrase");
+
+            let cert_v = get_property_helper(tls_prop, Value::string(cert_k));
+            if let Some(c) = cert_v.as_str() {
+                tls_cert = Some(c.to_string());
+            }
+            let key_v = get_property_helper(tls_prop, Value::string(key_k));
+            if let Some(k) = key_v.as_str() {
+                tls_key = Some(k.to_string());
+            }
+            let pass_v = get_property_helper(tls_prop, Value::string(pass_k));
+            if let Some(p) = pass_v.as_str() {
+                tls_pass = Some(p.to_string());
+            }
         }
 
         let fetch_key = get_or_create_string("fetch");
@@ -705,7 +740,17 @@ pub fn native_serve(args: Vec<Value>) -> Value {
     }
 
     // 3. Create ErServer instance passing final_port as user pointer
-    let mut server = ErServer::<false>::new(final_port as usize as *mut c_void);
+    let is_ssl = tls_cert.is_some() && tls_key.is_some();
+    let mut server = if is_ssl {
+        ErServer::new_ssl(
+            tls_cert.as_deref().unwrap(),
+            tls_key.as_deref().unwrap(),
+            tls_pass.as_deref(),
+            final_port as usize as *mut c_void,
+        )
+    } else {
+        ErServer::new(final_port as usize as *mut c_void)
+    };
 
     if ws_val.is_some() {
         server.register_ws_route("/*", 0);
@@ -716,7 +761,8 @@ pub fn native_serve(args: Vec<Value>) -> Value {
         return Value::null();
     }
 
-    println!("[HTTP] Server listening on http://{}:{}", hostname, final_port);
+    let protocol = if is_ssl { "https" } else { "http" };
+    println!("[HTTP] Server listening on {}://{}:{}", protocol, hostname, final_port);
 
     // 4. Construct Eronom Server object
     let mut server_map = crate::vm::gc::get_pooled_map(8);

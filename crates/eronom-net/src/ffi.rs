@@ -11,6 +11,7 @@ unsafe extern "C" {
 
     // Multi-instance server lifecycle
     pub fn er_server_create(ssl: i32, rust_server: *mut c_void) -> *mut c_void;
+    pub fn er_server_create_ssl(cert_path: *const c_char, key_path: *const c_char, passphrase: *const c_char, rust_server: *mut c_void) -> *mut c_void;
     pub fn er_server_destroy(server: *mut c_void);
     pub fn er_server_register_route(server: *mut c_void, method: *const c_char, path: *const c_char, route_id: u32);
     pub fn er_server_register_ws_route(server: *mut c_void, path: *const c_char, route_id: u32);
