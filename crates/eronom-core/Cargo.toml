@@ -7,4 +7,6 @@ edition = "2024"
 fnv = "1.0.7"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
-mimalloc = { version = "0.1", default-features = false }
+
+[build-dependencies]
+cc = "1.0"

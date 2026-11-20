@@ -5,7 +5,7 @@ pub use eronom::jit;
 pub use eronom::runner;
 
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static GLOBAL: eronom_core::alloc::MiMalloc = eronom_core::alloc::MiMalloc;
 
 use runner::{run_file, run_test_command};
 
