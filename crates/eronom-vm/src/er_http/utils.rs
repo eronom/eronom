@@ -240,60 +240,6 @@ pub fn status_code_to_status_line(code: u16) -> &'static str {
     }
 }
 
-pub fn value_to_json(val: Value) -> serde_json::Value {
-    if val.is_null() {
-        serde_json::Value::Null
-    } else if val.is_boolean() {
-        serde_json::Value::Bool(val.as_boolean())
-    } else if val.is_number() {
-        let num = val.as_number();
-        if let Some(n) = serde_json::Number::from_f64(num) {
-            serde_json::Value::Number(n)
-        } else {
-            serde_json::Value::Null
-        }
-    } else if val.is_string() {
-        val.as_str().map(|s| serde_json::Value::String(s.to_string())).unwrap_or(serde_json::Value::Null)
-    } else if val.is_array() {
-        unsafe {
-            match &(*val.as_gc_ptr()).data {
-                GcData::Array(arr) => {
-                    let items: Vec<serde_json::Value> = arr.iter().map(|&v| value_to_json(v)).collect();
-                    serde_json::Value::Array(items)
-                }
-                _ => serde_json::Value::Null
-            }
-        }
-    } else if val.is_object() {
-        unsafe {
-            match &(*val.as_gc_ptr()).data {
-                GcData::Object(map) => {
-                    let mut obj = serde_json::Map::new();
-                    for (k, v) in map {
-                        let key_str = match k.0.as_str() {
-                            Some(s) => s.to_string(),
-                            None => continue,
-                        };
-                        obj.insert(key_str, value_to_json(*v));
-                    }
-                    serde_json::Value::Object(obj)
-                }
-                GcData::Struct(s) => {
-                    let mut obj = serde_json::Map::new();
-                    for (map_key, &idx) in &s.descriptor.field_indices {
-                        let name = map_key.0.as_str().unwrap_or("");
-                        obj.insert(name.to_string(), value_to_json(s.fields[idx]));
-                    }
-                    serde_json::Value::Object(obj)
-                }
-                _ => serde_json::Value::Null
-            }
-        }
-    } else {
-        serde_json::Value::Null
-    }
-}
-
 pub fn is_port_in_use(port: u16) -> bool {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;

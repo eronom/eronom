@@ -9,8 +9,6 @@ eronom-frontend = { path = "../eronom-frontend" }
 eronom-net = { path = "../eronom-net" }
 anyhow = "1.0.102"
 fnv = "1.0.7"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.149", features = ["preserve_order"] }
 regex = "1"
 toml = "0.8.19"
 target-lexicon = "0.13.5"

@@ -463,7 +463,8 @@ pub extern "C" fn er_http_on_fallback(
                                 }
                             }
                         } else {
-                            let json_msg = serde_json::to_string(&err).unwrap_or_else(|_| "\"Internal Server Error\"".to_string());
+                            let mut json_msg = String::new();
+                            crate::vm::escape_json_string(&mut json_msg, &err);
                             let body = format!("{{\"error\":\"Internal Server Error\",\"message\":{}}}", json_msg);
                             super::context::flush_response(res, Some(body.as_bytes()), Some("application/json"), 500);
                         }

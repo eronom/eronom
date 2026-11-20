@@ -308,7 +308,9 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         if is_json_literal {
             params_obj.push_str(&format!("{}: {},", k, v));
         } else {
-            params_obj.push_str(&format!("{}: {},", k, serde_json::to_string(v).unwrap_or_else(|_| format!("\"{}\"", v.replace('"', "\\\"")))));
+            let mut quoted = String::new();
+            eronom_core::json::escape_json_string(&mut quoted, v);
+            params_obj.push_str(&format!("{}: {},", k, quoted));
         }
     }
     params_obj.push('}');

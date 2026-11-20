@@ -450,8 +450,6 @@ dependencies = [
  "eronom-net",
  "fnv",
  "regex",
- "serde",
- "serde_json",
  "target-lexicon",
  "toml",
 ]

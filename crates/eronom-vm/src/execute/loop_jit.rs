@@ -259,8 +259,7 @@ impl VM {
                             } else {
                                 Value::null()
                             };
-                            let json_val = crate::vm::er_http::value_to_json(arg);
-                            let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+                            let json_str = crate::vm::json_stringify(arg, None);
                             crate::vm::er_http::end_http_response_json(res_ptr, &json_str);
                         }
                         reload_stack!();
