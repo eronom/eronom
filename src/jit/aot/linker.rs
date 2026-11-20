@@ -327,11 +327,14 @@ fn build_aot_binary_full(
     // Content-addressed AOT binary caching
     let cache_dir = get_aot_cache_dir();
     let cache_file = if let Some(ref cdir) = cache_dir {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(&script_bytes);
-        hasher.update(target.unwrap_or("host").as_bytes());
-        let hash_hex = format!("{:x}", hasher.finalize());
+        let mut full_input = Vec::with_capacity(script_bytes.len() + target.unwrap_or("host").len());
+        full_input.extend_from_slice(&script_bytes);
+        full_input.extend_from_slice(target.unwrap_or("host").as_bytes());
+        let mut digest = [0u8; 32];
+        unsafe {
+            eronom_net::ffi::SHA256(full_input.as_ptr(), full_input.len(), digest.as_mut_ptr());
+        }
+        let hash_hex = digest.iter().map(|b| format!("{:02x}", b)).collect::<String>();
         let _ = std::fs::create_dir_all(cdir);
         Some(cdir.join(hash_hex))
     } else {

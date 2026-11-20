@@ -61,4 +61,27 @@ unsafe extern "C" {
         out_err: *mut *mut c_char,
     ) -> i32;
     pub fn er_fetch_free(ptr: *mut c_char);
+
+    // Native hardware-accelerated cryptographic primitives (BoringSSL)
+    pub fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
+    pub fn SHA512(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
+    pub fn MD5(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
+
+    pub fn EVP_sha256() -> *const c_void;
+    pub fn EVP_sha512() -> *const c_void;
+    pub fn EVP_md5() -> *const c_void;
+
+    pub fn HMAC(
+        evp_md: *const c_void,
+        key: *const c_void,
+        key_len: usize,
+        data: *const u8,
+        data_len: usize,
+        out: *mut u8,
+        out_len: *mut u32,
+    ) -> *mut u8;
+
+    pub fn RAND_bytes(buf: *mut u8, len: usize) -> i32;
+
+    pub fn CRYPTO_memcmp(a: *const c_void, b: *const c_void, len: usize) -> i32;
 }
