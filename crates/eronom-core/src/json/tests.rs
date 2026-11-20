@@ -1,4 +1,3 @@
-// Copyright 2024 Eronom Project. All rights reserved.
 // Comprehensive unit tests for the Eronom native JSON engine.
 
 use super::*;

@@ -1,4 +1,3 @@
-// Copyright 2024 Eronom Project. All rights reserved.
 // Stateless wire format processing for JSON text (ported from jsonwire).
 
 /// Lookup table indicating which ASCII characters require escaping in JSON.

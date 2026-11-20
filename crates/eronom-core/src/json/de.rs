@@ -1,4 +1,3 @@
-// Copyright 2024 Eronom Project. All rights reserved.
 // Semantic deserializer binding streaming JSON tokens directly to Eronom's GC heap.
 
 use crate::gc::{gc_alloc_string, gc_allocate, get_pooled_vec, intern_string, GcData, GcStruct};

@@ -1,4 +1,3 @@
-// Copyright 2024 Eronom Project. All rights reserved.
 // Standard JSON module builtins for Eronom VM runtime.
 
 use super::gc::{gc_alloc_string, get_or_create_string, get_pooled_map};

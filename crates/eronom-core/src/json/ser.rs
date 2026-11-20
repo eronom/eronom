@@ -1,4 +1,3 @@
-// Copyright 2024 Eronom Project. All rights reserved.
 // Semantic serializer streaming Eronom's tagged Value directly into JSON text buffers.
 
 use std::fmt::Write;

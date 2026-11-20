@@ -1,4 +1,3 @@
-// Copyright 2024 Eronom Project. All rights reserved.
 // Streaming syntactic JSON token decoder with depth guard (ported from jsontext).
 
 use std::borrow::Cow;

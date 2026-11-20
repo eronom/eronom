@@ -1,4 +1,3 @@
-// Copyright 2024 Eronom Project. All rights reserved.
 // High-performance, zero-AST streaming JSON engine for Eronom runtime.
 
 pub mod wire;
