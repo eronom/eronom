@@ -175,3 +175,4 @@ impl<'p, 'a, I: ArgIter<'a>> StreamingClap<'p, 'a, I> {
         }
     }
 }
+

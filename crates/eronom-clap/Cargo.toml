@@ -8,3 +8,4 @@ path = "src/lib.rs"
 
 [dependencies]
 eronom-clap-macros = { path = "../eronom-clap-macros" }
+

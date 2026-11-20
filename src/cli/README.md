@@ -8,7 +8,7 @@ The CLI subsystem handles command-line argument parsing, subcommand dispatch, pr
 
 ```text
 src/cli/
-├── commands.rs     # Clap argument parser, subcommands, and configuration resolver
+├── commands.rs     # In-tree eronom-clap argument parser, subcommands, and configuration resolver
 ├── init.rs         # Project scaffolding and template extractor (init command)
 ├── build.rs        # Web bundle builder (SSR, SSG, PPR) and native compiler dispatcher
 ├── bundle.rs       # Self-contained executable bundler (embedded app runtime)
@@ -21,7 +21,7 @@ src/cli/
 ## Subcommands Overview
 
 ### 1. `commands.rs`
-- Defines the `Cli` structure and `Commands` enum via `clap`.
+- Defines the `Cli` structure and `Commands` enum via `eronom-clap`.
 - Resolves server listening ports in priority order: CLI flag (`-p`) > positional argument > `PORT` environment variable > `eronom.toml` configuration.
 - Parses `eronom.toml` server settings (`[server] port = 3000`).
 
