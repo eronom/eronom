@@ -34,9 +34,7 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
                         next_auto_val = n + 1.0;
                         n.to_string()
                     }
-                    Some(LiteralValue::String(s)) => {
-                        serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s))
-                    }
+                    Some(LiteralValue::String(s)) => escape_json_str(s),
                     Some(LiteralValue::Boolean(b)) => b.to_string(),
                     Some(LiteralValue::Null) => "null".to_string(),
                     None => {
@@ -263,11 +261,34 @@ fn emit_stmt_inline(out: &mut String, stmt: &Stmt, indent: usize) {
     }
 }
 
+fn escape_json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x08' => out.push_str("\\b"),
+            '\x0C' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 pub fn emit_expr(expr: &Expr) -> String {
     match expr {
         Expr::Literal(val) => match val {
             LiteralValue::Number(n) => n.to_string(),
-            LiteralValue::String(s) => serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s)),
+            LiteralValue::String(s) => escape_json_str(s),
             LiteralValue::Boolean(b) => b.to_string(),
             LiteralValue::Null => "null".to_string(),
         },

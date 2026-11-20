@@ -412,7 +412,6 @@ name = "eronom-frontend"
 version = "0.9.4"
 dependencies = [
  "serde",
- "serde_json",
 ]
 
 [[package]]
