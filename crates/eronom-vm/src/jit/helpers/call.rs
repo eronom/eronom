@@ -323,11 +323,7 @@ pub extern "C" fn er_jit_call_non_vm(
                     if callee.is_method_json() {
                         if body_val.is_string() {
                             let s = body_val.as_str().unwrap_or("");
-                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(s) {
-                                crate::vm::gc::json_to_value(json_val)
-                            } else {
-                                Value::null()
-                            }
+                            crate::vm::json_parse(s).unwrap_or(Value::null())
                         } else {
                             Value::null()
                         }

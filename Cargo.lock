@@ -389,8 +389,6 @@ version = "0.9.4"
 dependencies = [
  "cc",
  "fnv",
- "serde",
- "serde_json",
 ]
 
 [[package]]

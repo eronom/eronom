@@ -106,8 +106,8 @@ pub fn run_micro_file(path: &str) -> anyhow::Result<()> {
         if toml_path.exists() {
             if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
                 if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    if let Ok(json_val) = serde_json::to_value(toml_val) {
-                        let config_val = backend::gc::json_to_value(json_val);
+                    if let Ok(json_str) = serde_json::to_string(&toml_val) {
+                        let config_val = backend::json_parse(&json_str).unwrap_or(backend::Value::null());
                         vm.register_global("config", config_val);
                     }
                 }

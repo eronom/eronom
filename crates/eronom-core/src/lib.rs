@@ -3,6 +3,7 @@ pub mod bytecode;
 pub mod frame;
 pub mod gc;
 pub mod hooks;
+pub mod json;
 pub mod shape;
 pub mod value;
 
@@ -17,6 +18,7 @@ pub use gc::{
     GC_STATE, GC_ROOTS, GC_NEEDS_STEP,
 };
 pub use shape::*;
+pub use json::{json_parse, json_stringify, escape_json_string};
 
 // Internal alias so submodules can use `crate::vm::...`
 pub use crate as vm;
