@@ -232,11 +232,41 @@ impl<'a> Lexer<'a> {
                         string.clear();
 
                         let mut expr_str = String::new();
+                        let mut brace_depth = 1;
+                        let mut in_str_quote = None;
+                        let mut is_escaped = false;
+
                         while let Some(ec) = self.advance() {
-                            if ec == '}' {
-                                break;
+                            if is_escaped {
+                                is_escaped = false;
+                                expr_str.push(ec);
+                                continue;
                             }
-                            expr_str.push(ec);
+                            if ec == '\\' {
+                                is_escaped = true;
+                                expr_str.push(ec);
+                                continue;
+                            }
+                            if let Some(q) = in_str_quote {
+                                if ec == q {
+                                    in_str_quote = None;
+                                }
+                                expr_str.push(ec);
+                            } else if ec == '"' || ec == '\'' {
+                                in_str_quote = Some(ec);
+                                expr_str.push(ec);
+                            } else if ec == '{' {
+                                brace_depth += 1;
+                                expr_str.push(ec);
+                            } else if ec == '}' {
+                                brace_depth -= 1;
+                                if brace_depth == 0 {
+                                    break;
+                                }
+                                expr_str.push(ec);
+                            } else {
+                                expr_str.push(ec);
+                            }
                         }
 
                         let mut sub_lexer = Lexer::new(&expr_str);
@@ -370,4 +400,17 @@ pub fn lex(source: &str) -> Vec<Token> {
         }
     }
     tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nested_brace_string_interpolation() {
+        let code = r#""Result: {format({ key: "val" })}""#;
+        let tokens = lex(code);
+        assert!(tokens.iter().any(|t| matches!(&t.ty, TokenType::Identifier(id) if id == "format")));
+        assert!(tokens.iter().any(|t| matches!(&t.ty, TokenType::String(s) if s == "Result: ")));
+    }
 }
