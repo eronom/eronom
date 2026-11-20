@@ -38,6 +38,14 @@ fn get_exported_names(stmts: &[Stmt]) -> HashSet<String> {
 }
 
 fn find_std_dir(start_dir: &Path) -> Option<PathBuf> {
+    // 0. Explicit environment variable override
+    if let Ok(env_path) = std::env::var("ERONOM_STD_DIR") {
+        let p = PathBuf::from(env_path);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+
     // 1. Search upwards from the compiling file's directory
     let mut current = Some(start_dir);
     while let Some(dir) = current {
