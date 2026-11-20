@@ -11,6 +11,33 @@ pub use commands::{Cli, Commands, BuildMode, ToolchainAction};
 pub use init::init_project;
 pub use build::build_project;
 
+pub const ROOT_PARAMS: &[eronom_clap::Param<eronom_clap::Help>] = eronom_clap::concat_params!(eronom_clap::params!(
+    "-v, --version  Print version information",
+    "-h, --help     Print help information",
+));
+
+pub static ROOT_TABLE: &eronom_clap::ConvertedTable = eronom_clap::comptime_table!(ROOT_PARAMS);
+
+pub const ROOT_COMMANDS: &[(&str, &str)] = &[
+    ("init", "Initialize a fresh Eronom project"),
+    ("build", "Build the project or compile into a standalone binary"),
+    ("start", "Start the server in production mode"),
+    ("dev", "Start the server in development mode"),
+    ("test", "Run Eronom test files"),
+    ("check", "Type-check an Eronom script or project without running it"),
+    ("transpile", "Transpile an Eronom (.er) script to JavaScript (.js)"),
+    ("toolchain", "Manage optional Eronom toolchains (e.g. cranelift)"),
+];
+
+pub fn print_root_help() {
+    let help = eronom_clap::format_help(
+        "eronom <COMMAND|FILE> [OPTIONS]",
+        ROOT_PARAMS,
+        ROOT_COMMANDS,
+    );
+    print!("{}", help);
+}
+
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::try_parse_from(args)?;
     if let Some(cmd) = cli.command {

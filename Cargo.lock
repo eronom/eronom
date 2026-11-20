@@ -370,6 +370,7 @@ version = "0.9.4"
 dependencies = [
  "anyhow",
  "clap",
+ "eronom-clap",
  "eronom-core",
  "eronom-frontend",
  "eronom-net",

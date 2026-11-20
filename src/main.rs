@@ -20,6 +20,72 @@ fn main() {
         return;
     }
 
+    // 1. Fast-path: Inspect raw OS argv directly via eronom-clap
+    let os_iter = eronom_clap::OsIterator::init();
+    if os_iter.remain.is_empty() {
+        eronom::cli::print_root_help();
+        std::process::exit(1);
+    }
+
+    let first_arg = os_iter.remain[0];
+    if first_arg == b"-v" || first_arg == b"--version" {
+        println!("eronom {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
+    if first_arg == b"-h" || first_arg == b"--help" {
+        eronom::cli::print_root_help();
+        return;
+    }
+
+    // Direct script execution fast-path (sub-millisecond boot)
+    if !first_arg.starts_with(b"-") {
+        let first_str = std::str::from_utf8(first_arg).unwrap_or("");
+        let is_subcommand = matches!(
+            first_str,
+            "init" | "build" | "start" | "dev" | "test" | "check" | "transpile" | "toolchain"
+        );
+        if !is_subcommand {
+            let file_path = std::path::Path::new(first_str);
+            if first_str.ends_with(".exe") && file_path.exists() {
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                {
+                    let bytes = match std::fs::read(&file_path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("Error reading {}: {}", file_path.display(), e);
+                            std::process::exit(1);
+                        }
+                    };
+                    match eronom::jit::aot::pe_writer::run_pe64_standalone(&bytes) {
+                        Ok((code, output)) => {
+                            print!("{}", output);
+                            std::process::exit(code);
+                        }
+                        Err(e) => {
+                            eprintln!("Error executing PE binary {}: {}", file_path.display(), e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+                {
+                    eprintln!("Running .exe directly is only supported on x86_64 Linux or natively on Windows.");
+                    std::process::exit(1);
+                }
+            }
+            if !first_str.ends_with(".er") && !file_path.exists() {
+                eprintln!("Error: Unknown command or file: {}", file_path.display());
+                std::process::exit(1);
+            }
+            if let Err(e) = run_file(first_str) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
+
     use clap::Parser;
     let cli = eronom::cli::Cli::parse();
 

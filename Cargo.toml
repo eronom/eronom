@@ -28,6 +28,7 @@ eronom-core = { path = "crates/eronom-core" }
 eronom-frontend = { path = "crates/eronom-frontend" }
 eronom-net = { path = "crates/eronom-net" }
 eronom-vm = { path = "crates/eronom-vm" }
+eronom-clap = { path = "crates/eronom-clap" }
 anyhow = "1.0.102"
 fnv = "1.0.7"
 regex = "1"
