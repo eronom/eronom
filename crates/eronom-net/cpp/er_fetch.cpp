@@ -50,11 +50,12 @@ static SSL_CTX* get_client_ssl_ctx() {
             }
 
             const char* verify_env = getenv("ER_SSL_VERIFY");
-            if (verify_env && (strcmp(verify_env, "0") == 0 || strcmp(verify_env, "false") == 0)) {
+            const char* skip_verify_env = getenv("ER_INSECURE_SKIP_VERIFY");
+            if ((verify_env && (strcmp(verify_env, "0") == 0 || strcmp(verify_env, "false") == 0)) ||
+                (skip_verify_env && (strcmp(skip_verify_env, "1") == 0 || strcmp(skip_verify_env, "true") == 0))) {
                 SSL_CTX_set_verify(g_client_ssl_ctx, SSL_VERIFY_NONE, nullptr);
             } else {
-                // By default allow peer verification with fallback to lenient for self-signed development
-                SSL_CTX_set_verify(g_client_ssl_ctx, SSL_VERIFY_NONE, nullptr);
+                SSL_CTX_set_verify(g_client_ssl_ctx, SSL_VERIFY_PEER, nullptr);
             }
         }
     }
