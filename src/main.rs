@@ -74,24 +74,20 @@ fn main() {
                         match eronom::frontend::check_program(&stmts) {
                             Ok(()) => {
                                 if json {
-                                    let payload = serde_json::json!({
-                                        "status": "ok",
-                                        "file": file.to_string_lossy(),
-                                        "errors": []
-                                    });
-                                    println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+                                    let mut file_esc = String::new();
+                                    eronom::frontend::ast::escape_json_string(&mut file_esc, &file.to_string_lossy());
+                                    println!("{{\n  \"status\": \"ok\",\n  \"file\": \"{}\",\n  \"errors\": []\n}}", file_esc);
                                 } else {
                                     println!("✓ Type check passed: {}", file.display());
                                 }
                             }
                             Err(errs) => {
                                 if json {
-                                    let payload = serde_json::json!({
-                                        "status": "error",
-                                        "file": file.to_string_lossy(),
-                                        "errors": errs
-                                    });
-                                    println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+                                    let mut file_esc = String::new();
+                                    eronom::frontend::ast::escape_json_string(&mut file_esc, &file.to_string_lossy());
+                                    let err_strs: Vec<String> = errs.iter().map(|e| e.to_json()).collect();
+                                    println!("{{\n  \"status\": \"error\",\n  \"file\": \"{}\",\n  \"errors\": [\n    {}\n  ]\n}}",
+                                        file_esc, err_strs.join(",\n    "));
                                 } else {
                                     eprintln!("✗ Type check failed with {} error(s):", errs.len());
                                     for err in errs {
@@ -104,20 +100,12 @@ fn main() {
                     }
                     Err(e) => {
                         if json {
-                            let payload = serde_json::json!({
-                                "status": "error",
-                                "file": file.to_string_lossy(),
-                                "errors": [{
-                                    "code": "E0001",
-                                    "message": format!("Parse/Import error: {}", e),
-                                    "loc": {
-                                        "file_path": file.to_string_lossy(),
-                                        "line": 0,
-                                        "col": 0
-                                    }
-                                }]
-                            });
-                            println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
+                            let mut file_esc = String::new();
+                            eronom::frontend::ast::escape_json_string(&mut file_esc, &file.to_string_lossy());
+                            let mut msg_esc = String::new();
+                            eronom::frontend::ast::escape_json_string(&mut msg_esc, &format!("Parse/Import error: {}", e));
+                            println!("{{\n  \"status\": \"error\",\n  \"file\": \"{}\",\n  \"errors\": [\n    {{\n      \"code\": \"E0001\",\n      \"message\": \"{}\",\n      \"loc\": {{\n        \"file_path\": \"{}\",\n        \"line\": 0,\n        \"col\": 0\n      }}\n    }}\n  ]\n}}",
+                                file_esc, msg_esc, file_esc);
                         } else {
                             eprintln!("Parse/Import error: {}", e);
                         }

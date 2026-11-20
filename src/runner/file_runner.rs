@@ -87,8 +87,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         .filter(|p| p.exists())
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|c| toml::from_str::<toml::Value>(&c).ok())
-        .and_then(|v| serde_json::to_string(&v).ok())
-        .and_then(|s| backend::json_parse(&s))
+        .map(backend::er_http::toml_to_value)
     {
         vm.register_global("config", config_val);
     }

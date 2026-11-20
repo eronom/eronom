@@ -1,11 +1,41 @@
 use std::fmt;
 use super::token::TokenType;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub fn escape_json_string(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x08' => out.push_str("\\b"),
+            '\x0C' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SourceLocation {
     pub file_path: String,
     pub line: usize,
     pub col: usize,
+}
+
+impl SourceLocation {
+    pub fn to_json(&self) -> String {
+        let mut path_esc = String::new();
+        escape_json_string(&mut path_esc, &self.file_path);
+        format!(
+            "{{\"file_path\":\"{}\",\"line\":{},\"col\":{}}}",
+            path_esc, self.line, self.col
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
