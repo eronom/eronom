@@ -210,6 +210,7 @@ pub const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
     idx
 }
 
+#[derive(Debug)]
 pub struct ConvertedTable {
     pub converted: &'static [Param<usize>],
     pub n_flags: usize,
