@@ -1,12 +1,58 @@
 use std::env;
 use std::path::Path;
 
+fn collect_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let mut sorted: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+        sorted.sort();
+        for p in sorted {
+            if p.is_dir() {
+                collect_sources(&p, out);
+            } else if p.extension().is_some_and(|ext| ext == "cc" || ext == "S") {
+                out.push(p);
+            }
+        }
+    }
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let root_dir = Path::new(&manifest_dir).join("../..");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let is_windows = target_os == "windows";
+
+    let bssl_dir = root_dir.join("deps").join("boringssl");
+    if bssl_dir.exists() {
+        let mut bssl_sources = Vec::new();
+        collect_sources(&bssl_dir.join("crypto"), &mut bssl_sources);
+        collect_sources(&bssl_dir.join("ssl"), &mut bssl_sources);
+        collect_sources(&bssl_dir.join("gen"), &mut bssl_sources);
+        collect_sources(&bssl_dir.join("third_party"), &mut bssl_sources);
+
+        let mut bssl_build = cc::Build::new();
+        bssl_build
+            .cpp(true)
+            .std("c++17")
+            .include(bssl_dir.join("include"))
+            .flag_if_supported("-fno-exceptions")
+            .flag_if_supported("-fno-rtti")
+            .flag_if_supported("-fvisibility=hidden")
+            .flag_if_supported("-fno-strict-aliasing")
+            .flag_if_supported("-fno-stack-protector")
+            .flag_if_supported("-ffunction-sections")
+            .flag_if_supported("-fdata-sections")
+            .define("NDEBUG", None)
+            .warnings(false)
+            .opt_level(3);
+
+        for src in &bssl_sources {
+            println!("cargo:rerun-if-changed={}", src.display());
+            bssl_build.file(src);
+        }
+
+        bssl_build.compile("boringssl");
+    }
 
     let libuv_dir = root_dir.join("deps").join("libuv");
     if is_windows {
@@ -74,11 +120,20 @@ fn main() {
         .file(u_sockets_dir.join("src").join("socket.c"))
         .file(u_sockets_dir.join("src").join("udp.c"))
         .include(u_sockets_dir.join("src"))
-        .define("LIBUS_NO_SSL", None)
         .flag_if_supported("-fno-unwind-tables")
         .flag_if_supported("-fno-asynchronous-unwind-tables")
         .warnings(false)
         .opt_level(3);
+
+    if bssl_dir.exists() {
+        u_sockets_build
+            .file(u_sockets_dir.join("src").join("crypto").join("openssl.c"))
+            .file(u_sockets_dir.join("src").join("crypto").join("sni_tree.cpp"))
+            .include(bssl_dir.join("include"))
+            .define("LIBUS_USE_OPENSSL", None);
+    } else {
+        u_sockets_build.define("LIBUS_NO_SSL", None);
+    }
 
     if is_windows {
         u_sockets_build.file(u_sockets_dir.join("src").join("eventing").join("libuv.c"));
@@ -108,7 +163,6 @@ fn main() {
         .file(&er_clif_cpp)
         .include(u_websockets_dir.join("src"))
         .include(u_sockets_dir.join("src"))
-        .define("LIBUS_NO_SSL", None)
         .define("UWS_NO_ZLIB", None)
         .flag_if_supported("-fno-exceptions")
         .flag_if_supported("-fno-rtti")
@@ -116,6 +170,14 @@ fn main() {
         .flag_if_supported("-fno-asynchronous-unwind-tables")
         .warnings(false)
         .opt_level(3);
+
+    if bssl_dir.exists() {
+        u_websockets_build
+            .include(bssl_dir.join("include"))
+            .define("LIBUS_USE_OPENSSL", None);
+    } else {
+        u_websockets_build.define("LIBUS_NO_SSL", None);
+    }
 
     if is_windows {
         u_websockets_build.define("LIBUS_USE_LIBUV", None);
@@ -141,7 +203,7 @@ fn main() {
     let _ = std::fs::create_dir_all(&native_dir);
 
     // Copy compiled static libraries to target/er_native/
-    for name in &["er_http", "usockets", "uv"] {
+    for name in &["er_http", "usockets", "uv", "boringssl"] {
         let candidates = [
             format!("{}.lib", name),
             format!("lib{}.a", name),
