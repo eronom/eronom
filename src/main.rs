@@ -86,7 +86,6 @@ fn main() {
         }
     }
 
-    use clap::Parser;
     let cli = eronom::cli::Cli::parse();
 
     if let Some(file_path) = cli.file {
@@ -219,10 +218,7 @@ fn main() {
             }
         }
     } else {
-        use clap::CommandFactory;
-        let mut cmd = eronom::cli::Cli::command();
-        let _ = cmd.print_help();
-        println!();
+        eronom::cli::print_root_help();
         std::process::exit(1);
     }
 }

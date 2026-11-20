@@ -5,7 +5,6 @@ pub mod build;
 pub mod bundle;
 
 use std::path::{Path, PathBuf};
-use clap::Parser;
 
 pub use commands::{Cli, Commands, BuildMode, ToolchainAction};
 pub use init::init_project;
