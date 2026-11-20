@@ -382,6 +382,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "eronom-clap"
+version = "0.9.4"
+dependencies = [
+ "eronom-clap-macros",
+]
+
+[[package]]
+name = "eronom-clap-macros"
+version = "0.9.4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "eronom-core"
 version = "0.9.4"
 dependencies = [

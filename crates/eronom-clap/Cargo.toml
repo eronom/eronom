@@ -1,0 +1,10 @@
+[package]
+name = "eronom-clap"
+version = "0.9.4"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+eronom-clap-macros = { path = "../eronom-clap-macros" }
