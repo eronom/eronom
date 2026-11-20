@@ -1160,36 +1160,48 @@ pub fn build_cranelift_binary(
                     .ok_or_else(|| anyhow::anyhow!("Could not find liber_http.a for Cranelift server linking"))?;
                 let libusockets = find_static_lib("usockets")
                     .ok_or_else(|| anyhow::anyhow!("Could not find libusockets.a for Cranelift server linking"))?;
-                let status = Command::new("clang")
-                    .arg("-Wl,-dead_strip")
+                let libboringssl = find_static_lib("boringssl");
+                let mut cmd = Command::new("clang");
+                cmd.arg("-Wl,-dead_strip")
                     .arg(&temp_obj)
                     .arg(&liber_http)
-                    .arg(&libusockets)
-                    .arg("-lc++")
+                    .arg(&libusockets);
+                if let Some(ref bssl) = libboringssl {
+                    cmd.arg(bssl);
+                } else {
+                    cmd.arg("-lssl").arg("-lcrypto");
+                }
+                cmd.arg("-lc++")
                     .arg("-lpthread")
                     .arg("-o")
-                    .arg(output_path)
-                    .status();
+                    .arg(output_path);
+                let status = cmd.status();
                 matches!(status, Ok(s) if s.success())
             }
             _ => {
-                // Linux / System V ELF: Link with liber_http.a, libusockets.a, -lstdc++, -lpthread, -lm
+                // Linux / System V ELF: Link with liber_http.a, libusockets.a, libboringssl.a, -lstdc++, -lpthread, -lm
                 let liber_http = find_static_lib("er_http")
                     .ok_or_else(|| anyhow::anyhow!("Could not find liber_http.a for Cranelift server linking"))?;
                 let libusockets = find_static_lib("usockets")
                     .ok_or_else(|| anyhow::anyhow!("Could not find libusockets.a for Cranelift server linking"))?;
+                let libboringssl = find_static_lib("boringssl");
                 let cc_bin = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
-                let status = Command::new(cc_bin)
-                    .arg("-s")
+                let mut cmd = Command::new(cc_bin);
+                cmd.arg("-s")
                     .arg(&temp_obj)
                     .arg(&liber_http)
-                    .arg(&libusockets)
-                    .arg("-lstdc++")
+                    .arg(&libusockets);
+                if let Some(ref bssl) = libboringssl {
+                    cmd.arg(bssl);
+                } else {
+                    cmd.arg("-lssl").arg("-lcrypto");
+                }
+                cmd.arg("-lstdc++")
                     .arg("-lpthread")
                     .arg("-lm")
                     .arg("-o")
-                    .arg(output_path)
-                    .status();
+                    .arg(output_path);
+                let status = cmd.status();
                 matches!(status, Ok(s) if s.success())
             }
         }
