@@ -106,4 +106,43 @@ impl FiberScheduler {
         }
         awakened
     }
+
+    pub fn wake_promise_error(&mut self, promise_ptr: *mut GcObject, err_str: String) -> Vec<u64> {
+        let mut awakened = Vec::new();
+        if let Some(fiber_ids) = self.waiting_fibers.remove(&promise_ptr) {
+            for fid in fiber_ids {
+                if let Some(fiber) = self.fibers.get_mut(&fid) {
+                    if fiber.status == FiberStatus::Suspended {
+                        fiber.status = FiberStatus::Ready;
+                        fiber.waiting_on = None;
+                        if let Some(frame) = fiber.frames.last_mut() {
+                            let raw_func = unsafe {
+                                match &(*frame.function).data {
+                                    crate::vm::gc::GcData::Function(f) => f,
+                                    crate::vm::gc::GcData::Closure(c) => match &(*c.function).data {
+                                        crate::vm::gc::GcData::Function(f) => f,
+                                        _ => unreachable!(),
+                                    },
+                                    _ => unreachable!(),
+                                }
+                            };
+                            let thrown = Value::string(crate::vm::gc::gc_alloc_string(&err_str));
+                            if let Some(handler) = raw_func.chunk.find_handler(frame.ip).cloned() {
+                                let reg_idx = frame.slots_offset + handler.err_reg as usize;
+                                if reg_idx < fiber.stack.len() {
+                                    fiber.stack[reg_idx] = thrown;
+                                }
+                                frame.ip = handler.catch_ip;
+                            } else {
+                                fiber.fail(err_str.clone());
+                            }
+                        }
+                        self.ready_queue.push_back(fid);
+                        awakened.push(fid);
+                    }
+                }
+            }
+        }
+        awakened
+    }
 }

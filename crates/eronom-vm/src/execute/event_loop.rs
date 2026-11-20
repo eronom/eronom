@@ -44,6 +44,7 @@ impl VM {
                     AsyncResult::ResolveTextPromise(promise_ptr, _) |
                     AsyncResult::ResolveJsonPromise(promise_ptr, _) |
                     AsyncResult::ResolveWritePromise(promise_ptr, _) => {
+                        let mut error_opt: Option<String> = None;
                         let resolved_value = match task.result {
                             AsyncResult::ResolvePromise(_, val) => val,
                             AsyncResult::ResolveFetchPromise(_, res) => {
@@ -58,6 +59,7 @@ impl VM {
                                     }
                                     Err(e) => {
                                         eprintln!("[FetchAsyncPromise] Error: {}", e);
+                                        error_opt = Some(e);
                                         Value::null()
                                     }
                                 }
@@ -70,6 +72,7 @@ impl VM {
                                     }
                                     Err(e) => {
                                         eprintln!("[FileTextPromise] Error: {}", e);
+                                        error_opt = Some(e);
                                         Value::null()
                                     }
                                 }
@@ -80,11 +83,15 @@ impl VM {
                                         if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
                                             crate::vm::gc::json_to_value(json_val)
                                         } else {
+                                            let err_str = "Invalid JSON format".to_string();
+                                            eprintln!("[FileJsonPromise] Error: {}", err_str);
+                                            error_opt = Some(err_str);
                                             Value::null()
                                         }
                                     }
                                     Err(e) => {
                                         eprintln!("[FileJsonPromise] Error: {}", e);
+                                        error_opt = Some(e);
                                         Value::null()
                                     }
                                 }
@@ -94,6 +101,7 @@ impl VM {
                                     Ok(bytes) => Value::number(bytes as f64),
                                     Err(e) => {
                                         eprintln!("[FileWritePromise] Error: {}", e);
+                                        error_opt = Some(e);
                                         Value::number(0.0)
                                     }
                                 }
@@ -107,7 +115,11 @@ impl VM {
                                     let mut state = prom.state.lock().unwrap();
                                     match *state {
                                         crate::vm::gc::PromiseState::Pending => {
-                                            *state = crate::vm::gc::PromiseState::Fulfilled(resolved_value);
+                                            if let Some(ref err) = error_opt {
+                                                *state = crate::vm::gc::PromiseState::Rejected(err.clone());
+                                            } else {
+                                                *state = crate::vm::gc::PromiseState::Fulfilled(resolved_value);
+                                            }
                                             (
                                                 std::mem::take(&mut *prom.suspended_stack.lock().unwrap()),
                                                 std::mem::take(&mut *prom.suspended_frames.lock().unwrap())
@@ -121,7 +133,11 @@ impl VM {
                         };
 
                         // 1. Check if any fiber in scheduler was waiting on this promise
-                        let awakened_fibers = self.scheduler.wake_promise(promise_ptr, resolved_value);
+                        let awakened_fibers = if let Some(ref err) = error_opt {
+                            self.scheduler.wake_promise_error(promise_ptr, err.clone())
+                        } else {
+                            self.scheduler.wake_promise(promise_ptr, resolved_value)
+                        };
                         if !awakened_fibers.is_empty() {
                             continue;
                         }
@@ -149,15 +165,29 @@ impl VM {
                         let inst = func.chunk.code[frame.ip];
                         assert!(inst.op == OpCode::Await || inst.op == OpCode::Call);
 
-                        // Write the resolved value to the destination register of the suspended instruction
-                        self.stack[frame.slots_offset + inst.ra as usize] = resolved_value;
+                        if let Some(err_str) = error_opt {
+                            let thrown = Value::string(crate::vm::gc::gc_alloc_string(&err_str));
+                            self.thrown_value = thrown;
+                            if let Some(handler) = func.chunk.find_handler(frame.ip).cloned() {
+                                self.stack[frame.slots_offset + handler.err_reg as usize] = thrown;
+                                frame.ip = handler.catch_ip;
+                                if let Err(e) = self.execute_loop_interpreter(0) {
+                                    return Err(e);
+                                }
+                            } else {
+                                return Err(format!("Uncaught exception: {}", err_str));
+                            }
+                        } else {
+                            // Write the resolved value to the destination register of the suspended instruction
+                            self.stack[frame.slots_offset + inst.ra as usize] = resolved_value;
 
-                        // Advance instruction pointer past Await/Call
-                        frame.ip += 1;
+                            // Advance instruction pointer past Await/Call
+                            frame.ip += 1;
 
-                        // Resume execution directly at frame.ip (which points to the instruction right after Await/Call)
-                        if let Err(e) = self.execute_loop_interpreter(0) {
-                            return Err(e);
+                            // Resume execution directly at frame.ip (which points to the instruction right after Await/Call)
+                            if let Err(e) = self.execute_loop_interpreter(0) {
+                                return Err(e);
+                            }
                         }
                         continue;
                     }
