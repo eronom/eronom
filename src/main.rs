@@ -32,19 +32,29 @@ fn main() {
         unsafe {
             unsafe extern "C" {
                 fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+                fn _exit(status: i32) -> !;
             }
             let _ = write(1, VER_STR.as_ptr(), VER_STR.len());
+            _exit(0);
         }
         #[cfg(not(unix))]
         {
             use std::io::Write;
             let _ = std::io::stdout().write_all(VER_STR.as_bytes());
+            return;
         }
-        return;
     }
 
     if first_arg == b"-h" || first_arg == b"--help" {
         eronom::cli::print_root_help();
+        #[cfg(unix)]
+        unsafe {
+            unsafe extern "C" {
+                fn _exit(status: i32) -> !;
+            }
+            _exit(0);
+        }
+        #[cfg(not(unix))]
         return;
     }
 

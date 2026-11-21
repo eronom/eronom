@@ -29,4 +29,11 @@ fn main() {
     code.push_str("];\n");
     let embedded_std_path = Path::new(&out_dir).join("embedded_std.rs");
     std::fs::write(&embedded_std_path, code).unwrap();
+
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "linux" {
+        println!("cargo:rustc-link-arg=-no-pie");
+        println!("cargo:rustc-link-arg=-Wl,-z,lazy");
+        println!("cargo:rustc-link-arg=-Wl,--hash-style=gnu");
+    }
 }
