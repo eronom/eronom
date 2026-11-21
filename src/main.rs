@@ -10,19 +10,17 @@ static GLOBAL: eronom_core::alloc::MiMalloc = eronom_core::alloc::MiMalloc;
 use runner::{run_file, run_test_command};
 
 fn main() {
-    eronom::jit::init_jit_hooks();
-    // 0. If running as a standalone self-contained bundle, execute the embedded app
-    if let Some(res) = runner::check_and_run_embedded_bundle() {
-        if let Err(e) = res {
-            eprintln!("Error running standalone application: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
     // 1. Fast-path: Inspect raw OS argv directly via eronom-clap
     let os_iter = eronom_clap::OsIterator::init();
     if os_iter.remain.is_empty() {
+        // If running as a standalone self-contained bundle with no arguments
+        if let Some(res) = runner::check_and_run_embedded_bundle() {
+            if let Err(e) = res {
+                eprintln!("Error running standalone application: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
         eronom::cli::print_root_help();
         std::process::exit(1);
     }
@@ -37,6 +35,8 @@ fn main() {
         eronom::cli::print_root_help();
         return;
     }
+
+    eronom::jit::init_jit_hooks();
 
     // Direct script execution fast-path (sub-millisecond boot)
     if !first_arg.starts_with(b"-") {
@@ -75,6 +75,13 @@ fn main() {
                 }
             }
             if !first_str.ends_with(".er") && !file_path.exists() {
+                if let Some(res) = runner::check_and_run_embedded_bundle() {
+                    if let Err(e) = res {
+                        eprintln!("Error running standalone application: {}", e);
+                        std::process::exit(1);
+                    }
+                    return;
+                }
                 eprintln!("Error: Unknown command or file: {}", file_path.display());
                 std::process::exit(1);
             }
@@ -117,6 +124,13 @@ fn main() {
             }
         }
         if !file_path.to_string_lossy().ends_with(".er") && !file_path.exists() {
+            if let Some(res) = runner::check_and_run_embedded_bundle() {
+                if let Err(e) = res {
+                    eprintln!("Error running standalone application: {}", e);
+                    std::process::exit(1);
+                }
+                return;
+            }
             eprintln!("Error: Unknown command or file: {}", file_path.display());
             std::process::exit(1);
         }
@@ -218,6 +232,13 @@ fn main() {
             }
         }
     } else {
+        if let Some(res) = runner::check_and_run_embedded_bundle() {
+            if let Err(e) = res {
+                eprintln!("Error running standalone application: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
         eronom::cli::print_root_help();
         std::process::exit(1);
     }
