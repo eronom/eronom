@@ -43,8 +43,9 @@ fn main() {
             .flag_if_supported("-ffunction-sections")
             .flag_if_supported("-fdata-sections")
             .define("NDEBUG", None)
+            .define("OPENSSL_SMALL", None)
             .warnings(false)
-            .opt_level(3);
+            .opt_level_str("z");
 
         for src in &bssl_sources {
             println!("cargo:rerun-if-changed={}", src.display());
@@ -122,8 +123,11 @@ fn main() {
         .include(u_sockets_dir.join("src"))
         .flag_if_supported("-fno-unwind-tables")
         .flag_if_supported("-fno-asynchronous-unwind-tables")
+        .flag_if_supported("-ffunction-sections")
+        .flag_if_supported("-fdata-sections")
+        .flag_if_supported("-fvisibility=hidden")
         .warnings(false)
-        .opt_level(3);
+        .opt_level_str("z");
 
     if bssl_dir.exists() {
         u_sockets_build
@@ -171,8 +175,11 @@ fn main() {
         .flag_if_supported("-fno-rtti")
         .flag_if_supported("-fno-unwind-tables")
         .flag_if_supported("-fno-asynchronous-unwind-tables")
+        .flag_if_supported("-ffunction-sections")
+        .flag_if_supported("-fdata-sections")
+        .flag_if_supported("-fvisibility=hidden")
         .warnings(false)
-        .opt_level(3);
+        .opt_level_str("z");
 
     if bssl_dir.exists() {
         u_websockets_build
