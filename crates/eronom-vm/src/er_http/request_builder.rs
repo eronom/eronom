@@ -44,19 +44,29 @@ pub fn build_request_context(
     }
     let params_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(params_obj_map)));
 
-    // 2. Query map
-    let parsed_query = if !raw_query.is_empty() {
-        super::utils::parse_query_string(raw_query)
+    // 2. Query map (zero-allocation for empty queries, direct single-pass without intermediate HashMap)
+    let query_obj = if raw_query.is_empty() {
+        let empty_map = crate::vm::gc::get_pooled_map(0);
+        Value::object(crate::vm::gc::gc_allocate(GcData::Object(empty_map)))
     } else {
-        HashMap::new()
+        let mut query_obj_map = crate::vm::gc::get_pooled_map(4);
+        for pair in raw_query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            let (k, v) = if let Some(pos) = pair.find('=') {
+                (&pair[..pos], &pair[pos + 1..])
+            } else {
+                (pair, "")
+            };
+            let decoded_k = super::utils::percent_decode(k);
+            let decoded_v = super::utils::percent_decode(v);
+            let k_ptr = get_or_create_string(&decoded_k);
+            let v_ptr = get_or_create_string(&decoded_v);
+            query_obj_map.insert(crate::vm::value::MapKey(Value::string(k_ptr)), Value::string(v_ptr));
+        }
+        Value::object(crate::vm::gc::gc_allocate(GcData::Object(query_obj_map)))
     };
-    let mut query_obj_map = crate::vm::gc::get_pooled_map(parsed_query.len());
-    for (k, v) in &parsed_query {
-        let k_str = get_or_create_string(k);
-        let v_str = get_or_create_string(v);
-        query_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
-    }
-    let query_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(query_obj_map)));
 
     // 3. Headers & Cookies (single zero-copy extraction pass)
     let mut headers_obj_map = crate::vm::gc::get_pooled_map(8);
@@ -113,22 +123,32 @@ pub fn build_request_context(
 
     let headers_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(headers_obj_map)));
 
-    // 4. Cookies map
-    let parsed_cookies = if !cookie_header.is_empty() {
-        super::utils::parse_cookies(&cookie_header)
+    // 4. Cookies map (zero-allocation for empty cookies, direct single-pass without intermediate HashMap)
+    let cookies_obj = if cookie_header.is_empty() {
+        let empty_map = crate::vm::gc::get_pooled_map(0);
+        Value::object(crate::vm::gc::gc_allocate(GcData::Object(empty_map)))
     } else {
-        HashMap::new()
+        let mut cookies_obj_map = crate::vm::gc::get_pooled_map(4);
+        for item in cookie_header.split(';') {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            let (k, v) = if let Some(pos) = item.find('=') {
+                (&item[..pos], &item[pos + 1..])
+            } else {
+                (item, "")
+            };
+            let k_ptr = get_or_create_string(k);
+            let v_ptr = get_or_create_string(v);
+            cookies_obj_map.insert(crate::vm::value::MapKey(Value::string(k_ptr)), Value::string(v_ptr));
+        }
+        Value::object(crate::vm::gc::gc_allocate(GcData::Object(cookies_obj_map)))
     };
-    let mut cookies_obj_map = crate::vm::gc::get_pooled_map(parsed_cookies.len());
-    for (k, v) in &parsed_cookies {
-        let k_str = get_or_create_string(k);
-        let v_str = get_or_create_string(v);
-        cookies_obj_map.insert(crate::vm::value::MapKey(Value::string(k_str)), Value::string(v_str));
-    }
-    let cookies_obj = Value::object(crate::vm::gc::gc_allocate(GcData::Object(cookies_obj_map)));
 
-    let mut files_obj_map = crate::vm::gc::get_pooled_map(5);
-    if content_type.contains("multipart/form-data") {
+    let is_multipart = content_type.contains("multipart/form-data");
+    let mut files_obj_map = crate::vm::gc::get_pooled_map(if is_multipart { 4 } else { 0 });
+    if is_multipart {
         if let Some(b_pos) = content_type.find("boundary=") {
             let boundary = content_type[b_pos + 9..].trim().to_string();
             let parts = parse_multipart(body_bytes, &boundary);
