@@ -27,7 +27,19 @@ fn main() {
 
     let first_arg = os_iter.remain[0];
     if first_arg == b"-v" || first_arg == b"--version" {
-        println!("eronom {}", env!("CARGO_PKG_VERSION"));
+        const VER_STR: &str = concat!("eronom ", env!("CARGO_PKG_VERSION"), "\n");
+        #[cfg(unix)]
+        unsafe {
+            unsafe extern "C" {
+                fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+            }
+            let _ = write(1, VER_STR.as_ptr(), VER_STR.len());
+        }
+        #[cfg(not(unix))]
+        {
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(VER_STR.as_bytes());
+        }
         return;
     }
 

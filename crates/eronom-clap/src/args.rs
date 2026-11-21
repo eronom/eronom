@@ -39,6 +39,39 @@ pub struct OsIterator {
     pub remain: &'static [&'static [u8]],
 }
 
+#[cfg(target_os = "linux")]
+static mut RAW_ARGS_STORAGE: [&'static [u8]; 128] = [&[]; 128];
+#[cfg(target_os = "linux")]
+static mut RAW_ARGS_LEN: usize = 0;
+
+#[cfg(target_os = "linux")]
+#[used]
+#[unsafe(link_section = ".init_array")]
+static INIT_HOOK: extern "C" fn(i32, *const *const u8) = capture_raw_argv;
+
+#[cfg(target_os = "linux")]
+extern "C" fn capture_raw_argv(argc: i32, argv: *const *const u8) {
+    if argc <= 0 || argv.is_null() {
+        return;
+    }
+    let count = (argc as usize).min(128);
+    for i in 0..count {
+        unsafe {
+            let ptr = *argv.add(i);
+            if !ptr.is_null() {
+                let mut len = 0;
+                while *ptr.add(len) != 0 {
+                    len += 1;
+                }
+                RAW_ARGS_STORAGE[i] = std::slice::from_raw_parts(ptr, len);
+            }
+        }
+    }
+    unsafe {
+        RAW_ARGS_LEN = count;
+    }
+}
+
 fn init_os_argv() -> &'static [&'static [u8]] {
     let args: Vec<&'static [u8]> = std::env::args_os()
         .map(|os_str| {
@@ -62,6 +95,17 @@ fn init_os_argv() -> &'static [&'static [u8]] {
 
 impl OsIterator {
     pub fn init() -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            let count = unsafe { RAW_ARGS_LEN };
+            if count > 1 {
+                let slice = unsafe { &RAW_ARGS_STORAGE[1..count] };
+                return Self { remain: slice };
+            } else if count == 1 {
+                return Self { remain: &[] };
+            }
+        }
+
         static ONCE: std::sync::OnceLock<&'static [&'static [u8]]> = std::sync::OnceLock::new();
         let argv = ONCE.get_or_init(init_os_argv);
         let mut iter = Self { remain: argv };
