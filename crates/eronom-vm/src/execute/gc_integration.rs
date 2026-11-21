@@ -93,8 +93,20 @@ impl VM {
                     for _ in 0..256 {
                         let curr = state.sweep_ptr;
                         if curr.is_null() {
+                            let mut live_objects: usize = 0;
+                            let mut curr_count = state.head;
+                            while !curr_count.is_null() {
+                                unsafe {
+                                    live_objects += 1;
+                                    curr_count = (*curr_count).next;
+                                }
+                            }
+                            state.live_count = live_objects;
+                            state.alloc_threshold = (live_objects * 2).clamp(512, 65536);
                             state.phase = GcPhase::Pause;
                             state.alloc_count = 0;
+                            state.sweep_ptr = std::ptr::null_mut();
+                            state.prev_sweep_ptr = std::ptr::null_mut();
                             GC_NEEDS_STEP.store(false, Ordering::Relaxed);
                             break;
                         }
@@ -295,8 +307,8 @@ impl VM {
                 }
             }
             state.live_count = live_objects;
-            // Adaptive threshold: 2× the live set, bounded between 512 and 2048
-            state.alloc_threshold = (live_objects * 2).max(512).min(2048);
+            // Adaptive threshold: 2× the live set, scaled dynamically up to 65536
+            state.alloc_threshold = (live_objects * 2).clamp(512, 65536);
             state.alloc_count = 0;
             state.phase = GcPhase::Pause;
             state.sweep_ptr = std::ptr::null_mut();
