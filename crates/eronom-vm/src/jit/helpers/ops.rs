@@ -261,22 +261,32 @@ pub extern "C" fn er_jit_to_iter(vm: *mut VM, val: Value) -> Value {
             val
         } else if val.is_object() {
             let obj_ptr = val.as_gc_ptr();
-            let keys: Vec<Value> = match &(*obj_ptr).data {
-                GcData::Object(map) => map.keys().map(|k| k.0).collect(),
-                GcData::Struct(s) => s.descriptor.field_indices.keys().map(|k| k.0).collect(),
-                _ => Vec::new(),
-            };
+            let mut keys = crate::vm::gc::get_pooled_vec(8);
+            keys.clear();
+            match &(*obj_ptr).data {
+                GcData::Object(map) => {
+                    for k in map.keys() {
+                        keys.push(k.0);
+                    }
+                }
+                GcData::Struct(s) => {
+                    for k in s.descriptor.field_indices.keys() {
+                        keys.push(k.0);
+                    }
+                }
+                _ => {}
+            }
             let arr_ptr = gc_allocate(GcData::Array(keys));
             Value::array(arr_ptr)
         } else if val.is_string() {
-            let s_ptr = val.as_gc_ptr();
-            let chars: Vec<Value> = match &(*s_ptr).data {
-                GcData::String(s) => s.as_str().chars().map(|c| {
-                    let cp = gc_alloc_string(&c.to_string());
-                    Value::string(cp)
-                }).collect(),
-                _ => Vec::new(),
-            };
+            let s = val.as_str().unwrap_or("");
+            let mut chars = crate::vm::gc::get_pooled_vec(s.len());
+            chars.clear();
+            let mut buf = [0u8; 4];
+            for c in s.chars() {
+                let s_char = c.encode_utf8(&mut buf);
+                chars.push(Value::string_from_str(s_char));
+            }
             let arr_ptr = gc_allocate(GcData::Array(chars));
             Value::array(arr_ptr)
         } else {
