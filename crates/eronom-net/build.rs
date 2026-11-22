@@ -33,6 +33,7 @@ fn main() {
         let mut bssl_build = cc::Build::new();
         bssl_build
             .cpp(true)
+            .cpp_link_stdlib(None)
             .std("c++17")
             .include(bssl_dir.join("include"))
             .flag_if_supported("-fno-exceptions")
@@ -164,6 +165,7 @@ fn main() {
     let mut u_websockets_build = cc::Build::new();
     u_websockets_build
         .cpp(true)
+        .cpp_link_stdlib(None)
         .std("c++17")
         .file(&er_http_cpp)
         .file(&er_clif_cpp)

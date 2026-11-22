@@ -2,20 +2,25 @@ use std::env;
 use std::path::Path;
 
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "linux" {
         println!("cargo:rustc-link-arg=-no-pie");
         println!("cargo:rustc-link-arg=-Wl,-z,lazy");
         println!("cargo:rustc-link-arg=-Wl,--hash-style=gnu");
 
-        if has_static_libstdcxx() {
-            println!("cargo:rustc-link-arg=-static-libstdc++");
+        if let Some(static_dir) = find_static_libstdcxx_dir() {
+            println!("cargo:rustc-link-search=native={}", static_dir.display());
+            println!("cargo:rustc-link-lib=static=stdc++");
             println!("cargo:rustc-link-arg=-static-libgcc");
+        } else {
+            println!("cargo:rustc-link-lib=stdc++");
         }
     }
 }
 
-fn has_static_libstdcxx() -> bool {
+fn find_static_libstdcxx_dir() -> Option<std::path::PathBuf> {
     for cc in &["g++", "clang++", "c++"] {
         if let Ok(output) = std::process::Command::new(cc)
             .args(["-print-file-name=libstdc++.a"])
@@ -26,7 +31,9 @@ fn has_static_libstdcxx() -> bool {
                 if path_str != "libstdc++.a" {
                     let path = Path::new(&path_str);
                     if path.is_file() && path.exists() {
-                        return true;
+                        if let Some(parent) = path.parent() {
+                            return Some(parent.to_path_buf());
+                        }
                     }
                 }
             }
@@ -45,12 +52,12 @@ fn has_static_libstdcxx() -> bool {
                 for entry in entries.flatten() {
                     let candidate = entry.path().join("libstdc++.a");
                     if candidate.is_file() && candidate.exists() {
-                        return true;
+                        return Some(entry.path());
                     }
                 }
             }
         }
     }
 
-    false
+    None
 }
