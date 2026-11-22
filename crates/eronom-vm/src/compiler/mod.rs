@@ -51,6 +51,7 @@ pub struct Compiler {
     pub(crate) concurrent_scopes: Vec<usize>,
     pub(crate) loop_stack: Vec<LoopContext>,
     pub(crate) effects: Rc<RefCell<crate::frontend::FunctionEffects>>,
+    pub(crate) current_binding_name: Option<String>,
 }
 
 impl Default for Compiler {
@@ -79,6 +80,7 @@ impl Compiler {
             concurrent_scopes: Vec::new(),
             loop_stack: Vec::new(),
             effects: Rc::new(RefCell::new(crate::frontend::FunctionEffects::default())),
+            current_binding_name: None,
         }
     }
 

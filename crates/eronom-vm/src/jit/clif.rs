@@ -570,10 +570,27 @@ impl CraneliftJitEngine {
                         call_helper(&mut builder, "er_jit_define_global", &[vm_val, name_val, va]);
                     }
                     OpCode::GetGlobal => {
-                        let offset = (operand * 8) as i32;
-                        let name_val = builder.ins().load(types::I64, MemFlags::new(), constants_ptr_val, offset);
-                        let res = call_helper(&mut builder, "er_jit_get_global", &[vm_val, name_val]);
-                        builder.def_var(reg_vars[ra], res);
+                        let is_self_fn_get = if let Some(ref fn_name) = func.name {
+                            if let Some(c_val) = func.chunk.constants.get(operand as usize) {
+                                c_val.as_str() == Some(fn_name.as_str()) && func_obj.is_some()
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if is_self_fn_get {
+                            let f_obj = func_obj.unwrap();
+                            let self_val = Value::function(f_obj).0 as i64;
+                            let self_const = builder.ins().iconst(types::I64, self_val);
+                            builder.def_var(reg_vars[ra], self_const);
+                        } else {
+                            let offset = (operand * 8) as i32;
+                            let name_val = builder.ins().load(types::I64, MemFlags::new(), constants_ptr_val, offset);
+                            let res = call_helper(&mut builder, "er_jit_get_global", &[vm_val, name_val]);
+                            builder.def_var(reg_vars[ra], res);
+                        }
                     }
                     OpCode::SetGlobal => {
                         let offset = (operand * 8) as i32;
