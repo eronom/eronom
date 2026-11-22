@@ -10,6 +10,10 @@ To build and develop Eronom, your system needs:
 - **Rust Toolchain**: Stable `rustc` and `cargo` (1.75+).
 - **C/C++ Compiler**: GCC, Clang (Linux/macOS), or MSVC (Windows) for native C++ `uWebSockets` and Vladimir Makarov's `MIR` JIT engine.
 - **CMake & Make**: For building native dependencies in `deps/`.
+- **Static C++ Libraries (Optional for Linux Release Builds)**:
+  - Fedora / RHEL: `sudo dnf install libstdc++-static libatomic-static`
+  - Ubuntu / Debian: Included automatically with `build-essential` / `g++`
+  *(When installed, Eronom automatically compiles with a self-contained static C++ runtime, eliminating runtime library overhead and matching Bun's startup efficiency).*
 
 ---
 
