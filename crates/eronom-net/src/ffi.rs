@@ -6,6 +6,22 @@ pub type HeaderIterCallback = extern "C" fn(user_data: *mut c_void, key: *const 
 unsafe extern "C" {
     // Legacy server lifecycle
     pub fn er_http_init();
+    pub fn er_http_init_with_callbacks(
+        http_req_cb: extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+        ),
+        ws_open_cb: extern "C" fn(*mut c_void, *const c_char, usize),
+        ws_message_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize, i32),
+        ws_close_cb: extern "C" fn(*mut c_void, *const c_char, usize, i32, *const c_char, usize),
+    );
     pub fn er_http_register_route(method: *const c_char, path: *const c_char);
     pub fn er_http_listen_and_run(port: i32);
 

@@ -4,7 +4,7 @@ pub mod init;
 pub mod build;
 pub mod bundle;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub use commands::{Cli, Commands, BuildMode, ToolchainAction};
 pub use init::init_project;
@@ -198,25 +198,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
                 dir = "app/build".to_string();
             }
             let resolved_port = commands::resolve_port(&dir, port_val, false)?;
-            crate::vm::er_http::LISTEN_PORT.with(|p| p.set(Some(resolved_port as i32)));
-
-            let dir_path = Path::new(&dir);
-            let server_script = if dir_path.join("server.er").exists() {
-                dir_path.join("server.er")
-            } else if dir_path.join("build/server.er").exists() {
-                dir_path.join("build/server.er")
-            } else if dir_path.join("main.er").exists() {
-                dir_path.join("main.er")
-            } else {
-                anyhow::bail!("No server script found in '{}'. Run 'eronom build' first to generate the production server.", dir);
-            };
-            let server_script = server_script.canonicalize().unwrap_or(server_script);
-
-            if dir != "." && dir_path.is_dir() {
-                let _ = std::env::set_current_dir(dir_path);
-            }
-
-            crate::runner::run_file(&server_script.to_string_lossy())?;
+            crate::server::start_server(&dir, true, resolved_port)?;
         }
         Commands::Dev {
             dir_or_port,
@@ -225,25 +207,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
         } => {
             let (dir, port_val) = commands::parse_dir_and_port(dir_or_port, port_pos, port, ".")?;
             let resolved_port = commands::resolve_port(&dir, port_val, false)?;
-            crate::vm::er_http::LISTEN_PORT.with(|p| p.set(Some(resolved_port as i32)));
-
-            let dir_path = Path::new(&dir);
-            let dev_script = if dir_path.join("server.er").exists() {
-                dir_path.join("server.er")
-            } else if dir_path.join("dev.er").exists() {
-                dir_path.join("dev.er")
-            } else if dir_path.join("app/pages").exists() || dir_path.join("pages").exists() || dir_path.join("app").exists() {
-                resolve_std_cli_dev()
-            } else {
-                anyhow::bail!("No Eronom server or ERM app found in '{}'.", dir);
-            };
-            let dev_script = dev_script.canonicalize().unwrap_or(dev_script);
-
-            if dir != "." && dir_path.is_dir() {
-                let _ = std::env::set_current_dir(dir_path);
-            }
-
-            crate::runner::run_file(&dev_script.to_string_lossy())?;
+            crate::server::start_server(&dir, false, resolved_port)?;
         }
         Commands::Test { file: _ } => {
             // Handled via the main binary entrypoint
@@ -281,31 +245,3 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolve_std_cli_dev() -> PathBuf {
-    if Path::new("std/erm/cli_dev.er").exists() {
-        if let Ok(canon) = Path::new("std/erm/cli_dev.er").canonicalize() {
-            return canon;
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let candidate = parent.join("std/erm/cli_dev.er");
-            if candidate.exists() {
-                if let Ok(canon) = candidate.canonicalize() {
-                    return canon;
-                }
-                return candidate;
-            }
-            if let Some(grandparent) = parent.parent() {
-                let candidate = grandparent.join("std/erm/cli_dev.er");
-                if candidate.exists() {
-                    if let Ok(canon) = candidate.canonicalize() {
-                        return canon;
-                    }
-                    return candidate;
-                }
-            }
-        }
-    }
-    PathBuf::from("std/erm/cli_dev.er")
-}

@@ -13,4 +13,5 @@ pub mod erm;
 
 pub use erm::compiler;
 pub use erm::eval;
-
+pub use erm::server;
+pub use erm::router;
