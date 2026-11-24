@@ -16,6 +16,7 @@ wasmtime-core = { path = "../core", version = "0.139.0-dev", package = "wasmtime
 anyhow = { version = "1.0.103", default-features = false, optional = true }
 pulley-macros = { path = "macros", version = "0.139.0-dev", optional = true }
 
+
 [features]
 std = ['wasmtime-core?/std']
 arbitrary = ["dep:arbitrary", "arbitrary/derive", "std", "cranelift-bitset/arbitrary"]
@@ -27,3 +28,7 @@ profile = ['std', 'dep:anyhow']
 
 [package.metadata.docs.rs]
 all-features = true
+
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

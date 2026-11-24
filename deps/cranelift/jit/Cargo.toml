@@ -33,6 +33,7 @@ features = [
 
 [features]
 default = []
+
 wasmtime-unwinder = []
 
 [dev-dependencies]

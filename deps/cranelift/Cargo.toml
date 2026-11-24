@@ -81,7 +81,7 @@ pulley-macros = { path = "pulley/macros" }
 wasmtime-core = { path = "core", package = "wasmtime-internal-core" }
 wasmtime-jit-icache-coherence = { path = "jit-icache-coherence", package = "wasmtime-internal-jit-icache-coherence" }
 
-# Third-Party Dependencies
+# Third-Party Dependencies (dynamically inherited from upstream)
 regalloc2 = "0.15.3"
 target-lexicon = "0.13.5"
 object = { version = "0.40.0", default-features = false, features = ["read_core", "elf"] }

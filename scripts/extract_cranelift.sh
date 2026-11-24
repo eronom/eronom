@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Eronom Cranelift Extraction & Vendoring Script
 # Extracts minimal Cranelift JIT/AOT backend crates from an upstream wasmtime source tree.
+# Automatically detects upstream Cranelift version and third-party dependency specifications.
 
 SRC="${1:-others/wasmtime}"
 DEST="${2:-deps/cranelift}"
@@ -10,6 +11,11 @@ DEST="${2:-deps/cranelift}"
 if [ ! -d "$SRC" ]; then
     echo "Error: Source directory '$SRC' not found."
     echo "Usage: $0 [path/to/wasmtime] [path/to/destination]"
+    exit 1
+fi
+
+if [ ! -f "$SRC/Cargo.toml" ] || [ ! -f "$SRC/cranelift/codegen/Cargo.toml" ]; then
+    echo "Error: Upstream source '$SRC' is missing Cargo.toml or cranelift/codegen/Cargo.toml."
     exit 1
 fi
 
@@ -54,82 +60,234 @@ cp -r "$SRC/crates/jit-icache-coherence" "$DEST/"
 echo "=== 7. Cleaning up test & fuzz harnesses ==="
 rm -rf "$DEST/assembler-x64/fuzz"
 
-echo "=== 8. Inlining workspace dependencies for standalone build ==="
+echo "=== 8. Dynamically parsing upstream versions and rewriting manifests ==="
 python3 -c '
-import os, glob, re
+import os, sys, glob, re, tomllib
+
+src = sys.argv[1]
+dest = sys.argv[2]
+
+# 1. Parse upstream workspace manifest
+with open(os.path.join(src, "Cargo.toml"), "rb") as f:
+    upstream_ws = tomllib.load(f)
+
+ws = upstream_ws.get("workspace", {})
+pkg = ws.get("package", {})
+upstream_deps = ws.get("dependencies", {})
+ws_edition = pkg.get("edition", "2024")
+
+# 2. Parse Cranelift version from cranelift/codegen/Cargo.toml
+with open(os.path.join(src, "cranelift/codegen/Cargo.toml"), "rb") as f:
+    cg = tomllib.load(f)
+cranelift_version = cg.get("package", {}).get("version")
+if not cranelift_version:
+    cd_dep = upstream_deps.get("cranelift-codegen")
+    if isinstance(cd_dep, dict):
+        cranelift_version = cd_dep.get("version", "0.139.0")
+    else:
+        cranelift_version = "0.139.0"
+
+print(f" -> Detected Cranelift version: {cranelift_version}")
+print(f" -> Detected upstream workspace edition: {ws_edition}")
+print(f" -> Loaded {len(upstream_deps)} upstream workspace dependency specifications")
 
 crate_dirs = {
-    "cranelift-codegen": "deps/cranelift/codegen",
-    "cranelift-codegen-shared": "deps/cranelift/codegen/shared",
-    "cranelift-codegen-meta": "deps/cranelift/codegen/meta",
-    "cranelift-frontend": "deps/cranelift/frontend",
-    "cranelift-module": "deps/cranelift/module",
-    "cranelift-object": "deps/cranelift/object",
-    "cranelift-jit": "deps/cranelift/jit",
-    "cranelift-native": "deps/cranelift/native",
-    "cranelift-entity": "deps/cranelift/entity",
-    "cranelift-bforest": "deps/cranelift/bforest",
-    "cranelift-bitset": "deps/cranelift/bitset",
-    "cranelift-control": "deps/cranelift/control",
-    "cranelift-assembler-x64": "deps/cranelift/assembler-x64",
-    "cranelift-assembler-x64-meta": "deps/cranelift/assembler-x64/meta",
-    "cranelift-srcgen": "deps/cranelift/srcgen",
-    "cranelift-isle": "deps/cranelift/isle/isle",
-    "pulley-interpreter": "deps/cranelift/pulley",
-    "pulley-macros": "deps/cranelift/pulley/macros",
-    "wasmtime-core": "deps/cranelift/core",
-    "wasmtime-jit-icache-coherence": "deps/cranelift/jit-icache-coherence",
+    "cranelift-codegen": os.path.join(dest, "codegen"),
+    "cranelift-codegen-shared": os.path.join(dest, "codegen/shared"),
+    "cranelift-codegen-meta": os.path.join(dest, "codegen/meta"),
+    "cranelift-frontend": os.path.join(dest, "frontend"),
+    "cranelift-module": os.path.join(dest, "module"),
+    "cranelift-object": os.path.join(dest, "object"),
+    "cranelift-jit": os.path.join(dest, "jit"),
+    "cranelift-native": os.path.join(dest, "native"),
+    "cranelift-entity": os.path.join(dest, "entity"),
+    "cranelift-bforest": os.path.join(dest, "bforest"),
+    "cranelift-bitset": os.path.join(dest, "bitset"),
+    "cranelift-control": os.path.join(dest, "control"),
+    "cranelift-assembler-x64": os.path.join(dest, "assembler-x64"),
+    "cranelift-assembler-x64-meta": os.path.join(dest, "assembler-x64/meta"),
+    "cranelift-srcgen": os.path.join(dest, "srcgen"),
+    "cranelift-isle": os.path.join(dest, "isle/isle"),
+    "pulley-interpreter": os.path.join(dest, "pulley"),
+    "pulley-macros": os.path.join(dest, "pulley/macros"),
+    "wasmtime-core": os.path.join(dest, "core"),
+    "wasmtime-jit-icache-coherence": os.path.join(dest, "jit-icache-coherence"),
 }
 
-external_deps = {
-    "regalloc2": "\"0.15.3\"",
-    "target-lexicon": "\"0.13.5\"",
-    "object": "{ version = \"0.40.0\", default-features = false }",
-    "hashbrown": "{ version = \"0.17\", default-features = false }",
-    "smallvec": "{ version = \"1.15.1\", features = [\"union\"] }",
-    "bumpalo": "\"3.20.4\"",
-    "rustc-hash": "{ version = \"2.1.1\", default-features = false }",
-    "libm": "\"0.2.16\"",
-    "heck": "\"0.5\"",
-    "anyhow": "{ version = \"1.0.103\", default-features = false }",
-    "log": "{ version = \"0.4.28\", default-features = false }",
-    "libc": "{ version = \"0.2.190\", default-features = true }",
-    "region": "\"3.0.2\"",
-    "memmap2": "\"0.9.11\"",
-    "gimli": "{ version = \"0.33.0\", default-features = false }",
-    "windows-sys": "\"0.61.2\"",
-    "mach2": "\"0.6\"",
-    "arbitrary": "\"1.4.2\"",
-    "arbtest": "\"0.3.2\"",
-    "capstone": "{ version = \"0.14.0\", default-features = false }",
-    "xed-sys": "\"0.6\"",
-    "serde": "{ version = \"1.0.228\", default-features = false, features = [\"alloc\"] }",
-    "serde_derive": "\"1.0.228\"",
-    "postcard": "{ version = \"1.1.3\", default-features = false, features = [\"alloc\"] }",
-    "sha2": "{ version = \"0.10.2\", default-features = false }",
-    "env_logger": "\"0.11.5\"",
-    "similar": "\"3.1.1\"",
-    "proptest": "\"1.11.0\"",
-    "criterion": "{ version = \"0.8.2\", default-features = false }",
-    "mutatis": "{ version = \"0.5.2\", features = [\"alloc\", \"derive\", \"check\"] }",
-    "libfuzzer-sys": "\"0.4.10\"",
-    "proc-macro2": "\"1.0.101\"",
-    "quote": "\"1.0.41\"",
-    "syn": "\"3.0.5\"",
+fallback_deps = {
+    "region": "3.0.2",
+    "memmap2": "0.9.11",
+    "souper-ir": "2.1.0",
 }
 
-for path in sorted(glob.glob("deps/cranelift/**/Cargo.toml", recursive=True)):
-    if path == "deps/cranelift/Cargo.toml":
+standard_features = {
+    "object": ["read_core", "elf"],
+    "smallvec": ["union"],
+    "gimli": ["read"],
+    "serde": ["alloc"],
+    "postcard": ["alloc"],
+    "mutatis": ["alloc", "derive", "check"],
+}
+
+def format_dep(dep_name, extra_parts, is_workspace_root=False):
+    val = upstream_deps.get(dep_name, fallback_deps.get(dep_name))
+    if val is None:
+        return None
+    if isinstance(val, str):
+        if not extra_parts:
+            return f"\"{val}\""
+        return "{ " + ", ".join([f"version = \"{val}\""] + extra_parts) + " }"
+    elif isinstance(val, dict):
+        parts = []
+        if "version" in val:
+            v_ver = val["version"]
+            parts.append(f"version = \"{v_ver}\"")
+        if "default-features" in val and not any("default-features" in p for p in extra_parts):
+            df = "true" if val["default-features"] else "false"
+            parts.append(f"default-features = {df}")
+        if is_workspace_root:
+            if dep_name in standard_features:
+                feats = [f"\"{x}\"" for x in standard_features[dep_name]]
+                parts.append("features = [" + ", ".join(feats) + "]")
+        else:
+            if not any("features" in p for p in extra_parts) and "features" in val:
+                if dep_name not in ["criterion", "capstone"]:
+                    feats = [f"\"{x}\"" for x in val["features"]]
+                    parts.append("features = [" + ", ".join(feats) + "]")
+        parts.extend(extra_parts)
+        return "{ " + ", ".join(parts) + " }"
+    return str(val)
+
+# 3. Dynamically write standalone workspace Cargo.toml at destination root
+dest_cargo_toml = f"""[workspace]
+resolver = "2"
+members = [
+    "assembler-x64",
+    "assembler-x64/meta",
+    "bforest",
+    "bitset",
+    "codegen",
+    "codegen/meta",
+    "codegen/shared",
+    "control",
+    "core",
+    "entity",
+    "frontend",
+    "isle/isle",
+    "jit",
+    "jit-icache-coherence",
+    "module",
+    "native",
+    "object",
+    "pulley",
+    "pulley/macros",
+    "srcgen",
+]
+
+[workspace.package]
+version = "{cranelift_version}"
+edition = "{ws_edition}"
+rust-version = "1.95.0"
+license = "Apache-2.0 WITH LLVM-exception"
+authors = ["The Cranelift Project Developers"]
+repository = "https://github.com/bytecodealliance/wasmtime"
+
+[workspace.lints.rust]
+unused_extern_crates = '\''warn'\''
+trivial_numeric_casts = '\''warn'\''
+unused_import_braces = '\''warn'\''
+unused_lifetimes = '\''warn'\''
+unused_macro_rules = '\''warn'\''
+
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+  '\''cfg(pulley_tail_calls)'\'',
+  '\''cfg(pulley_assume_llvm_makes_tail_calls)'\'',
+  '\''cfg(pulley_disable_interp_simd)'\'',
+  '\''cfg(arc_try_new)'\'',
+  '\''cfg(fuzzing)'\'',
+  '\''cfg(feature, values("pulley"))'\'',
+]
+
+[workspace.lints.clippy]
+all = {{ level = '\''allow'\'', priority = -1 }}
+clone_on_copy = '\''warn'\''
+map_clone = '\''warn'\''
+uninlined_format_args = '\''warn'\''
+unnecessary_to_owned = '\''warn'\''
+manual_strip = '\''warn'\''
+useless_conversion = '\''warn'\''
+
+[workspace.dependencies]
+# Internal Cranelift & Runtime Crates
+cranelift-codegen = {{ path = "codegen", default-features = false }}
+cranelift-codegen-shared = {{ path = "codegen/shared" }}
+cranelift-codegen-meta = {{ path = "codegen/meta" }}
+cranelift-frontend = {{ path = "frontend" }}
+cranelift-module = {{ path = "module" }}
+cranelift-object = {{ path = "object" }}
+cranelift-jit = {{ path = "jit" }}
+cranelift-native = {{ path = "native" }}
+cranelift-entity = {{ path = "entity" }}
+cranelift-bforest = {{ path = "bforest" }}
+cranelift-bitset = {{ path = "bitset" }}
+cranelift-control = {{ path = "control", default-features = false }}
+cranelift-assembler-x64 = {{ path = "assembler-x64" }}
+cranelift-assembler-x64-meta = {{ path = "assembler-x64/meta" }}
+cranelift-srcgen = {{ path = "srcgen" }}
+cranelift-isle = {{ path = "isle/isle" }}
+pulley-interpreter = {{ path = "pulley" }}
+pulley-macros = {{ path = "pulley/macros" }}
+wasmtime-core = {{ path = "core", package = "wasmtime-internal-core" }}
+wasmtime-jit-icache-coherence = {{ path = "jit-icache-coherence", package = "wasmtime-internal-jit-icache-coherence" }}
+
+# Third-Party Dependencies (dynamically inherited from upstream)
+"""
+
+needed_workspace_deps = [
+    "regalloc2", "target-lexicon", "object", "hashbrown", "smallvec",
+    "bumpalo", "rustc-hash", "libm", "heck", "anyhow", "log", "libc",
+    "region", "memmap2", "gimli", "windows-sys", "mach2", "arbitrary",
+    "arbtest", "capstone", "xed-sys", "serde", "serde_derive", "postcard",
+    "sha2", "env_logger", "similar", "proptest", "criterion", "mutatis",
+    "libfuzzer-sys", "proc-macro2", "quote", "syn"
+]
+
+for dep in needed_workspace_deps:
+    formatted = format_dep(dep, [], is_workspace_root=True)
+    if formatted:
+        dest_cargo_toml += f"{dep} = {formatted}\n"
+
+with open(os.path.join(dest, "Cargo.toml"), "w") as f:
+    f.write(dest_cargo_toml)
+
+# 4. Rewrite member Cargo.toml manifests
+dest_manifest = os.path.abspath(os.path.join(dest, "Cargo.toml"))
+for path in sorted(glob.glob(f"{dest}/**/Cargo.toml", recursive=True)):
+    if os.path.abspath(path) == dest_manifest:
         continue
     crate_dir = os.path.dirname(path)
     with open(path, "r") as f:
         content = f.read()
 
-    content = re.sub(r"edition\.workspace\s*=\s*true", "edition = \"2024\"", content)
+    content = re.sub(r"edition\.workspace\s*=\s*true", f"edition = \"{ws_edition}\"", content)
     content = re.sub(r"rust-version\.workspace\s*=\s*true", "rust-version = \"1.95.0\"", content)
-    content = re.sub(r"version\.workspace\s*=\s*true", "version = \"0.139.0-dev\"", content)
+    content = re.sub(r"version\.workspace\s*=\s*true", f"version = \"{cranelift_version}\"", content)
     content = re.sub(r"authors\.workspace\s*=\s*true", "authors = [\"The Cranelift Project Developers\"]", content)
     content = re.sub(r"\[lints\]\s*\nworkspace\s*=\s*true\s*\n", "", content)
+
+    # In cranelift-jit, remove optional wasmtime-unwinder dependency and set feature to empty
+    content = re.sub(r"^wasmtime-unwinder\s*=\s*\{.*?\n", "", content, flags=re.MULTILINE)
+    content = re.sub(r"wasmtime-unwinder\s*=\s*\[.*?\n", "wasmtime-unwinder = []\n", content)
+    # Remove dev-dependencies on umbrella crate
+    content = re.sub(r"cranelift\s*=\s*\{\s*path\s*=\s*\"../umbrella\"\s*\}\n", "", content)
+
+    # In pulley, remove standalone examples and dev-dependencies, and silence unexpected_cfgs
+    if crate_dir.endswith("pulley"):
+        content = re.sub(r"\[dev-dependencies\].*?(?=\n\[|\Z)", "", content, flags=re.DOTALL)
+        content = re.sub(r"\[\[example\]\].*?(?=\n\[|\Z)", "", content, flags=re.DOTALL)
+        content += "\n[lints.rust]\nunexpected_cfgs = { level = \"allow\" }\n"
 
     def repl_dep(m):
         full = m.group(0)
@@ -149,32 +307,30 @@ for path in sorted(glob.glob("deps/cranelift/**/Cargo.toml", recursive=True)):
             rel = os.path.relpath(crate_dirs[dep_name], crate_dir)
             extra_str = (", " + ", ".join(extra_parts)) if extra_parts else ""
             if dep_name == "wasmtime-core":
-                return f"{dep_name} = {{ path = \"{rel}\", version = \"0.139.0-dev\", package = \"wasmtime-internal-core\"{extra_str} }}"
+                return f"{dep_name} = {{ path = \"{rel}\", version = \"{cranelift_version}\", package = \"wasmtime-internal-core\"{extra_str} }}"
             elif dep_name == "wasmtime-jit-icache-coherence":
-                return f"{dep_name} = {{ path = \"{rel}\", version = \"0.139.0-dev\", package = \"wasmtime-internal-jit-icache-coherence\"{extra_str} }}"
+                return f"{dep_name} = {{ path = \"{rel}\", version = \"{cranelift_version}\", package = \"wasmtime-internal-jit-icache-coherence\"{extra_str} }}"
             else:
-                return f"{dep_name} = {{ path = \"{rel}\", version = \"0.139.0-dev\"{extra_str} }}"
-        elif dep_name in external_deps:
-            val = external_deps[dep_name]
-            if val.startswith("{"):
-                inner = val.strip("{} ")
-                if extra_parts:
-                    inner += ", " + ", ".join(extra_parts)
-                return f"{dep_name} = {{ {inner} }}"
-            else:
-                if extra_parts:
-                    return f"{dep_name} = {{ version = {val}, {\", \".join(extra_parts)} }}"
-                else:
-                    return f"{dep_name} = {val}"
+                return f"{dep_name} = {{ path = \"{rel}\", version = \"{cranelift_version}\"{extra_str} }}"
+        else:
+            formatted = format_dep(dep_name, extra_parts)
+            if formatted is not None:
+                return f"{dep_name} = {formatted}"
         return full
 
     content = re.sub(r"^([a-zA-Z0-9_-]+)\s*=\s*\{\s*workspace\s*=\s*true([^}]*)\}", repl_dep, content, flags=re.MULTILINE)
-    content = re.sub(r"\[target\.\x27cfg\(windows\)\x27\.dependencies\.windows-sys\]\nworkspace = true", "[target.\x27cfg(windows)\x27.dependencies.windows-sys]\nversion = \"0.61.2\"", content)
-    content = re.sub(r"\[target\.\x27cfg\(target_os = \"windows\"\)\x27\.dependencies\.windows-sys\]\nworkspace = true", "[target.\x27cfg(target_os = \"windows\")\x27.dependencies.windows-sys]\nversion = \"0.61.2\"", content)
+
+    # Windows target dependencies
+    win_sys = upstream_deps.get("windows-sys", "0.61.2")
+    win_sys_ver = win_sys if isinstance(win_sys, str) else win_sys.get("version", "0.61.2")
+    win_sys_ver = re.sub(r"[\"\x27]", "", str(win_sys_ver))
+    content = re.sub(r"(\[target\.[^\n]+windows[^\n]*\.dependencies\.windows-sys\]\n)workspace\s*=\s*true", f"\\g<1>version = \"{win_sys_ver}\"", content)
 
     with open(path, "w") as f:
         f.write(content)
-'
+
+print(" -> Subcrate manifests updated dynamically.")
+' "$SRC" "$DEST"
 
 echo "=== Extraction completed successfully into '$DEST' ==="
 du -sh "$DEST"
