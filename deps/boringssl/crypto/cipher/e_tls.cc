@@ -449,14 +449,22 @@ static int aead_des_ede3_cbc_sha1_tls_init(EVP_AEAD_CTX *ctx,
                                            const uint8_t *key, size_t key_len,
                                            size_t tag_len,
                                            enum evp_aead_direction_t dir) {
-  return aead_tls_init(ctx, key, key_len, tag_len, dir, EVP_des_ede3_cbc(),
+  const EVP_CIPHER *cipher = EVP_des_ede3_cbc();
+  if (cipher == nullptr) {
+    return 0;
+  }
+  return aead_tls_init(ctx, key, key_len, tag_len, dir, cipher,
                        EVP_sha1(), 0);
 }
 
 static int aead_des_ede3_cbc_sha1_tls_implicit_iv_init(
     EVP_AEAD_CTX *ctx, const uint8_t *key, size_t key_len, size_t tag_len,
     enum evp_aead_direction_t dir) {
-  return aead_tls_init(ctx, key, key_len, tag_len, dir, EVP_des_ede3_cbc(),
+  const EVP_CIPHER *cipher = EVP_des_ede3_cbc();
+  if (cipher == nullptr) {
+    return 0;
+  }
+  return aead_tls_init(ctx, key, key_len, tag_len, dir, cipher,
                        EVP_sha1(), 1);
 }
 

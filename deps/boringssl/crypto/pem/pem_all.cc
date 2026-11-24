@@ -27,7 +27,9 @@
 
 
 static RSA *pkey_get_rsa(EVP_PKEY *key, RSA **rsa);
+#ifndef OPENSSL_NO_DSA
 static DSA *pkey_get_dsa(EVP_PKEY *key, DSA **dsa);
+#endif
 static EC_KEY *pkey_get_eckey(EVP_PKEY *key, EC_KEY **eckey);
 
 IMPLEMENT_PEM_rw(X509_REQ, X509_REQ, PEM_STRING_X509_REQ, X509_REQ)

@@ -194,12 +194,8 @@ static bssl::UniquePtr<EVP_PKEY> old_priv_decode(CBS *cbs, int type) {
       return ret;
     }
     case EVP_PKEY_DSA: {
-      UniquePtr<DSA> dsa(DSA_parse_private_key(cbs));
-      if (dsa == nullptr) {
-        return nullptr;
-      }
-      EVP_PKEY_assign_DSA(ret.get(), dsa.release());
-      return ret;
+      OPENSSL_PUT_ERROR(EVP, EVP_R_UNKNOWN_PUBLIC_KEY_TYPE);
+      return nullptr;
     }
     case EVP_PKEY_RSA: {
       UniquePtr<RSA> rsa(RSA_parse_private_key(cbs));
@@ -298,7 +294,8 @@ int i2d_PublicKey(const EVP_PKEY *key, uint8_t **outp) {
     case EVP_PKEY_RSA:
       return i2d_RSAPublicKey(EVP_PKEY_get0_RSA(key), outp);
     case EVP_PKEY_DSA:
-      return i2d_DSAPublicKey(EVP_PKEY_get0_DSA(key), outp);
+      OPENSSL_PUT_ERROR(EVP, EVP_R_UNSUPPORTED_PUBLIC_KEY_TYPE);
+      return -1;
     case EVP_PKEY_EC:
       return i2o_ECPublicKey(EVP_PKEY_get0_EC_KEY(key), outp);
     default:
@@ -389,27 +386,11 @@ int i2d_RSA_PUBKEY(const RSA *rsa, uint8_t **outp) {
 }
 
 DSA *d2i_DSA_PUBKEY(DSA **out, const uint8_t **inp, long len) {
-  return D2IFromCBS(out, inp, len, [](CBS *cbs) -> UniquePtr<DSA> {
-    UniquePtr<EVP_PKEY> pkey = parse_spki(cbs, EVP_pkey_dsa());
-    if (pkey == nullptr) {
-      return nullptr;
-    }
-    return UniquePtr<DSA>(EVP_PKEY_get1_DSA(pkey.get()));
-  });
+  return nullptr;
 }
 
 int i2d_DSA_PUBKEY(const DSA *dsa, uint8_t **outp) {
-  if (dsa == nullptr) {
-    return 0;
-  }
-
-  UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
-  if (pkey == nullptr ||
-      !EVP_PKEY_set1_DSA(pkey.get(), const_cast<DSA *>(dsa))) {
-    return -1;
-  }
-
-  return i2d_PUBKEY(pkey.get(), outp);
+  return -1;
 }
 
 EC_KEY *d2i_EC_PUBKEY(EC_KEY **out, const uint8_t **inp, long len) {

@@ -270,33 +270,7 @@ const EVP_MD *EVP_blake2b256() { return &evp_md_blake2b256; }
 static_assert(sizeof(BLAKE2B_CTX) <= EVP_MAX_MD_DATA_SIZE);
 
 
-static void md4_init(EVP_MD_CTX *ctx) {
-  BSSL_CHECK(MD4_Init(reinterpret_cast<MD4_CTX *>(ctx->md_data)));
-}
-
-static void md4_update(EVP_MD_CTX *ctx, const void *data, size_t count) {
-  BSSL_CHECK(
-      MD4_Update(reinterpret_cast<MD4_CTX *>(ctx->md_data), data, count));
-}
-
-static void md4_final(EVP_MD_CTX *ctx, uint8_t *out) {
-  BSSL_CHECK(MD4_Final(out, reinterpret_cast<MD4_CTX *>(ctx->md_data)));
-}
-
-static const EVP_MD evp_md_md4 = {
-    NID_md4,            //
-    MD4_DIGEST_LENGTH,  //
-    0,
-    md4_init,
-    md4_update,
-    md4_final,
-    64,
-    sizeof(MD4_CTX),
-};
-
-const EVP_MD *EVP_md4() { return &evp_md_md4; }
-
-static_assert(sizeof(MD4_CTX) <= EVP_MAX_MD_DATA_SIZE);
+const EVP_MD *EVP_md4() { return nullptr; }
 
 
 static void md5_init(EVP_MD_CTX *ctx) {

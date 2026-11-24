@@ -7,6 +7,10 @@ fn collect_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         sorted.sort();
         for p in sorted {
             if p.is_dir() {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name == "des" || name == "rc4" || name == "md4" || name == "dsa" {
+                    continue;
+                }
                 collect_sources(&p, out);
             } else if p.extension().is_some_and(|ext| ext == "cc" || ext == "S") {
                 out.push(p);
@@ -45,6 +49,10 @@ fn main() {
             .flag_if_supported("-fdata-sections")
             .define("NDEBUG", None)
             .define("OPENSSL_SMALL", None)
+            .define("OPENSSL_NO_DSA", None)
+            .define("OPENSSL_NO_DES", None)
+            .define("OPENSSL_NO_RC4", None)
+            .define("OPENSSL_NO_MD4", None)
             .warnings(false)
             .opt_level_str("z");
 
