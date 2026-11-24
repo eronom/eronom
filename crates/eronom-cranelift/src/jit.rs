@@ -928,10 +928,7 @@ impl CraneliftJitEngine {
                 builder.ins().return_(&[ret_status]);
             }
 
-            for (_, block) in block_map {
-                builder.seal_block(block);
-            }
-            builder.seal_block(entry_block);
+            builder.seal_all_blocks();
             builder.finalize(self.module.isa().frontend_config());
         }
 
