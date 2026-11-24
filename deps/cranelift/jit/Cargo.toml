@@ -18,7 +18,6 @@ cranelift-native = { workspace = true }
 cranelift-codegen = { workspace = true, features = ["std"] }
 cranelift-entity = { workspace = true }
 cranelift-control = { workspace = true }
-wasmtime-unwinder = { workspace = true, optional = true, features = ["cranelift"] }
 anyhow = { workspace = true }
 region = "3.0.2"
 libc = { workspace = true }
@@ -37,10 +36,8 @@ features = [
 
 [features]
 default = []
-
-wasmtime-unwinder = ["dep:wasmtime-unwinder"]
+wasmtime-unwinder = []
 
 [dev-dependencies]
-cranelift = { path = "../umbrella" }
 cranelift-frontend = { workspace = true }
 cranelift-entity = { workspace = true }
