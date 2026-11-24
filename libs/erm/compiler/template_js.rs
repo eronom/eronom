@@ -60,36 +60,66 @@ pub struct ScriptStyleRanges {
     pub ranges: Vec<std::ops::Range<usize>>,
 }
 
+pub fn find_real_tag_ranges(content: &str, tag_name: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let open_tag = format!("<{}", tag_name);
+    let close_tag = format!("</{}>", tag_name);
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut skip_until = 0;
+
+    for (idx, ch) in content.char_indices() {
+        if idx < skip_until {
+            continue;
+        }
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if ch == '*' && content[idx..].starts_with("*/") {
+                in_block_comment = false;
+                skip_until = idx + 2;
+            }
+            continue;
+        }
+
+        if ch == '/' {
+            if content[idx..].starts_with("//") {
+                in_line_comment = true;
+                skip_until = idx + 2;
+                continue;
+            } else if content[idx..].starts_with("/*") {
+                in_block_comment = true;
+                skip_until = idx + 2;
+                continue;
+            }
+        }
+
+        if content[idx..].starts_with(&open_tag) {
+            let after_tag = idx + open_tag.len();
+            if after_tag < content.len() {
+                let next_ch = content[after_tag..].chars().next().unwrap_or(' ');
+                if next_ch == '>' || next_ch.is_whitespace() {
+                    if let Some(close_pos) = content[after_tag..].find(&close_tag) {
+                        let close_idx = after_tag + close_pos + close_tag.len();
+                        ranges.push(idx..close_idx);
+                        skip_until = close_idx;
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+    ranges
+}
+
 impl ScriptStyleRanges {
     pub fn new(content: &str) -> Self {
-        let mut ranges = Vec::new();
-        
-        let mut start_search = 0;
-        while let Some(open_pos) = content[start_search..].find("<script") {
-            let open_idx = start_search + open_pos;
-            if let Some(close_pos) = content[open_idx..].find("</script>") {
-                let close_idx = open_idx + close_pos + "</script>".len();
-                ranges.push(open_idx..close_idx);
-                start_search = close_idx;
-            } else {
-                ranges.push(open_idx..content.len());
-                break;
-            }
-        }
-        
-        let mut start_search = 0;
-        while let Some(open_pos) = content[start_search..].find("<style") {
-            let open_idx = start_search + open_pos;
-            if let Some(close_pos) = content[open_idx..].find("</style>") {
-                let close_idx = open_idx + close_pos + "</style>".len();
-                ranges.push(open_idx..close_idx);
-                start_search = close_idx;
-            } else {
-                ranges.push(open_idx..content.len());
-                break;
-            }
-        }
-        
+        let mut ranges = find_real_tag_ranges(content, "script");
+        ranges.extend(find_real_tag_ranges(content, "style"));
         Self { ranges }
     }
 

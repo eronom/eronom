@@ -71,23 +71,37 @@ pub fn native_clear_timeout(args: Vec<Value>) -> Value {
     Value::null()
 }
 
-fn get_ureq_agent() -> &'static ureq::Agent {
-    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
-    AGENT.get_or_init(|| {
-        let config = ureq::config::Config::builder()
-            .timeout_global(Some(std::time::Duration::from_secs(10)))
-            .user_agent("Eronom/0.9.2")
-            .max_idle_connections(100)
-            .max_idle_connections_per_host(100)
-            .build();
-        config.new_agent()
-    })
-}
-
 fn perform_native_fetch(url: &str) -> Result<String, String> {
-    let agent = get_ureq_agent();
-    let mut resp = agent.get(url).call().map_err(|e| e.to_string())?;
-    resp.body_mut().read_to_string().map_err(|e| e.to_string())
+    let url_c = std::ffi::CString::new(url).map_err(|e| e.to_string())?;
+    let mut out_body: *mut std::ffi::c_char = std::ptr::null_mut();
+    let mut out_body_len: usize = 0;
+    let mut out_err: *mut std::ffi::c_char = std::ptr::null_mut();
+
+    let rc = unsafe {
+        eronom_net::ffi::er_fetch(
+            url_c.as_ptr(),
+            &mut out_body,
+            &mut out_body_len,
+            &mut out_err,
+        )
+    };
+
+    if rc == 0 && !out_body.is_null() {
+        let slice = unsafe { std::slice::from_raw_parts(out_body as *const u8, out_body_len) };
+        let s = String::from_utf8_lossy(slice).to_string();
+        unsafe { eronom_net::ffi::er_fetch_free(out_body); }
+        Ok(s)
+    } else {
+        let err_msg = if !out_err.is_null() {
+            let c_str = unsafe { std::ffi::CStr::from_ptr(out_err) };
+            let msg = c_str.to_string_lossy().to_string();
+            unsafe { eronom_net::ffi::er_fetch_free(out_err); }
+            msg
+        } else {
+            "fetch failed".to_string()
+        };
+        Err(err_msg)
+    }
 }
 
 pub fn native_fetch_sync(args: Vec<Value>) -> Value {

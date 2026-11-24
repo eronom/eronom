@@ -217,11 +217,7 @@ pub fn native_eronom_file_json(args: Vec<Value>) -> Value {
     let vm_ptr = ACTIVE_VM.with(|active| active.get());
     if vm_ptr.is_null() {
         let content = std::fs::read_to_string(&path_str).unwrap_or_default();
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
-            return crate::vm::gc::json_to_value(json_val);
-        } else {
-            return Value::null();
-        }
+        return crate::vm::json_parse(&content).unwrap_or(Value::null());
     }
     let vm = unsafe { &mut *vm_ptr };
 
@@ -266,11 +262,7 @@ pub fn native_eronom_file_json(args: Vec<Value>) -> Value {
         Value::null()
     } else {
         let content = std::fs::read_to_string(&path_str).unwrap_or_default();
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
-            crate::vm::gc::json_to_value(json_val)
-        } else {
-            Value::null()
-        }
+        crate::vm::json_parse(&content).unwrap_or(Value::null())
     }
 }
 

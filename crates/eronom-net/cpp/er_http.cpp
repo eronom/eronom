@@ -62,16 +62,18 @@ static WsMessageCallback g_ws_message_cb = nullptr;
 static WsCloseCallback g_ws_close_cb = nullptr;
 
 struct PerSocketData {
-    // User socket context
+    bool is_ssl{false};
 };
 
 struct HttpResponseToken {
-    std::atomic<uWS::HttpResponse<false>*> res;
+    bool is_ssl{false};
+    void* res{nullptr};
     std::atomic<bool> aborted{false};
     std::atomic<bool> responded{false};
     std::atomic<uint32_t> ref_count{2}; // 1 for uWS onAborted wrapper, 1 for Rust context
 
-    HttpResponseToken(uWS::HttpResponse<false>* r) : res(r) {}
+    HttpResponseToken(uWS::HttpResponse<false>* r) : is_ssl(false), res(r) {}
+    HttpResponseToken(uWS::HttpResponse<true>* r) : is_ssl(true), res(r) {}
 
     void add_ref() {
         ref_count.fetch_add(1, std::memory_order_relaxed);
@@ -118,10 +120,43 @@ struct AbortHandler {
     void operator()() {
         if (token) {
             token->aborted.store(true, std::memory_order_release);
-            token->res.store(nullptr, std::memory_order_release);
+            token->res = nullptr;
         }
     }
 };
+
+template <typename F>
+bool dispatch_response(void* token_ptr, F&& fn) {
+    if (!token_ptr) return false;
+    auto* token = static_cast<HttpResponseToken*>(token_ptr);
+    if (token->aborted.load(std::memory_order_acquire)) return false;
+    if (token->is_ssl) {
+        auto* http_res = static_cast<uWS::HttpResponse<true>*>(token->res);
+        if (!http_res) return false;
+        return fn(http_res);
+    } else {
+        auto* http_res = static_cast<uWS::HttpResponse<false>*>(token->res);
+        if (!http_res) return false;
+        return fn(http_res);
+    }
+}
+
+template <bool SSL>
+struct AsyncSocketAccessor : public uWS::AsyncSocket<SSL> {
+    using uWS::AsyncSocket<SSL>::getBufferedAmount;
+};
+
+template <typename F>
+auto dispatch_ws(void* ws, F&& fn) {
+    auto* non_ssl = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
+    auto* data = non_ssl->getUserData();
+    if (data && data->is_ssl) {
+        auto* ssl_ws = static_cast<uWS::WebSocket<true, true, PerSocketData>*>(ws);
+        return fn(ssl_ws);
+    } else {
+        return fn(non_ssl);
+    }
+}
 
 // Unified zero-copy request view
 struct ErReqView {
@@ -264,11 +299,21 @@ bool er_http_req_get_parameter(void* req_ptr, unsigned short index, const char**
 struct ErServer {
     bool ssl{false};
     uWS::App* app{nullptr};
+    uWS::SSLApp* ssl_app{nullptr};
     void* rust_server{nullptr};
     us_listen_socket_t* listen_socket{nullptr};
 
-    ErServer(bool is_ssl, void* r_server) : ssl(is_ssl), rust_server(r_server) {
-        app = new uWS::App();
+    ErServer(bool is_ssl, void* r_server, const char* cert_path = nullptr, const char* key_path = nullptr, const char* passphrase = nullptr)
+        : ssl(is_ssl), rust_server(r_server) {
+        if (ssl) {
+            uWS::SocketContextOptions options;
+            if (cert_path && strlen(cert_path) > 0) options.cert_file_name = cert_path;
+            if (key_path && strlen(key_path) > 0) options.key_file_name = key_path;
+            if (passphrase && strlen(passphrase) > 0) options.passphrase = passphrase;
+            ssl_app = new uWS::SSLApp(options);
+        } else {
+            app = new uWS::App();
+        }
     }
 
     ~ErServer() {
@@ -280,35 +325,18 @@ struct ErServer {
             delete app;
             app = nullptr;
         }
+        if (ssl_app) {
+            delete ssl_app;
+            ssl_app = nullptr;
+        }
     }
 };
 
 static ErServer* g_default_server = nullptr;
 static uWS::App* g_app = nullptr;
 
-extern "C" {
-
-void* er_server_create(int ssl, void* rust_server) {
-    return new ErServer(ssl != 0, rust_server);
-}
-
-void er_server_destroy(void* server_ptr) {
-    if (server_ptr) {
-        delete static_cast<ErServer*>(server_ptr);
-    }
-}
-
-void er_server_register_route(void* server_ptr, const char* method, const char* path, uint32_t route_id) {
-    if (!server_ptr || !method || !path) return;
-    auto* server = static_cast<ErServer*>(server_ptr);
-    auto* app = server->app;
-    if (!app) return;
-
-    std::string method_str(method);
-    for (char &c : method_str) c = (char)toupper((unsigned char)c);
-    std::string path_str(path);
-    void* rust_server = server->rust_server;
-
+template <typename TApp>
+void register_route_impl(TApp* app, void* rust_server, const std::string& method_str, const std::string& path_str, uint32_t route_id) {
     if (method_str == "GET") {
         app->get(path_str, [rust_server, route_id](auto* res, auto* req) {
             auto* token = new HttpResponseToken(res);
@@ -376,16 +404,9 @@ void er_server_register_route(void* server_ptr, const char* method, const char* 
     }
 }
 
-void er_server_register_ws_route(void* server_ptr, const char* path, uint32_t route_id) {
-    if (!server_ptr || !path) return;
-    auto* server = static_cast<ErServer*>(server_ptr);
-    auto* app = server->app;
-    if (!app) return;
-
-    std::string path_str(path);
-    void* rust_server = server->rust_server;
-
-    uWS::App::WebSocketBehavior<PerSocketData> ws_behavior;
+template <bool SSL, typename TApp>
+void register_ws_route_impl(TApp* app, void* rust_server, const std::string& path_str, uint32_t route_id) {
+    typename uWS::TemplatedApp<SSL>::template WebSocketBehavior<PerSocketData> ws_behavior;
     ws_behavior.compression = uWS::CompressOptions(uWS::SHARED_COMPRESSOR);
     ws_behavior.maxPayloadLength = 16 * 1024 * 1024;
     ws_behavior.idleTimeout = 120;
@@ -395,6 +416,8 @@ void er_server_register_ws_route(void* server_ptr, const char* path, uint32_t ro
     ws_behavior.sendPingsAutomatically = true;
 
     ws_behavior.open = [rust_server, route_id, path_str](auto* ws) {
+        auto* data = ws->getUserData();
+        if (data) data->is_ssl = SSL;
         if (g_ws_open_cb) {
             g_ws_open_cb(ws, path_str.data(), path_str.length());
         } else {
@@ -417,14 +440,11 @@ void er_server_register_ws_route(void* server_ptr, const char* path, uint32_t ro
         }
     };
 
-    app->ws<PerSocketData>(path_str, std::move(ws_behavior));
+    app->template ws<PerSocketData>(path_str, std::move(ws_behavior));
 }
 
-static void register_fallback_internal(ErServer* server) {
-    if (!server || !server->app) return;
-    auto* app = server->app;
-    void* rust_server = server->rust_server;
-
+template <typename TApp>
+void register_fallback_impl(TApp* app, void* rust_server) {
     app->any("/*", [rust_server](auto* res, auto* req) {
         auto* token = new HttpResponseToken(res);
         res->onAborted(AbortHandler(token));
@@ -498,16 +518,65 @@ static void register_fallback_internal(ErServer* server) {
     });
 }
 
+extern "C" {
+
+void* er_server_create(int ssl, void* rust_server) {
+    return new ErServer(ssl != 0, rust_server);
+}
+
+void* er_server_create_ssl(const char* cert_path, const char* key_path, const char* passphrase, void* rust_server) {
+    return new ErServer(true, rust_server, cert_path, key_path, passphrase);
+}
+
+void er_server_destroy(void* server_ptr) {
+    if (server_ptr) {
+        delete static_cast<ErServer*>(server_ptr);
+    }
+}
+
+void er_server_register_route(void* server_ptr, const char* method, const char* path, uint32_t route_id) {
+    if (!server_ptr || !method || !path) return;
+    auto* server = static_cast<ErServer*>(server_ptr);
+    if (!server->app && !server->ssl_app) return;
+
+    std::string method_str(method);
+    for (char &c : method_str) c = (char)toupper((unsigned char)c);
+    std::string path_str(path);
+
+    if (server->ssl && server->ssl_app) {
+        register_route_impl(server->ssl_app, server->rust_server, method_str, path_str, route_id);
+    } else if (server->app) {
+        register_route_impl(server->app, server->rust_server, method_str, path_str, route_id);
+    }
+}
+
+void er_server_register_ws_route(void* server_ptr, const char* path, uint32_t route_id) {
+    if (!server_ptr || !path) return;
+    auto* server = static_cast<ErServer*>(server_ptr);
+    if (!server->app && !server->ssl_app) return;
+
+    std::string path_str(path);
+    if (server->ssl && server->ssl_app) {
+        register_ws_route_impl<true>(server->ssl_app, server->rust_server, path_str, route_id);
+    } else if (server->app) {
+        register_ws_route_impl<false>(server->app, server->rust_server, path_str, route_id);
+    }
+}
+
 bool er_server_listen(void* server_ptr, int port) {
     if (!server_ptr) return false;
     auto* server = static_cast<ErServer*>(server_ptr);
-    if (!server->app) return false;
+    if (!server->app && !server->ssl_app) return false;
 
-    register_fallback_internal(server);
+    if (server->ssl && server->ssl_app) {
+        register_fallback_impl(server->ssl_app, server->rust_server);
+    } else if (server->app) {
+        register_fallback_impl(server->app, server->rust_server);
+    }
 
     void* rust_server = server->rust_server;
     bool success = false;
-    server->app->listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, [&success, server, rust_server, port](auto* socket) {
+    auto listen_cb = [&success, server, rust_server, port](auto* socket) {
         if (socket) {
             server->listen_socket = (us_listen_socket_t*)socket;
             success = true;
@@ -516,14 +585,22 @@ bool er_server_listen(void* server_ptr, int port) {
         } else {
             std::cerr << "[uWebSockets] Failed to listen on port " << port << std::endl;
         }
-    });
+    };
+
+    if (server->ssl && server->ssl_app) {
+        server->ssl_app->listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, listen_cb);
+    } else if (server->app) {
+        server->app->listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, listen_cb);
+    }
     return success;
 }
 
 void er_server_run(void* server_ptr) {
     if (!server_ptr) return;
     auto* server = static_cast<ErServer*>(server_ptr);
-    if (server->app) {
+    if (server->ssl && server->ssl_app) {
+        server->ssl_app->run();
+    } else if (server->app) {
         server->app->run();
     }
 }
@@ -572,61 +649,78 @@ void er_ws_register_route(const char* path) {
 
 void er_ws_send(void* ws, const char* message, size_t message_len, int is_binary) {
     if (!ws || !message) return;
-    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
-    web_socket->send(std::string_view(message, message_len), op, false);
+    dispatch_ws(ws, [&](auto* web_socket) {
+        uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+        web_socket->send(std::string_view(message, message_len), op, false);
+    });
 }
 
 void er_ws_close(void* ws) {
     if (!ws) return;
-    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    web_socket->close();
+    dispatch_ws(ws, [](auto* web_socket) {
+        web_socket->close();
+    });
 }
 
 void er_ws_close_with_code(void* ws, int code, const char* message, size_t message_len) {
     if (!ws) return;
-    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    if (code > 0 || message_len > 0) {
-        web_socket->end(code, std::string_view(message ? message : "", message_len));
-    } else {
-        web_socket->close();
-    }
+    dispatch_ws(ws, [&](auto* web_socket) {
+        if (code > 0 || message_len > 0) {
+            web_socket->end(code, std::string_view(message ? message : "", message_len));
+        } else {
+            web_socket->close();
+        }
+    });
 }
 
 bool er_ws_subscribe(void* ws, const char* topic, size_t topic_len) {
     if (!ws || !topic) return false;
-    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    return web_socket->subscribe(std::string_view(topic, topic_len));
+    return dispatch_ws(ws, [&](auto* web_socket) {
+        return web_socket->subscribe(std::string_view(topic, topic_len));
+    });
 }
 
 bool er_ws_unsubscribe(void* ws, const char* topic, size_t topic_len) {
     if (!ws || !topic) return false;
-    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    return web_socket->unsubscribe(std::string_view(topic, topic_len));
+    return dispatch_ws(ws, [&](auto* web_socket) {
+        return web_socket->unsubscribe(std::string_view(topic, topic_len));
+    });
 }
 
 bool er_ws_is_subscribed(void* ws, const char* topic, size_t topic_len) {
     if (!ws || !topic) return false;
-    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    return web_socket->isSubscribed(std::string_view(topic, topic_len));
+    return dispatch_ws(ws, [&](auto* web_socket) {
+        return web_socket->isSubscribed(std::string_view(topic, topic_len));
+    });
 }
 
 bool er_ws_publish(void* ws, const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
     if (!ws || !topic || !message) return false;
-    auto* web_socket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
-    return web_socket->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+    return dispatch_ws(ws, [&](auto* web_socket) {
+        uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
+        return web_socket->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+    });
 }
 
 bool er_app_publish(const char* topic, size_t topic_len, const char* message, size_t message_len, int is_binary) {
-    if (!g_default_server || !g_default_server->app || !topic || !message) return false;
+    if (!g_default_server || !topic || !message) return false;
     uWS::OpCode op = (is_binary != 0) ? uWS::OpCode::BINARY : uWS::OpCode::TEXT;
-    return g_default_server->app->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+    if (g_default_server->ssl && g_default_server->ssl_app) {
+        return g_default_server->ssl_app->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+    } else if (g_default_server->app) {
+        return g_default_server->app->publish(std::string_view(topic, topic_len), std::string_view(message, message_len), op);
+    }
+    return false;
 }
 
 unsigned int er_app_num_subscribers(const char* topic, size_t topic_len) {
-    if (!g_default_server || !g_default_server->app || !topic) return 0;
-    return g_default_server->app->numSubscribers(std::string_view(topic, topic_len));
+    if (!g_default_server || !topic) return 0;
+    if (g_default_server->ssl && g_default_server->ssl_app) {
+        return g_default_server->ssl_app->numSubscribers(std::string_view(topic, topic_len));
+    } else if (g_default_server->app) {
+        return g_default_server->app->numSubscribers(std::string_view(topic, topic_len));
+    }
+    return 0;
 }
 
 void er_http_register_route(const char* method, const char* path) {
@@ -659,96 +753,93 @@ void er_http_response_release(void* token_ptr) {
 bool er_http_response_end_json(void* token_ptr, const char* json_str, size_t json_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
-    if (token->aborted.load(std::memory_order_acquire)) return false;
     bool expected = false;
     if (!token->responded.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         return false;
     }
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return false;
-    http_res->writeHeader("Content-Type", "application/json");
-    http_res->end(std::string_view(json_str, json_len));
-    return true;
+    return dispatch_response(token_ptr, [&](auto* http_res) {
+        http_res->writeHeader("Content-Type", "application/json");
+        http_res->end(std::string_view(json_str, json_len));
+        return true;
+    });
 }
 
 bool er_http_response_end_html(void* token_ptr, const char* html_str, size_t html_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
-    if (token->aborted.load(std::memory_order_acquire)) return false;
     bool expected = false;
     if (!token->responded.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         return false;
     }
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return false;
-    http_res->writeHeader("Content-Type", "text/html; charset=utf-8");
-    http_res->end(std::string_view(html_str, html_len));
-    return true;
+    return dispatch_response(token_ptr, [&](auto* http_res) {
+        http_res->writeHeader("Content-Type", "text/html; charset=utf-8");
+        http_res->end(std::string_view(html_str, html_len));
+        return true;
+    });
 }
 
 bool er_http_response_write_status(void* token_ptr, const char* status_str, size_t status_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
-    if (token->aborted.load(std::memory_order_acquire)) return false;
     if (token->responded.load(std::memory_order_acquire)) return false;
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return false;
-    http_res->writeStatus(std::string_view(status_str, status_len));
-    return true;
+    return dispatch_response(token_ptr, [&](auto* http_res) {
+        http_res->writeStatus(std::string_view(status_str, status_len));
+        return true;
+    });
 }
 
 bool er_http_response_write_header(void* token_ptr, const char* key_str, size_t key_len, const char* val_str, size_t val_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
-    if (token->aborted.load(std::memory_order_acquire)) return false;
     if (token->responded.load(std::memory_order_acquire)) return false;
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return false;
-    http_res->writeHeader(std::string_view(key_str, key_len), std::string_view(val_str, val_len));
-    return true;
+    return dispatch_response(token_ptr, [&](auto* http_res) {
+        http_res->writeHeader(std::string_view(key_str, key_len), std::string_view(val_str, val_len));
+        return true;
+    });
 }
 
 bool er_http_response_end(void* token_ptr, const char* data_str, size_t data_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
-    if (token->aborted.load(std::memory_order_acquire)) return false;
     bool expected = false;
     if (!token->responded.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         return false;
     }
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return false;
-    http_res->end(std::string_view(data_str, data_len));
-    return true;
+    return dispatch_response(token_ptr, [&](auto* http_res) {
+        http_res->end(std::string_view(data_str, data_len));
+        return true;
+    });
 }
 
 bool er_http_response_write(void* token_ptr, const char* data_str, size_t data_len) {
     if (!token_ptr) return false;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
-    if (token->aborted.load(std::memory_order_acquire)) return false;
     if (token->responded.load(std::memory_order_acquire)) return false;
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return false;
-    return http_res->write(std::string_view(data_str, data_len));
+    return dispatch_response(token_ptr, [&](auto* http_res) {
+        return http_res->write(std::string_view(data_str, data_len));
+    });
 }
-
-struct AsyncSocketAccessor : public uWS::AsyncSocket<false> {
-    using uWS::AsyncSocket<false>::getBufferedAmount;
-};
 
 size_t er_http_response_get_buffered_amount(void* token_ptr) {
     if (!token_ptr) return 0;
     auto* token = static_cast<HttpResponseToken*>(token_ptr);
     if (token->aborted.load(std::memory_order_acquire)) return 0;
-    auto* http_res = token->res.load(std::memory_order_acquire);
-    if (!http_res) return 0;
-    return static_cast<AsyncSocketAccessor*>(static_cast<void*>(http_res))->getBufferedAmount();
+    if (token->is_ssl) {
+        auto* http_res = static_cast<uWS::HttpResponse<true>*>(token->res);
+        if (!http_res) return 0;
+        return static_cast<AsyncSocketAccessor<true>*>(static_cast<void*>(http_res))->getBufferedAmount();
+    } else {
+        auto* http_res = static_cast<uWS::HttpResponse<false>*>(token->res);
+        if (!http_res) return 0;
+        return static_cast<AsyncSocketAccessor<false>*>(static_cast<void*>(http_res))->getBufferedAmount();
+    }
 }
 
 size_t er_ws_get_buffered_amount(void* ws) {
     if (!ws) return 0;
-    auto* websocket = static_cast<uWS::WebSocket<false, true, PerSocketData>*>(ws);
-    return websocket->getBufferedAmount();
+    return dispatch_ws(ws, [](auto* web_socket) {
+        return web_socket->getBufferedAmount();
+    });
 }
 
 void er_http_create_timer(int ms, void (*cb)(void*)) {

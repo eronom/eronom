@@ -24,10 +24,68 @@
     ],
     "description": "Reactive state variable"
   },
+  "Exported Component Function": {
+    "prefix": "exportfn",
+    "body": [
+      "export function ${1:ComponentName}(${2:props}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Exported sub-component with implicit markup return"
+  },
+  "Component Function": {
+    "prefix": "fn",
+    "body": [
+      "function ${1:ComponentName}(${2:props}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Sub-component function"
+  },
+  "At-If Directive": {
+    "prefix": "@if",
+    "body": [
+      "@if ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Directive conditional block (@if)"
+  },
+  "At-If-Else Directive": {
+    "prefix": "@ifelse",
+    "body": [
+      "@if ${1:condition} {",
+      "\t$2",
+      "} @else {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Directive conditional block with else (@if / @else)"
+  },
+  "At-For Directive": {
+    "prefix": "@for",
+    "body": [
+      "@for ${1:item} in ${2:list} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Directive loop block (@for)"
+  },
+  "At-For-Empty Directive": {
+    "prefix": "@forempty",
+    "body": [
+      "@for ${1:item} in ${2:list} {",
+      "\t$3",
+      "} @empty {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Directive loop block with empty fallback (@for / @empty)"
+  },
   "If Block (Markup)": {
     "prefix": "if",
     "body": [
-      "if ${1:condition} {",
+      "@if ${1:condition} {",
       "\t$0",
       "}"
     ],
@@ -36,9 +94,9 @@
   "If Else Block (Markup)": {
     "prefix": "ifelse",
     "body": [
-      "if ${1:condition} {",
+      "@if ${1:condition} {",
       "\t$2",
-      "} else {",
+      "} @else {",
       "\t$0",
       "}"
     ],
@@ -47,7 +105,7 @@
   "For Loop (Markup)": {
     "prefix": "for",
     "body": [
-      "for ${1:item} in ${2:list} {",
+      "@for ${1:item} in ${2:list} {",
       "\t$0",
       "}"
     ],
@@ -56,7 +114,7 @@
   "For Loop Index (Markup)": {
     "prefix": "fori",
     "body": [
-      "for ${1:item}, ${2:i} in ${3:list} {",
+      "@for ${1:item}, ${2:i} in ${3:list} {",
       "\t$0",
       "}"
     ],

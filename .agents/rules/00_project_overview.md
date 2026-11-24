@@ -17,7 +17,7 @@ Eronom (⚡) is a high-performance, JIT & AOT-compiled scripting language runtim
 - **Language Stack**: Rust (VM runtime, bytecode compiler, CLI, ERM compiler), C++ (uWebSockets FFI), Eronom script (`.er`), ERM templates (`.erm`), JavaScript (client runtime).
 - **Execution Model**: Single-threaded, blocking execution loop per script runtime. No heavy async runtimes (e.g., no `tokio`). Synchronous I/O or single-threaded event loop model (`Io.setMode("evented")`).
 - **Memory Management**: Custom Mark-and-Sweep Garbage Collector (`src/vm/gc.rs`) for heap-allocated VM `Value`s (Objects, Arrays, Strings, Closures, Structs).
-- **HTTP Client**: Synchronous `ureq` crate for outbound HTTP requests in VM native bindings.
+- **HTTP Client**: Native synchronous HTTP/HTTPS client powered by BoringSSL TLS (`crates/eronom-net/cpp/er_fetch.cpp`).
 
 ## 3. Directory & Subsystem Overview
 - **`src/frontend/`**: Lexer (`lexer.rs`), Recursive Descent Parser (`parser.rs`), and AST nodes (`ast.rs`).

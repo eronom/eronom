@@ -1,14 +1,446 @@
 use std::sync::OnceLock;
 
 pub fn is_function_template(content: &str) -> bool {
-    if content.contains("<script") || content.contains("<SCRIPT") {
+    if has_real_script_tag(content) {
         return false;
     }
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+            continue;
+        }
+        if trimmed.starts_with("import ") {
+            continue;
+        }
+        if trimmed.starts_with("export default function")
+            || trimmed.starts_with("export default fn")
+            || trimmed.starts_with("export function")
+            || trimmed.starts_with("export fn")
+        {
+            return true;
+        }
+        return false;
+    }
+    false
+}
+
+pub fn has_real_script_tag(content: &str) -> bool {
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if in_line_comment {
+            if chars[i] == '\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                in_block_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+        if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            in_block_comment = true;
+            i += 2;
+            continue;
+        }
+        if chars[i] == '<' && i + 6 < chars.len() {
+            let slice: String = chars[i..i + 7].iter().collect();
+            let slice_lower = slice.to_lowercase();
+            if slice_lower == "<script" {
+                if i + 7 == chars.len() || chars[i + 7] == '>' || chars[i + 7].is_whitespace() {
+                    return true;
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+pub fn is_bare_script_template(_content: &str) -> bool {
+    false
+}
+
+pub fn preprocess_bare_script_template(content: &str) -> anyhow::Result<String> {
+    let mut script_lines = Vec::new();
+    let mut markup_lines = Vec::new();
+    let mut script_mode = true;
+    let mut paren_depth = 0;
+    let mut bracket_depth = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if script_mode {
+                script_lines.push(line);
+            } else {
+                markup_lines.push(line);
+            }
+            continue;
+        }
+
+        if script_mode {
+            let is_expression_markup = trimmed.starts_with('{') && (trimmed.contains(".map(") || trimmed.contains('<'));
+            let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+                super::utils::starts_with_html_tag(trimmed)
+                || trimmed.starts_with("@for")
+                || trimmed.starts_with("@if")
+                || is_expression_markup
+            );
+            if starts_with_markup {
+                script_mode = false;
+            } else {
+                let mut in_str = false;
+                let mut str_char = ' ';
+                let mut in_line_comm = false;
+                let chars: Vec<char> = line.chars().collect();
+                let mut ci = 0;
+                while ci < chars.len() {
+                    let ch = chars[ci];
+                    if in_line_comm {
+                        break;
+                    }
+                    if in_str {
+                        if ch == str_char && (ci == 0 || chars[ci - 1] != '\\') {
+                            in_str = false;
+                        }
+                        ci += 1;
+                        continue;
+                    }
+                    if (ch == '"' || ch == '\'' || ch == '`') && (ci == 0 || chars[ci - 1] != '\\') {
+                        in_str = true;
+                        str_char = ch;
+                        ci += 1;
+                        continue;
+                    }
+                    if ch == '/' && ci + 1 < chars.len() && chars[ci + 1] == '/' {
+                        in_line_comm = true;
+                        ci += 2;
+                        continue;
+                    }
+                    if ch == '(' {
+                        paren_depth += 1;
+                    } else if ch == ')' && paren_depth > 0 {
+                        paren_depth -= 1;
+                    } else if ch == '[' {
+                        bracket_depth += 1;
+                    } else if ch == ']' && bracket_depth > 0 {
+                        bracket_depth -= 1;
+                    }
+                    ci += 1;
+                }
+            }
+        }
+
+        if script_mode {
+            script_lines.push(line);
+        } else {
+            if trimmed.starts_with("//") || (trimmed.starts_with("/*") && trimmed.ends_with("*/")) {
+                continue;
+            }
+            markup_lines.push(line);
+        }
+    }
+
+    let mut result = String::new();
+    result.push_str("<script>\n");
+    for s in script_lines {
+        result.push_str(s);
+        result.push('\n');
+    }
+    result.push_str("</script>\n");
+    for m in markup_lines {
+        result.push_str(m);
+        result.push('\n');
+    }
+    Ok(result)
+}
+
+pub fn desugar_expression_mapping(content: &str) -> String {
+    let ranges = super::template_js::ScriptStyleRanges::new(content);
+    let mut result = String::new();
+    let mut i = 0;
+    while i < content.len() {
+        if let Some(skip_to) = ranges.get_skip_pos(i) {
+            result.push_str(&content[i..skip_to]);
+            i = skip_to;
+            continue;
+        }
+
+        if content[i..].starts_with('{') {
+            let mut j = i + 1;
+            while j < content.len() && content[j..].chars().next().unwrap().is_whitespace() {
+                j += 1;
+            }
+            let after_ws = &content[j..];
+            if let Some(map_pos) = after_ws.find(".map(") {
+                let collection = after_ws[..map_pos].trim();
+                if !collection.is_empty() && collection.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.') {
+                    let after_map = j + map_pos + 5;
+                    if let Some(arrow_pos) = content[after_map..].find("=>") {
+                        let params_raw = content[after_map..after_map + arrow_pos].trim();
+                        let params = if params_raw.starts_with('(') && params_raw.ends_with(')') {
+                            params_raw[1..params_raw.len() - 1].trim()
+                        } else {
+                            params_raw
+                        };
+
+                        let after_arrow = after_map + arrow_pos + 2;
+                        if let Some(close_idx) = super::utils::find_matching_close_brace(&content[i + 1..]) {
+                            let total_close = i + 1 + close_idx;
+                            let mut body = content[after_arrow..total_close].trim();
+                            // Strip closing ')' of .map(...)
+                            if body.ends_with(')') {
+                                body = body[..body.len() - 1].trim();
+                            }
+                            // Strip outer parentheses if body was wrapped in (...)
+                            if body.starts_with('(') && body.ends_with(')') {
+                                body = body[1..body.len() - 1].trim();
+                            }
+                            // If wrapped in { return ... }, strip that
+                            if body.starts_with('{') && body.ends_with('}') {
+                                let inner = body[1..body.len() - 1].trim();
+                                if inner.starts_with("return ") {
+                                    body = inner["return ".len()..].trim();
+                                    if body.ends_with(';') {
+                                        body = body[..body.len() - 1].trim();
+                                    }
+                                }
+                            }
+                            if body.starts_with('(') && body.ends_with(')') {
+                                body = body[1..body.len() - 1].trim();
+                            }
+
+                            if body.starts_with('<') {
+                                result.push_str(&format!("@for {} in {} {{\n{}\n}}", params, collection, body));
+                                i = total_close + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let c = content[i..].chars().next().unwrap();
+        result.push(c);
+        i += c.len_utf8();
+    }
+    result
+}
+
+pub fn extract_exported_function_components(content: &str) -> String {
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
+        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
     });
-    re.is_match(content)
+
+    let ranges = super::template_js::ScriptStyleRanges::new(content);
+    let mut fns_to_extract = Vec::new();
+
+    for caps in re.captures_iter(content) {
+        let m = caps.get(0).unwrap();
+        let start = m.start();
+        let mut inside_script = false;
+        for r in &ranges.ranges {
+            if r.contains(&start) {
+                inside_script = true;
+                break;
+            }
+        }
+        if !inside_script {
+            let fn_name = caps.get(1).unwrap().as_str().to_string();
+            if !fn_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                continue;
+            }
+            let params = caps.get(2).unwrap().as_str().to_string();
+            let body_start = m.end();
+            if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
+                let body = content[body_start..body_start + cb].to_string();
+                if !body.contains('<') && !body.contains('@') {
+                    continue;
+                }
+                if body.contains("return `") {
+                    continue;
+                }
+                let total_end = body_start + cb + 1;
+                fns_to_extract.push((start, total_end, fn_name, params, body));
+            }
+        }
+    }
+
+    if fns_to_extract.is_empty() {
+        return content.to_string();
+    }
+
+    let mut generated_fns = Vec::new();
+    let mut result = content.to_string();
+
+    for (start, end, fn_name, params_str, body) in fns_to_extract.into_iter().rev() {
+        let trimmed_params = params_str.trim();
+        let clean_params = if trimmed_params.starts_with('{') {
+            if let Some(cb) = super::utils::find_matching_close_brace(&trimmed_params[1..]) {
+                trimmed_params[..=cb + 1].trim()
+            } else {
+                trimmed_params
+            }
+        } else if let Some(colon_pos) = trimmed_params.find(':') {
+            trimmed_params[..colon_pos].trim()
+        } else {
+            trimmed_params
+        };
+
+        let mut script_lines = Vec::new();
+        let mut markup_lines = Vec::new();
+        let mut script_mode = true;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
+
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if script_mode {
+                let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+                    super::utils::starts_with_html_tag(trimmed)
+                    || trimmed.starts_with('@')
+                    || (trimmed.starts_with('{') && !trimmed.starts_with("{//") && !trimmed.starts_with("{/*"))
+                );
+                if starts_with_markup {
+                    script_mode = false;
+                }
+            }
+            if script_mode {
+                for c in line.chars() {
+                    if c == '(' { paren_depth += 1; }
+                    else if c == ')' && paren_depth > 0 { paren_depth -= 1; }
+                    else if c == '[' { bracket_depth += 1; }
+                    else if c == ']' && bracket_depth > 0 { bracket_depth -= 1; }
+                }
+                script_lines.push(line);
+            } else {
+                let trimmed = line.trim();
+                let cleaned_line = if trimmed.starts_with("return ") {
+                    trimmed["return ".len()..].trim_start_matches('(').trim_end_matches(';').trim_end_matches(')').to_string()
+                } else {
+                    line.to_string()
+                };
+                markup_lines.push(cleaned_line);
+            }
+        }
+
+        let mut fn_code = format!("export function {}(props) {{\n", fn_name);
+        if !clean_params.is_empty() {
+            if clean_params.starts_with('{') {
+                fn_code.push_str(&format!("  const {} = props || {{}};\n", clean_params));
+            } else if clean_params != "props" {
+                fn_code.push_str(&format!("  const {} = props;\n", clean_params));
+            }
+        }
+        for s in script_lines {
+            let s_trim = s.trim();
+            if s_trim.starts_with("const props =") || s_trim.starts_with("let props =") || s_trim.starts_with("var props =") {
+                continue;
+            }
+            fn_code.push_str("  ");
+            fn_code.push_str(s_trim);
+            fn_code.push('\n');
+        }
+        let markup_joined = markup_lines.join("\n");
+        fn_code.push_str(&format!("  return `\n{}\n`;\n", markup_joined));
+        fn_code.push_str("}\n");
+
+        generated_fns.push(fn_code);
+        result.replace_range(start..end, "");
+    }
+
+    if !generated_fns.is_empty() {
+        let fns_block = generated_fns.join("\n");
+        let script_ranges = super::template_js::find_real_tag_ranges(&result, "script");
+        if let Some(first_range) = script_ranges.first() {
+            let start = first_range.start;
+            if let Some(tag_end) = result[start..].find('>') {
+                let insert_at = start + tag_end + 1;
+                result.insert_str(insert_at, &format!("\n{}\n", fns_block));
+            } else {
+                result.push_str(&format!("<script>\n{}\n</script>\n", fns_block));
+            }
+        } else {
+            result.insert_str(0, &format!("<script>\n{}\n</script>\n", fns_block));
+        }
+    }
+
+    result
+}
+
+pub fn strip_template_comments(content: &str) -> String {
+    let ranges = super::template_js::ScriptStyleRanges::new(content);
+    let mut result = String::new();
+    let mut offset = 0;
+    let mut in_block_comment = false;
+
+    for line in content.lines() {
+        let line_len = line.len();
+        let trimmed = line.trim();
+        let is_in_script_or_style = ranges.ranges.iter().any(|r| r.contains(&offset));
+
+        if !is_in_script_or_style {
+            if in_block_comment {
+                if trimmed.ends_with("*/") || trimmed.contains("*/") {
+                    in_block_comment = false;
+                }
+                offset += line_len + 1;
+                continue;
+            }
+
+            if trimmed.starts_with("/*") {
+                if !trimmed.ends_with("*/") {
+                    in_block_comment = true;
+                }
+                offset += line_len + 1;
+                continue;
+            }
+
+            if trimmed.starts_with("//")
+                || trimmed.starts_with("{//")
+                || (trimmed.starts_with("{/*") && trimmed.ends_with("*/}"))
+            {
+                offset += line_len + 1;
+                continue;
+            }
+        }
+
+        result.push_str(line);
+        result.push('\n');
+        offset += line_len + 1;
+    }
+
+    result
+}
+
+pub fn preprocess_erm_template(content: &str) -> anyhow::Result<String> {
+    let stripped = strip_template_comments(content);
+    let intermediate = if is_function_template(&stripped) {
+        preprocess_function_template(&stripped)?
+    } else {
+        stripped
+    };
+    let with_extracted_fns = extract_exported_function_components(&intermediate);
+    Ok(desugar_expression_mapping(&with_extracted_fns))
 }
 
 pub fn inject_line_attr(markup: &str, line_num: usize) -> String {
@@ -34,7 +466,7 @@ pub fn inject_line_attr(markup: &str, line_num: usize) -> String {
 pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
     static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)\s*\{").unwrap()
+        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
     });
 
     if let Some(captures) = re.captures(content) {
@@ -137,6 +569,8 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
         let mut script_lines = Vec::new();
         let mut markup_lines = Vec::new();
         let mut script_mode = true;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
 
         for (line_idx, line) in body_str.lines().enumerate() {
             let line_num = body_start_line + line_idx;
@@ -151,16 +585,24 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
             }
 
             if script_mode {
-                let starts_with_markup = trimmed.starts_with('<')
-                    || trimmed.starts_with("if ")
-                    || trimmed.starts_with("for ")
-                    || trimmed.starts_with("return");
+                let starts_with_markup = paren_depth == 0 && bracket_depth == 0 && (
+                    super::utils::starts_with_html_tag(trimmed)
+                    || trimmed.starts_with("@if")
+                    || trimmed.starts_with("@for")
+                    || trimmed.starts_with("return")
+                );
                 if starts_with_markup {
                     script_mode = false;
                 }
             }
 
             if script_mode {
+                for c in line.chars() {
+                    if c == '(' { paren_depth += 1; }
+                    else if c == ')' && paren_depth > 0 { paren_depth -= 1; }
+                    else if c == '[' { bracket_depth += 1; }
+                    else if c == ']' && bracket_depth > 0 { bracket_depth -= 1; }
+                }
                 script_lines.push((line.to_string(), line_num));
             } else {
                 markup_lines.push((line.to_string(), line_num));
@@ -190,8 +632,20 @@ pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
             }
         }
 
-        let param_binding = if !params_str.trim().is_empty() {
-            format!("let {} = useParams();\n", params_str.trim())
+        let trimmed_params = params_str.trim();
+        let clean_params = if trimmed_params.starts_with('{') {
+            if let Some(cb) = super::utils::find_matching_close_brace(&trimmed_params[1..]) {
+                trimmed_params[..=cb + 1].trim()
+            } else {
+                trimmed_params
+            }
+        } else if let Some(colon_pos) = trimmed_params.find(':') {
+            trimmed_params[..colon_pos].trim()
+        } else {
+            trimmed_params
+        };
+        let param_binding = if !clean_params.is_empty() {
+            format!("let {} = useParams();\n", clean_params)
         } else {
             "".to_string()
         };

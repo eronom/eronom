@@ -1,6 +1,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-pub use eronom_core::{alloc, bytecode, frame, gc, hooks, shape, value};
+pub use eronom_core::{alloc, bytecode, frame, gc, hooks, json, shape, value};
+pub use eronom_core::json::{json_parse, json_stringify, escape_json_string};
 pub use eronom_frontend as frontend;
 pub use eronom_net as net;
 
@@ -17,7 +18,8 @@ pub mod jit;
 
 // Module alias for backward compatibility with internal crate::vm::* imports
 pub mod vm {
-    pub use eronom_core::{alloc, bytecode, frame, gc, hooks, shape, value};
+    pub use eronom_core::{alloc, bytecode, frame, gc, hooks, json, shape, value};
+    pub use eronom_core::json::{json_parse, json_stringify, escape_json_string};
     pub use crate::compiler;
     pub use crate::execute;
     pub use crate::er_http;

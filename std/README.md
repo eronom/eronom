@@ -20,7 +20,6 @@ The Eronom standard library provides built-in modules for HTTP networking, file 
 | **Environment**| `"std/env"` | System environment variable access | `get`, `set`, `has` |
 | **JSON** | `"std/json"` | Native JSON serialization and parsing | `parse`, `stringify` |
 | **Testing** | `"std/test"` | Built-in test runner and assertion assertions | `describe`, `it`, `expect`, `assert` |
-| **ERM** | `"std/erm"` | Low-level reactivity primitives | `init`, `get`, `set`, `update` |
 
 ---
 

@@ -272,6 +272,7 @@ pub fn gc_free_all() {
             s_ref.vector_pool.clear();
             s_ref.map_pool.clear();
             s_ref.alloc_count = 0;
+            s_ref.alloc_threshold = 512;
             s_ref.live_count = 0;
             s_ref.phase = GcPhase::Pause;
             s_ref.gray_stack.clear();

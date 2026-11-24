@@ -110,6 +110,57 @@ describe("Eronom Extension Configuration Tests", () => {
       "entity.name.tag.html"
     );
   });
+
+  test("ERM grammar defines comments supporting line comments and block comments", () => {
+    const ermGrammarPath = path.join(extensionDir, "syntaxes", "erm.tmLanguage.json");
+    const ermGrammar = JSON.parse(fs.readFileSync(ermGrammarPath, "utf8"));
+    const comments = ermGrammar.repository["comments"];
+    assert.ok(comments, "comments pattern repository should exist");
+    const patterns = comments.patterns;
+    assert.ok(Array.isArray(patterns), "comments should define patterns array");
+    const lineComment = patterns.find((p: any) => p.name === "comment.line.double-slash.erm");
+    assert.ok(lineComment, "line comment pattern comment.line.double-slash.erm should exist");
+    const lineCommentRe = new RegExp(lineComment.begin);
+    assert.ok(lineCommentRe.test("// 7. Exported Sub-component with implicit markup return"));
+    assert.ok(lineCommentRe.test("    // 6. Sub-component usage"));
+  });
+
+  test("ERM grammar defines component-function highlighting export function fnName(){}", () => {
+    const ermGrammarPath = path.join(extensionDir, "syntaxes", "erm.tmLanguage.json");
+    const ermGrammar = JSON.parse(fs.readFileSync(ermGrammarPath, "utf8"));
+    const compFn = ermGrammar.repository["component-function"];
+    assert.ok(compFn, "component-function repository should exist");
+    assert.ok(
+      ermGrammar.patterns.some((p: any) => p.include === "#component-function"),
+      "patterns should include #component-function"
+    );
+    const beginRe = new RegExp(compFn.begin, "m");
+    assert.ok(beginRe.test("export function CardBadge() {"));
+    assert.ok(beginRe.test("export function fnName(){}"));
+    assert.ok(beginRe.test("function CardBadge() {"));
+    assert.ok(beginRe.test("export default function Component() {"));
+    assert.ok(beginRe.test("export fn CardBadge() {"));
+  });
+
+  test("ERM grammar control-blocks match directives like @if, @else, @for, @empty", () => {
+    const ermGrammarPath = path.join(extensionDir, "syntaxes", "erm.tmLanguage.json");
+    const ermGrammar = JSON.parse(fs.readFileSync(ermGrammarPath, "utf8"));
+    const controlBlocks = ermGrammar.repository["control-blocks"];
+    assert.ok(controlBlocks, "control-blocks repository should exist");
+    const directivePattern = controlBlocks.patterns.find((p: any) => p.match && p.match.includes("@"));
+    assert.ok(directivePattern, "directive pattern with @ should exist");
+    const re = new RegExp(directivePattern.match);
+    assert.ok(re.test("@if count > 5"));
+    assert.ok(re.test("@else"));
+    assert.ok(re.test("@for todo in todos"));
+    assert.ok(re.test("@empty"));
+  });
+
+  test("ERM language configuration supports lineComment //", () => {
+    const configPath = path.join(extensionDir, "erm-language-configuration.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    assert.strictEqual(config.comments?.lineComment, "//");
+  });
 });
 
 describe("ERM & EDS Auto-Suggestion Provider Tests", () => {

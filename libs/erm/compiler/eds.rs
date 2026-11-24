@@ -225,11 +225,25 @@ pub fn validate_tag(
         let tag_name_ptr = crate::vm::gc::get_or_create_string(tag_name);
         let tag_name_val = crate::vm::value::Value::string(tag_name_ptr);
 
-        let json_map: serde_json::Map<String, serde_json::Value> = attrs
-            .iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect();
-        let attrs_val = crate::vm::gc::json_to_value(serde_json::Value::Object(json_map));
+        let mut keys = Vec::with_capacity(attrs.len());
+        let mut values = Vec::with_capacity(attrs.len());
+        for (k, v) in attrs {
+            let key_ptr = crate::vm::gc::get_or_create_string(k);
+            let val_ptr = crate::vm::gc::gc_alloc_string(v);
+            keys.push(crate::vm::value::Value::string(key_ptr));
+            values.push(crate::vm::value::Value::string(val_ptr));
+        }
+        let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
+        let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
+        fields.resize(keys.len(), crate::vm::value::Value::null());
+        for i in 0..keys.len() {
+            fields[offsets[i]] = values[i];
+        }
+        let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Struct(crate::vm::gc::GcStruct {
+            descriptor: desc,
+            fields,
+        }));
+        let attrs_val = crate::vm::value::Value::object(ptr);
 
         let file_ptr = crate::vm::gc::get_or_create_string(file);
         let file_val = crate::vm::value::Value::string(file_ptr);
@@ -262,11 +276,25 @@ pub fn transform_primitive(
         let tag_name_ptr = crate::vm::gc::get_or_create_string(tag_name);
         let tag_name_val = crate::vm::value::Value::string(tag_name_ptr);
 
-        let json_map: serde_json::Map<String, serde_json::Value> = attrs
-            .iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect();
-        let attrs_val = crate::vm::gc::json_to_value(serde_json::Value::Object(json_map));
+        let mut keys = Vec::with_capacity(attrs.len());
+        let mut values = Vec::with_capacity(attrs.len());
+        for (k, v) in attrs {
+            let key_ptr = crate::vm::gc::get_or_create_string(k);
+            let val_ptr = crate::vm::gc::gc_alloc_string(v);
+            keys.push(crate::vm::value::Value::string(key_ptr));
+            values.push(crate::vm::value::Value::string(val_ptr));
+        }
+        let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
+        let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
+        fields.resize(keys.len(), crate::vm::value::Value::null());
+        for i in 0..keys.len() {
+            fields[offsets[i]] = values[i];
+        }
+        let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Struct(crate::vm::gc::GcStruct {
+            descriptor: desc,
+            fields,
+        }));
+        let attrs_val = crate::vm::value::Value::object(ptr);
 
         let res = engine
             .vm

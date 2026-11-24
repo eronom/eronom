@@ -4,6 +4,47 @@ use std::time::SystemTime;
 use crate::vm::execute::VM;
 use super::types::*;
 
+pub fn toml_to_value(val: toml::Value) -> crate::vm::value::Value {
+    match val {
+        toml::Value::String(s) => {
+            let ptr = crate::vm::gc::gc_alloc_string(&s);
+            crate::vm::value::Value::string(ptr)
+        }
+        toml::Value::Integer(i) => crate::vm::value::Value::number(i as f64),
+        toml::Value::Float(f) => crate::vm::value::Value::number(f),
+        toml::Value::Boolean(b) => crate::vm::value::Value::boolean(b),
+        toml::Value::Datetime(d) => {
+            let ptr = crate::vm::gc::gc_alloc_string(&d.to_string());
+            crate::vm::value::Value::string(ptr)
+        }
+        toml::Value::Array(arr) => {
+            let elements: Vec<crate::vm::value::Value> = arr.into_iter().map(toml_to_value).collect();
+            let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Array(elements));
+            crate::vm::value::Value::array(ptr)
+        }
+        toml::Value::Table(tbl) => {
+            let mut keys = Vec::with_capacity(tbl.len());
+            let mut values = Vec::with_capacity(tbl.len());
+            for (k, v) in tbl {
+                let key_ptr = crate::vm::gc::intern_string(&k);
+                keys.push(crate::vm::value::Value::string(key_ptr));
+                values.push(toml_to_value(v));
+            }
+            let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
+            let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
+            fields.resize(keys.len(), crate::vm::value::Value::null());
+            for i in 0..keys.len() {
+                fields[offsets[i]] = values[i];
+            }
+            let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Struct(crate::vm::gc::GcStruct {
+                descriptor: desc,
+                fields,
+            }));
+            crate::vm::value::Value::object(ptr)
+        }
+    }
+}
+
 pub fn set_target_script_path(path: &str) {
     TARGET_SCRIPT_PATH.with(|p| {
         *p.borrow_mut() = Some(path.to_string());
@@ -135,10 +176,8 @@ pub fn check_and_reload_script_if_needed(vm: &mut VM) {
         if toml_path.exists() {
             if let Ok(toml_content) = fs::read_to_string(&toml_path) {
                 if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    if let Ok(json_val) = serde_json::to_value(toml_val) {
-                        let config_val = crate::vm::gc::json_to_value(json_val);
-                        vm.register_global("config", config_val);
-                    }
+                    let config_val = toml_to_value(toml_val);
+                    vm.register_global("config", config_val);
                 }
             }
         }

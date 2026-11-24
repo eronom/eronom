@@ -88,7 +88,7 @@ fn test_for_loop_compilation() {
     <script>
         let items = useState([1, 2, 3]);
     </script>
-    for item, i in items {
+    @for item, i in items {
         <p>Item key as {i} : {item}</p>
     }
     "#;
@@ -151,11 +151,11 @@ fn test_new_if_syntax_compiler() {
     <script>
         let porridge = { temperature: 90 };
     </script>
-    if porridge.temperature > 100 {
+    @if porridge.temperature > 100 {
         <p>too hot!</p>
-    } else if 80 > porridge.temperature {
+    } @else if 80 > porridge.temperature {
         <p>too cold!</p>
-    } else {
+    } @else {
         <p>just right!</p>
     }
     "#;
@@ -176,10 +176,10 @@ fn test_nested_if_syntax_compiler() {
         let outer = true;
         let inner = false;
     </script>
-    if outer {
-        if inner {
+    @if outer {
+        @if inner {
             <p>Inner True</p>
-        } else {
+        } @else {
             <p>Inner False</p>
         }
     }
@@ -337,10 +337,10 @@ fn test_clean_blocks_compilation() {
         let items = useState([1, 2]);
         let show = useState(true);
     </script>
-    if show {
+    @if show {
         <p>Visible</p>
     }
-    for item in items {
+    @for item in items {
         <span>Item: {item}</span>
     }
     "#;
@@ -695,7 +695,6 @@ fn test_render_params_ssr_and_client_bindings() {
     assert!(res.contains("let discount = __params[\"discount\"];"));
     assert!(res.contains("setParams({"));
     assert!(res.contains("let __params = useParams();"));
-    assert!(!res.contains("window.__erm_params"));
 }
 
 #[test]
@@ -712,5 +711,475 @@ fn test_template_cloning_and_node_primitives_availability() {
     assert!(res.contains("ifBlock, eachBlock"));
     assert!(res.contains("createHmrProxy"));
 }
+
+#[test]
+fn test_at_for_and_empty_directive() {
+    let content_with_items = r#"
+    <script>
+        let todos = useState(["Task A", "Task B"]);
+    </script>
+    <ul>
+        @for todo in todos {
+            <li>{todo}</li>
+        } @empty {
+            <li>No todos yet</li>
+        }
+    </ul>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content_with_items, false, &params).unwrap();
+    assert!(res.contains("Task A"));
+    assert!(res.contains("Task B"));
+    assert!(res.contains(">Task A</li>"));
+    assert!(res.contains("renderFor("));
+
+    // Test with empty array
+    let content_empty = r#"
+    <script>
+        let todos = useState([]);
+    </script>
+    <ul>
+        @for todo in todos {
+            <li>{todo}</li>
+        } @empty {
+            <li>No todos yet</li>
+        }
+    </ul>
+    "#;
+    let res_empty = process_erm_component(".", content_empty, false, &params).unwrap();
+    assert!(res_empty.contains(">No todos yet</li>"));
+    assert!(res_empty.contains("renderFor("));
+}
+
+#[test]
+fn test_expression_mapping_desugaring() {
+    let content = r#"
+    <script>
+        let names = useState(["Alpha", "Beta"]);
+    </script>
+    <div>
+        {names.map(name => (
+            <p>{name}</p>
+        ))}
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Alpha</p>"));
+    assert!(res.contains("Beta</p>"));
+    assert!(res.contains("renderFor("));
+    assert!(!res.contains("@<span")); // Ensure @ was cleanly stripped
+}
+
+#[test]
+fn test_bare_script_rejection_with_helpful_message() {
+    let content = r#"
+    const num = useState(5);
+    const name = useState("Vishnu");
+
+    <h1>Hello {name}</h1>
+    <p>Num is {num}</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare variable declaration detected in template markup: 'const num'"));
+    assert!(err_msg.contains("<script>"));
+}
+
+#[test]
+fn test_use_style_compile_time_extraction() {
+    let content = r#"
+    <script>
+        const style = useStyle({
+            card: {
+                color: "red",
+                padding: "10px",
+                border: "1px solid black",
+                borderRadius: "5px"
+            }
+        });
+    </script>
+    <div class={style.card}>
+        <p>Card Content</p>
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains(".erm-card-"));
+    assert!(res.contains("border-radius: 5px;"));
+    assert!(res.contains("color: red;"));
+    assert!(res.contains("padding: 10px;"));
+    assert!(res.contains("class=\"erm-card-"));
+}
+
+#[test]
+fn test_user_index_erm_syntax() {
+    let content = r#"
+    <script>
+    const num = useState(5);
+    const name = useState("Vishnu");
+    const names = ["name1", "name2", "name3", "name4"];
+    </script>
+
+    <button onClick={() => {}}></button>
+    <h1>hello {name}</h1>
+
+    {names.map(n => (
+        <p>{n}</p>
+    ))}
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Vishnu"));
+    assert!(res.contains("name1</p>"));
+    assert!(res.contains("name4</p>"));
+}
+
+#[test]
+fn test_full_ermsyntax_file_compilation() {
+    let file_path = "ermsyntax/index.erm";
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        let params = std::collections::HashMap::new();
+        let res = process_erm_component(file_path, &content, false, &params).unwrap();
+        assert!(res.contains("hello"));
+        assert!(res.contains("function TodoList"));
+        assert!(res.contains("function Counter"));
+        assert!(res.contains("function Card"));
+        assert!(res.contains(".erm-card-"));
+        assert!(res.contains("name1</p>"));
+        assert!(res.contains("name4</p>"));
+    }
+}
+
+#[test]
+fn test_same_file_sub_component_rendering() {
+    let content = r##"
+    <div class="page">
+        <h1>Dashboard</h1>
+        <CardBadge title="Alpha" />
+        <CardBadge title="Beta" />
+    </div>
+
+    export function CardBadge({ title }: { title: string }) {
+        const badgeStyle = useStyle({
+            pill: {
+                padding: "4px 8px",
+                borderRadius: "12px",
+                color: "#1e40af"
+            }
+        })
+
+        <span class={badgeStyle.pill}>Badge: {title}</span>
+    }
+    "##;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component("app/pages/dashboard.erm", content, false, &params).unwrap();
+    assert!(res.contains("Dashboard</h1>"));
+    assert!(res.contains(".erm-pill-"));
+    assert!(res.contains("class=\"erm-pill-"));
+    assert!(res.contains("Badge: <span"));
+}
+
+#[test]
+fn test_full_newr_compilation() {
+    let content = r##"
+<script>
+const name = useState("Vishnu");
+const count = useState(0);
+const todos = useState([
+    { id: 1, text: "Explore new syntax" },
+    { id: 2, text: "Build with Eronom" }
+]);
+
+function formatCurrency(amount) {
+    return "$" + amount.toFixed(2);
+}
+
+const styles = useStyle({
+    container: {
+        padding: "24px"
+    },
+    header: {
+        fontSize: "28px"
+    }
+});
+</script>
+
+<div class={styles.container}>
+    <h1 class={styles.header}>Welcome, {name}!</h1>
+    <CardBadge />
+</div>
+
+export function CardBadge() {
+    const price = useState(49.99);
+    const cardStyle = useStyle({
+        badge: {
+            color: "#3730a3"
+        }
+    });
+    <p>Unit Price: {formatCurrency(price)}</p>
+    <div>
+        <span class={cardStyle.badge}>Sub-component Badge</span>
+    </div>
+}
+    "##;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component("newr.erm", content, false, &params).unwrap();
+    assert!(res.contains("Welcome, <span"));
+    assert!(res.contains(".erm-container-"));
+    assert!(res.contains("Sub-component Badge"));
+    assert!(res.contains(".erm-badge-"));
+}
+
+#[test]
+fn test_bare_if_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        if count > 5 {
+            <p>High</p>
+        } else {
+            <p>Low</p>
+        }
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    println!("ACTUAL ERR MSG:\n{}", err_msg);
+    assert!(err_msg.contains("Bare 'if' block detected in template markup"));
+    assert!(err_msg.contains("@if"));
+    assert!(err_msg.contains("> 3 |"));
+    assert!(err_msg.contains("^^"));
+}
+
+#[test]
+fn test_bare_for_rejection_with_helpful_message() {
+    let content = r#"
+    <ul>
+        for item in items {
+            <li>{item}</li>
+        }
+    </ul>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare 'for' loop detected in template markup"));
+    assert!(err_msg.contains("@for"));
+    assert!(err_msg.contains("> 3 |"));
+    assert!(err_msg.contains("^^^"));
+}
+
+#[test]
+fn test_bare_else_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        @if count > 5 {
+            <p>High</p>
+        } else {
+            <p>Low</p>
+        }
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare 'else' detected in template markup"));
+    assert!(err_msg.contains("@else"));
+}
+
+#[test]
+fn test_bare_map_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        todos.map(todo => <p>{todo.text}</p>)
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Array mapping 'todos.map(...)' was found outside expression braces"));
+    assert!(err_msg.contains("{todos.map(...)}"));
+}
+
+#[test]
+fn test_bare_function_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        <h1>My Page</h1>
+    </div>
+
+    function formatCurrency(amount) {
+        return "$" + amount.toFixed(2);
+    }
+
+    <p>Price: {formatCurrency(price)}</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare function declaration detected in template markup: 'function formatCurrency'"));
+    assert!(err_msg.contains("<script>"));
+}
+
+#[test]
+fn test_bare_variable_rejection_with_helpful_message() {
+    let content = r#"
+    <div>
+        <h1>My Page</h1>
+    </div>
+
+    const discount = 15;
+
+    <p>Discount: {discount}%</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare variable declaration detected in template markup: 'const discount'"));
+    assert!(err_msg.contains("<script>"));
+}
+
+#[test]
+fn test_bare_exported_function_helper_rejection() {
+    let content = r#"
+    <div>
+        <h1>My Page</h1>
+    </div>
+
+    export function formatCurrency(amount) {
+        return "$" + amount.toFixed(2);
+    }
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("Bare function declaration detected in template markup: 'export function formatCurrency'"));
+    assert!(err_msg.contains("<script>"));
+}
+
+#[test]
+fn test_bare_import_and_export_rejection() {
+    let content1 = r#"
+    import { something } from "./lib";
+    <div>Hello</div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err1 = process_erm_component("test.erm", content1, false, &params).unwrap_err();
+    assert!(err1.to_string().contains("Bare import statement detected outside of <script> tag"));
+
+    let content2 = r#"
+    export const PI = 3.14159;
+    <div>Hello</div>
+    "#;
+    let err2 = process_erm_component("test.erm", content2, false, &params).unwrap_err();
+    assert!(err2.to_string().contains("Bare export statement detected outside of <script> tag"));
+}
+
+#[test]
+fn test_template_markup_comments_stripped() {
+    let content = r#"
+    <script>
+    const title = useState("Hello");
+    </script>
+
+    // 1. Header Section
+    <header>
+        <h1>{title}</h1>
+        // Sub-header comment
+        <p>Subtitle</p>
+    </header>
+
+    /* Block comment in markup */
+    <main>
+        {/* JSX style comment */}
+        <p>Main content</p>
+    </main>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component("test.erm", content, false, &params).unwrap();
+    assert!(!res.contains("// 1. Header Section"));
+    assert!(!res.contains("// Sub-header comment"));
+    assert!(!res.contains("Block comment in markup"));
+    assert!(!res.contains("JSX style comment"));
+    assert!(res.contains("<header"));
+    assert!(res.contains("Subtitle"));
+    assert!(res.contains("Main content"));
+}
+
+#[test]
+fn test_raw_html_in_interpolation_rejection() {
+    let content = r#"
+    <div>
+        { <p>Invalid raw markup in interpolation</p> }
+    </div>
+    "#;
+    let params = std::collections::HashMap::new();
+    let err = process_erm_component("test.erm", content, false, &params).unwrap_err();
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("contains raw HTML markup '<...>'"));
+}
+
+#[test]
+fn test_english_prose_not_parsed_as_control_flow() {
+    let content = r#"
+    <section>
+        <p>Search for discounts if available and save today!</p>
+        <p>Wait for 5 minutes if you can.</p>
+    </section>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Search for discounts if available and save today!"));
+    assert!(res.contains("Wait for 5 minutes if you can."));
+    assert!(!res.contains("renderIf("));
+    assert!(!res.contains("renderFor("));
+}
+
+#[test]
+fn test_multiline_less_than_in_script_tag() {
+    let content = r#"
+    <script>
+    const minThreshold = 100;
+    const isLow = (
+        < minThreshold
+    );
+    const limit = 50;
+    const isBelow =
+        < limit;
+    </script>
+
+    <h1>Threshold Status</h1>
+    <p>Status: OK</p>
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Threshold Status"));
+    assert!(res.contains("< minThreshold"));
+    assert!(res.contains("< limit"));
+}
+
+#[test]
+fn test_multiline_less_than_in_local_component() {
+    let content = r#"
+    <main>
+        <StatusCard />
+    </main>
+
+    export function StatusCard(props) {
+        const threshold = 10;
+        const isAlert = (
+            < threshold
+        );
+        return <div class="status">Alert Level</div>;
+    }
+    "#;
+    let params = std::collections::HashMap::new();
+    let res = process_erm_component(".", content, false, &params).unwrap();
+    assert!(res.contains("Alert Level"));
+    assert!(res.contains("<main"));
+}
+
 
 

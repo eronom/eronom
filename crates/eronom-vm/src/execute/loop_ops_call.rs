@@ -174,11 +174,7 @@ impl VM {
                 }
                 2 => { // json
                     if let Ok(content) = std::fs::read_to_string(&path_str) {
-                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                            crate::vm::gc::json_to_value(json_val)
-                        } else {
-                            Value::null()
-                        }
+                        crate::vm::json_parse(&content).unwrap_or(Value::null())
                     } else {
                         Value::null()
                     }
@@ -197,11 +193,7 @@ impl VM {
                     if callee.is_method_json() {
                         if body_val.is_string() {
                             let s = body_val.as_str().unwrap_or("");
-                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(s) {
-                                crate::vm::gc::json_to_value(json_val)
-                            } else {
-                                Value::null()
-                            }
+                            crate::vm::json_parse(s).unwrap_or(Value::null())
                         } else {
                             Value::null()
                         }
@@ -222,8 +214,7 @@ impl VM {
                 } else {
                     Value::null()
                 };
-                let json_val = crate::vm::er_http::value_to_json(arg);
-                let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+                let json_str = crate::vm::json_stringify(arg, None);
                 crate::vm::er_http::end_http_response_json(res_ptr, &json_str);
             }
             let stack_start = self.stack.as_mut_ptr();

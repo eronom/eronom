@@ -4,10 +4,10 @@ use std::hash::Hasher;
 use crate::eval::{self, ErmEval};
 use super::utils::*;
 use super::css::{scope_css, scope_html};
-use super::transform::{is_function_template, preprocess_function_template, transform_use_effect};
+use super::transform::{preprocess_erm_template, transform_use_effect};
 use super::reactivity::parse_reactivity;
-use super::blocks::{find_last_for_block, find_last_if_block, find_tag_end, process_for_block_at, process_if_block_at};
-use super::components::{resolve_custom_component, resolve_suspense_loading};
+use super::blocks::{find_last_for_block, find_last_if_block, find_tag_end, process_for_block_at, process_if_block_at, validate_template_directives};
+use super::components::{extract_local_components, resolve_custom_component, resolve_local_component, resolve_suspense_loading};
 
 pub struct ProcessResult {
     pub html: String,
@@ -26,13 +26,10 @@ pub fn process_component_tree(
     for_counter: &mut usize,
     state_var_sources: &mut HashMap<String, String>,
 ) -> anyhow::Result<ProcessResult> {
-    let preprocessed;
-    let content = if is_function_template(content) {
-        preprocessed = preprocess_function_template(content)?;
-        &preprocessed
-    } else {
-        content
-    };
+    let local_components = extract_local_components(content);
+    let preprocessed = preprocess_erm_template(content)?;
+    validate_template_directives(&preprocessed, file_path)?;
+    let content = &preprocessed;
     
     let path = std::path::Path::new(file_path);
     let base_dir = if path.is_file() {
@@ -54,6 +51,10 @@ pub fn process_component_tree(
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect();
+
+    let mut hasher = FnvHasher::default();
+    hasher.write(content.as_bytes());
+    let scope_id = format!("data-e-{:x}", hasher.finish());
 
     // 1. Initialize local ErmEval and parse parameters/scripts for SSR block evaluation
     let mut ev = ErmEval::new();
@@ -77,8 +78,11 @@ pub fn process_component_tree(
             let script_tag = &content[script_start..script_end + 9];
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = &script_tag[content_start..script_tag.len() - 9];
-            let script_for_eval = script_content.replace("useParams()", "__erm_params");
-            let _ = ev.parse_script_vars(&script_for_eval);
+            let script_for_eval = script_content
+                .replace("useParams()", "__erm_params")
+                .replace("useProps()", "__erm_params");
+            let (script_for_eval_cleaned, _) = crate::compiler::css::extract_use_style(&script_for_eval, &scope_id);
+            let _ = ev.parse_script_vars(&script_for_eval_cleaned);
             temp_search = script_end + 9;
         } else {
             break;
@@ -128,10 +132,6 @@ pub fn process_component_tree(
             break;
         }
     }
-    let mut hasher = FnvHasher::default();
-    hasher.write(content.as_bytes());
-    let scope_id = format!("data-e-{:x}", hasher.finish());
-
     // 3. Compile all blocks (new if syntax and new for syntax) from inside out
     let mut compiled_content = content.to_string();
     let mut block_logic = Vec::new();
@@ -262,7 +262,11 @@ pub fn process_component_tree(
                 cleaned_script.push_str(&processed_line);
                 cleaned_script.push('\n');
             }
-            scripts.push(cleaned_script.trim().to_string());
+            let (cleaned_script_use_style, use_style_css) = crate::compiler::css::extract_use_style(&cleaned_script, &scope_id);
+            for c in use_style_css {
+                styles.push(c);
+            }
+            scripts.push(cleaned_script_use_style.trim().to_string());
             i += end + 9;
         } else if content[i..].starts_with("<style") {
             let end = match content[i..].find("</style>") {
@@ -303,7 +307,11 @@ pub fn process_component_tree(
                         i += tag_end + 1;
                         continue;
                     }
-                    if eds_enabled && crate::compiler::eds::is_primitive(closing_tag_name) && !component_imports.contains_key(closing_tag_name) {
+                    if local_components.contains_key(closing_tag_name) {
+                        i += tag_end + 1;
+                        continue;
+                    }
+                    if eds_enabled && crate::compiler::eds::is_primitive(closing_tag_name) && !component_imports.contains_key(closing_tag_name) && !local_components.contains_key(closing_tag_name) {
                         if let Some(target_html_tag) = eds_closing_stack.pop() {
                             html_buf.push_str(&format!("</{}>", target_html_tag));
                             i += tag_end + 1;
@@ -324,7 +332,7 @@ pub fn process_component_tree(
                     // EDS compile-time primitives
                     let is_eds_primitive = eds_enabled && crate::compiler::eds::is_primitive(tag_name.as_str());
 
-                    if is_eds_primitive && !component_imports.contains_key(tag_name.as_str()) {
+                    if is_eds_primitive && !component_imports.contains_key(tag_name.as_str()) && !local_components.contains_key(tag_name.as_str()) {
                         let is_self_closing = tag_content.ends_with('/') || parts.last().map_or(false, |p| p.ends_with('/'));
                         crate::compiler::eds::validate_tag(tag_name, &raw_attrs, file_path, line_num)?;
 
@@ -399,6 +407,26 @@ pub fn process_component_tree(
                     }
 
                     if !tag_name.is_empty() && tag_name.chars().next().unwrap().is_ascii_uppercase() {
+                        if let Some(local_comp) = local_components.get(tag_name.as_str()) {
+                            resolve_local_component(
+                                tag_name,
+                                tag_content,
+                                local_comp,
+                                file_path,
+                                visited,
+                                params,
+                                if_counter,
+                                for_counter,
+                                state_var_sources,
+                                &mut scripts,
+                                &mut styles,
+                                &mut state_vars,
+                                &mut html_buf,
+                            )?;
+                            i += tag_end + 1;
+                            continue;
+                        }
+
                         resolve_custom_component(
                             tag_name,
                             tag_content,
@@ -478,7 +506,7 @@ pub fn process_component_tree(
 
     let mut bindings = Vec::new();
     let mut events = Vec::new();
-    let reactive_html = parse_reactivity(&html_buf, &mut bindings, &mut events, &state_vars);
+    let reactive_html = parse_reactivity(&html_buf, &mut bindings, &mut events, &state_vars)?;
     let scoped_html = scope_html(&reactive_html, &scope_id)?;
 
     scripts.append(&mut bindings);

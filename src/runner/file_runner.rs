@@ -1,6 +1,6 @@
-use eronom::vm as backend;
-use eronom::frontend;
-use eronom::jit;
+use crate::vm as backend;
+use crate::frontend;
+use crate::jit;
 use backend::{Compiler, VM, Value};
 use super::natives::*;
 use super::http_detect::{find_listen_port, has_http_import};
@@ -87,8 +87,7 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         .filter(|p| p.exists())
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|c| toml::from_str::<toml::Value>(&c).ok())
-        .and_then(|v| serde_json::to_value(v).ok())
-        .map(backend::gc::json_to_value)
+        .map(backend::er_http::toml_to_value)
     {
         vm.register_global("config", config_val);
     }

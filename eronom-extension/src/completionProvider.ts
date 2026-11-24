@@ -544,25 +544,47 @@ export class ErmCompletionItemProvider implements vscode.CompletionItemProvider 
     useStateItem.insertText = new vscode.SnippetString('let ${1:stateName} = useState(${2:initialValue});');
     items.push(useStateItem);
 
-    // Control Blocks
+    // Sub-component functions
+    const compFnItem = new vscode.CompletionItem('export function', vscode.CompletionItemKind.Snippet);
+    compFnItem.detail = 'Exported Sub-component Function';
+    compFnItem.documentation = new vscode.MarkdownString('Declares an exported sub-component function with implicit markup return.\n\n```javascript\nexport function ComponentName() {\n  return <div>...</div>;\n}\n```');
+    compFnItem.insertText = new vscode.SnippetString('export function ${1:ComponentName}(${2:props}) {\n\t$0\n}');
+    items.push(compFnItem);
+
+    // Control Blocks / Directives
+    const atIfItem = new vscode.CompletionItem('@if directive', vscode.CompletionItemKind.Snippet);
+    atIfItem.detail = 'ERM @if Directive Block';
+    atIfItem.insertText = new vscode.SnippetString('@if ${1:condition} {\n\t$0\n}');
+    items.push(atIfItem);
+
+    const atIfElseItem = new vscode.CompletionItem('@ifelse directive', vscode.CompletionItemKind.Snippet);
+    atIfElseItem.detail = 'ERM @if / @else Directive Block';
+    atIfElseItem.insertText = new vscode.SnippetString('@if ${1:condition} {\n\t$2\n} @else {\n\t$0\n}');
+    items.push(atIfItem);
+
+    const atForEmptyItem = new vscode.CompletionItem('@for empty directive', vscode.CompletionItemKind.Snippet);
+    atForEmptyItem.detail = 'ERM @for Loop with @empty Fallback';
+    atForEmptyItem.insertText = new vscode.SnippetString('@for ${1:item} in ${2:list} {\n\t$3\n} @empty {\n\t$0\n}');
+    items.push(atForEmptyItem);
+
     const ifItem = new vscode.CompletionItem('if block', vscode.CompletionItemKind.Snippet);
     ifItem.detail = 'ERM Conditional Block';
-    ifItem.insertText = new vscode.SnippetString('if ${1:condition} {\n\t$0\n}');
+    ifItem.insertText = new vscode.SnippetString('@if ${1:condition} {\n\t$0\n}');
     items.push(ifItem);
 
     const ifElseItem = new vscode.CompletionItem('if else block', vscode.CompletionItemKind.Snippet);
     ifElseItem.detail = 'ERM If-Else Block';
-    ifElseItem.insertText = new vscode.SnippetString('if ${1:condition} {\n\t$2\n} else {\n\t$0\n}');
+    ifElseItem.insertText = new vscode.SnippetString('@if ${1:condition} {\n\t$2\n} @else {\n\t$0\n}');
     items.push(ifElseItem);
 
     const forItem = new vscode.CompletionItem('for loop', vscode.CompletionItemKind.Snippet);
     forItem.detail = 'ERM For Loop Block';
-    forItem.insertText = new vscode.SnippetString('for ${1:item} in ${2:list} {\n\t$0\n}');
+    forItem.insertText = new vscode.SnippetString('@for ${1:item} in ${2:list} {\n\t$0\n}');
     items.push(forItem);
 
     const foriItem = new vscode.CompletionItem('for index loop', vscode.CompletionItemKind.Snippet);
     foriItem.detail = 'ERM For Loop Block with Index';
-    foriItem.insertText = new vscode.SnippetString('for ${1:item}, ${2:i} in ${3:list} {\n\t$0\n}');
+    foriItem.insertText = new vscode.SnippetString('@for ${1:item}, ${2:i} in ${3:list} {\n\t$0\n}');
     items.push(foriItem);
 
     return items;

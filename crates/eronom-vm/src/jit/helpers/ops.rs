@@ -36,97 +36,58 @@ pub extern "C" fn er_jit_add(vm: *mut VM, val_b: Value, val_c: Value) -> Value {
             Value::number_unchecked(val_b.as_number() + val_c.as_number())
         } else if val_b.is_string() {
             let sa_str = val_b.as_str().unwrap_or("");
-            let mut buf = [0u8; 64];
-            let sa_bytes = sa_str.as_bytes();
-            let mut len = sa_bytes.len().min(63);
-            buf[..len].copy_from_slice(&sa_bytes[..len]);
-            if val_c.is_string() {
-                if let Some(sb_str) = val_c.as_str() {
-                    let sb_bytes = sb_str.as_bytes();
-                    let to_copy = sb_bytes.len().min(63 - len);
-                    buf[len..len + to_copy].copy_from_slice(&sb_bytes[..to_copy]);
-                    len += to_copy;
-                }
-            } else if val_c.is_number() {
-                let val = val_c.as_number();
-                if val >= 0.0 && val == val.trunc() && val < 1e15 {
-                    let mut n = val as u64;
-                    if n == 0 {
-                        if len < 64 { buf[len] = b'0'; len += 1; }
+            crate::vm::value::ADD_SCRATCH.with(|scratch| {
+                let mut s_ref = scratch.borrow_mut();
+                s_ref.clear();
+                s_ref.push_str(sa_str);
+                if val_c.is_string() {
+                    if let Some(sb_str) = val_c.as_str() {
+                        s_ref.push_str(sb_str);
+                    }
+                } else if val_c.is_number() {
+                    let val = val_c.as_number();
+                    if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
+                        crate::vm::value::push_positive_integer(&mut s_ref, val as u64);
                     } else {
-                        let mut digits = [0u8; 20];
-                        let mut d_len = 0;
-                        while n > 0 {
-                            digits[d_len] = b'0' + (n % 10) as u8;
-                            n /= 10;
-                            d_len += 1;
-                        }
-                        for i in (0..d_len).rev() {
-                            if len < 64 {
-                                buf[len] = digits[i];
-                                len += 1;
-                            }
-                        }
+                        use std::fmt::Write;
+                        let _ = write!(&mut s_ref, "{}", val);
                     }
                 } else {
-                    use std::io::Write;
-                    let _ = write!(&mut buf[len..], "{}", val);
+                    use std::fmt::Write;
+                    let _ = write!(&mut s_ref, "{}", val_c);
                 }
-            } else {
-                use std::io::Write;
-                let _ = write!(&mut buf[len..], "{}", val_c);
-            }
-            let s = std::str::from_utf8_unchecked(&buf[..len]);
-            if let Some(inline) = Value::inline_string(s) {
-                inline
-            } else {
-                let new_ptr = gc_alloc_string(s);
-                Value::string(new_ptr)
-            }
+                if let Some(inline) = Value::inline_string(s_ref.as_str()) {
+                    inline
+                } else {
+                    let new_ptr = gc_alloc_string(s_ref.as_str());
+                    Value::string(new_ptr)
+                }
+            })
         } else if val_c.is_string() {
             let sb_str = val_c.as_str().unwrap_or("");
-            let mut buf = [0u8; 64];
-            let mut len = 0;
-            if val_b.is_number() {
-                let val = val_b.as_number();
-                if val >= 0.0 && val == val.trunc() && val < 1e15 {
-                    let mut n = val as u64;
-                    if n == 0 {
-                        if len < 64 { buf[len] = b'0'; len += 1; }
+            crate::vm::value::ADD_SCRATCH.with(|scratch| {
+                let mut s_ref = scratch.borrow_mut();
+                s_ref.clear();
+                if val_b.is_number() {
+                    let val = val_b.as_number();
+                    if val >= 0.0 && val == val.trunc() && val < 1.8446744073709552e19 {
+                        crate::vm::value::push_positive_integer(&mut s_ref, val as u64);
                     } else {
-                        let mut digits = [0u8; 20];
-                        let mut d_len = 0;
-                        while n > 0 {
-                            digits[d_len] = b'0' + (n % 10) as u8;
-                            n /= 10;
-                            d_len += 1;
-                        }
-                        for i in (0..d_len).rev() {
-                            if len < 64 {
-                                buf[len] = digits[i];
-                                len += 1;
-                            }
-                        }
+                        use std::fmt::Write;
+                        let _ = write!(&mut s_ref, "{}", val);
                     }
                 } else {
-                    use std::io::Write;
-                    let _ = write!(&mut buf[len..], "{}", val);
+                    use std::fmt::Write;
+                    let _ = write!(&mut s_ref, "{}", val_b);
                 }
-            } else {
-                use std::io::Write;
-                let _ = write!(&mut buf[len..], "{}", val_b);
-            }
-            let sb_bytes = sb_str.as_bytes();
-            let to_copy = sb_bytes.len().min(63 - len);
-            buf[len..len + to_copy].copy_from_slice(&sb_bytes[..to_copy]);
-            len += to_copy;
-            let s = std::str::from_utf8_unchecked(&buf[..len]);
-            if let Some(inline) = Value::inline_string(s) {
-                inline
-            } else {
-                let new_ptr = gc_alloc_string(s);
-                Value::string(new_ptr)
-            }
+                s_ref.push_str(sb_str);
+                if let Some(inline) = Value::inline_string(s_ref.as_str()) {
+                    inline
+                } else {
+                    let new_ptr = gc_alloc_string(s_ref.as_str());
+                    Value::string(new_ptr)
+                }
+            })
         } else {
             (*vm).has_error_flag = 1; (*vm).error = Some("Operands must be numbers or strings".into());
             Value::null()
@@ -300,22 +261,32 @@ pub extern "C" fn er_jit_to_iter(vm: *mut VM, val: Value) -> Value {
             val
         } else if val.is_object() {
             let obj_ptr = val.as_gc_ptr();
-            let keys: Vec<Value> = match &(*obj_ptr).data {
-                GcData::Object(map) => map.keys().map(|k| k.0).collect(),
-                GcData::Struct(s) => s.descriptor.field_indices.keys().map(|k| k.0).collect(),
-                _ => Vec::new(),
-            };
+            let mut keys = crate::vm::gc::get_pooled_vec(8);
+            keys.clear();
+            match &(*obj_ptr).data {
+                GcData::Object(map) => {
+                    for k in map.keys() {
+                        keys.push(k.0);
+                    }
+                }
+                GcData::Struct(s) => {
+                    for k in s.descriptor.field_indices.keys() {
+                        keys.push(k.0);
+                    }
+                }
+                _ => {}
+            }
             let arr_ptr = gc_allocate(GcData::Array(keys));
             Value::array(arr_ptr)
         } else if val.is_string() {
-            let s_ptr = val.as_gc_ptr();
-            let chars: Vec<Value> = match &(*s_ptr).data {
-                GcData::String(s) => s.as_str().chars().map(|c| {
-                    let cp = gc_alloc_string(&c.to_string());
-                    Value::string(cp)
-                }).collect(),
-                _ => Vec::new(),
-            };
+            let s = val.as_str().unwrap_or("");
+            let mut chars = crate::vm::gc::get_pooled_vec(s.len());
+            chars.clear();
+            let mut buf = [0u8; 4];
+            for c in s.chars() {
+                let s_char = c.encode_utf8(&mut buf);
+                chars.push(Value::string_from_str(s_char));
+            }
             let arr_ptr = gc_allocate(GcData::Array(chars));
             Value::array(arr_ptr)
         } else {

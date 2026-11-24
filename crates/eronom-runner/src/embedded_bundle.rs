@@ -8,10 +8,128 @@ use eronom_vm::jit;
 use backend::{Compiler, VM, Value};
 pub const MAGIC_BYTES: &[u8; 16] = b"ERONOM_STUB_v1\0\0";
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(Debug, Clone)]
 pub struct AppBundle {
     pub entrypoint: String,
     pub files: Vec<(String, Vec<u8>)>,
+}
+
+impl AppBundle {
+    pub fn decode(data: &[u8]) -> anyhow::Result<Self> {
+        if data.starts_with(b"{") {
+            let s = std::str::from_utf8(data)?;
+            let mut dec = eronom_core::json::syntax::JsonDecoder::new(s);
+            let mut entrypoint = String::new();
+            let mut files = Vec::new();
+
+            match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                Some(eronom_core::json::syntax::Token::BeginObject) => {}
+                _ => anyhow::bail!("Expected BeginObject"),
+            }
+
+            while let Some(tok) = dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                match tok {
+                    eronom_core::json::syntax::Token::EndObject => break,
+                    eronom_core::json::syntax::Token::Comma => continue,
+                    eronom_core::json::syntax::Token::String(key) => {
+                        match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                            Some(eronom_core::json::syntax::Token::Colon) => {}
+                            _ => anyhow::bail!("Expected colon after key"),
+                        }
+                        if key == "entrypoint" {
+                            match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                Some(eronom_core::json::syntax::Token::String(ep)) => {
+                                    entrypoint = ep.into_owned();
+                                }
+                                _ => anyhow::bail!("Expected string entrypoint"),
+                            }
+                        } else if key == "files" {
+                            match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                Some(eronom_core::json::syntax::Token::BeginArray) => {}
+                                _ => anyhow::bail!("Expected BeginArray for files"),
+                            }
+                            loop {
+                                match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                    Some(eronom_core::json::syntax::Token::EndArray) => break,
+                                    Some(eronom_core::json::syntax::Token::Comma) => continue,
+                                    Some(eronom_core::json::syntax::Token::BeginArray) => {
+                                        let name = match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                            Some(eronom_core::json::syntax::Token::String(n)) => n.into_owned(),
+                                            _ => anyhow::bail!("Expected file name string"),
+                                        };
+                                        match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                            Some(eronom_core::json::syntax::Token::Comma) => {}
+                                            _ => anyhow::bail!("Expected comma in file entry"),
+                                        }
+                                        match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                            Some(eronom_core::json::syntax::Token::BeginArray) => {}
+                                            _ => anyhow::bail!("Expected BeginArray for file bytes"),
+                                        }
+                                        let mut bytes = Vec::new();
+                                        loop {
+                                            match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                                Some(eronom_core::json::syntax::Token::EndArray) => break,
+                                                Some(eronom_core::json::syntax::Token::Comma) => continue,
+                                                Some(eronom_core::json::syntax::Token::Number(num_str)) => {
+                                                    let b: u8 = num_str.parse().map_err(|_| anyhow::anyhow!("Invalid byte value"))?;
+                                                    bytes.push(b);
+                                                }
+                                                _ => anyhow::bail!("Expected byte number in file bytes"),
+                                            }
+                                        }
+                                        match dec.next_token().map_err(|e| anyhow::anyhow!("{}", e))? {
+                                            Some(eronom_core::json::syntax::Token::EndArray) => {}
+                                            _ => anyhow::bail!("Expected EndArray for file pair"),
+                                        }
+                                        files.push((name, bytes));
+                                    }
+                                    _ => anyhow::bail!("Unexpected token in files"),
+                                }
+                            }
+                        }
+                    }
+                    _ => anyhow::bail!("Unexpected token in bundle object"),
+                }
+            }
+
+            Ok(AppBundle { entrypoint, files })
+        } else {
+            if data.len() < 4 {
+                anyhow::bail!("Corrupted bundle: payload too short");
+            }
+            let ep_len = u32::from_le_bytes(data[..4].try_into().map_err(|_| anyhow::anyhow!("Invalid entrypoint length"))?) as usize;
+            let mut rem = &data[4..];
+            if rem.len() < ep_len + 4 {
+                anyhow::bail!("Corrupted bundle: entrypoint truncated");
+            }
+            let entrypoint = String::from_utf8(rem[..ep_len].to_vec())?;
+            rem = &rem[ep_len..];
+            let file_count = u32::from_le_bytes(rem[..4].try_into().map_err(|_| anyhow::anyhow!("Invalid file count"))?) as usize;
+            rem = &rem[4..];
+            let mut files = Vec::with_capacity(file_count);
+            for _ in 0..file_count {
+                if rem.len() < 4 {
+                    anyhow::bail!("Corrupted bundle: file name length missing");
+                }
+                let name_len = u32::from_le_bytes(rem[..4].try_into().map_err(|_| anyhow::anyhow!("Invalid file name length"))?) as usize;
+                rem = &rem[4..];
+                if rem.len() < name_len + 4 {
+                    anyhow::bail!("Corrupted bundle: file name truncated");
+                }
+                let name = String::from_utf8(rem[..name_len].to_vec())?;
+                rem = &rem[name_len..];
+                let content_len = u32::from_le_bytes(rem[..4].try_into().map_err(|_| anyhow::anyhow!("Invalid file content length"))?) as usize;
+                rem = &rem[4..];
+                if rem.len() < content_len {
+                    anyhow::bail!("Corrupted bundle: file content truncated");
+                }
+                let content = rem[..content_len].to_vec();
+                rem = &rem[content_len..];
+                files.push((name, content));
+            }
+            Ok(AppBundle { entrypoint, files })
+        }
+    }
 }
 
 use backend::gc::{self, GcData};
@@ -106,10 +224,8 @@ pub fn run_micro_file(path: &str) -> anyhow::Result<()> {
         if toml_path.exists() {
             if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
                 if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    if let Ok(json_val) = serde_json::to_value(toml_val) {
-                        let config_val = backend::gc::json_to_value(json_val);
-                        vm.register_global("config", config_val);
-                    }
+                    let config_val = backend::er_http::toml_to_value(toml_val);
+                    vm.register_global("config", config_val);
                 }
             }
         }
@@ -197,7 +313,7 @@ pub fn check_and_run_micro_bundle() -> Option<anyhow::Result<()>> {
         return Some(Err(anyhow::anyhow!("Failed to read embedded bundle: {}", e)));
     }
 
-    let bundle: AppBundle = match serde_json::from_slice(&payload) {
+    let bundle: AppBundle = match AppBundle::decode(&payload) {
         Ok(b) => b,
         Err(e) => return Some(Err(anyhow::anyhow!("Failed to deserialize embedded bundle: {}", e))),
     };

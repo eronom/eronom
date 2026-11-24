@@ -124,6 +124,26 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Verify Linux Release Binary Linkage & Relocations
+        if: runner.os == 'Linux'
+        run: |
+          BIN="target/${{ matrix.target }}/release/${{ matrix.binary-name }}"
+          echo "=== Inspecting dynamic libraries of $BIN ==="
+          ldd "$BIN"
+          echo "=== Verifying no dynamic libstdc++ ==="
+          if ldd "$BIN" | grep -q "libstdc++\.so"; then
+            echo "::error::Release binary dynamically links libstdc++.so.6! Must be statically linked for portable distribution."
+            exit 1
+          fi
+          echo "=== Verifying dynamic relative relocations ==="
+          REL_COUNT=$(readelf -d "$BIN" | grep -oP '(?<=\(RELACOUNT\)\s+)\d+' || echo 0)
+          echo "Relative relocations count: $REL_COUNT"
+          if [ "$REL_COUNT" -gt 0 ]; then
+            echo "::error::Release binary has $REL_COUNT dynamic relative relocations! Expected 0 (Non-PIE)."
+            exit 1
+          fi
+          echo "Verification passed: release binary is self-contained and zero-relocation."
+
       # Packaging on Unix (Linux & macOS) -> .tar.gz
       - name: Package Unix Archive (.tar.gz)
         if: runner.os != 'Windows'

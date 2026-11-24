@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{types, AbiParam, Block, InstBuilder};
 use cranelift_codegen::settings::{self, Configurable, Flags};
 use cranelift_codegen::{isa, Context};
@@ -14,7 +14,7 @@ use target_lexicon::Triple;
 use eronom::vm::bytecode::{Function, OpCode};
 use eronom::vm::execute::VM;
 use eronom::vm::gc::{GcData, GcObject};
-use eronom::vm::value::{TAG_FALSE, TAG_NULL, TAG_TRUE, TAG_FUNCTION, TAG_METHOD_PUSH, TAG_METHOD_POP};
+use eronom::vm::value::{TAG_FALSE, TAG_NULL, TAG_TRUE, TAG_NUMBER_MASK, TAG_FUNCTION, TAG_METHOD_PUSH, TAG_METHOD_POP};
 use eronom::vm::Value;
 
 pub type JitFn = unsafe extern "C" fn(
@@ -235,26 +235,142 @@ impl CraneliftJitEngine {
                     OpCode::Add => {
                         let vb = builder.use_var(reg_vars[rb]);
                         let vc = builder.use_var(reg_vars[rc]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+                        let c_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vc, tag_num_mask);
+                        let both_num = builder.ins().band(b_is_num, c_is_num);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(both_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fc = builder.ins().bitcast(types::F64, MemFlags::new(), vc);
+                        let fres = builder.ins().fadd(fb, fc);
+                        let ires = builder.ins().bitcast(types::I64, MemFlags::new(), fres);
+                        let res_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, ires, tag_num_mask);
+
+                        let valid_res_block = builder.create_block();
+                        builder.ins().brif(res_is_num, valid_res_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(valid_res_block);
+                        builder.def_var(reg_vars[ra], ires);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_add", &[vm_val, vb, vc]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::Sub => {
                         let vb = builder.use_var(reg_vars[rb]);
                         let vc = builder.use_var(reg_vars[rc]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+                        let c_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vc, tag_num_mask);
+                        let both_num = builder.ins().band(b_is_num, c_is_num);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(both_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fc = builder.ins().bitcast(types::F64, MemFlags::new(), vc);
+                        let fres = builder.ins().fsub(fb, fc);
+                        let ires = builder.ins().bitcast(types::I64, MemFlags::new(), fres);
+                        let res_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, ires, tag_num_mask);
+
+                        let valid_res_block = builder.create_block();
+                        builder.ins().brif(res_is_num, valid_res_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(valid_res_block);
+                        builder.def_var(reg_vars[ra], ires);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_sub", &[vm_val, vb, vc]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::Mul => {
                         let vb = builder.use_var(reg_vars[rb]);
                         let vc = builder.use_var(reg_vars[rc]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+                        let c_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vc, tag_num_mask);
+                        let both_num = builder.ins().band(b_is_num, c_is_num);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(both_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fc = builder.ins().bitcast(types::F64, MemFlags::new(), vc);
+                        let fres = builder.ins().fmul(fb, fc);
+                        let ires = builder.ins().bitcast(types::I64, MemFlags::new(), fres);
+                        let res_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, ires, tag_num_mask);
+
+                        let valid_res_block = builder.create_block();
+                        builder.ins().brif(res_is_num, valid_res_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(valid_res_block);
+                        builder.def_var(reg_vars[ra], ires);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_mul", &[vm_val, vb, vc]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::Div => {
                         let vb = builder.use_var(reg_vars[rb]);
                         let vc = builder.use_var(reg_vars[rc]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+                        let c_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vc, tag_num_mask);
+                        let both_num = builder.ins().band(b_is_num, c_is_num);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(both_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fc = builder.ins().bitcast(types::F64, MemFlags::new(), vc);
+                        let fres = builder.ins().fdiv(fb, fc);
+                        let ires = builder.ins().bitcast(types::I64, MemFlags::new(), fres);
+                        let res_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, ires, tag_num_mask);
+
+                        let valid_res_block = builder.create_block();
+                        builder.ins().brif(res_is_num, valid_res_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(valid_res_block);
+                        builder.def_var(reg_vars[ra], ires);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_div", &[vm_val, vb, vc]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::Mod => {
                         let vb = builder.use_var(reg_vars[rb]);
@@ -264,31 +380,133 @@ impl CraneliftJitEngine {
                     }
                     OpCode::Negate => {
                         let vb = builder.use_var(reg_vars[rb]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(b_is_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fres = builder.ins().fneg(fb);
+                        let ires = builder.ins().bitcast(types::I64, MemFlags::new(), fres);
+                        builder.def_var(reg_vars[ra], ires);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_negate", &[vm_val, vb]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::Not => {
                         let vb = builder.use_var(reg_vars[rb]);
-                        let res = call_helper(&mut builder, "er_jit_not", &[vm_val, vb]);
+                        let false_tag = builder.ins().iconst(types::I64, TAG_FALSE as i64);
+                        let null_tag = builder.ins().iconst(types::I64, TAG_NULL as i64);
+                        let true_tag = builder.ins().iconst(types::I64, TAG_TRUE as i64);
+
+                        let is_false = builder.ins().icmp(IntCC::Equal, vb, false_tag);
+                        let is_null = builder.ins().icmp(IntCC::Equal, vb, null_tag);
+                        let is_falsey = builder.ins().bor(is_false, is_null);
+                        let res = builder.ins().select(is_falsey, true_tag, false_tag);
                         builder.def_var(reg_vars[ra], res);
                     }
                     OpCode::Equal => {
                         let vb = builder.use_var(reg_vars[rb]);
                         let vc = builder.use_var(reg_vars[rc]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+                        let c_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vc, tag_num_mask);
+                        let both_num = builder.ins().band(b_is_num, c_is_num);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(both_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fc = builder.ins().bitcast(types::F64, MemFlags::new(), vc);
+                        let cmp = builder.ins().fcmp(FloatCC::Equal, fb, fc);
+                        let true_tag = builder.ins().iconst(types::I64, TAG_TRUE as i64);
+                        let false_tag = builder.ins().iconst(types::I64, TAG_FALSE as i64);
+                        let res_bool = builder.ins().select(cmp, true_tag, false_tag);
+                        builder.def_var(reg_vars[ra], res_bool);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_equal", &[vm_val, vb, vc]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::Greater => {
                         let vb = builder.use_var(reg_vars[rb]);
                         let vc = builder.use_var(reg_vars[rc]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+                        let c_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vc, tag_num_mask);
+                        let both_num = builder.ins().band(b_is_num, c_is_num);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(both_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fc = builder.ins().bitcast(types::F64, MemFlags::new(), vc);
+                        let cmp = builder.ins().fcmp(FloatCC::GreaterThan, fb, fc);
+                        let true_tag = builder.ins().iconst(types::I64, TAG_TRUE as i64);
+                        let false_tag = builder.ins().iconst(types::I64, TAG_FALSE as i64);
+                        let res_bool = builder.ins().select(cmp, true_tag, false_tag);
+                        builder.def_var(reg_vars[ra], res_bool);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_greater", &[vm_val, vb, vc]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::Less => {
                         let vb = builder.use_var(reg_vars[rb]);
                         let vc = builder.use_var(reg_vars[rc]);
+                        let tag_num_mask = builder.ins().iconst(types::I64, TAG_NUMBER_MASK as i64);
+                        let b_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vb, tag_num_mask);
+                        let c_is_num = builder.ins().icmp(IntCC::UnsignedLessThan, vc, tag_num_mask);
+                        let both_num = builder.ins().band(b_is_num, c_is_num);
+
+                        let fast_block = builder.create_block();
+                        let slow_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        builder.ins().brif(both_num, fast_block, &[], slow_block, &[]);
+
+                        builder.switch_to_block(fast_block);
+                        let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
+                        let fc = builder.ins().bitcast(types::F64, MemFlags::new(), vc);
+                        let cmp = builder.ins().fcmp(FloatCC::LessThan, fb, fc);
+                        let true_tag = builder.ins().iconst(types::I64, TAG_TRUE as i64);
+                        let false_tag = builder.ins().iconst(types::I64, TAG_FALSE as i64);
+                        let res_bool = builder.ins().select(cmp, true_tag, false_tag);
+                        builder.def_var(reg_vars[ra], res_bool);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(slow_block);
                         let res = call_helper(&mut builder, "er_jit_less", &[vm_val, vb, vc]);
                         builder.def_var(reg_vars[ra], res);
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(merge_block);
                     }
                     OpCode::BitAnd => {
                         let vb = builder.use_var(reg_vars[rb]);
@@ -347,10 +565,27 @@ impl CraneliftJitEngine {
                         call_helper(&mut builder, "er_jit_define_global", &[vm_val, name_val, va]);
                     }
                     OpCode::GetGlobal => {
-                        let name_c = func.chunk.constants[operand];
-                        let name_val = builder.ins().iconst(types::I64, name_c.0 as i64);
-                        let res = call_helper(&mut builder, "er_jit_get_global", &[vm_val, name_val]);
-                        builder.def_var(reg_vars[ra], res);
+                        let is_self_fn_get = if let Some(ref fn_name) = func.name {
+                            if let Some(c_val) = func.chunk.constants.get(operand as usize) {
+                                c_val.as_str() == Some(fn_name.as_str()) && func_obj.is_some()
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if is_self_fn_get {
+                            let f_obj = func_obj.unwrap();
+                            let self_val = Value::function(f_obj).0 as i64;
+                            let self_const = builder.ins().iconst(types::I64, self_val);
+                            builder.def_var(reg_vars[ra], self_const);
+                        } else {
+                            let name_c = func.chunk.constants[operand];
+                            let name_val = builder.ins().iconst(types::I64, name_c.0 as i64);
+                            let res = call_helper(&mut builder, "er_jit_get_global", &[vm_val, name_val]);
+                            builder.def_var(reg_vars[ra], res);
+                        }
                     }
                     OpCode::SetGlobal => {
                         let name_c = func.chunk.constants[operand];

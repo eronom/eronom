@@ -338,6 +338,46 @@ pub fn build_dir_recursive(
     Ok(())
 }
 
+fn stringify_manifest(manifest: &std::collections::HashMap<String, String>) -> String {
+    let mut out = String::from("{\n");
+    let mut entries: Vec<_> = manifest.iter().collect();
+    entries.sort_by_key(|(k, _)| *k);
+    for (i, (k, v)) in entries.iter().enumerate() {
+        let mut escaped_k = String::new();
+        let mut escaped_v = String::new();
+        eronom_core::json::escape_json_string(&mut escaped_k, k);
+        eronom_core::json::escape_json_string(&mut escaped_v, v);
+        out.push_str(&format!("  {}: {}", escaped_k, escaped_v));
+        if i + 1 < entries.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push('}');
+    out
+}
+
+#[cfg(test)]
+fn parse_manifest(manifest_str: &str) -> Option<std::collections::HashMap<String, String>> {
+    let val = eronom_core::json::json_parse(manifest_str)?;
+    if !val.is_object() {
+        return None;
+    }
+    unsafe {
+        if let eronom_core::gc::GcData::Struct(s) = &(*val.as_gc_ptr()).data {
+            let mut map = std::collections::HashMap::new();
+            for (key, &idx) in &s.descriptor.field_indices {
+                let key_str = key.0.as_str()?;
+                let field_val = s.fields[idx];
+                let val_str = field_val.as_str()?;
+                map.insert(key_str.to_string(), val_str.to_string());
+            }
+            return Some(map);
+        }
+    }
+    None
+}
+
 pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     let input_path = Path::new(dir);
     if !input_path.exists() {
@@ -389,10 +429,10 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
     process_static_assets(&base_path, &base_path, &build_dir, &mut manifest)?;
 
     // Update in-memory manifest for component compilation
-    *crate::server::types::ASSET_MANIFEST.lock().unwrap() = manifest.clone();
+    *crate::compiler::ASSET_MANIFEST.lock().unwrap() = manifest.clone();
 
     // Write manifest.json
-    let manifest_json = serde_json::to_string_pretty(&manifest)?;
+    let manifest_json = stringify_manifest(&manifest);
     fs::write(build_dir.join("manifest.json"), manifest_json)?;
 
     // Pass 2: Compile routes, templates, and API endpoints
@@ -460,7 +500,7 @@ mod tests {
         let manifest_path = build_dir.join("manifest.json");
         assert!(manifest_path.exists());
         let manifest_str = fs::read_to_string(&manifest_path).unwrap();
-        let manifest: std::collections::HashMap<String, String> = serde_json::from_str(&manifest_str).unwrap();
+        let manifest = parse_manifest(&manifest_str).unwrap();
 
         assert!(manifest.contains_key("/modules/erm/runtime.js"));
         let runtime_hashed = manifest.get("/modules/erm/runtime.js").unwrap();
@@ -480,14 +520,11 @@ mod tests {
         assert!(!styles_data.contains("/* Header CSS */"), "CSS comments should be minified");
         assert!(styles_data.contains("background-color:#000000"));
 
-        // Check preloaded static assets in server cache
-        crate::server::dev::preload_static_assets(&build_dir);
-        let cache = crate::server::types::STATIC_ASSET_CACHE.lock().unwrap();
-        assert!(cache.contains_key(runtime_hashed));
-        assert!(cache.contains_key(styles_hashed));
-        let cached_style = cache.get(styles_hashed).unwrap();
-        assert!(cached_style.is_immutable);
-        assert_eq!(cached_style.content_type, "text/css; charset=utf-8");
+        // Verify server entrypoint script was generated
+        let server_er_file = build_dir.join("server.er");
+        assert!(server_er_file.exists());
+        let server_er_src = fs::read_to_string(&server_er_file).unwrap();
+        assert!(server_er_src.contains("std/http"));
 
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);

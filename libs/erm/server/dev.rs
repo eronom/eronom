@@ -107,7 +107,6 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                     
                     println!("[HMR] File changed: {}", rel_path);
 
-
                     let is_css = rel_path.ends_with(".css") || rel_path == "eronom.toml";
                     let update_type = if is_css { "css-update" } else { "js-update" };
                     let timestamp = SystemTime::now()
@@ -121,16 +120,10 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                         format!("/{}", rel_path)
                     };
 
-                    let msg = serde_json::json!({
-                        "type": "update",
-                        "path": path_str,
-                        "updates": [{
-                            "type": update_type,
-                            "path": path_str,
-                            "acceptedPath": path_str,
-                            "timestamp": timestamp
-                        }]
-                    }).to_string();
+                    let msg = format!(
+                        r#"{{"type":"update","path":"{}","updates":[{{"type":"{}","path":"{}","acceptedPath":"{}","timestamp":{}}}]}}"#,
+                        path_str, update_type, path_str, path_str, timestamp
+                    );
                     
                     HMR_QUEUE.lock().unwrap().push(msg);
                     last_ping = SystemTime::now();
@@ -138,9 +131,7 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
                     last_files = current_files;
                     if let Ok(elapsed) = last_ping.elapsed() {
                         if elapsed >= Duration::from_secs(15) {
-                            let ping = serde_json::json!({
-                                "type": "ping"
-                            }).to_string();
+                            let ping = r#"{"type":"ping"}"#.to_string();
                             HMR_QUEUE.lock().unwrap().push(ping);
                             last_ping = SystemTime::now();
                         }
@@ -190,8 +181,18 @@ pub fn preload_static_assets(root: &std::path::Path) {
 
     if let Some(m_path) = manifest_path {
         if let Ok(content) = fs::read_to_string(&m_path) {
-            if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&content) {
-                *manifest = parsed;
+            if let Ok(parsed) = eronom_core::json::parse_json(&content) {
+                if parsed.is_object() {
+                    unsafe {
+                        if let eronom_core::gc::GcData::Object(map) = &(*parsed.as_gc_ptr()).data {
+                            for (k, v) in map {
+                                if let (Some(ks), Some(vs)) = (k.0.as_str(), v.as_str()) {
+                                    manifest.insert(ks.to_string(), vs.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -286,5 +287,3 @@ mod tests {
         drop(initial_listener);
     }
 }
-
-

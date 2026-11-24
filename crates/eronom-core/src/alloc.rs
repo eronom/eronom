@@ -1,11 +1,40 @@
 //! Eronom Memory Allocator Subsystem
 //! Unified high-performance memory allocator subsystem using mimalloc with idle scavenging.
 
-pub use mimalloc::MiMalloc;
+use std::alloc::{GlobalAlloc, Layout};
 
 unsafe extern "C" {
-    fn mi_collect(force: bool);
-    fn mi_option_set(option: i32, val: i64);
+    pub fn mi_malloc(size: usize) -> *mut u8;
+    pub fn mi_free(p: *mut u8);
+    pub fn mi_realloc(p: *mut u8, newsize: usize) -> *mut u8;
+    pub fn mi_zalloc(size: usize) -> *mut u8;
+    pub fn mi_collect(force: bool);
+    pub fn mi_option_set(option: i32, val: i64);
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct MiMalloc;
+
+unsafe impl GlobalAlloc for MiMalloc {
+    #[inline]
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { mi_malloc(layout.size()) }
+    }
+
+    #[inline]
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        unsafe { mi_free(ptr) }
+    }
+
+    #[inline]
+    unsafe fn realloc(&self, ptr: *mut u8, _layout: Layout, new_size: usize) -> *mut u8 {
+        unsafe { mi_realloc(ptr, new_size) }
+    }
+
+    #[inline]
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        unsafe { mi_zalloc(layout.size()) }
+    }
 }
 
 use std::sync::Once;

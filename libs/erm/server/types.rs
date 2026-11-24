@@ -16,7 +16,7 @@ pub static IS_PROD: Mutex<bool> = Mutex::new(false);
 pub static HMR_QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub static ACTIVE_CONNECTIONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 pub static STATIC_ASSET_CACHE: LazyLock<Mutex<HashMap<String, CachedAsset>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static ASSET_MANIFEST: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub use crate::compiler::ASSET_MANIFEST;
 
 pub fn guess_mime_type(ext: &str) -> &'static str {
     match ext.to_ascii_lowercase().as_str() {

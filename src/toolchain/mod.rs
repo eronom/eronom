@@ -266,28 +266,47 @@ pub fn install_toolchain(name: &str) -> anyhow::Result<()> {
         name, host_triple
     );
 
-    match ureq::get(&download_url).call() {
-        Ok(mut resp) => {
-            let bytes = resp.body_mut().read_to_vec()?;
-            std::fs::write(&dest_file, &bytes)?;
+    let url_c = std::ffi::CString::new(download_url.clone())?;
+    let mut out_body: *mut std::os::raw::c_char = std::ptr::null_mut();
+    let mut out_body_len: usize = 0;
+    let mut out_err: *mut std::os::raw::c_char = std::ptr::null_mut();
 
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dest_file, std::fs::Permissions::from_mode(0o755));
-            }
-            println!("✓ Installed eronom-{} to {}", name, dest_file.display());
-            Ok(())
+    let rc = unsafe {
+        eronom_net::ffi::er_fetch(
+            url_c.as_ptr(),
+            &mut out_body,
+            &mut out_body_len,
+            &mut out_err,
+        )
+    };
+
+    if rc == 0 && !out_body.is_null() {
+        let bytes = unsafe { std::slice::from_raw_parts(out_body as *const u8, out_body_len) };
+        std::fs::write(&dest_file, bytes)?;
+        unsafe { eronom_net::ffi::er_fetch_free(out_body); }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dest_file, std::fs::Permissions::from_mode(0o755));
         }
-        Err(e) => {
-            anyhow::bail!(
-                "Failed to download pre-built toolchain from {}: {}\n\
-                 You can compile it locally with: cargo build -p eronom-{}",
-                download_url,
-                e,
-                name
-            )
-        }
+        println!("✓ Installed eronom-{} to {}", name, dest_file.display());
+        Ok(())
+    } else {
+        let err_msg = if !out_err.is_null() {
+            let msg = unsafe { std::ffi::CStr::from_ptr(out_err).to_string_lossy().to_string() };
+            unsafe { eronom_net::ffi::er_fetch_free(out_err); }
+            msg
+        } else {
+            "Unknown download error".to_string()
+        };
+        anyhow::bail!(
+            "Failed to download pre-built toolchain from {}: {}\n\
+             You can compile it locally with: cargo build -p eronom-{}",
+            download_url,
+            err_msg,
+            name
+        )
     }
 }
 

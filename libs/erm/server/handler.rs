@@ -125,9 +125,7 @@ pub extern "C" fn dev_ws_open_callback(
     if !conns.contains(&(ws as usize)) {
         conns.push(ws as usize);
     }
-    let connected_msg = serde_json::json!({
-        "type": "connected"
-    }).to_string();
+    let connected_msg = r#"{"type":"connected"}"#;
     let msg_c = CString::new(connected_msg).unwrap();
     unsafe {
         er_ws_send(ws, msg_c.as_ptr(), msg_c.as_bytes().len(), 0);
@@ -145,13 +143,11 @@ pub extern "C" fn dev_ws_message_callback(
     if !msg_ptr.is_null() && msg_len > 0 {
         let msg_slice = unsafe { std::slice::from_raw_parts(msg_ptr as *const u8, msg_len) };
         if let Ok(msg_str) = std::str::from_utf8(msg_slice) {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(msg_str) {
-                if val.get("type").and_then(|t| t.as_str()) == Some("ping") {
-                    let pong = serde_json::json!({ "type": "pong" }).to_string();
-                    let msg_c = CString::new(pong).unwrap();
-                    unsafe {
-                        er_ws_send(ws, msg_c.as_ptr(), msg_c.as_bytes().len(), 0);
-                    }
+            if msg_str.contains("\"ping\"") {
+                let pong = r#"{"type":"pong"}"#;
+                let msg_c = CString::new(pong).unwrap();
+                unsafe {
+                    er_ws_send(ws, msg_c.as_ptr(), msg_c.as_bytes().len(), 0);
                 }
             }
         }
@@ -362,7 +358,11 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                     send_response(res, "200 OK", "text/html; charset=utf-8", processed.as_bytes());
                 }
                 Err(e) => {
-                    eprintln!("[ERROR] Failed to compile {}: {}", file_path.display(), e);
+                    if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                        eprintln!("[browser] {}", ce.message);
+                    } else {
+                        eprintln!("[browser] {}", e);
+                    }
                     if is_prod {
                         let html = r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>500 Internal Server Error</title><style>body{background:#0b0b0d;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui,-apple-system,sans-serif;}h1{font-size:3rem;margin:0 0 0.5rem;}p{color:#888;margin:0;}</style></head><body><div style="text-align:center"><h1>500</h1><p>Internal Server Error</p></div></body></html>"#;
                         send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html.as_bytes());
@@ -379,27 +379,255 @@ pub fn handle_dev_request(res: *mut c_void, method: &str, raw_target: &str, head
                              .replace('\'', "&#39;")
                         };
 
-                        let err_msg_escaped = escape_html(&format!("{}", e));
-                        let rel_path_escaped = escape_html(&rel_path);
+                        let (err_file, err_line, err_col, err_msg, err_frame) = if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                            (
+                                ce.file.clone(),
+                                ce.line.to_string(),
+                                ce.col.to_string(),
+                                if let Some(ref hint) = ce.hint {
+                                    format!("{}\n\n{}", ce.message, hint)
+                                } else {
+                                    ce.message.clone()
+                                },
+                                ce.frame.clone(),
+                            )
+                        } else {
+                            (
+                                rel_path.clone(),
+                                String::new(),
+                                String::new(),
+                                format!("{}", e),
+                                String::new(),
+                            )
+                        };
+
+                        let err_file_escaped = escape_html(&err_file);
+                        let err_line_escaped = escape_html(&err_line);
+                        let err_col_escaped = escape_html(&err_col);
+                        let err_msg_escaped = escape_html(&err_msg);
+                        let err_frame_escaped = escape_html(&err_frame);
+
+                        let display_file = if !err_line.is_empty() {
+                            format!("{} ({}:{})", err_file, err_line, err_col)
+                        } else {
+                            err_file.clone()
+                        };
+                        let display_file_escaped = escape_html(&display_file);
+
+                        let frame_html = if !err_frame.is_empty() {
+                            let mut formatted_frame = String::new();
+                            for line in err_frame.lines() {
+                                let is_highlight = line.trim_start().starts_with('>') || line.contains('^');
+                                let escaped_line = escape_html(line);
+                                if is_highlight {
+                                    formatted_frame.push_str(&format!("<span class=\"frame-line highlight\">{}</span>\n", escaped_line));
+                                } else {
+                                    formatted_frame.push_str(&format!("<span class=\"frame-line\">{}</span>\n", escaped_line));
+                                }
+                            }
+                            format!("<div class=\"erm-error-code-block\">{}</div>", formatted_frame)
+                        } else {
+                            String::new()
+                        };
 
                         let html_content = format!(r#"<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Compiler Error</title>
   <style>
     body {{
       background-color: #0b0b0d;
       margin: 0;
       padding: 0;
       min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #f3f3f6;
+    }}
+    .erm-error-backdrop {{
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      backdrop-filter: blur(8px);
+    }}
+    .erm-error-card {{
+      background: #141419;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 720px;
+      max-height: 85vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      padding: 24px;
+    }}
+    .erm-error-header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }}
+    .erm-error-header-left {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }}
+    .erm-error-badge {{
+      background: #e03131;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }}
+    .erm-error-file-path {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      color: #a0a0b0;
+    }}
+    .erm-error-close-btn {{
+      background: transparent;
+      border: none;
+      color: #888;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      line-height: 1;
+    }}
+    .erm-error-close-btn:hover {{
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }}
+    .erm-error-message {{
+      font-size: 15px;
+      line-height: 1.5;
+      color: #f3f3f6;
+      margin-bottom: 16px;
+      white-space: pre-wrap;
+    }}
+    .erm-error-code-block {{
+      background: #0b0b0e;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      overflow-x: auto;
+      margin-bottom: 16px;
+      white-space: pre;
+    }}
+    .frame-line {{
+      display: block;
+      color: #8c8c9a;
+    }}
+    .frame-line.highlight {{
+      color: #ff6b6b;
+      font-weight: 600;
+    }}
+    .erm-error-footer {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #6c6c7d;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }}
+    .erm-error-minimized {{
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      z-index: 999998;
+      background: #e03131;
+      color: #fff;
+      border: none;
+      border-radius: 20px;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      box-shadow: 0 4px 16px rgba(224, 49, 49, 0.4), 0 2px 6px rgba(0, 0, 0, 0.3);
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+    }}
+    .erm-error-minimized:hover {{
+      transform: scale(1.05);
+      background: #f03e3e;
+      box-shadow: 0 6px 20px rgba(224, 49, 49, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+    }}
+    .erm-error-minimized:active {{
+      transform: scale(0.96);
     }}
   </style>
-  <script src="/modules/erm/hmr.js"></script>
+  <script type="module" src="/modules/erm/hmr.js"></script>
 </head>
-<body data-compile-error-file="{}" data-compile-error-message="{}">
+<body data-compile-error-file="{}" data-compile-error-line="{}" data-compile-error-col="{}" data-compile-error-message="{}" data-compile-error-frame="{}">
+  <div class="erm-error-backdrop" id="erm-backdrop">
+    <div class="erm-error-card">
+      <div class="erm-error-header">
+        <div class="erm-error-header-left">
+          <span class="erm-error-badge">[eronom] SyntaxError</span>
+          <span class="erm-error-file-path">{}</span>
+        </div>
+        <button class="erm-error-close-btn" id="erm-close-btn" title="Dismiss (Esc)">&times;</button>
+      </div>
+      <div class="erm-error-message">{}</div>
+      {}
+      <div class="erm-error-footer">
+        <span>Fix the problem in your editor to clear this screen automatically.</span>
+        <span style="font-family: ui-monospace, SFMono-Regular, monospace; background: rgba(255, 255, 255, 0.06); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.08);">Press <kbd style="color: #fff;">Esc</kbd> to dismiss</span>
+      </div>
+    </div>
+  </div>
+  <button class="erm-error-minimized" id="erm-minimized-btn" title="Open compile error">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"></circle>
+      <line x1="12" y1="8" x2="12" y2="12"></line>
+      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+    </svg>
+    <span>1 Error</span>
+  </button>
+  <script>
+    (function() {{
+      const backdrop = document.getElementById('erm-backdrop');
+      const minBtn = document.getElementById('erm-minimized-btn');
+      const closeBtn = document.getElementById('erm-close-btn');
+      function minimize() {{
+        if (backdrop) backdrop.style.display = 'none';
+        if (minBtn) minBtn.style.display = 'inline-flex';
+      }}
+      function maximize() {{
+        if (backdrop) backdrop.style.display = 'flex';
+        if (minBtn) minBtn.style.display = 'none';
+      }}
+      if (closeBtn) closeBtn.addEventListener('click', minimize);
+      if (minBtn) minBtn.addEventListener('click', maximize);
+      if (backdrop) backdrop.addEventListener('click', (e) => {{
+        if (e.target === backdrop) minimize();
+      }});
+      window.addEventListener('keydown', (e) => {{
+        if (e.key === 'Escape' && backdrop && backdrop.style.display !== 'none') {{
+          minimize();
+        }}
+      }});
+    }})();
+  </script>
 </body>
-</html>"#, rel_path_escaped, err_msg_escaped);
+</html>"#, err_file_escaped, err_line_escaped, err_col_escaped, err_msg_escaped, err_frame_escaped, display_file_escaped, err_msg_escaped, frame_html);
 
                         send_response(res, "500 Internal Server Error", "text/html; charset=utf-8", html_content.as_bytes());
                     }

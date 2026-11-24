@@ -77,11 +77,7 @@ impl VM {
                             AsyncResult::ResolveJsonPromise(_, res) => {
                                 match res {
                                     Ok(content) => {
-                                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                            crate::vm::gc::json_to_value(json_val)
-                                        } else {
-                                            Value::null()
-                                        }
+                                        crate::vm::json_parse(&content).unwrap_or(Value::null())
                                     }
                                     Err(e) => {
                                         eprintln!("[FileJsonPromise] Error: {}", e);

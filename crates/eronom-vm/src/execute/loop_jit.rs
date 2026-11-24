@@ -240,11 +240,7 @@ impl VM {
                             }
                             2 => { // json
                                 if let Ok(content) = std::fs::read_to_string(&path_str) {
-                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                        crate::vm::gc::json_to_value(json_val)
-                                    } else {
-                                        Value::null()
-                                    }
+                                    crate::vm::json_parse(&content).unwrap_or(Value::null())
                                 } else {
                                     Value::null()
                                 }
@@ -263,8 +259,7 @@ impl VM {
                             } else {
                                 Value::null()
                             };
-                            let json_val = crate::vm::er_http::value_to_json(arg);
-                            let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+                            let json_str = crate::vm::json_stringify(arg, None);
                             crate::vm::er_http::end_http_response_json(res_ptr, &json_str);
                         }
                         reload_stack!();
@@ -325,7 +320,8 @@ impl VM {
                         frame.ip = ip_out + 1;
                         ip_val = frame.ip;
                     } else {
-                        return Err(format!("[JIT] Can only call functions (callee: 0x{:x}, func_reg: {}, dest_reg: {}, ip: {})", callee.0, func_reg_out, dest_reg_out, ip_out).into());
+                        let fn_name = func.name.as_deref().unwrap_or("<anonymous>");
+                        return Err(format!("[JIT] Can only call functions in '{}' (callee: 0x{:x}, func_reg: {}, dest_reg: {}, ip: {})", fn_name, callee.0, func_reg_out, dest_reg_out, ip_out).into());
                     }
                 } else if status == 1 {
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.

@@ -5,12 +5,37 @@ pub mod build;
 pub mod bundle;
 
 use std::path::Path;
-use crate::server::start_server;
-use clap::Parser;
 
 pub use commands::{Cli, Commands, BuildMode, ToolchainAction};
 pub use init::init_project;
 pub use build::build_project;
+
+pub const ROOT_PARAMS: &[eronom_clap::Param<eronom_clap::Help>] = eronom_clap::concat_params!(eronom_clap::params!(
+    "-v, --version  Print version information",
+    "-h, --help     Print help information",
+));
+
+pub static ROOT_TABLE: &eronom_clap::ConvertedTable = eronom_clap::comptime_table!(ROOT_PARAMS);
+
+pub const ROOT_COMMANDS: &[(&str, &str)] = &[
+    ("init", "Initialize a fresh Eronom project"),
+    ("build", "Build the project or compile into a standalone binary"),
+    ("start", "Start the server in production mode"),
+    ("dev", "Start the server in development mode"),
+    ("test", "Run Eronom test files"),
+    ("check", "Type-check an Eronom script or project without running it"),
+    ("transpile", "Transpile an Eronom (.er) script to JavaScript (.js)"),
+    ("toolchain", "Manage optional Eronom toolchains (e.g. cranelift)"),
+];
+
+pub fn print_root_help() {
+    let help = eronom_clap::format_help(
+        "eronom <COMMAND|FILE> [OPTIONS]",
+        ROOT_PARAMS,
+        ROOT_COMMANDS,
+    );
+    print!("{}", help);
+}
 
 pub fn run_cli(args: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::try_parse_from(args)?;
@@ -173,7 +198,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
                 dir = "app/build".to_string();
             }
             let resolved_port = commands::resolve_port(&dir, port_val, false)?;
-            start_server(&dir, true, resolved_port)?;
+            crate::server::start_server(&dir, true, resolved_port)?;
         }
         Commands::Dev {
             dir_or_port,
@@ -182,7 +207,7 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
         } => {
             let (dir, port_val) = commands::parse_dir_and_port(dir_or_port, port_pos, port, ".")?;
             let resolved_port = commands::resolve_port(&dir, port_val, false)?;
-            start_server(&dir, false, resolved_port)?;
+            crate::server::start_server(&dir, false, resolved_port)?;
         }
         Commands::Test { file: _ } => {
             // Handled via the main binary entrypoint
@@ -219,3 +244,4 @@ pub fn run_command(cmd: Commands) -> anyhow::Result<()> {
     }
     Ok(())
 }
+

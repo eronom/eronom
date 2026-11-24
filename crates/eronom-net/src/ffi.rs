@@ -6,11 +6,28 @@ pub type HeaderIterCallback = extern "C" fn(user_data: *mut c_void, key: *const 
 unsafe extern "C" {
     // Legacy server lifecycle
     pub fn er_http_init();
+    pub fn er_http_init_with_callbacks(
+        http_req_cb: extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+            *const c_char,
+            usize,
+        ),
+        ws_open_cb: extern "C" fn(*mut c_void, *const c_char, usize),
+        ws_message_cb: extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize, i32),
+        ws_close_cb: extern "C" fn(*mut c_void, *const c_char, usize, i32, *const c_char, usize),
+    );
     pub fn er_http_register_route(method: *const c_char, path: *const c_char);
     pub fn er_http_listen_and_run(port: i32);
 
     // Multi-instance server lifecycle
     pub fn er_server_create(ssl: i32, rust_server: *mut c_void) -> *mut c_void;
+    pub fn er_server_create_ssl(cert_path: *const c_char, key_path: *const c_char, passphrase: *const c_char, rust_server: *mut c_void) -> *mut c_void;
     pub fn er_server_destroy(server: *mut c_void);
     pub fn er_server_register_route(server: *mut c_void, method: *const c_char, path: *const c_char, route_id: u32);
     pub fn er_server_register_ws_route(server: *mut c_void, path: *const c_char, route_id: u32);
@@ -51,4 +68,36 @@ unsafe extern "C" {
     pub fn er_app_num_subscribers(topic: *const c_char, topic_len: usize) -> u32;
 
     pub fn er_http_create_timer(ms: i32, cb: extern "C" fn(*mut c_void));
+
+    // Native outbound fetch client APIs (BoringSSL)
+    pub fn er_fetch(
+        url: *const c_char,
+        out_body: *mut *mut c_char,
+        out_body_len: *mut usize,
+        out_err: *mut *mut c_char,
+    ) -> i32;
+    pub fn er_fetch_free(ptr: *mut c_char);
+
+    // Native hardware-accelerated cryptographic primitives (BoringSSL)
+    pub fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
+    pub fn SHA512(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
+    pub fn MD5(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
+
+    pub fn EVP_sha256() -> *const c_void;
+    pub fn EVP_sha512() -> *const c_void;
+    pub fn EVP_md5() -> *const c_void;
+
+    pub fn HMAC(
+        evp_md: *const c_void,
+        key: *const c_void,
+        key_len: usize,
+        data: *const u8,
+        data_len: usize,
+        out: *mut u8,
+        out_len: *mut u32,
+    ) -> *mut u8;
+
+    pub fn RAND_bytes(buf: *mut u8, len: usize) -> i32;
+
+    pub fn CRYPTO_memcmp(a: *const c_void, b: *const c_void, len: usize) -> i32;
 }

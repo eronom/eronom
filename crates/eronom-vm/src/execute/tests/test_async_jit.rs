@@ -409,3 +409,58 @@ fn test_jit_lifecycle_reset() {
         }
     }
 }
+
+#[test]
+fn test_boringssl_ssl_and_crypto_primitives() {
+    // 1. Direct hardware-accelerated SHA256 test via BoringSSL FFI
+    let input = b"Eronom Secure BoringSSL";
+    let mut sha256_out = [0u8; 32];
+    unsafe {
+        eronom_net::ffi::SHA256(input.as_ptr(), input.len(), sha256_out.as_mut_ptr());
+    }
+    assert_ne!(sha256_out, [0u8; 32]);
+
+    // 2. Direct MD5 test via BoringSSL FFI
+    let mut md5_out = [0u8; 16];
+    unsafe {
+        eronom_net::ffi::MD5(input.as_ptr(), input.len(), md5_out.as_mut_ptr());
+    }
+    assert_ne!(md5_out, [0u8; 16]);
+
+    // 3. Constant-time memory comparison via BoringSSL FFI
+    let eq = unsafe {
+        eronom_net::ffi::CRYPTO_memcmp(
+            sha256_out.as_ptr() as *const std::ffi::c_void,
+            sha256_out.as_ptr() as *const std::ffi::c_void,
+            sha256_out.len(),
+        )
+    };
+    assert_eq!(eq, 0);
+
+    let diff = unsafe {
+        eronom_net::ffi::CRYPTO_memcmp(
+            sha256_out.as_ptr() as *const std::ffi::c_void,
+            md5_out.as_ptr() as *const std::ffi::c_void,
+            16,
+        )
+    };
+    assert_ne!(diff, 0);
+
+    // 4. Secure random bytes via BoringSSL FFI
+    let mut rand_buf = [0u8; 32];
+    let rc = unsafe { eronom_net::ffi::RAND_bytes(rand_buf.as_mut_ptr(), rand_buf.len()) };
+    assert_eq!(rc, 1);
+    assert_ne!(rand_buf, [0u8; 32]);
+
+    // 5. Outbound client fetch against closed port handles gracefully
+    let url_c = std::ffi::CString::new("https://127.0.0.1:59999/test").unwrap();
+    let mut out_body: *mut std::ffi::c_char = std::ptr::null_mut();
+    let mut out_len: usize = 0;
+    let mut out_err: *mut std::ffi::c_char = std::ptr::null_mut();
+    let fetch_rc = unsafe {
+        eronom_net::ffi::er_fetch(url_c.as_ptr(), &mut out_body, &mut out_len, &mut out_err)
+    };
+    assert_eq!(fetch_rc, -1);
+    assert!(!out_err.is_null());
+    unsafe { eronom_net::ffi::er_fetch_free(out_err); }
+}

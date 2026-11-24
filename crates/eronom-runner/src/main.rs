@@ -7,7 +7,7 @@ mod natives;
 mod embedded_bundle;
 
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static GLOBAL: eronom_core::alloc::MiMalloc = eronom_core::alloc::MiMalloc;
 
 fn main() {
     backend::jit::init_jit_hooks();

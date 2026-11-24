@@ -365,7 +365,7 @@
     <!-- Product Grid -->
     <div class="product-grid">
         <!-- Product 1: Apex Pro 75 Keyboard -->
-        if activeCategory == "All" || activeCategory == "Keyboards" {
+        @if activeCategory == "All" || activeCategory == "Keyboards" {
             <div class="product-card-wrap">
                 <div class="product-visual">
                     <span class="product-badge-tag">Bestseller</span>
@@ -384,7 +384,7 @@
         }
 
         <!-- Product 2: Aura Studio ANC Headphones -->
-        if activeCategory == "All" || activeCategory == "Audio" {
+        @if activeCategory == "All" || activeCategory == "Audio" {
             <div class="product-card-wrap">
                 <div class="product-visual">
                     <span class="product-badge-tag">Trending</span>
@@ -403,7 +403,7 @@
         }
 
         <!-- Product 3: Precision Magnetic Mouse -->
-        if activeCategory == "All" || activeCategory == "Accessories" {
+        @if activeCategory == "All" || activeCategory == "Accessories" {
             <div class="product-card-wrap">
                 <div class="product-visual">
                     <span class="product-badge-tag">Popular</span>
@@ -422,7 +422,7 @@
         }
 
         <!-- Product 4: Ultrawide QD-OLED Monitor -->
-        if activeCategory == "All" || activeCategory == "Displays" {
+        @if activeCategory == "All" || activeCategory == "Displays" {
             <div class="product-card-wrap">
                 <div class="product-visual">
                     <span class="product-badge-tag">Flagship</span>
@@ -441,7 +441,7 @@
         }
 
         <!-- Product 5: Dark Grid Deskmat -->
-        if activeCategory == "All" || activeCategory == "Accessories" {
+        @if activeCategory == "All" || activeCategory == "Accessories" {
             <div class="product-card-wrap">
                 <div class="product-visual">
                     <span class="product-badge-tag">Essential</span>
@@ -460,7 +460,7 @@
         }
 
         <!-- Product 6: Audiophile Dual DAC -->
-        if activeCategory == "All" || activeCategory == "Audio" {
+        @if activeCategory == "All" || activeCategory == "Audio" {
             <div class="product-card-wrap">
                 <div class="product-visual">
                     <span class="product-badge-tag">Hi-Res</span>

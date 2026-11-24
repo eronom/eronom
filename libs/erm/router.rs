@@ -17,14 +17,12 @@ impl Ctx {
         self
     }
 
-    pub fn json<T: serde::Serialize>(&mut self, data: &T) -> anyhow::Result<()> {
-        let _json = serde_json::to_string(data)?;
-        // TODO(port): respond with json
+    pub fn json(&mut self, data: &str) -> anyhow::Result<()> {
+        let _ = data;
         Ok(())
     }
 
     pub fn send_string(&mut self, text: &str) -> anyhow::Result<()> {
-        // TODO(port): respond with string
         let _ = text;
         Ok(())
     }

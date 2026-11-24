@@ -1,4 +1,4 @@
-use eronom::vm as backend;
+use crate::vm as backend;
 use backend::Value;
 
 #[repr(C)]
@@ -262,7 +262,7 @@ pub fn native_render(args: Vec<Value>) -> Value {
         return Value::string(ptr);
     }
     
-    match eronom::compiler::process_erm_component(&comp_path, &content, is_prod, &params_map) {
+    match crate::compiler::process_erm_component(&comp_path, &content, is_prod, &params_map) {
         Ok(html) => {
             let ptr = backend::gc::gc_alloc_string(&html);
             Value::string(ptr)
@@ -287,7 +287,7 @@ pub fn native_render_string(args: Vec<Value>) -> Value {
     let is_prod = if args.len() > 2 { args[2].as_boolean() } else { true };
     let params_map = extract_params_map(params_val);
 
-    match eronom::compiler::process_erm_component("<inline.erm>", content, is_prod, &params_map) {
+    match crate::compiler::process_erm_component("<inline.erm>", content, is_prod, &params_map) {
         Ok(html) => {
             let ptr = backend::gc::gc_alloc_string(&html);
             Value::string(ptr)

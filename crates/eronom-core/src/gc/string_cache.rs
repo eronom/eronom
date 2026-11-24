@@ -4,9 +4,9 @@ use std::rc::Rc;
 use crate::vm::value::Value;
 use super::types::{
     BuiltinMethodId, GcBuiltinMethod, GcColor, GcData, GcInlineString, GcObject,
-    GcString, GcStruct,
+    GcString,
 };
-use super::{gc_allocate, get_pooled_vec};
+use super::gc_allocate;
 
 thread_local! {
     pub static STRING_CACHE: RefCell<FnvHashMap<Rc<str>, *mut GcObject>> = RefCell::new(FnvHashMap::default());
@@ -81,48 +81,7 @@ pub fn get_or_create_string(s: &str) -> *mut GcObject {
     intern_string(s)
 }
 
-pub fn json_to_value(val: serde_json::Value) -> Value {
-    match val {
-        serde_json::Value::Null => Value::null(),
-        serde_json::Value::Bool(b) => Value::boolean(b),
-        serde_json::Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-                Value::number(f)
-            } else {
-                Value::null()
-            }
-        }
-        serde_json::Value::String(s) => {
-            let ptr = gc_alloc_string(&s);
-            Value::string(ptr)
-        }
-        serde_json::Value::Array(arr) => {
-            let mut elements = get_pooled_vec(arr.len());
-            for v in arr {
-                elements.push(json_to_value(v));
-            }
-            let ptr = gc_allocate(GcData::Array(elements));
-            Value::array(ptr)
-        }
-        serde_json::Value::Object(obj) => {
-            let mut keys = Vec::with_capacity(obj.len());
-            let mut values = Vec::with_capacity(obj.len());
-            for (k, v) in obj {
-                let key_ptr = intern_string(&k);
-                keys.push(Value::string(key_ptr));
-                values.push(json_to_value(v));
-            }
-            let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
-            let mut fields = get_pooled_vec(keys.len());
-            fields.resize(keys.len(), Value::null());
-            for i in 0..keys.len() {
-                fields[offsets[i]] = values[i];
-            }
-            let ptr = gc_allocate(GcData::Struct(GcStruct {
-                descriptor: desc,
-                fields,
-            }));
-            Value::object(ptr)
-        }
-    }
+#[inline(always)]
+pub fn json_to_value(json_str: &str) -> Value {
+    crate::json::json_parse(json_str).unwrap_or(Value::null())
 }

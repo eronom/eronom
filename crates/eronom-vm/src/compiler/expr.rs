@@ -362,6 +362,7 @@ impl Compiler {
                 compiler.effects = self.effects.clone();
                 compiler.function.arity = params.len();
                 compiler.function.is_async = *is_async;
+                compiler.function.name = self.current_binding_name.clone();
 
                 let rung = crate::frontend::infer_stmt_effect(body, &self.effects.borrow());
                 compiler.function.is_pure = *is_sync || (rung == crate::frontend::EffectRung::Pure);

@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use crate::eval::{self, ErmEval};
 use super::utils::*;
-use super::transform::{is_function_template, preprocess_function_template};
+use super::blocks::validate_template_directives;
+use super::transform::preprocess_erm_template;
 use super::tree::{process_component_tree, ProcessResult};
+
+pub static ASSET_MANIFEST: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn is_valid_js_identifier(name: &str) -> bool {
     if name.is_empty() {
@@ -27,13 +31,11 @@ fn is_valid_js_identifier(name: &str) -> bool {
 }
 
 pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, params: &HashMap<String, String>) -> anyhow::Result<String> {
-    let preprocessed;
-    let content = if is_function_template(content) {
-        preprocessed = preprocess_function_template(content)?;
-        &preprocessed
-    } else {
-        content
-    };
+    let cleaned = super::transform::strip_template_comments(content);
+    let content = &cleaned;
+    let preprocessed = preprocess_erm_template(content)?;
+    validate_template_directives(&preprocessed, file_path)?;
+    let content = &preprocessed;
     
     let path = std::path::Path::new(file_path);
     let base_dir = if path.is_file() {
@@ -306,7 +308,9 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         if is_json_literal {
             params_obj.push_str(&format!("{}: {},", k, v));
         } else {
-            params_obj.push_str(&format!("{}: {},", k, serde_json::to_string(v).unwrap_or_else(|_| format!("\"{}\"", v.replace('"', "\\\"")))));
+            let mut quoted = String::new();
+            eronom_core::json::escape_json_string(&mut quoted, v);
+            params_obj.push_str(&format!("{}: {},", k, quoted));
         }
     }
     params_obj.push('}');
@@ -387,7 +391,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut script_assets = String::new();
     if !scripts_to_inject.is_empty() || !result.state_vars.is_empty() {
         let runtime_path = if is_prod {
-            let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+            let manifest = ASSET_MANIFEST.lock().unwrap();
             manifest.get("/modules/erm/runtime.js")
                 .cloned()
                 .unwrap_or_else(|| "/modules/erm/runtime.js".to_string())
@@ -396,7 +400,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
         };
 
         let mut script_body = String::new();
-        script_body.push_str(&format!("import {{\n  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n  onMount, onCleanup, batch, untrack,\n  useState, useEffect, useProps, useFetch, unwrap, useParams, setParams, effect,\n  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n  Show, For, setCurrentPageDispose, mount, createRouter, navigate, setContext, getContext, createResource, template, child, sibling, ifBlock, eachBlock, createHmrProxy,\n  erm\n}} from '{}';\n", runtime_path));
+        script_body.push_str(&format!("import {{\n  createSignal, createEffect, createMemo, createRoot, createRenderEffect,\n  onMount, onCleanup, batch, untrack,\n  useState, useEffect, useStyle, useProps, useFetch, unwrap, useParams, setParams, effect,\n  bindText, bindEvent, bindAttr, bindProvider, renderFor, renderIf, registerEvent, escapeHtml,\n  Show, For, setCurrentPageDispose, mount, createRouter, navigate, setContext, getContext, createResource, template, child, sibling, ifBlock, eachBlock, createHmrProxy,\n  erm\n}} from '{}';\n", runtime_path));
         script_body.push_str("createRoot(async (dispose) => {\n");
         script_body.push_str("  setCurrentPageDispose(dispose);\n");
         for s in &scripts_to_inject {
@@ -418,7 +422,7 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
     let mut output = res_html.replace("__erm_anchor_id_prefix__", "");
     if is_prod {
         output = crate::compiler::inline_public_env_vars(&output);
-        let manifest = crate::server::types::ASSET_MANIFEST.lock().unwrap();
+        let manifest = ASSET_MANIFEST.lock().unwrap();
         if !manifest.is_empty() {
             for (orig, hashed) in manifest.iter() {
                 output = output.replace(orig, hashed);

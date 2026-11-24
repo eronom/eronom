@@ -1,4 +1,5 @@
 pub mod utils;
+pub mod errors;
 pub mod css;
 pub mod transform;
 pub mod template_js;
@@ -14,6 +15,7 @@ pub mod minify;
 pub mod tests;
 
 pub use utils::*;
+pub use errors::*;
 pub use css::*;
 pub use transform::*;
 pub use template_js::*;

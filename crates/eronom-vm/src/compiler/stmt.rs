@@ -75,7 +75,9 @@ impl Compiler {
                 }
                 if self.scope_depth > 0 {
                     let local_reg = self.locals.len();
+                    self.current_binding_name = Some(name.clone());
                     self.compile_expr(&expr, local_reg)?;
+                    self.current_binding_name = None;
                     self.locals.push(Local {
                         name: name.clone(),
                         depth: self.scope_depth,
@@ -85,7 +87,9 @@ impl Compiler {
                     });
                 } else {
                     let temp_reg = self.next_reg;
+                    self.current_binding_name = Some(name.clone());
                     self.compile_expr(&expr, temp_reg)?;
+                    self.current_binding_name = None;
                     let name_idx = self
                         .current_chunk()
                         .add_constant(Value::string_from_str(name.as_str()));

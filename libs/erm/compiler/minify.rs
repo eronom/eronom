@@ -210,7 +210,9 @@ pub fn inline_public_env_vars(code: &str) -> String {
     let replaced_env = re_env.replace_all(code, |caps: &regex::Captures| {
         let var_name = &caps[1];
         if let Ok(val) = std::env::var(var_name) {
-            serde_json::to_string(&val).unwrap_or_else(|_| format!("\"{}\"", val.replace('"', "\\\"")))
+            let mut out = String::new();
+            eronom_core::json::escape_json_string(&mut out, &val);
+            out
         } else {
             "\"\"".to_string()
         }
@@ -220,7 +222,9 @@ pub fn inline_public_env_vars(code: &str) -> String {
     re_bare.replace_all(&replaced_env, |caps: &regex::Captures| {
         let var_name = &caps[1];
         if let Ok(val) = std::env::var(var_name) {
-            serde_json::to_string(&val).unwrap_or_else(|_| format!("\"{}\"", val.replace('"', "\\\"")))
+            let mut out = String::new();
+            eronom_core::json::escape_json_string(&mut out, &val);
+            out
         } else {
             "\"\"".to_string()
         }

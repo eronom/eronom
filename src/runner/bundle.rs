@@ -2,11 +2,7 @@ use std::fs;
 
 pub const MAGIC_BYTES: &[u8; 16] = b"ERONOM_STUB_v1\0\0";
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct AppBundle {
-    pub entrypoint: String,
-    pub files: Vec<(String, Vec<u8>)>,
-}
+pub use crate::cli::bundle::AppBundle;
 
 /// Checks if the running executable has an embedded application bundle attached to its end.
 /// If present, unpacks the bundle to a temporary directory and runs the entrypoint.
@@ -65,7 +61,7 @@ pub fn check_and_run_embedded_bundle() -> Option<anyhow::Result<()>> {
         return Some(Err(anyhow::anyhow!("Failed to read embedded bundle: {}", e)));
     }
 
-    let bundle: AppBundle = match serde_json::from_slice(&payload) {
+    let bundle: AppBundle = match AppBundle::decode(&payload) {
         Ok(b) => b,
         Err(e) => return Some(Err(anyhow::anyhow!("Failed to deserialize embedded bundle: {}", e))),
     };

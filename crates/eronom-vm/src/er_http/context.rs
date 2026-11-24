@@ -4,7 +4,7 @@ use crate::vm::value::Value;
 use crate::vm::gc::{get_or_create_string, GcData};
 use super::ffi::*;
 use super::types::*;
-use super::utils::{format_cookie, status_code_to_status_line, value_to_json};
+use super::utils::{format_cookie, status_code_to_status_line};
 use super::static_files::serve_static_file;
 
 pub type RenderFn = fn(Vec<Value>) -> Value;
@@ -95,8 +95,7 @@ pub fn native_context_json(args: Vec<Value>) -> Value {
     if args.len() >= 2 && args[1].is_number() {
         ACTIVE_RESPONSE_STATE.with(|s| s.borrow_mut().status = Some(args[1].as_number() as u16));
     }
-    let json_val = value_to_json(data);
-    let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+    let json_str = crate::vm::json_stringify(data, None);
     flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
     Value::null()
 }
@@ -648,13 +647,11 @@ pub fn handle_fetch_return_value(res_ptr: *mut c_void, val: Value) {
             let b = body_bytes.as_deref().unwrap_or(b"");
             flush_response(res_ptr, Some(b), None, status);
         } else {
-            let json_val = value_to_json(val);
-            let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string());
+            let json_str = crate::vm::json_stringify(val, None);
             flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
         }
     } else if val.is_array() {
-        let json_val = value_to_json(val);
-        let json_str = serde_json::to_string(&json_val).unwrap_or_else(|_| "[]".to_string());
+        let json_str = crate::vm::json_stringify(val, None);
         flush_response(res_ptr, Some(json_str.as_bytes()), Some("application/json"), 200);
     } else if val.is_number() || val.is_boolean() {
         let s = val.to_string();

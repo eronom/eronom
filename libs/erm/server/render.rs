@@ -38,8 +38,7 @@ pub fn value_to_string_for_render(v: Value) -> String {
     } else if v.is_number() {
         v.as_number().to_string()
     } else {
-        let json_val = crate::vm::er_http::value_to_json(v);
-        serde_json::to_string(&json_val).unwrap_or_else(|_| "null".to_string())
+        eronom_core::json::json_stringify(v, None)
     }
 }
 
@@ -154,7 +153,11 @@ pub fn native_render(args: Vec<Value>) -> Value {
                         Value::string(ptr)
                     }
                     Err(e) => {
-                        eprintln!("[render] Compiler error: {:?}", e);
+                        if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                            eprintln!("[browser] {}", ce.message);
+                        } else {
+                            eprintln!("[browser] {:?}", e);
+                        }
                         Value::null()
                     }
                 }
@@ -210,7 +213,11 @@ pub fn native_render_string(args: Vec<Value>) -> Value {
             Value::string(ptr)
         }
         Err(e) => {
-            eprintln!("[renderString] Compiler error: {:?}", e);
+            if let Some(ce) = e.downcast_ref::<crate::compiler::CompileError>() {
+                eprintln!("[browser] {}", ce.message);
+            } else {
+                eprintln!("[browser] {:?}", e);
+            }
             Value::null()
         }
     }
@@ -274,6 +281,7 @@ pub fn execute_api_route(
     vm.register_global("getIoMode", Value::native_function(crate::vm::er_http::native_get_io_mode));
     vm.register_global("now", Value::native_function(native_now));
     vm.register_global("localTimeString", Value::native_function(native_local_time_string));
+    crate::vm::execute::fiber::register_fiber_natives(&mut vm);
     crate::vm::er_http::register_eronom_file_api(&mut vm).unwrap();
     crate::vm::std_fs::register_fs_natives(&mut vm);
     crate::vm::std_path::register_path_natives(&mut vm);
@@ -288,10 +296,8 @@ pub fn execute_api_route(
         if toml_path.exists() {
             if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
                 if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    if let Ok(json_val) = serde_json::to_value(toml_val) {
-                        let config_val = crate::vm::gc::json_to_value(json_val);
-                        vm.register_global("config", config_val);
-                    }
+                    let config_val = crate::vm::er_http::toml_to_value(toml_val);
+                    vm.register_global("config", config_val);
                 }
             }
         }

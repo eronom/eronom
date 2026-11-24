@@ -9,7 +9,7 @@ pub use env::TypeEnv;
 
 use crate::frontend::ast::{SourceLocation, Stmt};
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone)]
 pub struct TextEdit {
     pub line: usize,
     pub col: usize,
@@ -18,22 +18,78 @@ pub struct TextEdit {
     pub new_text: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+impl TextEdit {
+    pub fn to_json(&self) -> String {
+        let mut text_esc = String::new();
+        crate::frontend::ast::escape_json_string(&mut text_esc, &self.new_text);
+        format!(
+            "{{\"line\":{},\"col\":{},\"end_line\":{},\"end_col\":{},\"new_text\":\"{}\"}}",
+            self.line, self.col, self.end_line, self.end_col, text_esc
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DiagnosticFix {
     pub title: String,
     pub applicability: String,
     pub edits: Vec<TextEdit>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+impl DiagnosticFix {
+    pub fn to_json(&self) -> String {
+        let mut title_esc = String::new();
+        let mut app_esc = String::new();
+        crate::frontend::ast::escape_json_string(&mut title_esc, &self.title);
+        crate::frontend::ast::escape_json_string(&mut app_esc, &self.applicability);
+        let mut out = format!(
+            "{{\"title\":\"{}\",\"applicability\":\"{}\",\"edits\":[",
+            title_esc, app_esc
+        );
+        for (i, edit) in self.edits.iter().enumerate() {
+            if i > 0 { out.push(','); }
+            out.push_str(&edit.to_json());
+        }
+        out.push_str("]}");
+        out
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TypeError {
     pub code: String,
     pub message: String,
     pub loc: SourceLocation,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub fixes: Vec<DiagnosticFix>,
+}
+
+impl TypeError {
+    pub fn to_json(&self) -> String {
+        let mut code_esc = String::new();
+        let mut msg_esc = String::new();
+        crate::frontend::ast::escape_json_string(&mut code_esc, &self.code);
+        crate::frontend::ast::escape_json_string(&mut msg_esc, &self.message);
+        let mut out = format!(
+            "{{\"code\":\"{}\",\"message\":\"{}\",\"loc\":{}",
+            code_esc, msg_esc, self.loc.to_json()
+        );
+        if let Some(ref exp) = self.explanation {
+            let mut exp_esc = String::new();
+            crate::frontend::ast::escape_json_string(&mut exp_esc, exp);
+            out.push_str(&format!(",\"explanation\":\"{}\"", exp_esc));
+        }
+        if !self.fixes.is_empty() {
+            out.push_str(",\"fixes\":[");
+            for (i, fix) in self.fixes.iter().enumerate() {
+                if i > 0 { out.push(','); }
+                out.push_str(&fix.to_json());
+            }
+            out.push(']');
+        }
+        out.push('}');
+        out
+    }
 }
 
 impl TypeError {
