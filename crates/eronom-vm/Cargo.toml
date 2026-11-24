@@ -12,7 +12,7 @@ fnv = "1.0.7"
 regex = "1"
 toml = "0.8.19"
 target-lexicon = "0.13.5"
-cranelift-codegen = { path = "../../deps/cranelift/codegen", features = ["all-arch", "std"] }
+cranelift-codegen = { path = "../../deps/cranelift/codegen", features = ["host-arch", "std"] }
 cranelift-frontend = { path = "../../deps/cranelift/frontend" }
 cranelift-module = { path = "../../deps/cranelift/module" }
 cranelift-jit = { path = "../../deps/cranelift/jit" }
