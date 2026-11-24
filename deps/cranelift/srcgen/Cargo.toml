@@ -5,10 +5,7 @@ authors = ["The Wasmtime Project Developers"]
 description = "Helper functions for generating Rust and ISLE files"
 license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/bytecodealliance/wasmtime"
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]

@@ -1,22 +1,19 @@
 [package]
 name = "wasmtime-internal-jit-icache-coherence"
-version.workspace = true
-authors.workspace = true
+version = "0.139.0-dev"
+authors = ["The Cranelift Project Developers"]
 description = "INTERNAL: Utilities for JIT icache maintenance"
 documentation = "https://docs.rs/jit-icache-coherence"
 license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/bytecodealliance/wasmtime"
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-wasmtime-core = { workspace = true }
+wasmtime-core = { path = "../core", version = "0.139.0-dev", package = "wasmtime-internal-core" }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows-sys]
-workspace = true
+version = "0.61.2"
 features = [
     "Win32_Foundation",
     "Win32_System_Threading",
@@ -24,14 +21,14 @@ features = [
 ]
 
 [target.'cfg(all(not(miri), target_arch = "aarch64", any(target_os = "linux", target_os = "android")))'.dependencies]
-libc = { workspace = true }
+libc = { version = "0.2.190", default-features = true }
 
 [target.'cfg(all(not(miri), target_arch = "riscv64", target_os = "linux"))'.dependencies]
-libc = { workspace = true }
+libc = { version = "0.2.190", default-features = true }
 
 # For the test that runs rewritten code.
 [target.'cfg(all(not(miri), target_arch = "aarch64", any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "macos")))'.dev-dependencies]
-libc = { workspace = true }
+libc = { version = "0.2.190", default-features = true }
 
 [features]
 # Most modern CPUs are SMP (multicore). However, when only one core is present,

@@ -7,23 +7,20 @@ license = "Apache-2.0 WITH LLVM-exception"
 documentation = "https://docs.rs/cranelift-frontend"
 categories = ["no-std"]
 repository = "https://github.com/bytecodealliance/wasmtime"
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-cranelift-codegen = { workspace = true }
-log = { workspace = true }
-hashbrown = { workspace = true }
-smallvec = { workspace = true }
+cranelift-codegen = { path = "../codegen", version = "0.139.0-dev" }
+log = { version = "0.4.28", default-features = false }
+hashbrown = { version = "0.17", default-features = false }
+smallvec = { version = "1.15.1", features = ["union"] }
 
 [dev-dependencies]
-target-lexicon = { workspace = true }
-env_logger = { workspace = true }
-similar = { workspace = true }
-cranelift-codegen = { workspace = true, features = ['x86'] }
+target-lexicon = "0.13.5"
+env_logger = "0.11.5"
+similar = "3.1.1"
+cranelift-codegen = { path = "../codegen", version = "0.139.0-dev", features = ['x86'] }
 
 [features]
 default = ["std"]

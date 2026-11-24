@@ -8,17 +8,14 @@ documentation = "https://docs.rs/cranelift-entity"
 repository = "https://github.com/bytecodealliance/wasmtime"
 categories = ["no-std"]
 keywords = ["entity", "set", "map"]
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-cranelift-bitset = { workspace=true }
-serde = { workspace = true, optional = true }
-serde_derive = { workspace = true, optional = true }
-wasmtime-core = { workspace = true }
+cranelift-bitset = { path = "../bitset", version = "0.139.0-dev" }
+serde = { version = "1.0.228", default-features = false, features = ["alloc"], optional = true }
+serde_derive = { version = "1.0.228", optional = true }
+wasmtime-core = { path = "../core", version = "0.139.0-dev", package = "wasmtime-internal-core" }
 
 [features]
 enable-serde = ["serde", "serde_derive", "cranelift-bitset/enable-serde"]

@@ -6,28 +6,25 @@ description = "A JIT library backed by Cranelift"
 repository = "https://github.com/bytecodealliance/wasmtime"
 documentation = "https://docs.rs/cranelift-jit"
 license = "Apache-2.0 WITH LLVM-exception"
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-cranelift-module = { workspace = true }
-cranelift-native = { workspace = true }
-cranelift-codegen = { workspace = true, features = ["std"] }
-cranelift-entity = { workspace = true }
-cranelift-control = { workspace = true }
-anyhow = { workspace = true }
+cranelift-module = { path = "../module", version = "0.139.0-dev" }
+cranelift-native = { path = "../native", version = "0.139.0-dev" }
+cranelift-codegen = { path = "../codegen", version = "0.139.0-dev", features = ["std"] }
+cranelift-entity = { path = "../entity", version = "0.139.0-dev" }
+cranelift-control = { path = "../control", version = "0.139.0-dev" }
+anyhow = { version = "1.0.103", default-features = false }
 region = "3.0.2"
-libc = { workspace = true }
-target-lexicon = { workspace = true }
+libc = { version = "0.2.190", default-features = true }
+target-lexicon = "0.13.5"
 memmap2 = "0.9.11"
-log = { workspace = true }
-wasmtime-jit-icache-coherence = { workspace = true }
+log = { version = "0.4.28", default-features = false }
+wasmtime-jit-icache-coherence = { path = "../jit-icache-coherence", version = "0.139.0-dev", package = "wasmtime-internal-jit-icache-coherence" }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
-workspace = true
+version = "0.61.2"
 features = [
     "Win32_Foundation",
     "Win32_System_LibraryLoader",
@@ -39,5 +36,5 @@ default = []
 wasmtime-unwinder = []
 
 [dev-dependencies]
-cranelift-frontend = { workspace = true }
-cranelift-entity = { workspace = true }
+cranelift-frontend = { path = "../frontend", version = "0.139.0-dev" }
+cranelift-entity = { path = "../entity", version = "0.139.0-dev" }

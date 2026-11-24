@@ -1,22 +1,19 @@
 [package]
-authors.workspace = true
+authors = ["The Cranelift Project Developers"]
 description = "INTERNAL: Wasmtime's core utilities and helpers with minimal dependencies"
-edition.workspace = true
+edition = "2024"
 license = "Apache-2.0 WITH LLVM-exception"
 name = "wasmtime-internal-core"
-rust-version.workspace = true
-version.workspace = true
+rust-version = "1.95.0"
+version = "0.139.0-dev"
 
 [dependencies]
 # This crate should have *very* minimal dependencies! Don't add new ones
 # lightly.
-anyhow = { workspace = true, optional = true }
-hashbrown = { workspace = true, features = ["default-hasher"] }
-libm = { workspace = true }
-serde = { workspace = true, optional = true }
-
-[lints]
-workspace = true
+anyhow = { version = "1.0.103", default-features = false, optional = true }
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
+libm = "0.2.16"
+serde = { version = "1.0.228", default-features = false, features = ["alloc"], optional = true }
 
 [features]
 # Enable the use of the `std` crate.

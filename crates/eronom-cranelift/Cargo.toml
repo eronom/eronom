@@ -9,11 +9,11 @@ eronom-clap = { path = "../eronom-clap" }
 anyhow = "1.0.102"
 target-lexicon = "0.13.5"
 object = { version = "0.40.0", features = ["write", "std"] }
-cranelift-codegen = { version = "0.135.5", features = ["all-arch", "std"] }
-cranelift-frontend = "0.135.5"
-cranelift-module = "0.135.5"
-cranelift-object = "0.135.5"
-cranelift-jit = "0.135.5"
+cranelift-codegen = { path = "../../deps/cranelift/codegen", features = ["all-arch", "std"] }
+cranelift-frontend = { path = "../../deps/cranelift/frontend" }
+cranelift-module = { path = "../../deps/cranelift/module" }
+cranelift-object = { path = "../../deps/cranelift/object" }
+cranelift-jit = { path = "../../deps/cranelift/jit" }
 
 [[bin]]
 name = "eronom-cranelift"

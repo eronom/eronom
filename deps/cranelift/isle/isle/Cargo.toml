@@ -1,20 +1,17 @@
 [package]
 authors = ["The Cranelift Project Developers"]
 description = "ISLE: Instruction Selection and Lowering Expressions. A domain-specific language for instruction selection in Cranelift."
-edition.workspace = true
-rust-version.workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 license = "Apache-2.0 WITH LLVM-exception"
 name = "cranelift-isle"
 readme = "../README.md"
 repository = "https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle"
 version = "0.139.0-dev"
 
-[lints]
-workspace = true
-
 [dependencies]
 codespan-reporting = { version = "0.11.1", optional = true }
-log = { workspace = true, optional = true }
+log = { version = "0.4.28", default-features = false, optional = true }
 
 [features]
 default = []

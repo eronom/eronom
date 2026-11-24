@@ -3,12 +3,12 @@ name = "cranelift-assembler-x64"
 description = "A Cranelift-specific x64 assembler"
 version = "0.139.0-dev"
 license = "Apache-2.0 WITH LLVM-exception"
-edition.workspace = true
-rust-version.workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-arbitrary = { workspace = true, features = ["derive"], optional = true }
-capstone = { workspace = true, optional = true }
+arbitrary = { version = "1.4.2", features = ["derive"], optional = true }
+capstone = { version = "0.14.0", default-features = false, optional = true }
 
 # XED is built from C source by its own Python build system, which is picky
 # about its environment: it only recognizes x86 host CPUs, and it invokes LLVM
@@ -17,18 +17,15 @@ capstone = { workspace = true, optional = true }
 # actually runs, i.e. the `fuzz-xed` CI job and OSS-Fuzz -- so that
 # `--all-features` builds keep working elsewhere (see `ci/run-tests.py`).
 [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
-xed-sys = { workspace = true, optional = true }
+xed-sys = { version = "0.6", optional = true }
 
 [dev-dependencies]
-arbitrary = { workspace = true, features = ["derive"] }
-arbtest = { workspace = true }
-capstone = { workspace = true }
+arbitrary = { version = "1.4.2", features = ["derive"] }
+arbtest = "0.3.2"
+capstone = { version = "0.14.0", default-features = false }
 
 [build-dependencies]
 cranelift-assembler-x64-meta = { path = "meta", version = "0.139.0-dev" }
-
-[lints]
-workspace = true
 
 [features]
 fuzz = ['dep:arbitrary', 'dep:capstone']

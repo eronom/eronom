@@ -7,21 +7,18 @@ documentation = "https://docs.rs/cranelift-native"
 repository = "https://github.com/bytecodealliance/wasmtime"
 categories = ["no-std"]
 license = "Apache-2.0 WITH LLVM-exception"
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-cranelift-codegen = { workspace = true }
-target-lexicon = { workspace = true }
+cranelift-codegen = { path = "../codegen", version = "0.139.0-dev" }
+target-lexicon = "0.13.5"
 
 [target.'cfg(target_arch = "riscv64")'.dependencies]
-libc = { workspace = true }
+libc = { version = "0.2.190", default-features = true }
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.dependencies]
-mach2 = { workspace = true }
+mach2 = "0.6"
 
 [features]
 default = ["std"]

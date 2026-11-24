@@ -6,21 +6,18 @@ description = "Emit Cranelift output to native object files with `object`"
 repository = "https://github.com/bytecodealliance/wasmtime"
 documentation = "https://docs.rs/cranelift-object"
 license = "Apache-2.0 WITH LLVM-exception"
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-cranelift-module = { workspace = true }
-cranelift-codegen = { workspace = true, features = ["std"] }
-cranelift-control = { workspace = true }
-object = { workspace = true, features = ["write", "std"] }
-target-lexicon = { workspace = true }
-anyhow = { workspace = true }
-log = { workspace = true }
-gimli = { workspace = true, features = ["write"], optional = true }
+cranelift-module = { path = "../module", version = "0.139.0-dev" }
+cranelift-codegen = { path = "../codegen", version = "0.139.0-dev", features = ["std"] }
+cranelift-control = { path = "../control", version = "0.139.0-dev" }
+object = { version = "0.40.0", default-features = false, features = ["write", "std"] }
+target-lexicon = "0.13.5"
+anyhow = { version = "1.0.103", default-features = false }
+log = { version = "0.4.28", default-features = false }
+gimli = { version = "0.33.0", default-features = false, features = ["write"], optional = true }
 
 [features]
 default = ["unwind"]
@@ -29,6 +26,6 @@ default = ["unwind"]
 unwind = ["dep:gimli", "cranelift-codegen/unwind"]
 
 [dev-dependencies]
-cranelift-frontend = { workspace = true }
-cranelift-entity = { workspace = true }
-cranelift-codegen = { workspace = true, features = ["x86", "arm64"] }
+cranelift-frontend = { path = "../frontend", version = "0.139.0-dev" }
+cranelift-entity = { path = "../entity", version = "0.139.0-dev" }
+cranelift-codegen = { path = "../codegen", version = "0.139.0-dev", features = ["x86", "arm64"] }

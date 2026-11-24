@@ -3,11 +3,9 @@ name = "cranelift-assembler-x64-meta"
 description = "Generate a Cranelift-specific assembler for x64 instructions"
 version = "0.139.0-dev"
 license = "Apache-2.0 WITH LLVM-exception"
-edition.workspace = true
-rust-version.workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-cranelift-srcgen = { workspace = true }
+cranelift-srcgen = { path = "../../srcgen", version = "0.139.0-dev" }
 
-[lints]
-workspace = true

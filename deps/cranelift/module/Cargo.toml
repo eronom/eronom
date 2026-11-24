@@ -7,19 +7,16 @@ repository = "https://github.com/bytecodealliance/wasmtime"
 documentation = "https://docs.rs/cranelift-module"
 categories = ["no-std"]
 license = "Apache-2.0 WITH LLVM-exception"
-edition.workspace = true
-rust-version.workspace = true
-
-[lints]
-workspace = true
+edition = "2024"
+rust-version = "1.95.0"
 
 [dependencies]
-cranelift-codegen = { workspace = true }
-cranelift-control = { workspace = true }
-hashbrown = { workspace = true }
-anyhow = { workspace = true, features = ['std'] }
-serde = { workspace = true, optional = true }
-serde_derive = { workspace = true, optional = true }
+cranelift-codegen = { path = "../codegen", version = "0.139.0-dev" }
+cranelift-control = { path = "../control", version = "0.139.0-dev" }
+hashbrown = { version = "0.17", default-features = false }
+anyhow = { version = "1.0.103", default-features = false, features = ['std'] }
+serde = { version = "1.0.228", default-features = false, features = ["alloc"], optional = true }
+serde_derive = { version = "1.0.228", optional = true }
 
 [features]
 default = ["std"]
