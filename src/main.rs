@@ -31,10 +31,10 @@ fn main() {
         #[cfg(unix)]
         unsafe {
             unsafe extern "C" {
-                fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+                fn write(fd: i32, buf: *const std::ffi::c_void, count: usize) -> isize;
                 fn _exit(status: i32) -> !;
             }
-            let _ = write(1, VER_STR.as_ptr(), VER_STR.len());
+            let _ = write(1, VER_STR.as_ptr().cast(), VER_STR.len());
             _exit(0);
         }
         #[cfg(not(unix))]
