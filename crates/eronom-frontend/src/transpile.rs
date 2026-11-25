@@ -962,4 +962,15 @@ mod tests {
         assert!(res_fn.contains("erm.set(isCartOpen, true)"));
         assert!(!res_fn.contains("erm.get(isCartOpen).value"));
     }
+
+    #[test]
+    fn test_transpile_short_var_decl() {
+        let src = r#"
+            count := 5
+            count = 10
+        "#;
+        let js = parse_and_transpile(src);
+        assert!(js.contains("let count = 5;"));
+        assert!(js.contains("(count = 10);"));
+    }
 }

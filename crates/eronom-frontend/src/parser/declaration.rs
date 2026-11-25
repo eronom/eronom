@@ -227,6 +227,12 @@ impl Parser {
             let mut type_annotation = None;
             if self.match_token(&[TokenType::Colon]) {
                 type_annotation = Some(self.parse_type()?);
+            } else if self.check(&TokenType::ColonEqual) {
+                let kw = if is_const { "const" } else { "let" };
+                return Err(format!(
+                    "Error at line {}: Unexpected ':=' after '{}' declaration; use '=' with '{}' or omit '{}' to use ':='.",
+                    self.peek().line, kw, kw, kw
+                ));
             }
 
             let mut initializer = Expr::Literal(LiteralValue::Null);
@@ -313,25 +319,21 @@ impl Parser {
             };
             Ok(Stmt::VarDecl(name, None, false, Expr::Function(params, return_type, Box::new(body), is_async, is_sync), loc))
         } else if self.check_ident() && {
-            // Check for assignment or short variable declaration: ident = expr
+            // Check for short variable declaration: ident := expr
             self.current + 1 < self.tokens.len()
-                && self.tokens[self.current + 1].ty == TokenType::Equal
+                && self.tokens[self.current + 1].ty == TokenType::ColonEqual
         } {
             let name_tok = self.peek().clone();
             let name = self.consume_ident("Expected variable name.")?;
-            self.advance(); // consume =
+            self.advance(); // consume :=
             let expr = self.expression()?;
             let loc = SourceLocation {
                 file_path: self.file_path.clone(),
                 line: name_tok.line,
                 col: name_tok.col,
             };
-            if self.is_variable_declared(&name) {
-                Ok(Stmt::Expr(Expr::Assign(name, Box::new(expr), loc)))
-            } else {
-                self.declare_variable(name.clone());
-                Ok(Stmt::VarDecl(name, None, false, expr, loc))
-            }
+            self.declare_variable(name.clone());
+            Ok(Stmt::VarDecl(name, None, false, expr, loc))
         } else {
             self.statement()
         }

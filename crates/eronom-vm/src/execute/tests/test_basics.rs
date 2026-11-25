@@ -178,7 +178,7 @@ fn test_struct_new_constructor_syntax() {
         const d = Dog()
         let val_d_name = d.name
 
-        user1 = Dog("Eronom")
+        user1 := Dog("Eronom")
         let val_u1_name = user1.name
         let val_u1_age = user1.age
 
@@ -191,7 +191,7 @@ fn test_struct_new_constructor_syntax() {
         let user4 : Dog = [{}]
         let val_u4_name = user4[0].name
 
-        user5 = Dog([ { name: "A" }, { name: "B" } ])
+        user5 := Dog([ { name: "A" }, { name: "B" } ])
         let val_u5_name0 = user5[0].name
         let val_u5_name1 = user5[1].name
     "#;
@@ -434,4 +434,72 @@ fn test_zero_arc_promise_pair_high_volume() {
 
     assert_eq!(vm.get_global("total").unwrap().as_number(), 4950.0);
     gc_free_all();
+}
+
+#[test]
+fn test_short_var_decl_colon_equal() {
+    let source = r#"
+        count := 5
+        count = count + 10
+
+        msg := "hello"
+        msg = msg + " eronom"
+
+        fn make_counter(start) {
+            cur := start
+            return fn() {
+                cur = cur + 1
+                return cur
+            }
+        }
+
+        counter := make_counter(10)
+        c1 := counter()
+        c2 := counter()
+
+        // Local scoping and re-declaration matching `let`
+        outer := 1
+        {
+            outer := 99
+            inner := outer + 1
+        }
+        after_block := outer
+        outer := 200
+    "#;
+    let vm = run_code(source).unwrap();
+    assert_eq!(vm.get_global("count").unwrap().as_number(), 15.0);
+    assert_eq!(vm.get_global("msg").unwrap().as_str().unwrap(), "hello eronom");
+    assert_eq!(vm.get_global("c1").unwrap().as_number(), 11.0);
+    assert_eq!(vm.get_global("c2").unwrap().as_number(), 12.0);
+    assert_eq!(vm.get_global("after_block").unwrap().as_number(), 1.0);
+    assert_eq!(vm.get_global("outer").unwrap().as_number(), 200.0);
+}
+
+#[test]
+fn test_undeclared_assignment_fails() {
+    let source = "x = 5";
+    for use_jit in [true, false] {
+        let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::jit::init_jit_hooks();
+        crate::jit::reset_jit_state();
+        gc_free_all();
+
+        let tokens = crate::frontend::lex(source);
+        let mut parser = crate::frontend::Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let compiler = Compiler::new();
+        let function = compiler.compile(&stmts).unwrap();
+
+        let mut vm = VM::new();
+        vm.use_jit = use_jit;
+        let err = vm.run(function).expect_err("Expected undeclared variable error");
+        assert!(
+            err.contains("not declared") && err.contains(":="),
+            "Unexpected error for use_jit={}: {}",
+            use_jit,
+            err
+        );
+        crate::jit::reset_jit_state();
+        gc_free_all();
+    }
 }

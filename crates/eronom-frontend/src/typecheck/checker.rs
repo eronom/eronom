@@ -282,7 +282,7 @@ impl TypeChecker {
                             format!("Cannot assign to undeclared variable '{}'", name),
                             loc.clone(),
                         ).with_explanation(format!(
-                            "Variable '{}' must be declared with 'let' before assigning a value",
+                            "Variable '{}' must be declared with ':=', 'let', or 'const' before assigning a value",
                             name
                         ))
                     );

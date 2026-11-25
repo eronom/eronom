@@ -1,6 +1,6 @@
 import {User} from "./exportstruct"
 
-user = User({
+user := User({
     name: "Vishnu",
     age:25,
  })

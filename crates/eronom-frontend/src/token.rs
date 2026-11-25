@@ -15,6 +15,7 @@ pub enum TokenType {
     PlusPlus,
     PlusEqual,
     Colon,
+    ColonEqual,
     Slash,
     SlashEqual,
     Star,

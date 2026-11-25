@@ -324,6 +324,11 @@ impl VM {
                         return Err(format!("[JIT] Can only call functions in '{}' (callee: 0x{:x}, func_reg: {}, dest_reg: {}, ip: {})", fn_name, callee.0, func_reg_out, dest_reg_out, ip_out).into());
                     }
                 } else if status == 1 {
+                    if self.has_error_flag != 0 {
+                        self.has_error_flag = 0;
+                        let err_msg = self.error.take().unwrap_or_else(|| "JIT execution error".to_string());
+                        return Err(err_msg);
+                    }
                     // YieldReturn: a Return instruction yielded to the JIT orchestrator.
                     let caller_dest_reg = frame.dest_reg;
                     self.close_upvalues(frame.slots_offset);

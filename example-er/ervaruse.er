@@ -1,6 +1,6 @@
-export num = 5
+export num := 5
 
-name = "Eronom"
+name := "Eronom"
 
 print("new")
 

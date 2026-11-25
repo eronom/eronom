@@ -46,15 +46,6 @@ impl Parser {
         }
     }
 
-    pub(crate) fn is_variable_declared(&self, name: &str) -> bool {
-        for scope in self.scopes.iter().rev() {
-            if scope.contains(name) {
-                return true;
-            }
-        }
-        false
-    }
-
     pub(crate) fn peek(&self) -> &Token {
         &self.tokens[self.current]
     }

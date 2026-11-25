@@ -389,7 +389,7 @@ impl Drop for VM {
 
 pub fn format_undeclared_var_error(name: &str) -> String {
     format!(
-        "Variable '{}' not declared. It needs to be declared with 'let' or 'const', or by assigning to it.",
+        "Variable '{}' not declared. It needs to be declared with ':=', 'let', or 'const'.",
         name
     )
 }

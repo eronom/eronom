@@ -144,3 +144,34 @@ fn test_type_assertion_as() {
         panic!("test_type_assertion_as failed: {}", e);
     }
 }
+
+#[test]
+fn test_short_var_decl_and_undeclared_assignment() {
+    let valid_code = r#"
+        count := 5
+        count = 10
+        greeting := "hello"
+        greeting = "world"
+    "#;
+    if let Err(e) = parse_and_check(valid_code) {
+        panic!("test_short_var_decl valid case failed: {}", e);
+    }
+
+    let type_mismatch = r#"
+        count := 5
+        count = "oops"
+    "#;
+    assert!(parse_and_check(type_mismatch).is_err());
+
+    let undeclared_assign = r#"
+        undeclared_var = 5
+    "#;
+    let err = parse_and_check(undeclared_assign).expect_err("Expected undeclared variable error");
+    assert!(err.contains("E0202"));
+    assert!(err.contains("undeclared"));
+
+    let invalid_let_colon_eq = r#"
+        let x := 5
+    "#;
+    assert!(parse_and_check(invalid_let_colon_eq).is_err());
+}

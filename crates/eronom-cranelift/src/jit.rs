@@ -591,7 +591,22 @@ impl CraneliftJitEngine {
                         let name_c = func.chunk.constants[operand];
                         let name_val = builder.ins().iconst(types::I64, name_c.0 as i64);
                         let va = builder.use_var(reg_vars[ra]);
-                        call_helper(&mut builder, "er_jit_set_global", &[vm_val, va, name_val]);
+                        let err = call_helper(&mut builder, "er_jit_set_global", &[vm_val, va, name_val]);
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let is_err = builder.ins().icmp(IntCC::NotEqual, err, zero);
+                        let err_block = builder.create_block();
+                        let ok_block = builder.create_block();
+                        builder.ins().brif(is_err, err_block, &[], ok_block, &[]);
+
+                        builder.switch_to_block(err_block);
+                        let ip_c = builder.ins().iconst(types::I64, pc as i64);
+                        builder.ins().store(cranelift_codegen::ir::MemFlagsData::new(), ip_c, ip_out_val, 0);
+                        let null_val = builder.ins().iconst(types::I64, TAG_NULL as i64);
+                        builder.ins().store(cranelift_codegen::ir::MemFlagsData::new(), null_val, ret_val_out_val, 0);
+                        let err_status = builder.ins().iconst(types::I64, -1);
+                        builder.ins().return_(&[err_status]);
+
+                        builder.switch_to_block(ok_block);
                     }
                     OpCode::MakeArray => {
                         let count = inst.operand as usize;

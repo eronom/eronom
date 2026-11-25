@@ -96,7 +96,13 @@ impl<'a> Lexer<'a> {
             '[' => TokenType::LeftBracket,
             ']' => TokenType::RightBracket,
             ',' => TokenType::Comma,
-            ':' => TokenType::Colon,
+            ':' => {
+                if self.match_char('=') {
+                    TokenType::ColonEqual
+                } else {
+                    TokenType::Colon
+                }
+            }
             '@' => TokenType::At,
             '-' => {
                 if self.match_char('-') {
