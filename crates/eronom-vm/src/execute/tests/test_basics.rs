@@ -358,3 +358,80 @@ fn test_gc_atomic_flag() {
 
     gc_free_all();
 }
+
+#[test]
+fn test_allocator_arena_struct_shape_churn() {
+    let source = "
+        struct Point { x: int, y: int }
+        let sum = 0
+        for i in 0..500 {
+            let p = Point { x: i, y: i + 1 }
+            let obj = { a: i, b: i * 2, c: i + 3 }
+            obj.c = obj.c + 1
+            sum = sum + p.x + p.y + obj.a + obj.b + obj.c
+        }
+    ";
+    let vm = run_code(source).unwrap();
+    let expected: f64 = (0..500).map(|i| (i + (i + 1) + i + (i * 2) + (i + 4)) as f64).sum();
+    assert_eq!(vm.get_global("sum").unwrap().as_number(), expected);
+
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    gc_free_all();
+}
+
+#[test]
+fn test_allocator_slab_long_strings_and_arrays() {
+    let source = "
+        let acc = 0
+        let arr = []
+        for i in 0..200 {
+            let long_str = \"eronom_slab_heap_string_exceeding_31_bytes_\" + i
+            arr.push(long_str)
+            if (arr.length > 32) {
+                arr.shift()
+            }
+            acc = acc + long_str.length
+        }
+        arr.unshift(\"eronom_head_entry_longer_than_31_bytes_001\")
+        let final_len = arr.length
+    ";
+    let vm = run_code(source).unwrap();
+    assert_eq!(vm.get_global("final_len").unwrap().as_number(), 33.0);
+    assert!(vm.get_global("acc").unwrap().as_number() > 8000.0);
+
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    gc_free_all();
+}
+
+#[test]
+fn test_zero_arc_promise_pair_high_volume() {
+    let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    gc_free_all();
+
+    let source = "
+        let total = 0
+        for i in 0..100 {
+            const pair = createPromisePair()
+            setTimeout((resolve, v) => {
+                resolve(v)
+            }, 0, pair.resolve, i)
+            let x = futureAwait(pair.promise)
+            total = total + x
+        }
+    ";
+    let tokens = crate::frontend::lex(source);
+    let mut parser = crate::frontend::Parser::new(tokens);
+    let stmts = parser.parse().unwrap();
+    let compiler = crate::vm::compiler::Compiler::new();
+    let function = compiler.compile(&stmts).unwrap();
+    let mut vm = VM::new();
+    vm.register_global("setTimeout", Value::native_function(crate::vm::er_http::native_set_timeout));
+    vm.register_global("futureAwait", Value::native_function(crate::vm::er_http::native_future_await));
+    vm.register_global("createPromisePair", Value::native_function(crate::vm::er_http::native_create_promise_pair));
+    vm.use_jit = true;
+    vm.run(function).unwrap();
+    vm.run_event_loop().unwrap();
+
+    assert_eq!(vm.get_global("total").unwrap().as_number(), 4950.0);
+    gc_free_all();
+}
