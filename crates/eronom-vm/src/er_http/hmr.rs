@@ -18,7 +18,10 @@ pub fn toml_to_value(val: toml::Value) -> crate::vm::value::Value {
             crate::vm::value::Value::string(ptr)
         }
         toml::Value::Array(arr) => {
-            let elements: Vec<crate::vm::value::Value> = arr.into_iter().map(toml_to_value).collect();
+            let mut elements = crate::vm::gc::gc_vec_with_capacity(arr.len());
+            for v in arr {
+                elements.push(toml_to_value(v));
+            }
             let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Array(elements));
             crate::vm::value::Value::array(ptr)
         }

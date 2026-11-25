@@ -482,7 +482,10 @@ pub extern "C" fn er_ws_on_message_instance(
             Value::string(get_or_create_string(""))
         } else if is_binary != 0 {
             let slice = std::slice::from_raw_parts(message_ptr as *const u8, message_len);
-            let byte_vals: Vec<Value> = slice.iter().map(|&b| Value::number(b as f64)).collect();
+            let mut byte_vals = crate::vm::gc::gc_vec_with_capacity(slice.len());
+            for &b in slice {
+                byte_vals.push(Value::number(b as f64));
+            }
             let arr_ptr = gc_allocate(GcData::Array(byte_vals));
             Value::array(arr_ptr)
         } else {

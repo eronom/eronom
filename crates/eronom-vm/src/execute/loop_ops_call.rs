@@ -389,7 +389,7 @@ impl VM {
             GcData::Function(f) => f,
             _ => unreachable!(),
         };
-        let mut upvalue_ptrs = Vec::with_capacity(fn_proto.upvalues.len());
+        let mut upvalue_ptrs = crate::vm::gc::gc_vec_with_capacity(fn_proto.upvalues.len());
         for uv_desc in &fn_proto.upvalues {
             if uv_desc.is_local {
                 let abs_slot = slots_offset + uv_desc.index as usize;

@@ -56,7 +56,13 @@ pub fn execute_array_core_method(
             unsafe {
                 match &mut (*ptr).data {
                     GcData::Array(arr) => {
-                        arr.splice(0..0, args.iter().copied());
+                        let old_len = arr.len();
+                        let add_len = args.len();
+                        if add_len > 0 {
+                            arr.resize(old_len + add_len, Value::null());
+                            arr.copy_within(0..old_len, add_len);
+                            arr[..add_len].copy_from_slice(args);
+                        }
                         for arg in args {
                             gc_write_barrier(ptr, arg);
                         }
@@ -168,7 +174,7 @@ pub fn execute_array_core_method(
             let ptr = receiver.as_gc_ptr();
             let mut combined = unsafe {
                 match &(*ptr).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -204,7 +210,7 @@ pub fn execute_array_core_method(
             let ptr = receiver.as_gc_ptr();
             let mut items: Vec<Value> = unsafe {
                 match &(*ptr).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -253,7 +259,7 @@ pub fn execute_array_core_method(
             let depth = args.get(0).map(|v| if v.is_number() { (v.as_number() as usize).max(0) } else { 1 }).unwrap_or(1);
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };

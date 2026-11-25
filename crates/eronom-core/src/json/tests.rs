@@ -108,8 +108,8 @@ fn test_pretty_print() {
 
 #[test]
 fn test_circular_reference_protection() {
-    use crate::gc::{gc_allocate, GcData};
-    let elements = Vec::new();
+    use crate::gc::{gc_allocate, gc_vec_new, GcData};
+    let elements = gc_vec_new();
     let ptr = gc_allocate(GcData::Array(elements));
     let val = Value::array(ptr);
     unsafe {

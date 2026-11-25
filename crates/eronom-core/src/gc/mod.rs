@@ -28,7 +28,6 @@ pub struct GcState {
     pub current_chunk_ptr: *mut GcObject,
     pub chunk_remaining: usize,
     pub chunks: Vec<*mut GcObject>,
-    pub vector_pool: Vec<Vec<Value>>,
     pub map_pool: Vec<ObjectMap>,
 }
 
@@ -46,7 +45,6 @@ thread_local! {
         current_chunk_ptr: std::ptr::null_mut(),
         chunk_remaining: 0,
         chunks: Vec::new(),
-        vector_pool: Vec::new(),
         map_pool: Vec::new(),
     }) };
     pub static GC_ROOTS: RefCell<Vec<Box<dyn Fn()>>> = RefCell::new(Vec::new());
@@ -83,18 +81,25 @@ pub fn gc_with_state<R>(f: impl FnOnce(&mut GcState) -> R) -> R {
 }
 
 #[inline(always)]
-pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
-    GC_STATE.with(|state| unsafe {
-        let s = &mut *state.get();
-        if let Some(mut v) = s.vector_pool.pop() {
-            if v.capacity() < capacity {
-                v.reserve(capacity - v.capacity());
-            }
-            v
-        } else {
-            Vec::with_capacity(capacity.max(4))
-        }
-    })
+pub fn gc_vec_new<T>() -> crate::alloc::GcVec<T> {
+    Vec::new_in(crate::alloc::GcSlabAlloc)
+}
+
+#[inline(always)]
+pub fn gc_vec_with_capacity<T>(capacity: usize) -> crate::alloc::GcVec<T> {
+    Vec::with_capacity_in(capacity, crate::alloc::GcSlabAlloc)
+}
+
+#[inline(always)]
+pub fn gc_vec_from_slice<T: Copy>(slice: &[T]) -> crate::alloc::GcVec<T> {
+    let mut v = Vec::with_capacity_in(slice.len().max(4), crate::alloc::GcSlabAlloc);
+    v.extend_from_slice(slice);
+    v
+}
+
+#[inline(always)]
+pub fn get_pooled_vec(capacity: usize) -> crate::alloc::GcVec<Value> {
+    Vec::with_capacity_in(capacity.max(4), crate::alloc::GcSlabAlloc)
 }
 
 #[inline(always)]
@@ -116,17 +121,8 @@ pub fn get_pooled_map(capacity: usize) -> ObjectMap {
 pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
     GC_STATE.with(|state| unsafe {
         let s = &mut *state.get();
-        let count = slice.len();
-        let cap = if count < 4 { 4 } else { count };
-        let mut elements = if let Some(mut v) = s.vector_pool.pop() {
-            if v.capacity() < cap {
-                v.reserve(cap - v.capacity());
-            }
-            v.clear();
-            v
-        } else {
-            Vec::with_capacity(cap)
-        };
+        let cap = slice.len().max(4);
+        let mut elements = Vec::with_capacity_in(cap, crate::alloc::GcSlabAlloc);
         elements.extend_from_slice(slice);
         let ptr = gc_alloc_object(s, GcData::Array(elements));
         (*ptr).next = s.head;
@@ -145,25 +141,11 @@ const GC_POOL_MAX: usize = 128;
 pub fn gc_recycle_data(state: &mut GcState, data: &mut GcData) {
     unsafe {
         match data {
-            GcData::Array(arr) => {
-                let mut vec = std::ptr::read(arr);
-                vec.clear();
-                if state.vector_pool.len() < GC_POOL_MAX {
-                    state.vector_pool.push(vec);
-                }
-            }
             GcData::Object(obj) => {
                 let mut map = std::ptr::read(obj);
                 map.clear();
                 if state.map_pool.len() < GC_POOL_MAX {
                     state.map_pool.push(map);
-                }
-            }
-            GcData::Struct(s) => {
-                let mut s_val = std::ptr::read(s);
-                s_val.fields.clear();
-                if state.vector_pool.len() < GC_POOL_MAX {
-                    state.vector_pool.push(s_val.fields);
                 }
             }
             _ => {
@@ -269,7 +251,6 @@ pub fn gc_free_all() {
             for chunk in s_ref.chunks.drain(..) {
                 std::alloc::dealloc(chunk as *mut u8, layout);
             }
-            s_ref.vector_pool.clear();
             s_ref.map_pool.clear();
             s_ref.alloc_count = 0;
             s_ref.alloc_threshold = 512;

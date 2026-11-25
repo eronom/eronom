@@ -473,12 +473,8 @@ pub fn collect_allocator_memory(force: bool) {
 /// Proactively scavenge idle memory and return unused pages/capacities to the OS.
 /// Called during idle event loop pauses or between batch operations.
 pub fn scavenge_idle_memory() {
-    // 1. Trim thread-local GC vector and map pools down to baseline
+    // 1. Trim thread-local GC map pool and free list down to baseline
     crate::vm::gc::gc_with_state(|state| {
-        if state.vector_pool.len() > 32 {
-            state.vector_pool.truncate(32);
-            state.vector_pool.shrink_to_fit();
-        }
         if state.map_pool.len() > 16 {
             state.map_pool.truncate(16);
             state.map_pool.shrink_to_fit();
@@ -561,9 +557,10 @@ pub fn construct_struct_from_args(
             }
         } else if arg.is_array() {
             let arg_ptr = arg.as_gc_ptr();
-            let mut mapped_elements = Vec::new();
+            let mut mapped_elements = crate::vm::gc::gc_vec_new();
             unsafe {
                 if let GcData::Array(arr) = &(*arg_ptr).data {
+                    mapped_elements.reserve(arr.len());
                     for &item in arr {
                         let constructed = construct_struct_from_args(descriptor, vec![item])?;
                         mapped_elements.push(constructed);

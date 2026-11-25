@@ -311,7 +311,7 @@ fn test_extract_bytes_from_value() {
     assert_eq!(is_bin_forced, true);
 
     // 2. Test array of numbers extraction
-    let mut arr_elems = Vec::new();
+    let mut arr_elems = crate::vm::gc::gc_vec_with_capacity(3);
     arr_elems.push(Value::number(1.0));
     arr_elems.push(Value::number(2.0));
     arr_elems.push(Value::number(255.0));

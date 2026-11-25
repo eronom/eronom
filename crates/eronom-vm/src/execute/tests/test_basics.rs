@@ -211,10 +211,10 @@ fn test_incremental_garbage_collector() {
     let _lock = crate::vm::gc::TEST_GC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     gc_free_all();
 
-    let parent_ptr = gc_allocate(GcData::Array(vec![]));
+    let parent_ptr = gc_allocate(GcData::Array(crate::vm::gc::gc_vec_new()));
     let parent = Value::array(parent_ptr);
 
-    let garbage_ptr = gc_allocate(GcData::Array(vec![]));
+    let garbage_ptr = gc_allocate(GcData::Array(crate::vm::gc::gc_vec_new()));
     let _garbage = Value::array(garbage_ptr);
 
     let mut vm = VM::new();
@@ -223,7 +223,7 @@ fn test_incremental_garbage_collector() {
     assert_eq!(gc_with_state(|s| s.phase), GcPhase::Pause);
 
     for _ in 0..10000 {
-        gc_allocate(GcData::Array(vec![]));
+        gc_allocate(GcData::Array(crate::vm::gc::gc_vec_new()));
     }
 
     vm.gc_step();
@@ -271,10 +271,10 @@ fn test_gc_stack_roots_deep_no_truncation() {
     }
 
     // Place a live object at slot 450 (which would have been ignored by 256 truncation)
-    let deep_ptr = gc_allocate(GcData::Array(vec![Value::number(42.0)]));
+    let deep_ptr = gc_allocate(GcData::Array(crate::vm::gc::gc_vec_from_slice(&[Value::number(42.0)])));
     vm.stack[450] = Value::array(deep_ptr);
 
-    let garbage_ptr = gc_allocate(GcData::Array(vec![Value::number(999.0)]));
+    let garbage_ptr = gc_allocate(GcData::Array(crate::vm::gc::gc_vec_from_slice(&[Value::number(999.0)])));
     let _garbage = Value::array(garbage_ptr);
 
     // Run full GC collection
@@ -346,7 +346,7 @@ fn test_gc_atomic_flag() {
 
     let threshold = gc_with_state(|s| s.alloc_threshold);
     for _ in 0..threshold {
-        gc_allocate(GcData::Array(vec![]));
+        gc_allocate(GcData::Array(crate::vm::gc::gc_vec_new()));
     }
 
     assert_eq!(GC_NEEDS_STEP.load(Ordering::Relaxed), true);

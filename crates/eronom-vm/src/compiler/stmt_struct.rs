@@ -21,7 +21,7 @@ impl Compiler {
         let name_val = Value::string_from_str(name);
         let name_idx = self.current_chunk().add_constant(name_val);
         
-        let mut field_names_vals = Vec::new();
+        let mut field_names_vals = crate::vm::gc::gc_vec_with_capacity(flat.fields.len());
         for (field_name, _) in &flat.fields {
             field_names_vals.push(Value::string_from_str(field_name.as_str()));
         }

@@ -115,7 +115,7 @@ pub fn native_fiber_spawn(args: Vec<Value>) -> Value {
     let arg_list = if args.len() > 1 && args[1].is_array() {
         unsafe {
             match &(*args[1].as_gc_ptr()).data {
-                GcData::Array(arr) => arr.clone(),
+                GcData::Array(arr) => arr.to_vec(),
                 _ => Vec::new(),
             }
         }

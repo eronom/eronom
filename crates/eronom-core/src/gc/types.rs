@@ -146,7 +146,7 @@ pub struct GcBoundMethod {
 #[derive(Clone)]
 pub struct GcStruct {
     pub descriptor: Rc<StructDescriptor>,
-    pub fields: Vec<Value>,
+    pub fields: crate::alloc::GcVec<Value>,
 }
 
 impl GcStruct {
@@ -205,7 +205,7 @@ pub struct GcUpvalue {
 #[derive(Clone)]
 pub struct GcClosure {
     pub function: *mut GcObject,
-    pub upvalues: Vec<*mut GcObject>,
+    pub upvalues: crate::alloc::GcVec<*mut GcObject>,
 }
 
 #[repr(C)]
@@ -237,7 +237,7 @@ impl GcString {
 pub enum GcData {
     Empty,
     String(GcString),
-    Array(Vec<Value>),
+    Array(crate::alloc::GcVec<Value>),
     Object(FnvHashMap<MapKey, Value>),
     Function(Box<Function>),
     Promise(GcPromise),

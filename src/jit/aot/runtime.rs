@@ -34,7 +34,7 @@ pub extern "C" fn er_alloc_string(ptr: *const u8, len: usize) -> *mut GcObject {
 /// Native memory allocation for arrays into the garbage-collected heap.
 #[unsafe(no_mangle)]
 pub extern "C" fn er_alloc_array(capacity: usize) -> *mut GcObject {
-    let vec = Vec::with_capacity(capacity);
+    let vec = crate::vm::gc::gc_vec_with_capacity(capacity);
     gc_allocate(GcData::Array(vec))
 }
 
@@ -58,9 +58,11 @@ pub extern "C" fn er_alloc_struct(name_ptr: *const c_char, field_count: usize) -
         FnvHashMap::default(),
         FnvHashMap::default(),
     ));
+    let mut fields = crate::vm::gc::gc_vec_with_capacity(field_count);
+    fields.resize(field_count, Value::null());
     let instance = GcStruct {
         descriptor,
-        fields: vec![Value::null(); field_count],
+        fields,
     };
     gc_allocate(GcData::Struct(instance))
 }

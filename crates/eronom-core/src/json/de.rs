@@ -30,7 +30,7 @@ pub fn parse_value<'a>(decoder: &mut JsonDecoder<'a>) -> Result<Value, &'static 
             Ok(Value::string(ptr))
         }
         Some(Token::BeginArray) => {
-            let mut elements: Vec<Value> = get_pooled_vec(4);
+            let mut elements = get_pooled_vec(4);
             if let Some(&Token::EndArray) = decoder.peek_token()? {
                 decoder.next_token()?; // consume ']'
                 let ptr = gc_allocate(GcData::Array(elements));
@@ -55,8 +55,8 @@ pub fn parse_value<'a>(decoder: &mut JsonDecoder<'a>) -> Result<Value, &'static 
             Ok(Value::array(ptr))
         }
         Some(Token::BeginObject) => {
-            let mut keys: Vec<Value> = get_pooled_vec(4);
-            let mut values: Vec<Value> = get_pooled_vec(4);
+            let mut keys = get_pooled_vec(4);
+            let mut values = get_pooled_vec(4);
 
             if let Some(&Token::EndObject) = decoder.peek_token()? {
                 decoder.next_token()?; // consume '}'

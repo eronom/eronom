@@ -13,9 +13,10 @@ pub fn native_string_split(args: Vec<Value>) -> Value {
         Some(val) => val,
         None => return Value::null(),
     };
-    let parts: Vec<Value> = s.split(sep)
-        .map(|part| Value::string(get_or_create_string(part)))
-        .collect();
+    let mut parts = crate::vm::gc::gc_vec_new();
+    for part in s.split(sep) {
+        parts.push(Value::string(get_or_create_string(part)));
+    }
     
     let ptr = gc_allocate(GcData::Array(parts));
     Value::array(ptr)

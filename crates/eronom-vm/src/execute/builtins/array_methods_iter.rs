@@ -17,7 +17,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -38,7 +38,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -61,7 +61,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -89,7 +89,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -105,7 +105,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -124,7 +124,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -143,7 +143,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -162,7 +162,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
@@ -181,7 +181,7 @@ pub fn execute_array_iter_method(
             }
             let items: Vec<Value> = unsafe {
                 match &(*receiver.as_gc_ptr()).data {
-                    GcData::Array(arr) => arr.clone(),
+                    GcData::Array(arr) => arr.to_vec(),
                     _ => vec![],
                 }
             };
