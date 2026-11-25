@@ -1,5 +1,4 @@
 use std::ffi::{c_char, CStr};
-use std::rc::Rc;
 use fnv::FnvHashMap;
 use crate::vm::gc::{
     gc_alloc_string, gc_allocate, gc_clear_string_cache, gc_free_all,
@@ -53,8 +52,8 @@ pub extern "C" fn er_alloc_struct(name_ptr: *const c_char, field_count: usize) -
     } else {
         unsafe { CStr::from_ptr(name_ptr).to_string_lossy().into_owned() }
     };
-    let descriptor = Rc::new(StructDescriptor::new(
-        name.into(),
+    let descriptor = crate::vm::shape::alloc_shape_descriptor(StructDescriptor::new(
+        &name,
         FnvHashMap::default(),
         FnvHashMap::default(),
     ));

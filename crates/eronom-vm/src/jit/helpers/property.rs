@@ -148,7 +148,7 @@ pub extern "C" fn er_jit_set_property(vm: *mut VM, obj: Value, val: Value, name_
                         gc_write_barrier(ptr, &val);
                         0
                     } else if s.descriptor.name.as_ref() == "Anonymous" {
-                        let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, name_val);
+                        let new_desc = crate::vm::shape::transition_shape_add_property(s.descriptor, name_val);
                         s.descriptor = new_desc;
                         s.fields.push(val);
                         gc_write_barrier(ptr, &val);
@@ -349,7 +349,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
                             gc_write_barrier(ptr, &val);
                             0
                         } else if s.descriptor.name.as_ref() == "Anonymous" {
-                            let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, index);
+                            let new_desc = crate::vm::shape::transition_shape_add_property(s.descriptor, index);
                             s.descriptor = new_desc;
                             s.fields.push(val);
                             gc_write_barrier(ptr, &val);
@@ -374,7 +374,7 @@ pub extern "C" fn er_jit_set_index(vm: *mut VM, obj: Value, index: Value, val: V
 }
 
 pub fn construct_struct_from_args_helper(
-    descriptor: &std::rc::Rc<crate::vm::gc::StructDescriptor>,
+    descriptor: crate::vm::gc::ShapePtr,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     crate::vm::alloc::construct_struct_from_args(descriptor, args)

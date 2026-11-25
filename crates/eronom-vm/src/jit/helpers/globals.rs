@@ -107,7 +107,8 @@ pub extern "C" fn er_jit_make_array(_vm: *mut VM, start_reg: *const Value, count
 #[unsafe(no_mangle)]
 pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val: Value, methods_val: Value) -> i64 {
     unsafe {
-        let name_rc: Rc<str> = Rc::from(name_val.as_str().unwrap_or(""));
+        let name_str = name_val.as_str().unwrap_or("");
+        let name_rc: Rc<str> = Rc::from(name_str);
         let fields_vec = match &(*fields_val.as_gc_ptr()).data {
             GcData::Array(arr) => arr,
             _ => return -1,
@@ -128,12 +129,12 @@ pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val:
             }
         }
         
-        let descriptor = std::rc::Rc::new(crate::vm::gc::StructDescriptor::new(
-            name_rc.clone(),
+        let descriptor = crate::vm::shape::alloc_shape_descriptor(crate::vm::gc::StructDescriptor::new(
+            name_str,
             field_indices,
             methods,
         ));
-        (*vm).shapes.structs.insert(name_rc.clone(), descriptor.clone());
+        (*vm).shapes.structs.insert(name_rc.clone(), descriptor);
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
         (*vm).globals.insert(name_rc, Value::object(ptr));
         0

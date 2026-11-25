@@ -364,7 +364,7 @@ impl fmt::Display for Value {
                         write!(f, "{{{}}}", items.join(", "))
                     }
                     GcData::StructConstructor(desc) => {
-                        write!(f, "[Constructor {}]", desc.name)
+                        write!(f, "[Constructor {}]", &*desc.name)
                     }
                     _ => unreachable!(),
                 }

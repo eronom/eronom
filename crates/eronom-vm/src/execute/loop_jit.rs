@@ -306,7 +306,7 @@ impl VM {
                     } else if callee.is_object() && matches!(&(*callee.as_gc_ptr()).data, GcData::StructConstructor(_)) {
                         let ptr = callee.as_gc_ptr();
                         let descriptor = match &(*ptr).data {
-                            GcData::StructConstructor(desc) => desc.clone(),
+                            GcData::StructConstructor(desc) => *desc,
                             _ => unreachable!(),
                         };
                         let mut args = Vec::with_capacity(arg_count_out);
@@ -314,7 +314,7 @@ impl VM {
                             args.push(*frame_slots.add(func_reg_out + 1 + i));
                         }
                         frame.ip = ip_out;
-                        let result = crate::vm::alloc::construct_struct_from_args(&descriptor, args)?;
+                        let result = crate::vm::alloc::construct_struct_from_args(descriptor, args)?;
                         reload_stack!();
                         *frame_slots.add(dest_reg_out) = result;
                         frame.ip = ip_out + 1;

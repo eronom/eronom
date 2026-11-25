@@ -34,21 +34,34 @@ pub struct GcPromise {
 
 static NEXT_DESCRIPTOR_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShapePtr(pub *const StructDescriptor);
+
+impl std::ops::Deref for ShapePtr {
+    type Target = StructDescriptor;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.0 }
+    }
+}
+
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct StructDescriptor {
     pub id: u32,
     pub _padding: u32,
     pub fast_field_count: usize,
     pub fast_fields: [(Value, usize); 8],
-    pub name: Rc<str>,
+    pub name: crate::alloc::ShapeBox<str>,
     pub field_indices: FnvHashMap<MapKey, usize>,
     pub methods: FnvHashMap<MapKey, Value>,
 }
 
 impl StructDescriptor {
     pub fn new(
-        name: Rc<str>,
+        name: &str,
         field_indices: FnvHashMap<MapKey, usize>,
         methods: FnvHashMap<MapKey, Value>,
     ) -> Self {
@@ -66,7 +79,7 @@ impl StructDescriptor {
             _padding: 0,
             fast_field_count: count,
             fast_fields,
-            name,
+            name: crate::alloc::alloc_box_str_in_shape_arena(name),
             field_indices,
             methods,
         }
@@ -145,7 +158,7 @@ pub struct GcBoundMethod {
 #[repr(C)]
 #[derive(Clone)]
 pub struct GcStruct {
-    pub descriptor: Rc<StructDescriptor>,
+    pub descriptor: ShapePtr,
     pub fields: crate::alloc::GcVec<Value>,
 }
 
@@ -244,7 +257,7 @@ pub enum GcData {
     Struct(GcStruct),
     BoundMethod(GcBoundMethod),
     BuiltinMethod(GcBuiltinMethod),
-    StructConstructor(Rc<StructDescriptor>),
+    StructConstructor(ShapePtr),
     Closure(GcClosure),
     Upvalue(GcUpvalue),
 }

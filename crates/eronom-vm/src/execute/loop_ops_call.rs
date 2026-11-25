@@ -258,7 +258,7 @@ impl VM {
         } else if callee.is_object() && matches!(&(*callee.as_gc_ptr()).data, GcData::StructConstructor(_)) {
             let ptr = callee.as_gc_ptr();
             let descriptor = match &(*ptr).data {
-                GcData::StructConstructor(desc) => desc.clone(),
+                GcData::StructConstructor(desc) => *desc,
                 _ => unreachable!(),
             };
             let mut args = Vec::with_capacity(arg_count);
@@ -267,7 +267,7 @@ impl VM {
             }
             let frame = self.frames.last_mut().unwrap();
             frame.ip = ip.offset_from(code_ptr) as usize - 1;
-            let result = crate::vm::alloc::construct_struct_from_args(&descriptor, args)?;
+            let result = crate::vm::alloc::construct_struct_from_args(descriptor, args)?;
             let stack_start = self.stack.as_mut_ptr();
             let slots = stack_start.add(slots_offset);
             *slots.add(dest) = result;
@@ -341,7 +341,8 @@ impl VM {
     ) { unsafe {
         let name_val = *constants_ptr.add(instruction.operand as usize);
         let fields_val = *constants_ptr.add(instruction.ra as usize);
-        let name_rc: Rc<str> = Rc::from(name_val.as_str().unwrap_or(""));
+        let name_str = name_val.as_str().unwrap_or("");
+        let name_rc: Rc<str> = Rc::from(name_str);
         let fields_vec = match &(*fields_val.as_gc_ptr()).data {
             GcData::Array(arr) => arr,
             _ => unreachable!(),
@@ -363,12 +364,12 @@ impl VM {
             }
         }
         
-        let descriptor = std::rc::Rc::new(StructDescriptor::new(
-            name_rc.clone(),
+        let descriptor = crate::vm::shape::alloc_shape_descriptor(StructDescriptor::new(
+            name_str,
             field_indices,
             methods,
         ));
-        self.shapes.structs.insert(name_rc.clone(), descriptor.clone());
+        self.shapes.structs.insert(name_rc.clone(), descriptor);
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
         self.globals.insert(name_rc, Value::object(ptr));
     }}

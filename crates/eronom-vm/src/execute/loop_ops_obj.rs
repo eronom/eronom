@@ -248,7 +248,7 @@ impl VM {
                     if s.set_field(name_val, val) {
                         gc_write_barrier(ptr, &val);
                     } else if s.descriptor.name.as_ref() == "Anonymous" {
-                        let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, name_val);
+                        let new_desc = crate::vm::shape::transition_shape_add_property(s.descriptor, name_val);
                         s.descriptor = new_desc;
                         s.fields.push(val);
                         gc_write_barrier(ptr, &val);
@@ -417,7 +417,7 @@ impl VM {
                         if s.set_field(index, val) {
                             gc_write_barrier(ptr, &val);
                         } else if s.descriptor.name.as_ref() == "Anonymous" {
-                            let new_desc = crate::vm::shape::transition_shape_add_property(&s.descriptor, index);
+                            let new_desc = crate::vm::shape::transition_shape_add_property(s.descriptor, index);
                             s.descriptor = new_desc;
                             s.fields.push(val);
                             gc_write_barrier(ptr, &val);

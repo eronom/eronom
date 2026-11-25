@@ -297,14 +297,14 @@ pub extern "C" fn er_jit_call_non_vm(
         } else if callee.is_object() && matches!(&(*callee.as_gc_ptr()).data, GcData::StructConstructor(_)) {
             let ptr = callee.as_gc_ptr();
             let descriptor = match &(*ptr).data {
-                GcData::StructConstructor(desc) => desc.clone(),
+                GcData::StructConstructor(desc) => *desc,
                 _ => return -1,
             };
             let mut args = Vec::with_capacity(arg_count as usize);
             for i in 0..arg_count {
                 args.push(*frame_slots.offset((func_reg + 1 + i) as isize));
             }
-            match construct_struct_from_args_helper(&descriptor, args) {
+            match construct_struct_from_args_helper(descriptor, args) {
                 Ok(result) => {
                     *dest = result;
                     0

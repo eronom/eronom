@@ -328,6 +328,7 @@ struct ShapeArenaState {
     slabs: Vec<*mut u8>,
     cursor: usize,
     end: usize,
+    destructors: Vec<(*mut u8, unsafe fn(*mut u8))>,
 }
 
 impl ShapeArenaState {
@@ -336,6 +337,7 @@ impl ShapeArenaState {
             slabs: Vec::new(),
             cursor: 0,
             end: 0,
+            destructors: Vec::new(),
         }
     }
 
@@ -378,6 +380,9 @@ impl ShapeArenaState {
     }
 
     fn reset(&mut self) {
+        while let Some((ptr, drop_fn)) = self.destructors.pop() {
+            unsafe { drop_fn(ptr) };
+        }
         for slab in self.slabs.drain(..) {
             unsafe { mi_free(slab) };
         }
@@ -433,6 +438,19 @@ pub fn alloc_box_str_in_shape_arena(s: &str) -> ShapeBox<str> {
         let str_ptr = std::ptr::slice_from_raw_parts_mut(raw, len) as *mut str;
         Box::from_raw_in(str_ptr, ShapeArenaAlloc)
     }
+}
+
+/// Allocate `val` inside `ShapeArenaAlloc` and register its destructor to run on arena reset.
+pub fn alloc_in_shape_arena<T>(val: T) -> *const T {
+    unsafe fn drop_t<T>(ptr: *mut u8) {
+        unsafe { std::ptr::drop_in_place(ptr as *mut T) };
+    }
+    let boxed = Box::new_in(val, ShapeArenaAlloc);
+    let (ptr, _) = Box::into_raw_with_allocator(boxed);
+    SHAPE_ARENA.with(|arena| unsafe {
+        (*arena.get()).destructors.push((ptr as *mut u8, drop_t::<T>));
+    });
+    ptr as *const T
 }
 
 /// Reclaim all shape arena bump slabs. Caller must ensure all shape users have been destroyed.
@@ -499,10 +517,10 @@ pub fn scavenge_idle_memory() {
 }
 
 use crate::vm::value::Value;
-use crate::vm::gc::{gc_allocate, get_pooled_vec, GcData, GcStruct, StructDescriptor};
+use crate::vm::gc::{gc_allocate, get_pooled_vec, GcData, GcStruct, ShapePtr};
 
 pub fn construct_struct_from_args(
-    descriptor: &std::rc::Rc<StructDescriptor>,
+    descriptor: ShapePtr,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     if args.is_empty() {
@@ -510,7 +528,7 @@ pub fn construct_struct_from_args(
         let mut fields = get_pooled_vec(count);
         fields.resize(count, Value::null());
         let s_ptr = gc_allocate(GcData::Struct(GcStruct {
-            descriptor: descriptor.clone(),
+            descriptor,
             fields,
         }));
         return Ok(Value::object(s_ptr));
@@ -532,7 +550,7 @@ pub fn construct_struct_from_args(
                             }
                         }
                         let s_ptr = gc_allocate(GcData::Struct(GcStruct {
-                            descriptor: descriptor.clone(),
+                            descriptor,
                             fields,
                         }));
                         return Ok(Value::object(s_ptr));
@@ -547,7 +565,7 @@ pub fn construct_struct_from_args(
                             }
                         }
                         let s_ptr = gc_allocate(GcData::Struct(GcStruct {
-                            descriptor: descriptor.clone(),
+                            descriptor,
                             fields,
                         }));
                         return Ok(Value::object(s_ptr));
@@ -579,7 +597,7 @@ pub fn construct_struct_from_args(
         fields[i] = args[i];
     }
     let s_ptr = gc_allocate(GcData::Struct(GcStruct {
-        descriptor: descriptor.clone(),
+        descriptor,
         fields,
     }));
     Ok(Value::object(s_ptr))

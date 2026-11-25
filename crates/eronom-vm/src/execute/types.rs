@@ -6,7 +6,7 @@ use std::collections::BinaryHeap;
 use fnv::FnvHashMap;
 
 use crate::vm::value::{Value, MapKey};
-use crate::vm::gc::{GcObject, StructDescriptor};
+use crate::vm::gc::{GcObject, ShapePtr};
 
 pub enum AsyncResult {
     Timeout,
@@ -269,10 +269,10 @@ impl VmEventLoop {
 
 #[derive(Default)]
 pub struct ShapeRegistry {
-    pub structs: FnvHashMap<Rc<str>, Rc<StructDescriptor>>,
-    pub auto_shapes: FnvHashMap<Vec<MapKey>, (Rc<StructDescriptor>, Vec<usize>)>,
+    pub structs: FnvHashMap<Rc<str>, ShapePtr>,
+    pub auto_shapes: FnvHashMap<Vec<MapKey>, (ShapePtr, Vec<usize>)>,
     pub last_matched_keys: Vec<Value>,
-    pub last_matched_descriptor: Option<Rc<StructDescriptor>>,
+    pub last_matched_descriptor: Option<ShapePtr>,
     pub last_matched_offsets: Vec<usize>,
 }
 
