@@ -20,6 +20,7 @@ default-members = ["."]
 name = "eronom"
 version = "0.9.4"
 edition = "2024"
+rust-version = "1.100.0"
 default-run = "eronom"
 
 [lib]

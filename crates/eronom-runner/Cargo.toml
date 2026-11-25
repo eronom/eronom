@@ -2,6 +2,7 @@
 name = "eronom-runner"
 version = "0.9.4"
 edition = "2024"
+rust-version = "1.100.0"
 
 [dependencies]
 eronom-core = { path = "../eronom-core" }
