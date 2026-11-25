@@ -21,7 +21,6 @@ pub use scheduler::FiberScheduler;
 pub use gc_integration::{GC_TIME, GC_COUNT, er_gc_reset_stats, er_gc_print_stats};
 pub use builtins::{get_string_builtin_method_id, get_array_builtin_method_id, get_object_builtin_method_id};
 
-use std::rc::Rc;
 use fnv::FnvHashMap;
 
 use crate::vm::value::Value;
@@ -71,7 +70,11 @@ impl VM {
     }
 
     pub fn register_global(&mut self, name: &str, value: Value) {
-        self.globals.insert(Rc::from(name), value);
+        if let Some(entry) = self.globals.get_mut(name) {
+            *entry = value;
+        } else {
+            self.globals.insert(Box::from(name), value);
+        }
     }
 
     pub fn get_global(&self, name: &str) -> Option<&Value> {

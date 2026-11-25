@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::time::Instant;
 use fnv::FnvHashMap;
 use crate::vm::execute::{VM, format_undeclared_var_error};
@@ -27,14 +26,17 @@ pub fn reset_global_ic() {
 pub extern "C" fn er_jit_define_global(vm: *mut VM, name_val: Value, val: Value) -> i64 {
     unsafe {
         let name_str = name_val.as_str().unwrap_or("");
-        let name: Rc<str> = Rc::from(name_str);
         let key = name_val.0;
         let slot = (key ^ (key >> 6)) as usize & 63;
         let ic = &mut (*GLOBAL_IC.with(|c| c.get()))[slot];
         ic.vm = vm;
         ic.key = key;
         ic.val = val;
-        (*vm).globals.insert(name, val);
+        if let Some(entry) = (*vm).globals.get_mut(name_str) {
+            *entry = val;
+        } else {
+            (*vm).globals.insert(Box::from(name_str), val);
+        }
         0
     }
 }
@@ -108,7 +110,6 @@ pub extern "C" fn er_jit_make_array(_vm: *mut VM, start_reg: *const Value, count
 pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val: Value, methods_val: Value) -> i64 {
     unsafe {
         let name_str = name_val.as_str().unwrap_or("");
-        let name_rc: Rc<str> = Rc::from(name_str);
         let fields_vec = match &(*fields_val.as_gc_ptr()).data {
             GcData::Array(arr) => arr,
             _ => return -1,
@@ -134,9 +135,9 @@ pub extern "C" fn er_jit_define_struct(vm: *mut VM, name_val: Value, fields_val:
             field_indices,
             methods,
         ));
-        (*vm).shapes.structs.insert(name_rc.clone(), descriptor);
+        (*vm).shapes.structs.insert(Box::from(name_str), descriptor);
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
-        (*vm).globals.insert(name_rc, Value::object(ptr));
+        (*vm).globals.insert(Box::from(name_str), Value::object(ptr));
         0
     }
 }

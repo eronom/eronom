@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use crate::vm::value::Value;
 use crate::vm::bytecode::{Function, OpCode};
 use crate::vm::gc::{gc_allocate, get_pooled_vec, GcData, GcObject};
@@ -192,9 +191,12 @@ impl VM {
                     OpCode::DefineGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);
                         let name_str = name_val.as_str().unwrap_or("");
-                        let name: Rc<str> = Rc::from(name_str);
                         let val = *frame_slots.add(instruction.ra as usize);
-                        self.globals.insert(name, val);
+                        if let Some(entry) = self.globals.get_mut(name_str) {
+                            *entry = val;
+                        } else {
+                            self.globals.insert(Box::from(name_str), val);
+                        }
                     }
                     OpCode::GetGlobal => {
                         let name_val = *constants_ptr.add(instruction.operand as usize);

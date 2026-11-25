@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use fnv::FnvHashMap;
 use crate::vm::value::{Value, MapKey};
 use crate::vm::bytecode::{Function, Instruction};
@@ -342,7 +341,6 @@ impl VM {
         let name_val = *constants_ptr.add(instruction.operand as usize);
         let fields_val = *constants_ptr.add(instruction.ra as usize);
         let name_str = name_val.as_str().unwrap_or("");
-        let name_rc: Rc<str> = Rc::from(name_str);
         let fields_vec = match &(*fields_val.as_gc_ptr()).data {
             GcData::Array(arr) => arr,
             _ => unreachable!(),
@@ -369,9 +367,9 @@ impl VM {
             field_indices,
             methods,
         ));
-        self.shapes.structs.insert(name_rc.clone(), descriptor);
+        self.shapes.structs.insert(Box::from(name_str), descriptor);
         let ptr = gc_allocate(GcData::StructConstructor(descriptor));
-        self.globals.insert(name_rc, Value::object(ptr));
+        self.globals.insert(Box::from(name_str), Value::object(ptr));
     }}
 
     pub unsafe fn execute_closure_op(

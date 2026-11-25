@@ -1,5 +1,4 @@
 use fnv::FnvHashMap;
-use std::rc::Rc;
 use crate::vm::value::{MapKey, Value};
 use crate::vm::bytecode::Function;
 
@@ -231,7 +230,7 @@ pub struct GcInlineString {
 #[derive(Clone)]
 pub enum GcString {
     Inline(GcInlineString),
-    Heap(Rc<str>),
+    Heap(crate::alloc::GcBox<str>),
 }
 
 impl GcString {

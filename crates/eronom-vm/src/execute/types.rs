@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
@@ -269,7 +268,7 @@ impl VmEventLoop {
 
 #[derive(Default)]
 pub struct ShapeRegistry {
-    pub structs: FnvHashMap<Rc<str>, ShapePtr>,
+    pub structs: FnvHashMap<Box<str>, ShapePtr>,
     pub auto_shapes: FnvHashMap<Vec<MapKey>, (ShapePtr, Vec<usize>)>,
     pub last_matched_keys: Vec<Value>,
     pub last_matched_descriptor: Option<ShapePtr>,
@@ -289,7 +288,7 @@ pub struct VM {
     pub has_error_flag: u8,
     pub frames: Vec<CallFrame>,
     pub stack: Vec<Value>,
-    pub globals: FnvHashMap<Rc<str>, Value>,
+    pub globals: FnvHashMap<Box<str>, Value>,
     pub error: Option<String>,
     pub mir_ctx: Option<*mut std::ffi::c_void>,
     pub use_jit: bool,
