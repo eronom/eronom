@@ -39,12 +39,7 @@ pub fn native_eronom_write_file(args: Vec<Value>) -> Value {
     let vm = unsafe { &mut *vm_ptr };
 
     if vm.use_evented_io {
-        let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
-        let prom = crate::vm::gc::GcPromise {
-            state: state.clone(),
-            suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        };
+        let prom = crate::vm::gc::GcPromise::pending();
         let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
 
         let suspended_stack = std::mem::take(&mut vm.stack);
@@ -53,14 +48,14 @@ pub fn native_eronom_write_file(args: Vec<Value>) -> Value {
         unsafe {
             match &mut (*promise_ptr).data {
                 crate::vm::gc::GcData::Promise(p) => {
-                    *p.suspended_stack.lock().unwrap() = suspended_stack;
-                    *p.suspended_frames.lock().unwrap() = suspended_frames;
+                    p.suspended_stack = suspended_stack;
+                    p.suspended_frames = suspended_frames;
                 }
                 _ => unreachable!(),
             }
         }
 
-        let el = vm.event_loop.clone();
+        let el = vm.event_loop.sender();
         el.increment_active_tasks();
 
         let promise_ptr_usize = promise_ptr as usize;

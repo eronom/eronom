@@ -63,16 +63,15 @@ pub fn gc_blacken_object(ptr: *mut GcObject) {
                 }
             }
             GcData::Promise(prom) => {
-                if let Ok(stack) = prom.suspended_stack.lock() {
-                    for val in stack.iter() {
-                        gc_mark_value(val);
-                    }
+                if let super::types::PromiseState::Fulfilled(ref val) = prom.state {
+                    gc_mark_value(val);
                 }
-                if let Ok(frames) = prom.suspended_frames.lock() {
-                    for frame in frames.iter() {
-                        let fn_val = Value::function(frame.function);
-                        gc_mark_value(&fn_val);
-                    }
+                for val in &prom.suspended_stack {
+                    gc_mark_value(val);
+                }
+                for frame in &prom.suspended_frames {
+                    let fn_val = Value::function(frame.function);
+                    gc_mark_value(&fn_val);
                 }
             }
             GcData::BoundMethod(bm) => {

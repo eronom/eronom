@@ -98,15 +98,14 @@ impl VM {
                         };
 
                         let (suspended_stack, suspended_frames) = unsafe {
-                            match &(*promise_ptr).data {
+                            match &mut (*promise_ptr).data {
                                 crate::vm::gc::GcData::Promise(prom) => {
-                                    let mut state = prom.state.lock().unwrap();
-                                    match *state {
+                                    match prom.state {
                                         crate::vm::gc::PromiseState::Pending => {
-                                            *state = crate::vm::gc::PromiseState::Fulfilled(resolved_value);
+                                            prom.state = crate::vm::gc::PromiseState::Fulfilled(resolved_value);
                                             (
-                                                std::mem::take(&mut *prom.suspended_stack.lock().unwrap()),
-                                                std::mem::take(&mut *prom.suspended_frames.lock().unwrap())
+                                                std::mem::take(&mut prom.suspended_stack),
+                                                std::mem::take(&mut prom.suspended_frames)
                                             )
                                         }
                                         _ => continue, // already resolved

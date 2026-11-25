@@ -94,13 +94,9 @@ pub extern "C" fn er_jit_await(vm: *mut VM, await_val: Value, dest: *mut Value) 
     unsafe {
         if await_val.is_promise() {
             let promise_ptr = await_val.as_gc_ptr();
-            let state = match &(*promise_ptr).data {
+            let promise_status = match &(*promise_ptr).data {
                 crate::vm::gc::GcData::Promise(prom) => prom.state.clone(),
                 _ => return -1,
-            };
-            let promise_status = {
-                let lock = state.lock().unwrap();
-                lock.clone()
             };
             match promise_status {
                 crate::vm::gc::PromiseState::Fulfilled(val) => {

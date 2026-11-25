@@ -285,13 +285,9 @@ impl VM {
         let await_value = *frame_slots.add(instruction.rb as usize);
         if await_value.is_promise() {
             let promise_ptr = await_value.as_gc_ptr();
-            let state = match &(*promise_ptr).data {
+            let promise_status = match &(*promise_ptr).data {
                 GcData::Promise(prom) => prom.state.clone(),
                 _ => unreachable!(),
-            };
-            let promise_status = {
-                let lock = state.lock().unwrap();
-                lock.clone()
             };
             match promise_status {
                 crate::vm::gc::PromiseState::Fulfilled(val) => {
@@ -319,8 +315,8 @@ impl VM {
 
                     match &mut (*promise_ptr).data {
                         GcData::Promise(prom) => {
-                            *prom.suspended_stack.lock().unwrap() = suspended_stack;
-                            *prom.suspended_frames.lock().unwrap() = suspended_frames;
+                            prom.suspended_stack = suspended_stack;
+                            prom.suspended_frames = suspended_frames;
                         }
                         _ => unreachable!(),
                     }

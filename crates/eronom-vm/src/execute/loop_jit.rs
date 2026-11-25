@@ -364,8 +364,8 @@ impl VM {
 
                             match &mut (*promise_ptr).data {
                                 GcData::Promise(prom) => {
-                                    *prom.suspended_stack.lock().unwrap() = suspended_stack;
-                                    *prom.suspended_frames.lock().unwrap() = suspended_frames;
+                                    prom.suspended_stack = suspended_stack;
+                                    prom.suspended_frames = suspended_frames;
                                 }
                                 _ => unreachable!(),
                             }

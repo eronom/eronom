@@ -156,12 +156,7 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
     let vm = unsafe { &mut *vm_ptr };
 
     // 1. Create a promise
-    let state = std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending));
-    let prom = crate::vm::gc::GcPromise {
-        state: state.clone(),
-        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-    };
+    let prom = crate::vm::gc::GcPromise::pending();
     let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
 
     // 2. Take the stack and frames to suspend the VM
@@ -171,15 +166,15 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
     unsafe {
         match &mut (*promise_ptr).data {
             crate::vm::gc::GcData::Promise(p) => {
-                *p.suspended_stack.lock().unwrap() = suspended_stack;
-                *p.suspended_frames.lock().unwrap() = suspended_frames;
+                p.suspended_stack = suspended_stack;
+                p.suspended_frames = suspended_frames;
             }
             _ => unreachable!(),
         }
     }
 
     // 3. Increment active async tasks counter
-    let el = vm.event_loop.clone();
+    let el = vm.event_loop.sender();
     el.increment_active_tasks();
 
     let promise_ptr_usize = promise_ptr as usize;
@@ -243,8 +238,7 @@ pub fn native_future_await(args: Vec<Value>) -> Value {
     unsafe {
         match &(*promise_ptr).data {
             GcData::Promise(prom) => {
-                let state = prom.state.lock().unwrap();
-                match &*state {
+                match &prom.state {
                     crate::vm::gc::PromiseState::Fulfilled(val) => {
                         return *val;
                     }
@@ -296,8 +290,8 @@ pub fn native_future_await(args: Vec<Value>) -> Value {
     unsafe {
         match &mut (*promise_ptr).data {
             GcData::Promise(p) => {
-                *p.suspended_stack.lock().unwrap() = suspended_stack;
-                *p.suspended_frames.lock().unwrap() = suspended_frames;
+                p.suspended_stack = suspended_stack;
+                p.suspended_frames = suspended_frames;
             }
             _ => unreachable!(),
         }
@@ -393,11 +387,7 @@ pub fn native_sleep(args: Vec<Value>) -> Value {
     }
     let vm = unsafe { &mut *vm_ptr };
 
-    let prom = crate::vm::gc::GcPromise {
-        state: std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending)),
-        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-    };
+    let prom = crate::vm::gc::GcPromise::pending();
     let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
     let promise_val = Value::promise(promise_ptr);
 
@@ -411,11 +401,7 @@ pub fn native_sleep(args: Vec<Value>) -> Value {
 }
 
 pub fn native_create_promise_pair(_args: Vec<Value>) -> Value {
-    let prom = crate::vm::gc::GcPromise {
-        state: std::sync::Arc::new(std::sync::Mutex::new(crate::vm::gc::PromiseState::Pending)),
-        suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-    };
+    let prom = crate::vm::gc::GcPromise::pending();
     let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
     let promise_val = Value::promise(promise_ptr);
 

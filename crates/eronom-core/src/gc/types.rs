@@ -26,9 +26,20 @@ pub enum PromiseState {
 
 #[derive(Clone)]
 pub struct GcPromise {
-    pub state: std::sync::Arc<std::sync::Mutex<PromiseState>>,
-    pub suspended_stack: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
-    pub suspended_frames: std::sync::Arc<std::sync::Mutex<Vec<crate::frame::CallFrame>>>,
+    pub state: PromiseState,
+    pub suspended_stack: Vec<Value>,
+    pub suspended_frames: Vec<crate::frame::CallFrame>,
+}
+
+impl GcPromise {
+    #[inline(always)]
+    pub fn pending() -> Self {
+        Self {
+            state: PromiseState::Pending,
+            suspended_stack: Vec::new(),
+            suspended_frames: Vec::new(),
+        }
+    }
 }
 
 static NEXT_DESCRIPTOR_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);

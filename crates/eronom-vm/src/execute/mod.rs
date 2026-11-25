@@ -15,7 +15,7 @@ pub mod loop_impl;
 #[cfg(test)]
 pub mod tests;
 
-pub use types::{VM, CallFrame, AsyncResult, EventLoopTask, VmTimer, VmTimerAction, PendingAsync, format_undeclared_var_error};
+pub use types::{VM, CallFrame, AsyncResult, EventLoopSender, EventLoopTask, VmTimer, VmTimerAction, PendingAsync, format_undeclared_var_error};
 pub use fiber::{Fiber, FiberStatus};
 pub use scheduler::FiberScheduler;
 pub use gc_integration::{GC_TIME, GC_COUNT, er_gc_reset_stats, er_gc_print_stats};

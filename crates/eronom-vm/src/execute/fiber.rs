@@ -52,11 +52,7 @@ unsafe impl Sync for Fiber {}
 impl Fiber {
     pub fn new(parent_id: Option<u64>) -> Self {
         let id = NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed);
-        let prom = GcPromise {
-            state: std::sync::Arc::new(std::sync::Mutex::new(PromiseState::Pending)),
-            suspended_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            suspended_frames: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        };
+        let prom = GcPromise::pending();
         let completion_promise = gc_allocate(GcData::Promise(prom));
 
         Self {
@@ -83,10 +79,8 @@ impl Fiber {
         self.result = val;
         unsafe {
             if !self.completion_promise.is_null() {
-                if let GcData::Promise(p) = &(*self.completion_promise).data {
-                    if let Ok(mut state) = p.state.lock() {
-                        *state = PromiseState::Fulfilled(val);
-                    }
+                if let GcData::Promise(p) = &mut (*self.completion_promise).data {
+                    p.state = PromiseState::Fulfilled(val);
                 }
             }
         }
@@ -97,10 +91,8 @@ impl Fiber {
         self.error = Some(err.clone());
         unsafe {
             if !self.completion_promise.is_null() {
-                if let GcData::Promise(p) = &(*self.completion_promise).data {
-                    if let Ok(mut state) = p.state.lock() {
-                        *state = PromiseState::Rejected(err);
-                    }
+                if let GcData::Promise(p) = &mut (*self.completion_promise).data {
+                    p.state = PromiseState::Rejected(err);
                 }
             }
         }

@@ -1,6 +1,6 @@
 use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex, Condvar};
-use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::BinaryHeap;
 use fnv::FnvHashMap;
 
@@ -68,14 +68,46 @@ pub struct PendingAsync {
 
 unsafe impl Send for PendingAsync {}
 
+pub struct EventLoopShared {
+    pub queue: Mutex<Vec<EventLoopTask>>,
+    pub condvar: Condvar,
+    pub active_async_tasks: AtomicUsize,
+}
+
 #[derive(Clone)]
+pub struct EventLoopSender {
+    shared: Arc<EventLoopShared>,
+}
+
+impl EventLoopSender {
+    #[inline]
+    pub fn increment_active_tasks(&self) {
+        self.shared.active_async_tasks.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[inline]
+    pub fn post_and_decrement(&self, task: EventLoopTask) {
+        if let Ok(mut q) = self.shared.queue.lock() {
+            q.push(task);
+        }
+        self.shared.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+        self.shared.condvar.notify_all();
+    }
+
+    #[inline]
+    pub fn enqueue_task(&self, task: EventLoopTask) {
+        if let Ok(mut q) = self.shared.queue.lock() {
+            q.push(task);
+        }
+        self.shared.condvar.notify_all();
+    }
+}
+
 pub struct VmEventLoop {
-    pub queue: Arc<Mutex<Vec<EventLoopTask>>>,
-    pub condvar: Arc<Condvar>,
-    pub active_async_tasks: Arc<AtomicUsize>,
-    pub pending_callbacks: Arc<Mutex<Vec<PendingAsync>>>,
-    pub timers: Arc<Mutex<BinaryHeap<VmTimer>>>,
-    pub next_timer_id: Arc<AtomicU64>,
+    pub shared: Arc<EventLoopShared>,
+    pub pending_callbacks: Vec<PendingAsync>,
+    pub timers: BinaryHeap<VmTimer>,
+    pub next_timer_id: u64,
 }
 
 impl Default for VmEventLoop {
@@ -87,77 +119,83 @@ impl Default for VmEventLoop {
 impl VmEventLoop {
     pub fn new() -> Self {
         Self {
-            queue: Arc::new(Mutex::new(Vec::new())),
-            condvar: Arc::new(Condvar::new()),
-            active_async_tasks: Arc::new(AtomicUsize::new(0)),
-            pending_callbacks: Arc::new(Mutex::new(Vec::new())),
-            timers: Arc::new(Mutex::new(BinaryHeap::new())),
-            next_timer_id: Arc::new(AtomicU64::new(1)),
+            shared: Arc::new(EventLoopShared {
+                queue: Mutex::new(Vec::new()),
+                condvar: Condvar::new(),
+                active_async_tasks: AtomicUsize::new(0),
+            }),
+            pending_callbacks: Vec::new(),
+            timers: BinaryHeap::new(),
+            next_timer_id: 1,
+        }
+    }
+
+    #[inline]
+    pub fn sender(&self) -> EventLoopSender {
+        EventLoopSender {
+            shared: Arc::clone(&self.shared),
         }
     }
 
     #[inline]
     pub fn enqueue_task(&self, task: EventLoopTask) {
-        if let Ok(mut q) = self.queue.lock() {
+        if let Ok(mut q) = self.shared.queue.lock() {
             q.push(task);
         }
-        self.condvar.notify_all();
+        self.shared.condvar.notify_all();
     }
 
     #[inline]
     pub fn post_and_decrement(&self, task: EventLoopTask) {
-        if let Ok(mut q) = self.queue.lock() {
+        if let Ok(mut q) = self.shared.queue.lock() {
             q.push(task);
         }
-        self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
-        self.condvar.notify_all();
+        self.shared.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+        self.shared.condvar.notify_all();
     }
 
     #[inline]
     pub fn increment_active_tasks(&self) {
-        self.active_async_tasks.fetch_add(1, Ordering::SeqCst);
+        self.shared.active_async_tasks.fetch_add(1, Ordering::SeqCst);
     }
 
     #[inline]
     pub fn decrement_active_tasks(&self) {
-        self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+        self.shared.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
     }
 
     #[inline]
     pub fn active_tasks(&self) -> usize {
-        self.active_async_tasks.load(Ordering::SeqCst)
+        self.shared.active_async_tasks.load(Ordering::SeqCst)
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.queue.lock().map_or(true, |q| q.is_empty())
+        self.shared.queue.lock().map_or(true, |q| q.is_empty())
     }
 
     pub fn take_tasks(&self) -> Vec<EventLoopTask> {
-        let mut queue = self.queue.lock().unwrap();
+        let mut queue = self.shared.queue.lock().unwrap();
         std::mem::take(&mut *queue)
     }
 
-    pub fn pop_expired_timer(&self) -> Option<VmTimer> {
+    pub fn pop_expired_timer(&mut self) -> Option<VmTimer> {
         let now = Instant::now();
-        let mut timers = self.timers.lock().unwrap();
-        if let Some(top) = timers.peek() {
+        if let Some(top) = self.timers.peek() {
             if top.due_time <= now {
-                return timers.pop();
+                return self.timers.pop();
             }
         }
         None
     }
 
     pub fn has_due_timers(&self) -> bool {
-        let timers = self.timers.lock().unwrap();
-        timers.peek().map_or(false, |t| t.due_time <= Instant::now())
+        self.timers.peek().map_or(false, |t| t.due_time <= Instant::now())
     }
 
     pub fn next_wait_timeout(&self) -> Duration {
         let now = Instant::now();
-        let timers = self.timers.lock().unwrap();
-        if let Some(top) = timers.peek() {
+        if let Some(top) = self.timers.peek() {
             if top.due_time > now {
                 top.due_time.duration_since(now).min(Duration::from_millis(10))
             } else {
@@ -170,34 +208,34 @@ impl VmEventLoop {
 
     pub fn wait_timeout(&self, timeout: Duration) {
         if timeout > Duration::from_millis(0) {
-            let queue = self.queue.lock().unwrap();
-            let _ = self.condvar.wait_timeout(queue, timeout);
+            let queue = self.shared.queue.lock().unwrap();
+            let _ = self.shared.condvar.wait_timeout(queue, timeout);
         }
     }
 
-    pub fn schedule_timer(&self, due_time: Instant, action: VmTimerAction) -> u64 {
-        let timer_id = self.next_timer_id.fetch_add(1, Ordering::SeqCst);
-        self.timers.lock().unwrap().push(VmTimer {
+    pub fn schedule_timer(&mut self, due_time: Instant, action: VmTimerAction) -> u64 {
+        let timer_id = self.next_timer_id;
+        self.next_timer_id += 1;
+        self.timers.push(VmTimer {
             id: timer_id,
             due_time,
             action,
         });
-        self.active_async_tasks.fetch_add(1, Ordering::SeqCst);
-        self.condvar.notify_all();
+        self.shared.active_async_tasks.fetch_add(1, Ordering::SeqCst);
+        self.shared.condvar.notify_all();
         timer_id
     }
 
-    pub fn cancel_timer(&self, timer_id: u64) -> bool {
-        let mut timers = self.timers.lock().unwrap();
-        let mut remaining: Vec<VmTimer> = timers.drain().collect();
+    pub fn cancel_timer(&mut self, timer_id: u64) -> bool {
+        let mut remaining: Vec<VmTimer> = self.timers.drain().collect();
         let mut found = false;
         if let Some(pos) = remaining.iter().position(|t| t.id == timer_id) {
             remaining.swap_remove(pos);
-            self.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
+            self.shared.active_async_tasks.fetch_sub(1, Ordering::SeqCst);
             found = true;
         }
         for t in remaining {
-            timers.push(t);
+            self.timers.push(t);
         }
         found
     }
@@ -206,7 +244,7 @@ impl VmEventLoop {
     where
         F: FnMut(&Value),
     {
-        if let Ok(queue) = self.queue.try_lock() {
+        if let Ok(queue) = self.shared.queue.try_lock() {
             if !queue.is_empty() {
                 for task in queue.iter() {
                     mark_value(&task.callback);
@@ -233,33 +271,25 @@ impl VmEventLoop {
                 }
             }
         }
-        if let Ok(pending) = self.pending_callbacks.try_lock() {
-            if !pending.is_empty() {
-                for item in pending.iter() {
-                    mark_value(&item.callback);
-                    for arg in item.args.iter() {
+        for item in &self.pending_callbacks {
+            mark_value(&item.callback);
+            for arg in &item.args {
+                mark_value(arg);
+            }
+        }
+        for timer in &self.timers {
+            match &timer.action {
+                VmTimerAction::Callback { callback, args } => {
+                    mark_value(callback);
+                    for arg in args {
                         mark_value(arg);
                     }
                 }
-            }
-        }
-        if let Ok(timers) = self.timers.try_lock() {
-            if !timers.is_empty() {
-                for timer in timers.iter() {
-                    match &timer.action {
-                        VmTimerAction::Callback { callback, args } => {
-                            mark_value(callback);
-                            for arg in args {
-                                mark_value(arg);
-                            }
-                        }
-                        VmTimerAction::ResolvePromise { promise_ptr, value } => {
-                            if !promise_ptr.is_null() {
-                                crate::vm::gc::mark_object(*promise_ptr);
-                            }
-                            mark_value(value);
-                        }
+                VmTimerAction::ResolvePromise { promise_ptr, value } => {
+                    if !promise_ptr.is_null() {
+                        crate::vm::gc::mark_object(*promise_ptr);
                     }
+                    mark_value(value);
                 }
             }
         }
