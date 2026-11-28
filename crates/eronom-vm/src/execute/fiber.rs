@@ -53,7 +53,7 @@ impl Fiber {
     pub fn new(parent_id: Option<u64>) -> Self {
         let id = NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed);
         let prom = GcPromise::pending();
-        let completion_promise = gc_allocate(GcData::Promise(prom));
+        let completion_promise = gc_allocate(GcData::Promise(Box::new(prom)));
 
         Self {
             id,

@@ -1,8 +1,8 @@
 //! Eronom Memory Allocator Subsystem
 //! Unified high-performance memory allocator subsystem using mimalloc,
-//! custom Allocator API slab pools, and bump arenas with idle scavenging.
+//! thread-local GC pools, and a bump arena for shape metadata with idle scavenging.
 
-use std::alloc::{AllocError, Allocator, GlobalAlloc, Layout};
+use std::alloc::{GlobalAlloc, Layout};
 use std::cell::UnsafeCell;
 use std::ptr::NonNull;
 
@@ -61,160 +61,6 @@ unsafe impl GlobalAlloc for MiMalloc {
     }
 }
 
-#[inline(always)]
-fn dangling_for_layout(layout: Layout) -> NonNull<[u8]> {
-    let ptr = std::ptr::without_provenance_mut::<u8>(layout.align());
-    // SAFETY: Layout alignment is always non-zero.
-    let nn = unsafe { NonNull::new_unchecked(ptr) };
-    NonNull::slice_from_raw_parts(nn, 0)
-}
-
-/// Direct mimalloc-backed `Allocator` implementation for GC collections and heap strings.
-#[derive(Copy, Clone, Default, Debug)]
-pub struct GcSlabAlloc;
-
-pub type GcVec<T> = Vec<T, GcSlabAlloc>;
-pub type GcBox<T> = Box<T, GcSlabAlloc>;
-
-impl GcSlabAlloc {
-    #[inline(always)]
-    fn alloc_raw(&self, layout: Layout, zeroed: bool) -> Result<NonNull<[u8]>, AllocError> {
-        let size = layout.size();
-        if size == 0 {
-            return Ok(dangling_for_layout(layout));
-        }
-        let raw = unsafe {
-            if layout.align() <= 16 {
-                if zeroed { mi_zalloc(size) } else { mi_malloc(size) }
-            } else if zeroed {
-                mi_zalloc_aligned(size, layout.align())
-            } else {
-                mi_malloc_aligned(size, layout.align())
-            }
-        };
-        let nn = NonNull::new(raw).ok_or(AllocError)?;
-        Ok(NonNull::slice_from_raw_parts(nn, size))
-    }
-}
-
-unsafe impl Allocator for GcSlabAlloc {
-    #[inline(always)]
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        self.alloc_raw(layout, false)
-    }
-
-    #[inline(always)]
-    fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        self.alloc_raw(layout, true)
-    }
-
-    #[inline(always)]
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        if layout.size() != 0 {
-            unsafe { mi_free(ptr.as_ptr()) };
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn grow(
-        &self,
-        ptr: NonNull<u8>,
-        old_layout: Layout,
-        new_layout: Layout,
-    ) -> Result<NonNull<[u8]>, AllocError> {
-        let old_size = old_layout.size();
-        let new_size = new_layout.size();
-        if old_size == 0 {
-            return self.allocate(new_layout);
-        }
-        let raw = unsafe {
-            if old_layout.align() <= 16 && new_layout.align() <= 16 {
-                mi_realloc(ptr.as_ptr(), new_size)
-            } else {
-                let fresh = mi_malloc_aligned(new_size, new_layout.align().max(16));
-                if !fresh.is_null() {
-                    std::ptr::copy_nonoverlapping(ptr.as_ptr(), fresh, old_size);
-                    mi_free(ptr.as_ptr());
-                }
-                fresh
-            }
-        };
-        let nn = NonNull::new(raw).ok_or(AllocError)?;
-        Ok(NonNull::slice_from_raw_parts(nn, new_size))
-    }
-
-    #[inline]
-    unsafe fn grow_zeroed(
-        &self,
-        ptr: NonNull<u8>,
-        old_layout: Layout,
-        new_layout: Layout,
-    ) -> Result<NonNull<[u8]>, AllocError> {
-        let old_size = old_layout.size();
-        let new_ptr = unsafe { self.grow(ptr, old_layout, new_layout)? };
-        let allocated_len = new_ptr.len();
-        if allocated_len > old_size {
-            unsafe {
-                std::ptr::write_bytes(
-                    (new_ptr.as_ptr() as *mut u8).add(old_size),
-                    0,
-                    allocated_len - old_size,
-                );
-            }
-        }
-        Ok(new_ptr)
-    }
-
-    #[inline(always)]
-    unsafe fn shrink(
-        &self,
-        ptr: NonNull<u8>,
-        old_layout: Layout,
-        new_layout: Layout,
-    ) -> Result<NonNull<[u8]>, AllocError> {
-        let new_size = new_layout.size();
-        if new_size == 0 {
-            unsafe { self.deallocate(ptr, old_layout) };
-            return Ok(dangling_for_layout(new_layout));
-        }
-        let raw = unsafe {
-            if old_layout.align() <= 16 && new_layout.align() <= 16 {
-                mi_realloc(ptr.as_ptr(), new_size)
-            } else {
-                let fresh = mi_malloc_aligned(new_size, new_layout.align().max(16));
-                if !fresh.is_null() {
-                    std::ptr::copy_nonoverlapping(ptr.as_ptr(), fresh, new_size);
-                    mi_free(ptr.as_ptr());
-                }
-                fresh
-            }
-        };
-        let nn = NonNull::new(raw).ok_or(AllocError)?;
-        Ok(NonNull::slice_from_raw_parts(nn, new_size))
-    }
-}
-
-/// Allocate an UTF-8 string slice inside `GcSlabAlloc`.
-#[inline]
-pub fn alloc_box_str_in_slab(s: &str) -> GcBox<str> {
-    let len = s.len();
-    if len == 0 {
-        let empty = dangling_for_layout(Layout::new::<u8>()).as_ptr() as *mut u8;
-        let str_ptr = std::ptr::slice_from_raw_parts_mut(empty, 0) as *mut str;
-        return unsafe { Box::from_raw_in(str_ptr, GcSlabAlloc) };
-    }
-    let layout = Layout::array::<u8>(len).expect("string layout overflow");
-    let raw = GcSlabAlloc
-        .allocate(layout)
-        .expect("slab allocation failed")
-        .as_ptr() as *mut u8;
-    unsafe {
-        std::ptr::copy_nonoverlapping(s.as_ptr(), raw, len);
-        let str_ptr = std::ptr::slice_from_raw_parts_mut(raw, len) as *mut str;
-        Box::from_raw_in(str_ptr, GcSlabAlloc)
-    }
-}
-
 const SHAPE_ARENA_SLAB_SIZE: usize = 64 * 1024;
 
 struct ShapeArenaState {
@@ -234,18 +80,19 @@ impl ShapeArenaState {
         }
     }
 
-    fn allocate_bytes(&mut self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    fn allocate_bytes(&mut self, layout: Layout) -> Option<NonNull<u8>> {
         let size = layout.size();
-        if size == 0 {
-            return Ok(dangling_for_layout(layout));
-        }
         let align = layout.align();
+        if size == 0 {
+            let ptr = std::ptr::without_provenance_mut::<u8>(align);
+            return unsafe { Some(NonNull::new_unchecked(ptr)) };
+        }
         if size > SHAPE_ARENA_SLAB_SIZE / 4 || align > 16 {
             let alloc_align = align.max(16);
             let raw = unsafe { mi_malloc_aligned(size, alloc_align) };
-            let nn = NonNull::new(raw).ok_or(AllocError)?;
+            let nn = NonNull::new(raw)?;
             self.slabs.push(raw);
-            return Ok(NonNull::slice_from_raw_parts(nn, size));
+            return Some(nn);
         }
 
         let aligned = (self.cursor + align - 1) & !(align - 1);
@@ -253,14 +100,13 @@ impl ShapeArenaState {
             if next_cursor <= self.end {
                 self.cursor = next_cursor;
                 let ptr = std::ptr::with_exposed_provenance_mut::<u8>(aligned);
-                let nn = unsafe { NonNull::new_unchecked(ptr) };
-                return Ok(NonNull::slice_from_raw_parts(nn, size));
+                return unsafe { Some(NonNull::new_unchecked(ptr)) };
             }
         }
 
         let slab = unsafe { mi_malloc_aligned(SHAPE_ARENA_SLAB_SIZE, 16) };
         if slab.is_null() {
-            return Err(AllocError);
+            return None;
         }
         self.slabs.push(slab);
         let base = slab.expose_provenance();
@@ -268,8 +114,7 @@ impl ShapeArenaState {
         self.cursor = aligned_new + size;
         self.end = base + SHAPE_ARENA_SLAB_SIZE;
         let ptr = std::ptr::with_exposed_provenance_mut::<u8>(aligned_new);
-        let nn = unsafe { NonNull::new_unchecked(ptr) };
-        Ok(NonNull::slice_from_raw_parts(nn, size))
+        unsafe { Some(NonNull::new_unchecked(ptr)) }
     }
 
     fn reset(&mut self) {
@@ -294,55 +139,90 @@ thread_local! {
     static SHAPE_ARENA: UnsafeCell<ShapeArenaState> = const { UnsafeCell::new(ShapeArenaState::new()) };
 }
 
-/// Thread-local bump arena allocator for immutable runtime shape metadata.
-#[derive(Copy, Clone, Default, Debug)]
-pub struct ShapeArenaAlloc;
+/// Immutable UTF-8 string slice stored inside the thread-local shape bump arena.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ShapeStr {
+    ptr: *const u8,
+    len: usize,
+}
 
-pub type ShapeBox<T> = Box<T, ShapeArenaAlloc>;
+unsafe impl Send for ShapeStr {}
+unsafe impl Sync for ShapeStr {}
 
-unsafe impl Allocator for ShapeArenaAlloc {
-    #[inline]
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        SHAPE_ARENA.with(|arena| unsafe { (*arena.get()).allocate_bytes(layout) })
-    }
-
-    #[inline]
-    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
-        // Bulk-reclaimed when reset_shape_arena() drops the arena slabs.
+impl ShapeStr {
+    #[inline(always)]
+    pub fn as_str(&self) -> &str {
+        if self.len == 0 {
+            ""
+        } else {
+            unsafe {
+                let bytes = std::slice::from_raw_parts(self.ptr, self.len);
+                std::str::from_utf8_unchecked(bytes)
+            }
+        }
     }
 }
 
-/// Allocate an UTF-8 string slice inside `ShapeArenaAlloc`.
+impl AsRef<str> for ShapeStr {
+    #[inline(always)]
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::ops::Deref for ShapeStr {
+    type Target = str;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Debug for ShapeStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+/// Copy an UTF-8 string slice into the thread-local shape bump arena.
 #[inline]
-pub fn alloc_box_str_in_shape_arena(s: &str) -> ShapeBox<str> {
+pub fn alloc_str_in_shape_arena(s: &str) -> ShapeStr {
     let len = s.len();
     if len == 0 {
-        let empty = dangling_for_layout(Layout::new::<u8>()).as_ptr() as *mut u8;
-        let str_ptr = std::ptr::slice_from_raw_parts_mut(empty, 0) as *mut str;
-        return unsafe { Box::from_raw_in(str_ptr, ShapeArenaAlloc) };
+        return ShapeStr {
+            ptr: std::ptr::NonNull::<u8>::dangling().as_ptr(),
+            len: 0,
+        };
     }
     let layout = Layout::array::<u8>(len).expect("string layout overflow");
-    let raw = ShapeArenaAlloc
-        .allocate(layout)
+    let raw = SHAPE_ARENA
+        .with(|arena| unsafe { (*arena.get()).allocate_bytes(layout) })
         .expect("shape arena allocation failed")
-        .as_ptr() as *mut u8;
+        .as_ptr();
     unsafe {
         std::ptr::copy_nonoverlapping(s.as_ptr(), raw, len);
-        let str_ptr = std::ptr::slice_from_raw_parts_mut(raw, len) as *mut str;
-        Box::from_raw_in(str_ptr, ShapeArenaAlloc)
     }
+    ShapeStr { ptr: raw, len }
 }
 
-/// Allocate `val` inside `ShapeArenaAlloc` and register its destructor to run on arena reset.
+/// Allocate `val` inside `SHAPE_ARENA` and register its destructor to run on arena reset.
 pub fn alloc_in_shape_arena<T>(val: T) -> *const T {
     unsafe fn drop_t<T>(ptr: *mut u8) {
         unsafe { std::ptr::drop_in_place(ptr as *mut T) };
     }
-    let boxed = Box::new_in(val, ShapeArenaAlloc);
-    let (ptr, _) = Box::into_raw_with_allocator(boxed);
-    SHAPE_ARENA.with(|arena| unsafe {
-        (*arena.get()).destructors.push((ptr as *mut u8, drop_t::<T>));
-    });
+    let layout = Layout::new::<T>();
+    let nn = SHAPE_ARENA
+        .with(|arena| unsafe { (*arena.get()).allocate_bytes(layout) })
+        .expect("shape arena allocation failed");
+    let ptr = nn.as_ptr();
+    unsafe {
+        ptr.cast::<T>().write(val);
+        SHAPE_ARENA.with(|arena| {
+            (*arena.get()).destructors.push((ptr, drop_t::<T>));
+        });
+    }
     ptr as *const T
 }
 
@@ -499,8 +379,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_gc_slab_alloc_vec_growth_and_shrink() {
-        let mut v: GcVec<u64> = Vec::new_in(GcSlabAlloc);
+    fn test_gc_string_and_vec_allocation() {
+        let mut v: Vec<u64> = Vec::new();
         for i in 0..512u64 {
             v.push(i * 3);
         }
@@ -511,44 +391,23 @@ mod tests {
         assert_eq!(v.len(), 4);
         assert_eq!(v[3], 9);
 
-        let s = alloc_box_str_in_slab("hello_eronom_allocator_api_long_string_buffer");
-        assert_eq!(&*s, "hello_eronom_allocator_api_long_string_buffer");
-        let empty = alloc_box_str_in_slab("");
+        let s: Box<str> = Box::from("hello_eronom_long_heap_string_buffer_no_rc");
+        assert_eq!(&*s, "hello_eronom_long_heap_string_buffer_no_rc");
+        let empty: Box<str> = Box::from("");
         assert_eq!(&*empty, "");
-    }
-
-    #[test]
-    fn test_gc_slab_alloc_alignment_and_zeroed() {
-        #[repr(align(64))]
-        struct Aligned64([u64; 8]);
-
-        let b = Box::new_in(Aligned64([7; 8]), GcSlabAlloc);
-        assert_eq!(((&*b) as *const Aligned64 as usize) % 64, 0);
-        assert_eq!(b.0[7], 7);
-
-        let layout = Layout::from_size_align(128, 32).unwrap();
-        let mem = GcSlabAlloc.allocate_zeroed(layout).unwrap();
-        unsafe {
-            let slice = std::slice::from_raw_parts(mem.as_ptr() as *const u8, 128);
-            assert!(slice.iter().all(|&byte| byte == 0));
-            GcSlabAlloc.deallocate(mem.cast(), layout);
-        }
     }
 
     #[test]
     fn test_shape_arena_alloc_and_reset() {
         reset_shape_arena();
-        let b1 = Box::new_in(vec![1u64, 2, 3, 4], ShapeArenaAlloc);
-        let s1 = alloc_box_str_in_shape_arena("PlayerTransform");
-        assert_eq!(&*b1, &[1, 2, 3, 4]);
-        assert_eq!(&*s1, "PlayerTransform");
-
-        let (p1, _) = Box::into_raw_with_allocator(b1);
-        let (p_s1, _) = Box::into_raw_with_allocator(s1);
+        let ptr = alloc_in_shape_arena(vec![1u64, 2, 3, 4]);
+        let s1 = alloc_str_in_shape_arena("PlayerTransform");
+        let empty = alloc_str_in_shape_arena("");
         unsafe {
-            std::ptr::drop_in_place(p1);
-            std::ptr::drop_in_place(p_s1);
+            assert_eq!(&*ptr, &[1, 2, 3, 4]);
         }
+        assert_eq!(&*s1, "PlayerTransform");
+        assert_eq!(&*empty, "");
         reset_shape_arena();
     }
 }

@@ -64,7 +64,7 @@ pub struct StructDescriptor {
     pub _padding: u32,
     pub fast_field_count: usize,
     pub fast_fields: [(Value, usize); 8],
-    pub name: crate::alloc::ShapeBox<str>,
+    pub name: crate::alloc::ShapeStr,
     pub field_indices: FnvHashMap<MapKey, usize>,
     pub methods: FnvHashMap<MapKey, Value>,
 }
@@ -89,7 +89,7 @@ impl StructDescriptor {
             _padding: 0,
             fast_field_count: count,
             fast_fields,
-            name: crate::alloc::alloc_box_str_in_shape_arena(name),
+            name: crate::alloc::alloc_str_in_shape_arena(name),
             field_indices,
             methods,
         }
@@ -168,7 +168,7 @@ pub struct GcBoundMethod {
 #[derive(Clone)]
 pub enum StructFields {
     Inline { len: u8, data: [Value; 4] },
-    Heap(crate::alloc::GcVec<Value>),
+    Heap(Vec<Value>),
 }
 
 impl StructFields {
@@ -309,7 +309,7 @@ pub struct GcUpvalue {
 #[derive(Clone)]
 pub struct GcClosure {
     pub function: *mut GcObject,
-    pub upvalues: crate::alloc::GcVec<*mut GcObject>,
+    pub upvalues: Vec<*mut GcObject>,
 }
 
 #[repr(C)]
@@ -322,7 +322,7 @@ pub struct GcInlineString {
 #[derive(Clone)]
 pub enum GcString {
     Inline(GcInlineString),
-    Heap(crate::alloc::GcBox<str>),
+    Heap(Box<str>),
 }
 
 impl GcString {
@@ -341,10 +341,10 @@ impl GcString {
 pub enum GcData {
     Empty,
     String(GcString),
-    Array(crate::alloc::GcVec<Value>),
+    Array(Vec<Value>),
     Object(FnvHashMap<MapKey, Value>),
     Function(Box<Function>),
-    Promise(GcPromise),
+    Promise(Box<GcPromise>),
     Struct(GcStruct),
     BoundMethod(GcBoundMethod),
     BuiltinMethod(GcBuiltinMethod),

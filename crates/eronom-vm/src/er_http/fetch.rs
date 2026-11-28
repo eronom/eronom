@@ -157,7 +157,7 @@ pub fn native_fetch_evented(args: Vec<Value>) -> Value {
 
     // 1. Create a promise
     let prom = crate::vm::gc::GcPromise::pending();
-    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(Box::new(prom)));
 
     // 2. Take the stack and frames to suspend the VM
     let suspended_stack = std::mem::take(&mut vm.stack);
@@ -388,7 +388,7 @@ pub fn native_sleep(args: Vec<Value>) -> Value {
     let vm = unsafe { &mut *vm_ptr };
 
     let prom = crate::vm::gc::GcPromise::pending();
-    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(Box::new(prom)));
     let promise_val = Value::promise(promise_ptr);
 
     let due_time = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms);
@@ -402,7 +402,7 @@ pub fn native_sleep(args: Vec<Value>) -> Value {
 
 pub fn native_create_promise_pair(_args: Vec<Value>) -> Value {
     let prom = crate::vm::gc::GcPromise::pending();
-    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+    let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(Box::new(prom)));
     let promise_val = Value::promise(promise_ptr);
 
     let resolver = Value(crate::vm::value::TAG_METHOD_RESOLVE | (promise_ptr as u64 & crate::vm::value::PTR_MASK));

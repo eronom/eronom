@@ -9,8 +9,7 @@ pub mod value;
 
 // Re-export key structures
 pub use alloc::{
-    GcBox, GcSlabAlloc, GcVec, ShapeArenaAlloc, ShapeBox,
-    alloc_box_str_in_shape_arena, alloc_box_str_in_slab, alloc_in_shape_arena, reset_shape_arena,
+    ShapeStr, alloc_in_shape_arena, alloc_str_in_shape_arena, reset_shape_arena,
 };
 pub use value::Value;
 pub use bytecode::{Function, Chunk, OpCode, ArrayMethodType, UpvalueDescriptor};

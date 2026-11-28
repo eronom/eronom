@@ -74,7 +74,7 @@ pub fn gc_alloc_string(s: &str) -> *mut GcObject {
             bytes,
         })
     } else {
-        GcString::Heap(crate::alloc::alloc_box_str_in_slab(s))
+        GcString::Heap(Box::from(s))
     };
     gc_allocate(GcData::String(str_data))
 }

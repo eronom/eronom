@@ -28,7 +28,7 @@ pub struct GcState {
     pub current_chunk_ptr: *mut GcObject,
     pub chunk_remaining: usize,
     pub chunks: Vec<*mut GcObject>,
-    pub vector_pool: Vec<crate::alloc::GcVec<Value>>,
+    pub vector_pool: Vec<Vec<Value>>,
     pub map_pool: Vec<ObjectMap>,
 }
 
@@ -83,24 +83,24 @@ pub fn gc_with_state<R>(f: impl FnOnce(&mut GcState) -> R) -> R {
 }
 
 #[inline(always)]
-pub fn gc_vec_new<T>() -> crate::alloc::GcVec<T> {
-    Vec::new_in(crate::alloc::GcSlabAlloc)
+pub fn gc_vec_new<T>() -> Vec<T> {
+    Vec::new()
 }
 
 #[inline(always)]
-pub fn gc_vec_with_capacity<T>(capacity: usize) -> crate::alloc::GcVec<T> {
-    Vec::with_capacity_in(capacity, crate::alloc::GcSlabAlloc)
+pub fn gc_vec_with_capacity<T>(capacity: usize) -> Vec<T> {
+    Vec::with_capacity(capacity)
 }
 
 #[inline(always)]
-pub fn gc_vec_from_slice<T: Copy>(slice: &[T]) -> crate::alloc::GcVec<T> {
-    let mut v = Vec::with_capacity_in(slice.len().max(4), crate::alloc::GcSlabAlloc);
+pub fn gc_vec_from_slice<T: Copy>(slice: &[T]) -> Vec<T> {
+    let mut v = Vec::with_capacity(slice.len().max(4));
     v.extend_from_slice(slice);
     v
 }
 
 #[inline(always)]
-pub fn get_pooled_vec(capacity: usize) -> crate::alloc::GcVec<Value> {
+pub fn get_pooled_vec(capacity: usize) -> Vec<Value> {
     GC_STATE.with(|state| unsafe {
         let s = &mut *state.get();
         if let Some(mut v) = s.vector_pool.pop() {
@@ -109,7 +109,7 @@ pub fn get_pooled_vec(capacity: usize) -> crate::alloc::GcVec<Value> {
             }
             v
         } else {
-            Vec::with_capacity_in(capacity.max(4), crate::alloc::GcSlabAlloc)
+            Vec::with_capacity(capacity.max(4))
         }
     })
 }
@@ -141,7 +141,7 @@ pub fn gc_alloc_array(slice: &[Value]) -> *mut GcObject {
             v.clear();
             v
         } else {
-            Vec::with_capacity_in(cap, crate::alloc::GcSlabAlloc)
+            Vec::with_capacity(cap)
         };
         elements.extend_from_slice(slice);
         let ptr = gc_alloc_object(s, GcData::Array(elements));

@@ -40,7 +40,7 @@ pub fn native_eronom_write_file(args: Vec<Value>) -> Value {
 
     if vm.use_evented_io {
         let prom = crate::vm::gc::GcPromise::pending();
-        let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(prom));
+        let promise_ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Promise(Box::new(prom)));
 
         let suspended_stack = std::mem::take(&mut vm.stack);
         let suspended_frames = std::mem::take(&mut vm.frames);
