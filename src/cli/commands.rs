@@ -492,14 +492,8 @@ pub fn get_port_from_config_file(dir: &str) -> Option<u16> {
 
     if let Some(toml_path) = found_toml {
         if let Ok(content) = fs::read_to_string(toml_path) {
-            if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-                if let Some(server) = toml_val.get("server") {
-                    if let Some(port) = server.get("port") {
-                        if let Some(port_u64) = port.as_integer() {
-                            return Some(port_u64 as u16);
-                        }
-                    }
-                }
+            if let Some(port_i64) = eronom_toml::lookup_integer(&content, &["server", "port"]) {
+                return Some(port_i64 as u16);
             }
         }
     }

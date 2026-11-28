@@ -290,16 +290,11 @@ pub fn execute_api_route(
     crate::vm::std_system::register_system_natives(&mut vm);
     crate::vm::er_http::set_target_script_path(&file_path.to_string_lossy());
     
-    // Load config from eronom.toml if it exists
+    // Load config from eronom.toml if it exists (cached by mtime)
     if let Some(parent_dir) = file_path.parent() {
-        let toml_path = parent_dir.join("eronom.toml");
-        if toml_path.exists() {
-            if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
-                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    let config_val = crate::vm::er_http::toml_to_value(toml_val);
-                    vm.register_global("config", config_val);
-                }
-            }
+        if let Some(toml_val) = crate::vm::er_http::load_cached_toml_for_dir(parent_dir) {
+            let config_val = crate::vm::er_http::toml_to_value(&toml_val);
+            vm.register_global("config", config_val);
         }
     }
 

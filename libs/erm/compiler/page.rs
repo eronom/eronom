@@ -321,17 +321,14 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
 
     for (k, _) in params {
         if is_valid_js_identifier(k) {
-            if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(k))) {
-                if !re_decl.is_match(&combined_scripts) && !result.state_vars.contains(k) {
-                    declarations.push_str(&format!("let {} = __params[\"{}\"];\n", k, k));
-                }
+            if !super::utils::is_js_var_declared(&combined_scripts, k) && !result.state_vars.contains(k) {
+                declarations.push_str(&format!("let {} = __params[\"{}\"];\n", k, k));
             }
         }
     }
 
     for v in &result.state_vars {
-        if let Ok(re_decl) = regex::Regex::new(&format!(r#"\b(let|const|var)\s+[^;]*\b{}\b"#, regex::escape(v))) {
-            if !re_decl.is_match(&combined_scripts) {
+        if !super::utils::is_js_var_declared(&combined_scripts, v) {
                 let mut fallback_val = match v.as_str() {
                     "activeTheme" => "'light'".to_string(),
                     "count" => "0".to_string(),
@@ -377,7 +374,6 @@ pub fn process_erm_component(file_path: &str, content: &str, is_prod: bool, para
                     "let {} = erm.init({}, \"{}\");\n",
                     v, fallback_val, scoped_name
                 ));
-            }
         }
     }
 

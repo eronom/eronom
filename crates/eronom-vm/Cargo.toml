@@ -8,10 +8,9 @@ rust-version = "1.100.0"
 eronom-core = { path = "../eronom-core" }
 eronom-frontend = { path = "../eronom-frontend" }
 eronom-net = { path = "../eronom-net" }
+eronom-toml = { path = "../eronom-toml" }
 anyhow = "1.0.102"
 fnv = "1.0.7"
-regex = "1"
-toml = "0.8.19"
 target-lexicon = "0.13.5"
 cranelift-codegen = { path = "../../deps/cranelift/codegen", features = ["host-arch", "std"] }
 cranelift-frontend = { path = "../../deps/cranelift/frontend" }

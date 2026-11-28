@@ -1,30 +1,430 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use crate::eval;
 
-pub fn get_re_attr_brace() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#"^([A-Za-z0-9_-]+)=\{"#).unwrap())
+#[inline]
+fn is_js_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
-pub fn get_re_state() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#"(?:let|const|var)\s+([A-Za-z0-9_]+)\s*=\s*(?:await\s+)?(?:useState|erm\.init|useFetch)\("#).unwrap())
+#[inline]
+fn is_attr_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
 }
 
-pub fn get_re_import_named() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#"import\s*\{\s*([A-Za-z0-9_,\s]+)\s*\}\s*from\s+['"]([^'"]*)['"]\s*;?"#).unwrap())
+#[inline]
+fn skip_ws(s: &str, pos: usize) -> usize {
+    for (off, ch) in s[pos..].char_indices() {
+        if !ch.is_whitespace() {
+            return pos + off;
+        }
+    }
+    s.len()
 }
 
-pub fn get_re_import_default() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#"import\s+([A-Za-z0-9_]+)\s+from\s+['"]([^'"]*)['"]\s*;?"#).unwrap())
+#[inline]
+fn skip_horiz_ws(s: &str, mut pos: usize) -> usize {
+    let bytes = s.as_bytes();
+    while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+        pos += 1;
+    }
+    pos
 }
 
-pub fn get_re_export() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#"^(\s*)export\s+"#).unwrap())
+#[inline]
+pub fn match_attr_brace(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && is_attr_name_byte(bytes[i]) {
+        i += 1;
+    }
+    if i > 0 && bytes.get(i) == Some(&b'=') && bytes.get(i + 1) == Some(&b'{') {
+        Some(&s[..i])
+    } else {
+        None
+    }
+}
+
+pub struct StateDecl<'a> {
+    pub var_name: &'a str,
+    pub is_fetch: bool,
+    pub open_paren_end: usize,
+}
+
+pub fn scan_state_decls(script: &str) -> Vec<StateDecl<'_>> {
+    let mut out = Vec::new();
+    let bytes = script.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if !script.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
+        let kw_len = if i == 0 || !is_js_ident_byte(bytes[i - 1]) {
+            if script[i..].starts_with("const") {
+                5
+            } else if script[i..].starts_with("let") || script[i..].starts_with("var") {
+                3
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        if kw_len == 0 {
+            i += 1;
+            continue;
+        }
+        let after_kw = i + kw_len;
+        let name_start = skip_ws(script, after_kw);
+        if name_start == after_kw {
+            i += kw_len;
+            continue;
+        }
+        let mut name_end = name_start;
+        while name_end < bytes.len() && is_js_ident_byte(bytes[name_end]) {
+            name_end += 1;
+        }
+        if name_end == name_start {
+            i += kw_len;
+            continue;
+        }
+        let var_name = &script[name_start..name_end];
+        let eq_pos = skip_ws(script, name_end);
+        if bytes.get(eq_pos) != Some(&b'=') {
+            i = name_end;
+            continue;
+        }
+        let mut rhs = skip_ws(script, eq_pos + 1);
+        if script[rhs..].starts_with("await") {
+            let after_await = skip_ws(script, rhs + 5);
+            if after_await > rhs + 5 {
+                rhs = after_await;
+            }
+        }
+        let (fn_len, is_fetch) = if script[rhs..].starts_with("useFetch") {
+            (8, true)
+        } else if script[rhs..].starts_with("useState") || script[rhs..].starts_with("erm.init") {
+            (8, false)
+        } else {
+            i = name_end;
+            continue;
+        };
+        let paren_pos = skip_ws(script, rhs + fn_len);
+        if bytes.get(paren_pos) == Some(&b'(') {
+            out.push(StateDecl {
+                var_name,
+                is_fetch,
+                open_paren_end: paren_pos + 1,
+            });
+            i = paren_pos + 1;
+        } else {
+            i = rhs + fn_len;
+        }
+    }
+    out
+}
+
+pub fn parse_import_named(line: &str) -> Option<(&str, &str)> {
+    let bytes = line.as_bytes();
+    let mut pos = skip_ws(line, 0);
+    if !line[pos..].starts_with("import") {
+        return None;
+    }
+    pos += 6;
+    pos = skip_ws(line, pos);
+    if bytes.get(pos) != Some(&b'{') {
+        return None;
+    }
+    pos += 1;
+    let names_raw_start = pos;
+    while pos < bytes.len() && bytes[pos] != b'}' {
+        let ch = line[pos..].chars().next()?;
+        if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ',' || ch.is_whitespace()) {
+            return None;
+        }
+        pos += ch.len_utf8();
+    }
+    if bytes.get(pos) != Some(&b'}') {
+        return None;
+    }
+    let names = line[names_raw_start..pos].trim();
+    if names.is_empty() {
+        return None;
+    }
+    pos = skip_ws(line, pos + 1);
+    if !line[pos..].starts_with("from") {
+        return None;
+    }
+    pos += 4;
+    let quote_pos = skip_ws(line, pos);
+    if quote_pos == pos {
+        return None;
+    }
+    let q = *bytes.get(quote_pos)?;
+    if q != b'\'' && q != b'"' {
+        return None;
+    }
+    let path_start = quote_pos + 1;
+    let mut path_end = path_start;
+    while path_end < bytes.len() && bytes[path_end] != b'\'' && bytes[path_end] != b'"' {
+        path_end += 1;
+    }
+    let close_q = *bytes.get(path_end)?;
+    if close_q != b'\'' && close_q != b'"' {
+        return None;
+    }
+    Some((names, &line[path_start..path_end]))
+}
+
+pub fn parse_import_default(line: &str) -> Option<(&str, &str)> {
+    let bytes = line.as_bytes();
+    let mut pos = skip_ws(line, 0);
+    if !line[pos..].starts_with("import") {
+        return None;
+    }
+    pos += 6;
+    let name_start = skip_ws(line, pos);
+    if name_start == pos {
+        return None;
+    }
+    let mut name_end = name_start;
+    while name_end < bytes.len() && is_js_ident_byte(bytes[name_end]) {
+        name_end += 1;
+    }
+    if name_end == name_start {
+        return None;
+    }
+    let ident = &line[name_start..name_end];
+    let from_pos = skip_ws(line, name_end);
+    if from_pos == name_end || !line[from_pos..].starts_with("from") {
+        return None;
+    }
+    let after_from = from_pos + 4;
+    let quote_pos = skip_ws(line, after_from);
+    if quote_pos == after_from {
+        return None;
+    }
+    let q = *bytes.get(quote_pos)?;
+    if q != b'\'' && q != b'"' {
+        return None;
+    }
+    let path_start = quote_pos + 1;
+    let mut path_end = path_start;
+    while path_end < bytes.len() && bytes[path_end] != b'\'' && bytes[path_end] != b'"' {
+        path_end += 1;
+    }
+    let close_q = *bytes.get(path_end)?;
+    if close_q != b'\'' && close_q != b'"' {
+        return None;
+    }
+    Some((ident, &line[path_start..path_end]))
+}
+
+pub fn strip_leading_export(line: &str) -> Cow<'_, str> {
+    let ws1 = skip_ws(line, 0);
+    if line[ws1..].starts_with("export") {
+        let after = ws1 + 6;
+        let ws2 = skip_ws(line, after);
+        if ws2 > after {
+            return Cow::Owned(format!("{}{}", &line[..ws1], &line[ws2..]));
+        }
+    }
+    Cow::Borrowed(line)
+}
+
+pub struct FnHeader<'a> {
+    pub start: usize,
+    pub body_start: usize,
+    pub name: &'a str,
+    pub params: &'a str,
+}
+
+pub fn find_fn_headers(content: &str, require_export: bool) -> Vec<FnHeader<'_>> {
+    let mut headers = Vec::new();
+    let bytes = content.as_bytes();
+    let mut line_start = 0usize;
+
+    while line_start <= bytes.len() {
+        let line_end = content[line_start..]
+            .find('\n')
+            .map_or(bytes.len(), |off| line_start + off);
+
+        let mut pos = skip_horiz_ws(content, line_start);
+        let mut saw_export = false;
+        if content[pos..].starts_with("export") {
+            let after_exp = pos + 6;
+            let next = skip_ws(content, after_exp);
+            if next > after_exp {
+                saw_export = true;
+                pos = next;
+                if content[pos..].starts_with("default") {
+                    let after_def = pos + 7;
+                    let next_def = skip_ws(content, after_def);
+                    if next_def > after_def {
+                        pos = next_def;
+                    }
+                }
+            }
+        }
+
+        if !require_export || saw_export {
+            let kw_len = if content[pos..].starts_with("function") {
+                8
+            } else if content[pos..].starts_with("fn") {
+                2
+            } else {
+                0
+            };
+            if kw_len > 0 {
+                let after_kw = pos + kw_len;
+                let name_start = skip_ws(content, after_kw);
+                if name_start > after_kw {
+                    let mut name_end = name_start;
+                    while name_end < bytes.len() && is_js_ident_byte(bytes[name_end]) {
+                        name_end += 1;
+                    }
+                    if name_end > name_start {
+                        let lparen = skip_ws(content, name_end);
+                        if bytes.get(lparen) == Some(&b'(') {
+                            let params_start = lparen + 1;
+                            let mut p = params_start;
+                            let mut depth = 1usize;
+                            let mut quote: Option<u8> = None;
+                            let mut escaped = false;
+                            while p < bytes.len() && depth > 0 {
+                                let b = bytes[p];
+                                if escaped {
+                                    escaped = false;
+                                    p += 1;
+                                    continue;
+                                }
+                                if let Some(q) = quote {
+                                    if b == b'\\' {
+                                        escaped = true;
+                                    } else if b == q {
+                                        quote = None;
+                                    }
+                                    p += 1;
+                                    continue;
+                                }
+                                match b {
+                                    b'\'' | b'"' | b'`' => quote = Some(b),
+                                    b'(' => depth += 1,
+                                    b')' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                p += 1;
+                            }
+                            if depth == 0 && p < bytes.len() {
+                                let params_end = p;
+                                let mut after_paren = skip_ws(content, params_end + 1);
+                                if bytes.get(after_paren) == Some(&b':') {
+                                    after_paren = skip_ws(content, after_paren + 1);
+                                    let ret_start = after_paren;
+                                    while after_paren < bytes.len() {
+                                        let ch = content[after_paren..].chars().next().unwrap();
+                                        if ch.is_ascii_alphanumeric()
+                                            || matches!(ch, '_' | '<' | '>' | '[' | ']' | ',')
+                                            || ch.is_whitespace()
+                                        {
+                                            after_paren += ch.len_utf8();
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    if after_paren > ret_start {
+                                        after_paren = skip_ws(content, after_paren);
+                                    } else {
+                                        after_paren = usize::MAX;
+                                    }
+                                }
+                                if after_paren < bytes.len() && bytes.get(after_paren) == Some(&b'{')
+                                {
+                                    headers.push(FnHeader {
+                                        start: line_start,
+                                        body_start: after_paren + 1,
+                                        name: &content[name_start..name_end],
+                                        params: &content[params_start..params_end],
+                                    });
+                                    line_start = content[after_paren + 1..]
+                                        .find('\n')
+                                        .map_or(bytes.len() + 1, |off| after_paren + 2 + off);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if line_end >= bytes.len() {
+            break;
+        }
+        line_start = line_end + 1;
+    }
+
+    headers
+}
+
+pub fn is_js_var_declared(script: &str, ident: &str) -> bool {
+    if ident.is_empty() {
+        return false;
+    }
+    for stmt in script.split(';') {
+        let bytes = stmt.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if !stmt.is_char_boundary(i) {
+                i += 1;
+                continue;
+            }
+            let kw_len = if i == 0 || !is_js_ident_byte(bytes[i - 1]) {
+                if stmt[i..].starts_with("const") {
+                    5
+                } else if stmt[i..].starts_with("let") || stmt[i..].starts_with("var") {
+                    3
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            if kw_len > 0 {
+                let after_kw = i + kw_len;
+                let rest_start = skip_ws(stmt, after_kw);
+                if rest_start > after_kw && contains_whole_word(&stmt[rest_start..], ident) {
+                    return true;
+                }
+                i = after_kw;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    false
+}
+
+fn contains_whole_word(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut start = 0usize;
+    while let Some(off) = haystack[start..].find(needle) {
+        let idx = start + off;
+        let end = idx + needle.len();
+        let left_ok = idx == 0 || !is_js_ident_byte(bytes[idx - 1]);
+        let right_ok = end == bytes.len() || !is_js_ident_byte(bytes[end]);
+        if left_ok && right_ok {
+            return true;
+        }
+        start = idx + 1;
+    }
+    false
 }
 
 pub fn file_exists_or_vfs(path: &std::path::Path) -> bool {
@@ -112,24 +512,96 @@ pub fn resolve_import_path(base_dir: &str, import_path: &str) -> Option<String> 
 
 pub fn parse_tag_attributes(tag_content: &str) -> HashMap<String, String> {
     let mut attrs = HashMap::new();
-    static RE_ATTR: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE_ATTR.get_or_init(|| {
-        regex::Regex::new(r#"([a-zA-Z0-9_\-]+)\s*=\s*(?:\{([^{}]+)\}|"([^"]*)"|'([^']*)'|([^\s>]+))"#).unwrap()
-    });
-    for cap in re.captures_iter(tag_content) {
-        let name = cap.get(1).unwrap().as_str().to_string();
-        let val = if let Some(expr) = cap.get(2) {
-            format!("() => ({})", expr.as_str())
-        } else if let Some(dq) = cap.get(3) {
-            format!("() => \"{}\"", dq.as_str())
-        } else if let Some(sq) = cap.get(4) {
-            format!("() => '{}'", sq.as_str())
-        } else if let Some(raw) = cap.get(5) {
-            format!("() => ({})", raw.as_str())
-        } else {
-            "() => null".to_string()
+    let bytes = tag_content.as_bytes();
+    let len = bytes.len();
+    let mut i = 0usize;
+
+    while i < len {
+        i = skip_ws(tag_content, i);
+        if i >= len {
+            break;
+        }
+        if !is_attr_name_byte(bytes[i]) {
+            let ch = tag_content[i..].chars().next().unwrap();
+            i += ch.len_utf8();
+            continue;
+        }
+        let name_start = i;
+        while i < len && is_attr_name_byte(bytes[i]) {
+            i += 1;
+        }
+        let name = &tag_content[name_start..i];
+        let eq_pos = skip_ws(tag_content, i);
+        if bytes.get(eq_pos) != Some(&b'=') {
+            i = eq_pos;
+            continue;
+        }
+        let val_start = skip_ws(tag_content, eq_pos + 1);
+        if val_start >= len {
+            break;
+        }
+        let val = match bytes[val_start] {
+            b'{' => {
+                let expr_start = val_start + 1;
+                let mut end = expr_start;
+                while end < len && bytes[end] != b'{' && bytes[end] != b'}' {
+                    end += 1;
+                }
+                if end > expr_start && bytes.get(end) == Some(&b'}') {
+                    i = end + 1;
+                    format!("() => ({})", &tag_content[expr_start..end])
+                } else {
+                    i = val_start + 1;
+                    continue;
+                }
+            }
+            b'"' => {
+                let s_start = val_start + 1;
+                let mut end = s_start;
+                while end < len && bytes[end] != b'"' {
+                    end += 1;
+                }
+                if bytes.get(end) == Some(&b'"') {
+                    i = end + 1;
+                    format!("() => \"{}\"", &tag_content[s_start..end])
+                } else {
+                    i = val_start + 1;
+                    continue;
+                }
+            }
+            b'\'' => {
+                let s_start = val_start + 1;
+                let mut end = s_start;
+                while end < len && bytes[end] != b'\'' {
+                    end += 1;
+                }
+                if bytes.get(end) == Some(&b'\'') {
+                    i = end + 1;
+                    format!("() => '{}'", &tag_content[s_start..end])
+                } else {
+                    i = val_start + 1;
+                    continue;
+                }
+            }
+            _ => {
+                let mut end = val_start;
+                while end < len {
+                    let ch = tag_content[end..].chars().next().unwrap();
+                    if ch.is_whitespace() || ch == '>' {
+                        break;
+                    }
+                    end += ch.len_utf8();
+                }
+                if end > val_start {
+                    i = end;
+                    format!("() => ({})", &tag_content[val_start..end])
+                } else {
+                    i = val_start + 1;
+                    continue;
+                }
+            }
         };
-        attrs.insert(name, val);
+        attrs.insert(name.to_string(), val);
     }
     attrs
 }
@@ -260,62 +732,81 @@ pub fn parse_raw_attributes(tag_content: &str) -> HashMap<String, String> {
     attrs
 }
 
-pub fn scope_component_ids(html: &mut String, scripts: &mut Vec<String>) {
-    static RE_ID: OnceLock<regex::Regex> = OnceLock::new();
-    let re_id = RE_ID.get_or_init(|| regex::Regex::new(r#"id\s*=\s*["']([^"']+)["']"#).unwrap());
+fn extract_html_id_attrs(html: &str) -> Vec<String> {
     let mut ids = Vec::new();
-    for cap in re_id.captures_iter(html) {
-        let id_val = cap.get(1).unwrap().as_str().to_string();
-        if !ids.contains(&id_val) {
-            ids.push(id_val);
+    let bytes = html.as_bytes();
+    let mut i = 0usize;
+    while let Some(off) = html[i..].find("id") {
+        let idx = i + off;
+        let left_ok = idx == 0 || !is_attr_name_byte(bytes[idx - 1]);
+        if !left_ok {
+            i = idx + 2;
+            continue;
+        }
+        let eq_pos = skip_ws(html, idx + 2);
+        if bytes.get(eq_pos) != Some(&b'=') {
+            i = idx + 2;
+            continue;
+        }
+        let q_pos = skip_ws(html, eq_pos + 1);
+        let Some(&q) = bytes.get(q_pos) else {
+            break;
+        };
+        if q != b'"' && q != b'\'' {
+            i = q_pos;
+            continue;
+        }
+        let val_start = q_pos + 1;
+        let mut val_end = val_start;
+        while val_end < bytes.len() && bytes[val_end] != b'"' && bytes[val_end] != b'\'' {
+            val_end += 1;
+        }
+        if val_end > val_start && bytes.get(val_end).is_some_and(|&c| c == b'"' || c == b'\'') {
+            let id_val = html[val_start..val_end].to_string();
+            if !ids.contains(&id_val) {
+                ids.push(id_val);
+            }
+            i = val_end + 1;
+        } else {
+            i = val_start;
         }
     }
+    ids
+}
+
+fn rewrite_scoped_ids(
+    html: &mut String,
+    scripts: &mut Vec<String>,
+    html_prefix: &str,
+    script_inside_prefix: &str,
+    script_outside_prefix: &str,
+) {
+    let ids = extract_html_id_attrs(html);
     for id in &ids {
         let old_pattern_dq = format!("id=\"{}\"", id);
-        let new_pattern_dq = format!("id=\"__erm_anchor_id_prefix__{}\"", id);
+        let new_pattern_dq = format!("id=\"{}{}\"", html_prefix, id);
         *html = html.replace(&old_pattern_dq, &new_pattern_dq);
         let old_pattern_sq = format!("id='{}'", id);
-        let new_pattern_sq = format!("id='__erm_anchor_id_prefix__{}'", id);
+        let new_pattern_sq = format!("id='{}{}'", html_prefix, id);
         *html = html.replace(&old_pattern_sq, &new_pattern_sq);
     }
     for id in &ids {
         let dq_pattern = format!("\"{}\"", id);
-        let dq_replace = format!("anchorId + \"{}\"", id);
+        let dq_replace = format!("{}\"{}{}\"", script_outside_prefix, script_inside_prefix, id);
         let sq_pattern = format!("'{}'", id);
-        let sq_replace = format!("anchorId + '{}'", id);
+        let sq_replace = format!("{}'{}{}'", script_outside_prefix, script_inside_prefix, id);
         for s in scripts.iter_mut() {
             *s = s.replace(&dq_pattern, &dq_replace).replace(&sq_pattern, &sq_replace);
         }
     }
 }
 
+pub fn scope_component_ids(html: &mut String, scripts: &mut Vec<String>) {
+    rewrite_scoped_ids(html, scripts, "__erm_anchor_id_prefix__", "", "anchorId + ");
+}
+
 pub fn scope_instance_ids(html: &mut String, scripts: &mut Vec<String>, prefix: &str) {
-    static RE_ID: OnceLock<regex::Regex> = OnceLock::new();
-    let re_id = RE_ID.get_or_init(|| regex::Regex::new(r#"id\s*=\s*["']([^"']+)["']"#).unwrap());
-    let mut ids = Vec::new();
-    for cap in re_id.captures_iter(html) {
-        let id_val = cap.get(1).unwrap().as_str().to_string();
-        if !ids.contains(&id_val) {
-            ids.push(id_val);
-        }
-    }
-    for id in &ids {
-        let old_pattern_dq = format!("id=\"{}\"", id);
-        let new_pattern_dq = format!("id=\"{}{}\"", prefix, id);
-        *html = html.replace(&old_pattern_dq, &new_pattern_dq);
-        let old_pattern_sq = format!("id='{}'", id);
-        let new_pattern_sq = format!("id='{}{}'", prefix, id);
-        *html = html.replace(&old_pattern_sq, &new_pattern_sq);
-    }
-    for id in &ids {
-        let dq_pattern = format!("\"{}\"", id);
-        let dq_replace = format!("\"{}{}\"", prefix, id);
-        let sq_pattern = format!("'{}'", id);
-        let sq_replace = format!("'{}{}'", prefix, id);
-        for s in scripts.iter_mut() {
-            *s = s.replace(&dq_pattern, &dq_replace).replace(&sq_pattern, &sq_replace);
-        }
-    }
+    rewrite_scoped_ids(html, scripts, prefix, prefix, "");
 }
 
 pub fn inject_state_name(input: &str, name: &str, scoped_name: &str) -> String {
@@ -451,15 +942,12 @@ pub fn find_state_variables(script_content: &str, init_fn: &str, state_vars: &mu
 }
 
 pub fn extract_state_variable_init(content: &str, var_name: &str) -> Option<String> {
-    let re = regex::Regex::new(&format!(
-        r#"(?:let|const|var)\s+{}\s*=\s*((?:await\s+)?useFetch|useState|erm\.init)\s*\("#,
-        regex::escape(var_name)
-    )).ok()?;
-    if let Some(caps) = re.captures(content) {
-        let whole_match = caps.get(0).unwrap();
-        let func_kind = caps.get(1).unwrap().as_str();
-        let is_fetch = func_kind.contains("useFetch");
-        let start = whole_match.end();
+    for decl in scan_state_decls(content) {
+        if decl.var_name != var_name {
+            continue;
+        }
+        let is_fetch = decl.is_fetch;
+        let start = decl.open_paren_end;
         let mut depth = 1;
         let mut in_single = false;
         let mut in_double = false;
@@ -648,8 +1136,7 @@ pub fn wrap_unquoted_braces(html: &str) -> String {
             }
 
             if in_quote.is_none() && i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && !html[i..].starts_with("on") {
-                if let Some(caps) = get_re_attr_brace().captures(&html[i..]) {
-                    let attr_name = caps.get(1).unwrap().as_str();
+                if let Some(attr_name) = match_attr_brace(&html[i..]) {
                     let start_expr = i + attr_name.len() + 2;
                     let mut depth = 1;
                     let mut j = start_expr;

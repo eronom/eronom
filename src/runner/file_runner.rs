@@ -35,14 +35,15 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
         anyhow::bail!("{}", err_msg);
     }
 
+    let parsed_toml = std::path::Path::new(path)
+        .parent()
+        .and_then(backend::er_http::load_toml_for_dir);
+
     if has_http_import(&stmts) {
         let mut port = find_listen_port(&stmts);
         if port.is_none() {
-            port = std::path::Path::new(path)
-                .parent()
-                .map(|p| p.join("eronom.toml"))
-                .and_then(|p| std::fs::read_to_string(p).ok())
-                .and_then(|c| toml::from_str::<toml::Value>(&c).ok())
+            port = parsed_toml
+                .as_ref()
                 .and_then(|v| v.get("server")?.get("port")?.as_integer())
                 .map(|p| p as i32);
         }
@@ -81,14 +82,8 @@ pub fn run_file(path: &str) -> anyhow::Result<()> {
     backend::std_json::register_json_natives(&mut vm);
     backend::std_system::register_system_natives(&mut vm);
     backend::er_http::set_target_script_path(path);
-    if let Some(config_val) = std::path::Path::new(path)
-        .parent()
-        .map(|p| p.join("eronom.toml"))
-        .filter(|p| p.exists())
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| toml::from_str::<toml::Value>(&c).ok())
-        .map(backend::er_http::toml_to_value)
-    {
+    if let Some(ref toml_val) = parsed_toml {
+        let config_val = backend::er_http::toml_to_value(toml_val);
         vm.register_global("config", config_val);
     }
 

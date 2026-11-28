@@ -1181,5 +1181,65 @@ fn test_multiline_less_than_in_local_component() {
     assert!(res.contains("<main"));
 }
 
+#[test]
+fn test_scanner_helpers_coverage() {
+    use super::utils::{
+        extract_state_variable_init, find_fn_headers, is_js_var_declared, match_attr_brace,
+        parse_import_default, parse_import_named, parse_tag_attributes, scan_state_decls,
+        scope_component_ids, scope_instance_ids, strip_leading_export,
+    };
+
+    assert_eq!(match_attr_brace("data-id={x}"), Some("data-id"));
+    assert_eq!(match_attr_brace("onClick={() => {}}"), Some("onClick"));
+    assert_eq!(match_attr_brace("class=\"btn\""), None);
+
+    let attrs = parse_tag_attributes("Input label=\"Name\" count={n} raw=42 disabled");
+    assert_eq!(attrs.get("label").map(String::as_str), Some("() => \"Name\""));
+    assert_eq!(attrs.get("count").map(String::as_str), Some("() => (n)"));
+    assert_eq!(attrs.get("raw").map(String::as_str), Some("() => (42)"));
+    assert!(!attrs.contains_key("disabled"));
+
+    assert_eq!(
+        parse_import_default("import Header from './Header.erm';"),
+        Some(("Header", "./Header.erm"))
+    );
+    assert_eq!(
+        parse_import_named("import { count, Card } from '@components/Card.erm';"),
+        Some(("count, Card", "@components/Card.erm"))
+    );
+    assert_eq!(strip_leading_export("  export const x = 1;").as_ref(), "  const x = 1;");
+
+    let script = "outlet = useState(0);\nconst count = useState(1, 'k');\nlet user = await useFetch('/me');";
+    let decls = scan_state_decls(script);
+    assert_eq!(decls.len(), 2);
+    assert_eq!(decls[0].var_name, "count");
+    assert_eq!(decls[1].var_name, "user");
+    assert!(decls[1].is_fetch);
+    assert_eq!(extract_state_variable_init(script, "count").as_deref(), Some("1"));
+    assert_eq!(extract_state_variable_init(script, "user").as_deref(), Some("await useFetch('/me')"));
+
+    assert!(is_js_var_declared("let a = 1; const b = 2;", "b"));
+    assert!(!is_js_var_declared("let fooBar = 1; bar;", "foo"));
+
+    let hdrs = find_fn_headers("  export fn Card(\n    props: Props\n  ): string {\n    return <div/>;\n  }", true);
+    assert_eq!(hdrs.len(), 1);
+    assert_eq!(hdrs[0].name, "Card");
+
+    let mut html = "<div id=\"box\" data-id=\"raw\"><span id='lbl'></span></div>".to_string();
+    let mut scripts = vec!["document.getElementById(\"box\"); get('lbl');".to_string()];
+    scope_component_ids(&mut html, &mut scripts);
+    assert!(html.contains("id=\"__erm_anchor_id_prefix__box\""));
+    assert!(html.contains("data-id=\"raw\""));
+    assert!(scripts[0].contains("anchorId + \"box\""));
+    assert!(scripts[0].contains("anchorId + 'lbl'"));
+
+    let mut html2 = "<div id=\"item\"></div>".to_string();
+    let mut scripts2 = vec!["get(\"item\")".to_string()];
+    scope_instance_ids(&mut html2, &mut scripts2, "p0_");
+    assert!(html2.contains("id=\"p0_item\""));
+    assert!(scripts2[0].contains("\"p0_item\""));
+}
+
+
 
 

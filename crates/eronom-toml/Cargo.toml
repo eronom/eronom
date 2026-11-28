@@ -1,0 +1,10 @@
+[package]
+name = "eronom-toml"
+version = "0.9.4"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+

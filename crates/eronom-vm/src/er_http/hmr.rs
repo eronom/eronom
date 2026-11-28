@@ -1,23 +1,65 @@
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 use crate::vm::execute::VM;
 use super::types::*;
 
-pub fn toml_to_value(val: toml::Value) -> crate::vm::value::Value {
+type TomlCacheEntry = (u64, Option<SystemTime>, Arc<eronom_toml::Value>);
+static TOML_CACHE: OnceLock<Mutex<HashMap<PathBuf, TomlCacheEntry>>> = OnceLock::new();
+
+pub fn load_toml_for_dir(dir: &Path) -> Option<eronom_toml::Value> {
+    let toml_path = dir.join("eronom.toml");
+    let content = fs::read_to_string(&toml_path).ok()?;
+    eronom_toml::from_str(&content).ok()
+}
+
+pub fn load_cached_toml_for_dir(dir: &Path) -> Option<Arc<eronom_toml::Value>> {
+    let toml_path = dir.join("eronom.toml");
+    let meta = match fs::metadata(&toml_path) {
+        Ok(m) => m,
+        Err(_) => {
+            if let Some(cache) = TOML_CACHE.get() {
+                if let Ok(mut guard) = cache.lock() {
+                    guard.remove(&toml_path);
+                }
+            }
+            return None;
+        }
+    };
+    let len = meta.len();
+    let mtime = meta.modified().ok();
+    let cache = TOML_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some((c_len, c_mtime, c_val)) = guard.get(&toml_path) {
+            if *c_len == len && *c_mtime == mtime {
+                return Some(Arc::clone(c_val));
+            }
+        }
+    }
+    let content = fs::read_to_string(&toml_path).ok()?;
+    let parsed = Arc::new(eronom_toml::from_str(&content).ok()?);
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(toml_path, (len, mtime, Arc::clone(&parsed)));
+    }
+    Some(parsed)
+}
+
+pub fn toml_to_value(val: &eronom_toml::Value) -> crate::vm::value::Value {
     match val {
-        toml::Value::String(s) => {
-            let ptr = crate::vm::gc::gc_alloc_string(&s);
+        eronom_toml::Value::String(s) => {
+            let ptr = crate::vm::gc::gc_alloc_string(s);
             crate::vm::value::Value::string(ptr)
         }
-        toml::Value::Integer(i) => crate::vm::value::Value::number(i as f64),
-        toml::Value::Float(f) => crate::vm::value::Value::number(f),
-        toml::Value::Boolean(b) => crate::vm::value::Value::boolean(b),
-        toml::Value::Datetime(d) => {
-            let ptr = crate::vm::gc::gc_alloc_string(&d.to_string());
+        eronom_toml::Value::Integer(i) => crate::vm::value::Value::number(*i as f64),
+        eronom_toml::Value::Float(f) => crate::vm::value::Value::number(*f),
+        eronom_toml::Value::Boolean(b) => crate::vm::value::Value::boolean(*b),
+        eronom_toml::Value::Datetime(d) => {
+            let ptr = crate::vm::gc::gc_alloc_string(d);
             crate::vm::value::Value::string(ptr)
         }
-        toml::Value::Array(arr) => {
+        eronom_toml::Value::Array(arr) => {
             let mut elements = crate::vm::gc::gc_vec_with_capacity(arr.len());
             for v in arr {
                 elements.push(toml_to_value(v));
@@ -25,11 +67,11 @@ pub fn toml_to_value(val: toml::Value) -> crate::vm::value::Value {
             let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Array(elements));
             crate::vm::value::Value::array(ptr)
         }
-        toml::Value::Table(tbl) => {
+        eronom_toml::Value::Table(tbl) => {
             let mut keys = Vec::with_capacity(tbl.len());
             let mut values = Vec::with_capacity(tbl.len());
             for (k, v) in tbl {
-                let key_ptr = crate::vm::gc::intern_string(&k);
+                let key_ptr = crate::vm::gc::intern_string(k);
                 keys.push(crate::vm::value::Value::string(key_ptr));
                 values.push(toml_to_value(v));
             }
@@ -174,14 +216,9 @@ pub fn check_and_reload_script_if_needed(vm: &mut VM) {
     // Reload eronom.toml if it exists
     let parent_dir = Path::new(&path).parent();
     if let Some(parent) = parent_dir {
-        let toml_path = parent.join("eronom.toml");
-        if toml_path.exists() {
-            if let Ok(toml_content) = fs::read_to_string(&toml_path) {
-                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    let config_val = toml_to_value(toml_val);
-                    vm.register_global("config", config_val);
-                }
-            }
+        if let Some(toml_val) = load_toml_for_dir(parent) {
+            let config_val = toml_to_value(&toml_val);
+            vm.register_global("config", config_val);
         }
     }
     

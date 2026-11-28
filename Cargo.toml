@@ -9,6 +9,7 @@ members = [
     "crates/eronom-cranelift",
     "crates/eronom-clap",
     "crates/eronom-clap-macros",
+    "crates/eronom-toml",
 ]
 exclude = [
     "deps/cranelift",
@@ -34,10 +35,9 @@ eronom-frontend = { path = "crates/eronom-frontend" }
 eronom-net = { path = "crates/eronom-net" }
 eronom-vm = { path = "crates/eronom-vm" }
 eronom-clap = { path = "crates/eronom-clap" }
+eronom-toml = { path = "crates/eronom-toml" }
 anyhow = "1.0.102"
 fnv = "1.0.7"
-regex = "1"
-toml = "0.8.19"
 object = { version = "0.40.0", features = ["write", "std"] }
 target-lexicon = "0.13.5"
 

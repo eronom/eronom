@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 pub fn is_function_template(content: &str) -> bool {
     if has_real_script_tag(content) {
         return false;
@@ -243,17 +241,11 @@ pub fn desugar_expression_mapping(content: &str) -> String {
 }
 
 pub fn extract_exported_function_components(content: &str) -> String {
-    static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
-    });
-
     let ranges = super::template_js::ScriptStyleRanges::new(content);
     let mut fns_to_extract = Vec::new();
 
-    for caps in re.captures_iter(content) {
-        let m = caps.get(0).unwrap();
-        let start = m.start();
+    for hdr in super::utils::find_fn_headers(content, true) {
+        let start = hdr.start;
         let mut inside_script = false;
         for r in &ranges.ranges {
             if r.contains(&start) {
@@ -262,12 +254,12 @@ pub fn extract_exported_function_components(content: &str) -> String {
             }
         }
         if !inside_script {
-            let fn_name = caps.get(1).unwrap().as_str().to_string();
+            let fn_name = hdr.name.to_string();
             if !fn_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
                 continue;
             }
-            let params = caps.get(2).unwrap().as_str().to_string();
-            let body_start = m.end();
+            let params = hdr.params.to_string();
+            let body_start = hdr.body_start;
             if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
                 let body = content[body_start..body_start + cb].to_string();
                 if !body.contains('<') && !body.contains('@') {
@@ -464,16 +456,10 @@ pub fn inject_line_attr(markup: &str, line_num: usize) -> String {
 }
 
 pub fn preprocess_function_template(content: &str) -> anyhow::Result<String> {
-    static RE_FN: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*export\s+(?:default\s+)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
-    });
-
-    if let Some(captures) = re.captures(content) {
-        let entire_match = captures.get(0).unwrap();
-        let fn_start_byte = entire_match.start();
-        let fn_body_start_byte = entire_match.end();
-        let params_str = captures.get(2).map_or("", |m| m.as_str());
+    if let Some(hdr) = super::utils::find_fn_headers(content, true).into_iter().next() {
+        let fn_start_byte = hdr.start;
+        let fn_body_start_byte = hdr.body_start;
+        let params_str = hdr.params;
 
         let mut fn_start_char = 0;
         let mut fn_body_start_char = 0;

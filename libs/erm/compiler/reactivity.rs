@@ -1,4 +1,4 @@
-use super::utils::get_re_attr_brace;
+use super::utils::match_attr_brace;
 
 pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec<String>, states: &[String]) -> anyhow::Result<String> {
     let mut out = String::new();
@@ -80,8 +80,7 @@ pub fn parse_reactivity(html: &str, bindings: &mut Vec<String>, events: &mut Vec
             
             // Wrap attribute brace values like value={name} or placeholder={desc} in double quotes
             if i > 0 && html[i-1..i].chars().next().unwrap().is_ascii_whitespace() && !html[i..].starts_with("on") {
-                if let Some(caps) = get_re_attr_brace().captures(&html[i..]) {
-                    let attr_name = caps.get(1).unwrap().as_str();
+                if let Some(attr_name) = match_attr_brace(&html[i..]) {
                     let start_expr = i + attr_name.len() + 2;
                     let mut depth = 1;
                     let mut j = start_expr;

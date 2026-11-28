@@ -206,29 +206,57 @@ pub fn minify_js(js: &str) -> String {
 
 pub fn inline_public_env_vars(code: &str) -> String {
     // Replaces references to (?:process\.)?env\.(ER_PUBLIC_[A-Za-z0-9_]+) and bare ER_PUBLIC_* variables
-    let re_env = regex::Regex::new(r#"(?:process\.)?env\.(ER_PUBLIC_[A-Za-z0-9_]+)"#).unwrap();
-    let replaced_env = re_env.replace_all(code, |caps: &regex::Captures| {
-        let var_name = &caps[1];
-        if let Ok(val) = std::env::var(var_name) {
-            let mut out = String::new();
-            eronom_core::json::escape_json_string(&mut out, &val);
-            out
-        } else {
-            "\"\"".to_string()
-        }
-    }).into_owned();
+    let bytes = code.as_bytes();
+    let mut out = String::with_capacity(code.len());
+    let mut last = 0usize;
+    let mut i = 0usize;
 
-    let re_bare = regex::Regex::new(r#"\b(ER_PUBLIC_[A-Za-z0-9_]+)\b"#).unwrap();
-    re_bare.replace_all(&replaced_env, |caps: &regex::Captures| {
-        let var_name = &caps[1];
-        if let Ok(val) = std::env::var(var_name) {
-            let mut out = String::new();
-            eronom_core::json::escape_json_string(&mut out, &val);
-            out
-        } else {
-            "\"\"".to_string()
+    while i < bytes.len() {
+        if !code.is_char_boundary(i) {
+            i += 1;
+            continue;
         }
-    }).into_owned()
+        let rest = &code[i..];
+        let (var_start, _) = if rest.starts_with("process.env.ER_PUBLIC_") {
+            (i + "process.env.".len(), true)
+        } else if rest.starts_with("env.ER_PUBLIC_") {
+            (i + "env.".len(), true)
+        } else if rest.starts_with("ER_PUBLIC_")
+            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'))
+        {
+            (i, false)
+        } else {
+            i += 1;
+            continue;
+        };
+
+        let mut var_end = var_start + "ER_PUBLIC_".len();
+        while var_end < bytes.len()
+            && (bytes[var_end].is_ascii_alphanumeric() || bytes[var_end] == b'_')
+        {
+            var_end += 1;
+        }
+        if var_end == var_start + "ER_PUBLIC_".len() {
+            i = var_end;
+            continue;
+        }
+
+        out.push_str(&code[last..i]);
+        let var_name = &code[var_start..var_end];
+        if let Ok(val) = std::env::var(var_name) {
+            eronom_core::json::escape_json_string(&mut out, &val);
+        } else {
+            out.push_str("\"\"");
+        }
+        last = var_end;
+        i = var_end;
+    }
+
+    if last == 0 {
+        return code.to_string();
+    }
+    out.push_str(&code[last..]);
+    out
 }
 
 #[cfg(test)]

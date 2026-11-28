@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use regex::Regex;
 use crate::compiler;
 use super::commands::{get_port_from_config_file, BuildMode};
 
@@ -127,16 +126,65 @@ pub fn generate_server_er_ssg(routes: &[PageRoute], api_routes: &[String], port:
     generate_server_script(routes, api_routes, port, |r| get_ssg_html_path(&r.rel_path))
 }
 
+fn skip_ws_idx(s: &str, pos: usize) -> usize {
+    for (off, ch) in s[pos..].char_indices() {
+        if !ch.is_whitespace() {
+            return pos + off;
+        }
+    }
+    s.len()
+}
+
 pub fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
-    let re = Regex::new(r#"(?x)
-        app\s*\.\s*(get|post|put|delete|patch|ws)\s*\(\s*(['"])([^'"]*)(['"])
-    "#).unwrap();
-    
-    re.replace_all(content, |caps: &regex::Captures| {
-        let method = &caps[1];
-        let quote = &caps[2];
-        let path = &caps[3];
-        
+    let bytes = content.as_bytes();
+    let mut out = String::with_capacity(content.len());
+    let mut last = 0usize;
+    let mut search_from = 0usize;
+
+    while let Some(off) = content[search_from..].find("app") {
+        let app_start = search_from + off;
+        if app_start > 0
+            && (bytes[app_start - 1].is_ascii_alphanumeric() || bytes[app_start - 1] == b'_')
+        {
+            search_from = app_start + 3;
+            continue;
+        }
+        let mut p = skip_ws_idx(content, app_start + 3);
+        if bytes.get(p) != Some(&b'.') {
+            search_from = app_start + 3;
+            continue;
+        }
+        p = skip_ws_idx(content, p + 1);
+        let method = ["delete", "patch", "post", "get", "put", "ws"]
+            .iter()
+            .copied()
+            .find(|m| content[p..].starts_with(m));
+        let Some(method) = method else {
+            search_from = app_start + 3;
+            continue;
+        };
+        p = skip_ws_idx(content, p + method.len());
+        if bytes.get(p) != Some(&b'(') {
+            search_from = app_start + 3;
+            continue;
+        }
+        p = skip_ws_idx(content, p + 1);
+        let Some(&open_q) = bytes.get(p) else {
+            break;
+        };
+        if open_q != b'\'' && open_q != b'"' {
+            search_from = app_start + 3;
+            continue;
+        }
+        let path_start = p + 1;
+        let mut path_end = path_start;
+        while path_end < bytes.len() && bytes[path_end] != b'\'' && bytes[path_end] != b'"' {
+            path_end += 1;
+        }
+        let Some(&close_q) = bytes.get(path_end) else {
+            break;
+        };
+        let path = &content[path_start..path_end];
         let new_path = if path == "/" {
             prefix.to_string()
         } else if path.starts_with('/') {
@@ -144,9 +192,90 @@ pub fn rewrite_api_route_paths(content: &str, prefix: &str) -> String {
         } else {
             format!("{}/{}", prefix, path)
         };
-        
-        format!("app.{}({}{}{}", method, quote, new_path, quote)
-    }).into_owned()
+
+        out.push_str(&content[last..app_start]);
+        out.push_str(&format!(
+            "app.{}({}{}{}",
+            method, open_q as char, new_path, close_q as char
+        ));
+        last = path_end + 1;
+        search_from = last;
+    }
+
+    if last == 0 {
+        return content.to_string();
+    }
+    out.push_str(&content[last..]);
+    out
+}
+
+fn replace_hmr_import(src: &str, replacement: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut search_from = 0usize;
+    while let Some(off) = src[search_from..].find("import") {
+        let start = search_from + off;
+        let mut p = skip_ws_idx(src, start + 6);
+        if bytes.get(p) != Some(&b'{') {
+            search_from = start + 6;
+            continue;
+        }
+        p = skip_ws_idx(src, p + 1);
+        if !src[p..].starts_with("createHotContext") {
+            search_from = start + 6;
+            continue;
+        }
+        p = skip_ws_idx(src, p + "createHotContext".len());
+        if bytes.get(p) != Some(&b',') {
+            search_from = start + 6;
+            continue;
+        }
+        p = skip_ws_idx(src, p + 1);
+        if !src[p..].starts_with("showError") {
+            search_from = start + 6;
+            continue;
+        }
+        p = skip_ws_idx(src, p + "showError".len());
+        if bytes.get(p) != Some(&b'}') {
+            search_from = start + 6;
+            continue;
+        }
+        p = skip_ws_idx(src, p + 1);
+        if !src[p..].starts_with("from") {
+            search_from = start + 6;
+            continue;
+        }
+        let after_from = p + 4;
+        let q_pos = skip_ws_idx(src, after_from);
+        if q_pos == after_from {
+            search_from = start + 6;
+            continue;
+        }
+        let Some(&q) = bytes.get(q_pos) else {
+            break;
+        };
+        if (q != b'\'' && q != b'"') || !src[q_pos + 1..].starts_with("./hmr.js") {
+            search_from = start + 6;
+            continue;
+        }
+        let after_path = q_pos + 1 + "./hmr.js".len();
+        let Some(&close_q) = bytes.get(after_path) else {
+            break;
+        };
+        if close_q != b'\'' && close_q != b'"' {
+            search_from = start + 6;
+            continue;
+        }
+        let mut end = after_path + 1;
+        if bytes.get(end) == Some(&b';') {
+            end += 1;
+        }
+        let mut out = String::with_capacity(src.len() + replacement.len());
+        out.push_str(&src[..start]);
+        out.push_str(replacement);
+        out.push_str(&src[end..]);
+        return out;
+    }
+    src.to_string()
 }
 
 fn is_ignored_build_file(name_str: &str, path: &Path) -> bool {
@@ -412,8 +541,10 @@ pub fn build_project(dir: &str, mode: BuildMode) -> anyhow::Result<()> {
         include_str!("../../libs/init/modules/erm/runtime.js").to_string()
     };
     // Strip HMR development dependency from production runtime
-    let re_hmr_import = regex::Regex::new(r#"import\s*\{\s*createHotContext\s*,\s*showError\s*\}\s*from\s*['"]\./hmr\.js['"];?"#).unwrap();
-    let prod_runtime = re_hmr_import.replace(&runtime_src, "const createHotContext = () => ({ data: {} }); const showError = (e) => { console.error(e); };");
+    let prod_runtime = replace_hmr_import(
+        &runtime_src,
+        "const createHotContext = () => ({ data: {} }); const showError = (e) => { console.error(e); };",
+    );
     let minified_runtime = compiler::minify_js(&prod_runtime);
     let runtime_hash = compiler::compute_asset_hash(minified_runtime.as_bytes());
     let hashed_runtime_name = format!("runtime-{}.js", runtime_hash);
@@ -528,5 +659,22 @@ mod tests {
 
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_rewrite_api_route_paths_and_hmr_strip() {
+        let src = r#"
+app.get("/", handler);
+app . post ( '/users' , create );
+myapp.get("/", untouched);
+"#;
+        let rewritten = rewrite_api_route_paths(src, "/api");
+        assert!(rewritten.contains("app.get(\"/api\", handler);"));
+        assert!(rewritten.contains("app.post('/api/users' , create );"));
+        assert!(rewritten.contains("myapp.get(\"/\", untouched);"));
+
+        let runtime = "import { createHotContext, showError } from './hmr.js';\nexport const x = 1;";
+        let stripped = replace_hmr_import(runtime, "const h = 0;");
+        assert_eq!(stripped, "const h = 0;\nexport const x = 1;");
     }
 }

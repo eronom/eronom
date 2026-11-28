@@ -292,22 +292,16 @@ pub struct LocalFunctionComponent {
 }
 
 pub fn extract_local_components(content: &str) -> HashMap<String, LocalFunctionComponent> {
-    static RE_FN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE_FN.get_or_init(|| {
-        regex::Regex::new(r"(?m)^\s*(?:export\s+(?:default\s+)?)?(?:fn|function)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)\s*(?::\s*[A-Za-z0-9_<>\[\],\s]+\s*)?\{").unwrap()
-    });
-
     let mut local_map = HashMap::new();
 
-    for caps in re.captures_iter(content) {
-        let m = caps.get(0).unwrap();
-        let fn_name = caps.get(1).unwrap().as_str().to_string();
+    for hdr in super::utils::find_fn_headers(content, false) {
+        let fn_name = hdr.name.to_string();
         if !fn_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
             continue;
         }
 
-        let params = caps.get(2).unwrap().as_str().to_string();
-        let body_start = m.end();
+        let params = hdr.params.to_string();
+        let body_start = hdr.body_start;
         if let Some(cb) = super::utils::find_matching_close_brace(&content[body_start..]) {
             let body = &content[body_start..body_start + cb];
 

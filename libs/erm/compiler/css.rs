@@ -98,19 +98,10 @@ pub fn scope_html(html: &str, scope_id: &str) -> anyhow::Result<String> {
 }
 
 pub fn is_eds_enabled(base_path: &std::path::Path) -> bool {
-    let toml_path = base_path.join("eronom.toml");
-    let toml_content_opt = if toml_path.exists() {
-        std::fs::read_to_string(&toml_path).ok()
-    } else {
-        None
-    };
-
-    if let Some(content) = toml_content_opt {
-        if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-            if let Some(ds) = toml_val.get("eds").or_else(|| toml_val.get("design_system")) {
-                if let Some(enabled) = ds.get("enabled").and_then(|v| v.as_bool()) {
-                    return enabled;
-                }
+    if let Some(toml_val) = crate::vm::er_http::load_cached_toml_for_dir(base_path) {
+        if let Some(ds) = toml_val.get("eds").or_else(|| toml_val.get("design_system")) {
+            if let Some(enabled) = ds.get("enabled").and_then(|v| v.as_bool()) {
+                return enabled;
             }
         }
     }

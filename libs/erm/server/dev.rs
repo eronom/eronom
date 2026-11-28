@@ -22,16 +22,10 @@ pub fn start_server(dir: &str, is_prod: bool, port: u16) -> anyhow::Result<()> {
         let toml_path = base_path.join("eronom.toml");
         if toml_path.exists() {
             if let Ok(content) = fs::read_to_string(&toml_path) {
-                if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-                    if let Some(server) = toml_val.get("server") {
-                        if let Some(dev) = server.get("dev") {
-                            if let Some(dev_str) = dev.as_str() {
-                                let dev_file = base_path.join(dev_str);
-                                if dev_file.exists() {
-                                    default_file = Some(dev_file);
-                                }
-                            }
-                        }
+                if let Some(dev_str) = eronom_toml::lookup_str(&content, &["server", "dev"]) {
+                    let dev_file = base_path.join(dev_str.as_ref());
+                    if dev_file.exists() {
+                        default_file = Some(dev_file);
                     }
                 }
             }

@@ -193,22 +193,17 @@ pub fn run_micro_file(path: &str) -> anyhow::Result<()> {
         anyhow::bail!("{}", err_msg);
     }
 
+    let parsed_toml = std::path::Path::new(path)
+        .parent()
+        .and_then(backend::er_http::load_toml_for_dir);
+
     if has_http_import(&stmts) {
         let mut port = find_listen_port(&stmts);
         if port.is_none() {
-            let main_path = std::path::Path::new(path);
-            if let Some(parent_dir) = main_path.parent() {
-                let toml_path = parent_dir.join("eronom.toml");
-                if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
-                    if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                        if let Some(server) = toml_val.get("server") {
-                            if let Some(p) = server.get("port").and_then(|p| p.as_integer()) {
-                                port = Some(p as i32);
-                            }
-                        }
-                    }
-                }
-            }
+            port = parsed_toml
+                .as_ref()
+                .and_then(|v| v.get("server")?.get("port")?.as_integer())
+                .map(|p| p as i32);
         }
         let final_port = port.unwrap_or(3000);
         backend::er_http::LISTEN_PORT.with(|p| p.set(Some(final_port)));
@@ -218,17 +213,9 @@ pub fn run_micro_file(path: &str) -> anyhow::Result<()> {
     register_micro_natives(&mut vm);
     backend::er_http::set_target_script_path(path);
 
-    let main_path = std::path::Path::new(path);
-    if let Some(parent_dir) = main_path.parent() {
-        let toml_path = parent_dir.join("eronom.toml");
-        if toml_path.exists() {
-            if let Ok(toml_content) = std::fs::read_to_string(&toml_path) {
-                if let Ok(toml_val) = toml::from_str::<toml::Value>(&toml_content) {
-                    let config_val = backend::er_http::toml_to_value(toml_val);
-                    vm.register_global("config", config_val);
-                }
-            }
-        }
+    if let Some(ref toml_val) = parsed_toml {
+        let config_val = backend::er_http::toml_to_value(toml_val);
+        vm.register_global("config", config_val);
     }
 
     let compiler = Compiler::new();

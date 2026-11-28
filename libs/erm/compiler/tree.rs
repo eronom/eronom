@@ -99,8 +99,8 @@ pub fn process_component_tree(
             let script_tag = &content[script_start..script_end + 9];
             let content_start = script_tag.find('>').unwrap_or(0) + 1;
             let script_content = &script_tag[content_start..script_tag.len() - 9];
-            for cap in get_re_state().captures_iter(script_content) {
-                let var_name = cap.get(1).unwrap().as_str().to_string();
+            for decl in scan_state_decls(script_content) {
+                let var_name = decl.var_name.to_string();
                 if !local_state_vars.contains(&var_name) {
                     local_state_vars.push(var_name.clone());
                 }
@@ -108,9 +108,8 @@ pub fn process_component_tree(
             }
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if let Some(caps) = get_re_import_named().captures(line_trimmed) {
-                    let names_str = caps.get(1).unwrap().as_str();
-                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
+                if let Some((names_str, comp_path)) = parse_import_named(line_trimmed) {
+                    let comp_path_val = comp_path.to_string();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
                         if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
@@ -176,15 +175,14 @@ pub fn process_component_tree(
 
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if let Some(caps) = get_re_import_default().captures(line_trimmed) {
-                    let comp_name = caps.get(1).unwrap().as_str().to_string();
-                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
+                if let Some((comp_name_s, comp_path_s)) = parse_import_default(line_trimmed) {
+                    let comp_name = comp_name_s.to_string();
+                    let comp_path_val = comp_path_s.to_string();
                     if comp_name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
                         component_imports.insert(comp_name, comp_path_val);
                     }
-                } else if let Some(caps) = get_re_import_named().captures(line_trimmed) {
-                    let names_str = caps.get(1).unwrap().as_str();
-                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
+                } else if let Some((names_str, comp_path_s)) = parse_import_named(line_trimmed) {
+                    let comp_path_val = comp_path_s.to_string();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
                         if !name.is_empty() {
@@ -232,9 +230,8 @@ pub fn process_component_tree(
             // Also check imported variables that are lowercased (state imports)
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if let Some(caps) = get_re_import_named().captures(line_trimmed) {
-                    let names_str = caps.get(1).unwrap().as_str();
-                    let comp_path_val = caps.get(2).unwrap().as_str().to_string();
+                if let Some((names_str, comp_path_s)) = parse_import_named(line_trimmed) {
+                    let comp_path_val = comp_path_s.to_string();
                     for name in names_str.split(',') {
                         let name = name.trim().to_string();
                         if !name.is_empty() && name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
@@ -255,10 +252,10 @@ pub fn process_component_tree(
             let mut cleaned_script = String::new();
             for line in script_content.lines() {
                 let line_trimmed = line.trim();
-                if get_re_import_default().is_match(line_trimmed) || get_re_import_named().is_match(line_trimmed) {
+                if parse_import_default(line_trimmed).is_some() || parse_import_named(line_trimmed).is_some() {
                     continue;
                 }
-                let processed_line = get_re_export().replace(line, "$1");
+                let processed_line = strip_leading_export(line);
                 cleaned_script.push_str(&processed_line);
                 cleaned_script.push('\n');
             }
