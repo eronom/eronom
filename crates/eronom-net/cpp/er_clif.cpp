@@ -1,5 +1,5 @@
 #include "App.h"
-#include <iostream>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <functional>
@@ -390,9 +390,10 @@ void er_clif_serve(int32_t port, ErClifFetchCallback fetch_fn) {
 
     app.listen(port, [port](auto* listen_socket) {
         if (listen_socket) {
-            std::cout << "[HTTP] Server listening on http://localhost:" << port << std::endl;
+            std::printf("[HTTP] Server listening on http://localhost:%d\n", port);
+            std::fflush(stdout);
         } else {
-            std::cerr << "[HTTP] Failed to listen on port " << port << std::endl;
+            std::fprintf(stderr, "[HTTP] Failed to listen on port %d\n", port);
         }
     });
 

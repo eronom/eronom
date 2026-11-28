@@ -1,7 +1,7 @@
 #include "App.h"
+#include <cstdio>
 #include <string>
 #include <string_view>
-#include <iostream>
 #include <cstring>
 #include <memory>
 #include <atomic>
@@ -583,7 +583,7 @@ bool er_server_listen(void* server_ptr, int port) {
             er_http_on_listening_instance(rust_server, port);
             er_http_on_listening();
         } else {
-            std::cerr << "[uWebSockets] Failed to listen on port " << port << std::endl;
+            std::fprintf(stderr, "[HTTP] Failed to listen on port %d\n", port);
         }
     };
 

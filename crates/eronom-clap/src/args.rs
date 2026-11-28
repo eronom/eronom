@@ -40,6 +40,10 @@ pub struct OsIterator {
 }
 
 #[cfg(target_os = "linux")]
+static mut RAW_ARGC: i32 = 0;
+#[cfg(target_os = "linux")]
+static mut RAW_ARGV: *const *const u8 = std::ptr::null();
+#[cfg(target_os = "linux")]
 static mut RAW_ARGS_STORAGE: [&'static [u8]; 128] = [&[]; 128];
 #[cfg(target_os = "linux")]
 static mut RAW_ARGS_LEN: usize = 0;
@@ -51,12 +55,26 @@ static INIT_HOOK: extern "C" fn(i32, *const *const u8) = capture_raw_argv;
 
 #[cfg(target_os = "linux")]
 extern "C" fn capture_raw_argv(argc: i32, argv: *const *const u8) {
-    if argc <= 0 || argv.is_null() {
-        return;
+    unsafe {
+        RAW_ARGC = argc;
+        RAW_ARGV = argv;
     }
-    let count = (argc as usize).min(128);
-    for i in 0..count {
-        unsafe {
+}
+
+#[cfg(target_os = "linux")]
+static RAW_INIT_ONCE: std::sync::Once = std::sync::Once::new();
+
+#[cfg(target_os = "linux")]
+#[inline]
+fn ensure_raw_args_parsed() -> usize {
+    RAW_INIT_ONCE.call_once(|| unsafe {
+        let argc = RAW_ARGC;
+        let argv = RAW_ARGV;
+        if argc <= 0 || argv.is_null() {
+            return;
+        }
+        let count = (argc as usize).min(128);
+        for i in 0..count {
             let ptr = *argv.add(i);
             if !ptr.is_null() {
                 let mut len = 0;
@@ -66,10 +84,9 @@ extern "C" fn capture_raw_argv(argc: i32, argv: *const *const u8) {
                 RAW_ARGS_STORAGE[i] = std::slice::from_raw_parts(ptr, len);
             }
         }
-    }
-    unsafe {
         RAW_ARGS_LEN = count;
-    }
+    });
+    unsafe { RAW_ARGS_LEN }
 }
 
 fn init_os_argv() -> &'static [&'static [u8]] {
@@ -97,7 +114,10 @@ impl OsIterator {
     pub fn init() -> Self {
         #[cfg(target_os = "linux")]
         {
-            let count = unsafe { RAW_ARGS_LEN };
+            if unsafe { RAW_ARGC } == 1 {
+                return Self { remain: &[] };
+            }
+            let count = ensure_raw_args_parsed();
             if count > 1 {
                 let slice = unsafe { &RAW_ARGS_STORAGE[1..count] };
                 return Self { remain: slice };

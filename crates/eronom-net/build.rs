@@ -42,6 +42,8 @@ fn main() {
             .include(bssl_dir.join("include"))
             .flag_if_supported("-fno-exceptions")
             .flag_if_supported("-fno-rtti")
+            .flag_if_supported("-fno-unwind-tables")
+            .flag_if_supported("-fno-asynchronous-unwind-tables")
             .flag_if_supported("-fvisibility=hidden")
             .flag_if_supported("-fno-strict-aliasing")
             .flag_if_supported("-fno-stack-protector")
@@ -141,9 +143,37 @@ fn main() {
     if bssl_dir.exists() {
         u_sockets_build
             .file(u_sockets_dir.join("src").join("crypto").join("openssl.c"))
-            .file(u_sockets_dir.join("src").join("crypto").join("sni_tree.cpp"))
             .include(bssl_dir.join("include"))
             .define("LIBUS_USE_OPENSSL", None);
+
+        let mut sni_build = cc::Build::new();
+        sni_build
+            .cpp(true)
+            .cpp_link_stdlib(None)
+            .std("c++17")
+            .file(u_sockets_dir.join("src").join("crypto").join("sni_tree.cpp"))
+            .include(u_sockets_dir.join("src"))
+            .include(bssl_dir.join("include"))
+            .define("LIBUS_USE_OPENSSL", None)
+            .flag_if_supported("-fno-exceptions")
+            .flag_if_supported("-fno-rtti")
+            .flag_if_supported("-fno-unwind-tables")
+            .flag_if_supported("-fno-asynchronous-unwind-tables")
+            .flag_if_supported("-ffunction-sections")
+            .flag_if_supported("-fdata-sections")
+            .flag_if_supported("-fvisibility=hidden")
+            .warnings(false)
+            .opt_level_str("z");
+        if is_windows {
+            sni_build
+                .include(libuv_dir.join("include"))
+                .define("LIBUS_USE_LIBUV", None)
+                .define("WIN32_LEAN_AND_MEAN", None)
+                .define("_CRT_SECURE_NO_WARNINGS", None);
+        }
+        for obj in sni_build.compile_intermediates() {
+            u_sockets_build.object(obj);
+        }
     } else {
         u_sockets_build.define("LIBUS_NO_SSL", None);
     }

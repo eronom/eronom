@@ -37,6 +37,8 @@ fn main() {
         println!("cargo:rustc-link-arg=-no-pie");
         println!("cargo:rustc-link-arg=-Wl,-z,lazy");
         println!("cargo:rustc-link-arg=-Wl,--hash-style=gnu");
+        println!("cargo:rustc-link-arg=-Wl,--gc-sections");
+        println!("cargo:rustc-link-arg=-Wl,--as-needed");
 
         if let Some(static_dir) = find_static_libstdcxx_dir() {
             println!("cargo:rustc-link-search=native={}", static_dir.display());

@@ -7,6 +7,47 @@ pub use eronom::runner;
 #[global_allocator]
 static GLOBAL: eronom_core::alloc::MiMalloc = eronom_core::alloc::MiMalloc;
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[used]
+#[unsafe(link_section = ".init_array.00101")]
+static FAST_CLI_INIT: extern "C" fn(i32, *const *const u8) = fast_cli_version_init;
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+extern "C" fn fast_cli_version_init(argc: i32, argv: *const *const u8) {
+    if argc < 2 || argv.is_null() {
+        return;
+    }
+    unsafe {
+        let p = *argv.add(1);
+        if p.is_null() {
+            return;
+        }
+        let is_short = *p == b'-' && *p.add(1) == b'v' && *p.add(2) == 0;
+        let is_long = !is_short && {
+            const LONG: &[u8] = b"--version\0";
+            let mut i = 0;
+            loop {
+                if *p.add(i) != LONG[i] {
+                    break false;
+                }
+                if LONG[i] == 0 {
+                    break true;
+                }
+                i += 1;
+            }
+        };
+        if is_short || is_long {
+            const VER_STR: &str = concat!("eronom ", env!("CARGO_PKG_VERSION"), "\n");
+            unsafe extern "C" {
+                fn write(fd: i32, buf: *const std::ffi::c_void, count: usize) -> isize;
+                fn _exit(status: i32) -> !;
+            }
+            let _ = write(1, VER_STR.as_ptr().cast(), VER_STR.len());
+            _exit(0);
+        }
+    }
+}
+
 use runner::{run_file, run_test_command};
 
 fn main() {
