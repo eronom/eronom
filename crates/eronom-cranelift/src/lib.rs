@@ -4,7 +4,8 @@ use std::process::Command;
 use std::str::FromStr;
 
 use cranelift_codegen::ir::{
-    types, AbiParam, Block, InstBuilder, Signature, UserExternalName, UserFuncName,
+    condcodes::IntCC, types, AbiParam, Block, InstBuilder, MemFlagsData, Signature,
+    StackSlotData, StackSlotKind, UserExternalName, UserFuncName,
 };
 use cranelift_codegen::isa;
 use cranelift_codegen::settings::{self, Configurable, Flags};
@@ -118,14 +119,29 @@ impl CraneliftBackend {
         let target_triple = if let Some(t_str) = target_triple_str {
             match t_str.to_lowercase().as_str() {
                 "windows" | "win" | "win64" => Triple::from_str("x86_64-pc-windows-msvc").unwrap(),
-                "macos" | "mac" | "darwin" => {
-                    #[cfg(target_arch = "aarch64")]
+                "macos" | "mac" | "darwin" | "apple" => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        #[cfg(target_arch = "aarch64")]
+                        { Triple::from_str("aarch64-apple-darwin").unwrap() }
+                        #[cfg(not(target_arch = "aarch64"))]
+                        { Triple::from_str("x86_64-apple-darwin").unwrap() }
+                    }
+                    #[cfg(not(target_os = "macos"))]
                     { Triple::from_str("aarch64-apple-darwin").unwrap() }
-                    #[cfg(not(target_arch = "aarch64"))]
-                    { Triple::from_str("x86_64-apple-darwin").unwrap() }
                 }
-                "linux" | "linux64" => Triple::from_str("x86_64-unknown-linux-gnu").unwrap(),
-                "linux-arm" | "linux-aarch64" | "arm64" => Triple::from_str("aarch64-unknown-linux-gnu").unwrap(),
+                "macos-arm64" | "mac-arm64" | "darwin-arm64" | "aarch64-macos" => {
+                    Triple::from_str("aarch64-apple-darwin").unwrap()
+                }
+                "macos-x86_64" | "macos-intel" | "x86_64-macos" => {
+                    Triple::from_str("x86_64-apple-darwin").unwrap()
+                }
+                "linux" | "linux64" | "linux-x86_64" | "x86_64-linux" => {
+                    Triple::from_str("x86_64-unknown-linux-gnu").unwrap()
+                }
+                "linux-arm" | "linux-arm64" | "linux-aarch64" | "aarch64-linux" | "arm64" => {
+                    Triple::from_str("aarch64-unknown-linux-gnu").unwrap()
+                }
                 "riscv" | "riscv64" => Triple::from_str("riscv64gc-unknown-linux-gnu").unwrap(),
                 other => Triple::from_str(other)
                     .map_err(|e| anyhow::anyhow!("Invalid target triple '{}': {}", other, e))?,
@@ -180,10 +196,230 @@ impl CraneliftBackend {
         Ok(fid)
     }
 
+    fn define_macos_runtime_stubs(&mut self) -> anyhow::Result<()> {
+        let exit_import = self.declare_runtime_fn("exit", &[types::I32], None)?;
+        let write_import =
+            self.declare_runtime_fn("write", &[types::I32, types::I64, types::I64], Some(types::I64))?;
+
+        let mut ctx = self.module.make_context();
+        let mut fn_builder_ctx = FunctionBuilderContext::new();
+
+        // 1. er_sys_exit(code: i64)
+        let mut exit_sig = self.module.make_signature();
+        exit_sig.params.push(AbiParam::new(types::I64));
+        let exit_fid = self.module.declare_function("er_sys_exit", Linkage::Export, &exit_sig)?;
+        ctx.func.signature = exit_sig;
+        ctx.func.name = UserFuncName::User(UserExternalName::new(exit_fid.as_u32(), 0));
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+            let entry = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            let code = builder.block_params(entry)[0];
+            let exit_ref = self.module.declare_func_in_func(exit_import, builder.func);
+            let code32 = builder.ins().ireduce(types::I32, code);
+            builder.ins().call(exit_ref, &[code32]);
+            builder.ins().return_(&[]);
+            builder.seal_all_blocks();
+            builder.finalize(self.module.isa().frontend_config());
+        }
+        self.module.define_function(exit_fid, &mut ctx)?;
+        self.module.clear_context(&mut ctx);
+        self.sys_exit_fid = Some(exit_fid);
+
+        // 2. er_print_str(ptr: i64)
+        let mut print_str_sig = self.module.make_signature();
+        print_str_sig.params.push(AbiParam::new(types::I64));
+        let print_str_fid =
+            self.module.declare_function("er_print_str", Linkage::Export, &print_str_sig)?;
+        ctx.func.signature = print_str_sig;
+        ctx.func.name = UserFuncName::User(UserExternalName::new(print_str_fid.as_u32(), 0));
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+            let len_var = builder.declare_var(types::I64);
+            let nl_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+
+            let entry = builder.create_block();
+            let loop_hdr = builder.create_block();
+            let loop_inc = builder.create_block();
+            let loop_done = builder.create_block();
+            let write_str_block = builder.create_block();
+            let write_nl_block = builder.create_block();
+
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            let ptr = builder.block_params(entry)[0];
+            let zero64 = builder.ins().iconst(types::I64, 0);
+            builder.def_var(len_var, zero64);
+            let is_null = builder.ins().icmp_imm_s(IntCC::Equal, ptr, 0);
+            builder.ins().brif(is_null, write_nl_block, &[], loop_hdr, &[]);
+
+            builder.switch_to_block(loop_hdr);
+            let cur_len = builder.use_var(len_var);
+            let ch_addr = builder.ins().iadd(ptr, cur_len);
+            let ch = builder.ins().load(types::I8, MemFlagsData::new(), ch_addr, 0);
+            let zero8 = builder.ins().iconst(types::I8, 0);
+            let is_nul = builder.ins().icmp(IntCC::Equal, ch, zero8);
+            builder.ins().brif(is_nul, loop_done, &[], loop_inc, &[]);
+
+            builder.switch_to_block(loop_inc);
+            let cur_len = builder.use_var(len_var);
+            let next_len = builder.ins().iadd_imm_s(cur_len, 1);
+            builder.def_var(len_var, next_len);
+            builder.ins().jump(loop_hdr, &[]);
+
+            builder.switch_to_block(loop_done);
+            let total_len = builder.use_var(len_var);
+            let has_bytes = builder.ins().icmp_imm_s(IntCC::SignedGreaterThan, total_len, 0);
+            builder.ins().brif(has_bytes, write_str_block, &[], write_nl_block, &[]);
+
+            builder.switch_to_block(write_str_block);
+            let write_ref = self.module.declare_func_in_func(write_import, builder.func);
+            let fd = builder.ins().iconst(types::I32, 1);
+            let total_len = builder.use_var(len_var);
+            builder.ins().call(write_ref, &[fd, ptr, total_len]);
+            builder.ins().jump(write_nl_block, &[]);
+
+            builder.switch_to_block(write_nl_block);
+            let write_ref = self.module.declare_func_in_func(write_import, builder.func);
+            let nl_ptr = builder.ins().stack_addr(types::I64, nl_slot, 0);
+            let nl_byte = builder.ins().iconst(types::I8, 0x0a);
+            builder.ins().store(MemFlagsData::new(), nl_byte, nl_ptr, 0);
+            let fd = builder.ins().iconst(types::I32, 1);
+            let one64 = builder.ins().iconst(types::I64, 1);
+            builder.ins().call(write_ref, &[fd, nl_ptr, one64]);
+            builder.ins().return_(&[]);
+
+            builder.seal_all_blocks();
+            builder.finalize(self.module.isa().frontend_config());
+        }
+        self.module.define_function(print_str_fid, &mut ctx)?;
+        self.module.clear_context(&mut ctx);
+        self.print_str_fid = Some(print_str_fid);
+
+        // 3. er_print_i64(val: i64)
+        let mut print_i64_sig = self.module.make_signature();
+        print_i64_sig.params.push(AbiParam::new(types::I64));
+        let print_i64_fid =
+            self.module.declare_function("er_print_i64", Linkage::Export, &print_i64_sig)?;
+        ctx.func.signature = print_i64_sig;
+        ctx.func.name = UserFuncName::User(UserExternalName::new(print_i64_fid.as_u32(), 0));
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_builder_ctx);
+            let buf_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                32,
+                3,
+            ));
+            let n_var = builder.declare_var(types::I64);
+            let pos_var = builder.declare_var(types::I64);
+            let is_neg_var = builder.declare_var(types::I64);
+
+            let entry = builder.create_block();
+            let zero_block = builder.create_block();
+            let loop_hdr = builder.create_block();
+            let loop_body = builder.create_block();
+            let sign_block = builder.create_block();
+            let minus_block = builder.create_block();
+            let emit_block = builder.create_block();
+
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            let val = builder.block_params(entry)[0];
+            let base = builder.ins().stack_addr(types::I64, buf_slot, 0);
+            let nl_addr = builder.ins().iadd_imm_s(base, 31);
+            let nl_byte = builder.ins().iconst(types::I8, 0x0a);
+            builder.ins().store(MemFlagsData::new(), nl_byte, nl_addr, 0);
+            let pos_init = builder.ins().iconst(types::I64, 31);
+            builder.def_var(pos_var, pos_init);
+
+            let is_neg = builder.ins().icmp_imm_s(IntCC::SignedLessThan, val, 0);
+            let is_neg_i64 = builder.ins().uextend(types::I64, is_neg);
+            builder.def_var(is_neg_var, is_neg_i64);
+            let neg_val = builder.ins().ineg(val);
+            let abs_val = builder.ins().select(is_neg, neg_val, val);
+            builder.def_var(n_var, abs_val);
+
+            let is_zero = builder.ins().icmp_imm_s(IntCC::Equal, abs_val, 0);
+            builder.ins().brif(is_zero, zero_block, &[], loop_hdr, &[]);
+
+            builder.switch_to_block(zero_block);
+            let pos0 = builder.ins().iconst(types::I64, 30);
+            let addr0 = builder.ins().iadd(base, pos0);
+            let ch0 = builder.ins().iconst(types::I8, 0x30);
+            builder.ins().store(MemFlagsData::new(), ch0, addr0, 0);
+            builder.def_var(pos_var, pos0);
+            builder.ins().jump(emit_block, &[]);
+
+            builder.switch_to_block(loop_hdr);
+            let cur_n = builder.use_var(n_var);
+            let done = builder.ins().icmp_imm_s(IntCC::Equal, cur_n, 0);
+            builder.ins().brif(done, sign_block, &[], loop_body, &[]);
+
+            builder.switch_to_block(loop_body);
+            let cur_n = builder.use_var(n_var);
+            let ten = builder.ins().iconst(types::I64, 10);
+            let q = builder.ins().udiv(cur_n, ten);
+            let qt = builder.ins().imul(q, ten);
+            let rem = builder.ins().isub(cur_n, qt);
+            let digit64 = builder.ins().iadd_imm_s(rem, 0x30);
+            let digit8 = builder.ins().ireduce(types::I8, digit64);
+            let pos = builder.use_var(pos_var);
+            let new_pos = builder.ins().iadd_imm_s(pos, -1);
+            builder.def_var(pos_var, new_pos);
+            let digit_addr = builder.ins().iadd(base, new_pos);
+            builder.ins().store(MemFlagsData::new(), digit8, digit_addr, 0);
+            builder.def_var(n_var, q);
+            builder.ins().jump(loop_hdr, &[]);
+
+            builder.switch_to_block(sign_block);
+            let neg_flag = builder.use_var(is_neg_var);
+            let need_minus = builder.ins().icmp_imm_s(IntCC::NotEqual, neg_flag, 0);
+            builder.ins().brif(need_minus, minus_block, &[], emit_block, &[]);
+
+            builder.switch_to_block(minus_block);
+            let pos = builder.use_var(pos_var);
+            let new_pos = builder.ins().iadd_imm_s(pos, -1);
+            builder.def_var(pos_var, new_pos);
+            let minus_addr = builder.ins().iadd(base, new_pos);
+            let minus_ch = builder.ins().iconst(types::I8, 0x2d);
+            builder.ins().store(MemFlagsData::new(), minus_ch, minus_addr, 0);
+            builder.ins().jump(emit_block, &[]);
+
+            builder.switch_to_block(emit_block);
+            let write_ref = self.module.declare_func_in_func(write_import, builder.func);
+            let pos = builder.use_var(pos_var);
+            let start_ptr = builder.ins().iadd(base, pos);
+            let end_len = builder.ins().iconst(types::I64, 32);
+            let total_len = builder.ins().isub(end_len, pos);
+            let fd = builder.ins().iconst(types::I32, 1);
+            builder.ins().call(write_ref, &[fd, start_ptr, total_len]);
+            builder.ins().return_(&[]);
+
+            builder.seal_all_blocks();
+            builder.finalize(self.module.isa().frontend_config());
+        }
+        self.module.define_function(print_i64_fid, &mut ctx)?;
+        self.module.clear_context(&mut ctx);
+        self.print_i64_fid = Some(print_i64_fid);
+
+        Ok(())
+    }
+
     pub fn compile_module(mut self, eir: &EirModule) -> anyhow::Result<Vec<u8>> {
-        // 1. Define direct zero-libc routines (Linux syscalls or Windows Win32 IAT routines)
+        // 1. Define platform runtime routines (macOS libSystem IR wrappers, Windows IAT thunks, or Linux syscalls)
         let is_windows = self.target_triple.operating_system == target_lexicon::OperatingSystem::Windows;
-        if self.target_triple.architecture == target_lexicon::Architecture::X86_64 {
+        let is_macos = matches!(
+            self.target_triple.operating_system,
+            target_lexicon::OperatingSystem::Darwin(_) | target_lexicon::OperatingSystem::MacOSX { .. }
+        );
+        if is_macos {
+            self.define_macos_runtime_stubs()?;
+        } else if self.target_triple.architecture == target_lexicon::Architecture::X86_64 {
             let (exit_bytes, print_i64_bytes, print_str_bytes) = if is_windows {
                 (
                     X86_64_WIN_SYS_EXIT_BYTES,
@@ -1220,33 +1456,73 @@ pub fn build_cranelift_binary(
                 let is_arm64 = matches!(target_arch, target_lexicon::Architecture::Aarch64(_));
                 #[cfg(target_os = "macos")]
                 {
-                    let status = Command::new("ld")
+                    let arch_str = if is_arm64 { "arm64" } else { "x86_64" };
+                    let sdk_path = Command::new("xcrun")
+                        .arg("--show-sdk-path")
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            [
+                                "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+                                "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+                            ]
+                            .iter()
+                            .find(|&&p| Path::new(p).exists())
+                            .map(|&s| s.to_string())
+                        });
+
+                    let mut ld_cmd = Command::new("ld");
+                    ld_cmd
+                        .arg("-arch")
+                        .arg(arch_str)
+                        .arg("-platform_version")
+                        .arg("macos")
+                        .arg("11.0")
+                        .arg("11.0");
+                    if let Some(ref sdk) = sdk_path {
+                        ld_cmd.arg("-syslibroot").arg(sdk);
+                    }
+                    ld_cmd
+                        .arg("-e")
+                        .arg("__start")
+                        .arg("-dead_strip")
                         .arg(&temp_obj)
+                        .arg("-lSystem")
                         .arg("-o")
-                        .arg(output_path)
-                        .status();
-                    if matches!(status, Ok(s) if s.success()) {
-                        true
-                    } else if target.is_none() {
-                        if let Some(stub_path) = eronom::jit::aot::resolve_target_stub(None, Some("macos")) {
-                            eronom::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
-                        } else {
-                            eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
+                        .arg(output_path);
+
+                    let ld_ok = matches!(ld_cmd.status(), Ok(s) if s.success());
+                    if ld_ok {
+                        if is_arm64 {
+                            let _ = Command::new("codesign")
+                                .arg("-s")
+                                .arg("-")
+                                .arg("-f")
+                                .arg(output_path)
+                                .status();
                         }
+                        true
                     } else {
-                        eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
+                        eronom::jit::aot::macho_writer::link_object_to_static_macho64(
+                            &obj_bytes,
+                            output_path,
+                            is_arm64,
+                        )
+                        .is_ok()
                     }
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
                     // Pure-Rust Mach-O 64-bit Synthesizer: emits standalone macOS binary without ld64 or runner stub
-                    if target.is_some() {
-                        eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
-                    } else if let Some(stub_path) = eronom::jit::aot::resolve_target_stub(None, Some("macos")) {
-                        eronom::cli::bundle::create_standalone_binary(&stub_path, script_path, None, output_path).is_ok()
-                    } else {
-                        eronom::jit::aot::macho_writer::link_object_to_static_macho64(&obj_bytes, output_path, is_arm64).is_ok()
-                    }
+                    eronom::jit::aot::macho_writer::link_object_to_static_macho64(
+                        &obj_bytes,
+                        output_path,
+                        is_arm64,
+                    )
+                    .is_ok()
                 }
             }
             _ => {
@@ -1304,7 +1580,7 @@ pub fn build_cranelift_binary(
 mod tests {
     use super::*;
     use eronom::jit::aot::lower;
-    use object::{Object, ObjectSection, ObjectSymbol};
+    use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol};
 
     #[test]
     fn test_cranelift_build_and_run_fib() {
@@ -1498,31 +1774,33 @@ print(res);
     fn test_cranelift_cross_macos_obj() {
         let temp_dir = std::env::temp_dir();
         let script_path = temp_dir.join(format!("test_clif_mac_probe_{}.er", std::process::id()));
-        std::fs::write(&script_path, "let x = 42;\nprint(x);\n").unwrap();
+        std::fs::write(&script_path, "let x = 42;\nprint(x);\nprint(\"hi\");\n").unwrap();
         let stmts = parse_and_resolve_imports(&script_path).unwrap();
         let compiler = Compiler::new();
         let function = compiler.compile(&stmts).unwrap();
         let eir_module = lower::lower_program(&function, "test_mac_probe");
-        let backend = CraneliftBackend::new("test_mac_probe", Some("macos")).unwrap();
-        let obj_bytes = backend.compile_module(&eir_module).unwrap();
         let _ = std::fs::remove_file(&script_path);
 
-        assert!(!obj_bytes.is_empty(), "Object bytes should not be empty");
-        let parsed = object::File::parse(&obj_bytes[..]).unwrap();
-        println!("macOS object format: {:?}", parsed.format());
-        assert_eq!(parsed.format(), object::BinaryFormat::MachO);
-        for sec in parsed.sections() {
-            println!("  Mach-O Section: {} (size: {})", sec.name().unwrap_or("?"), sec.data().unwrap().len());
-        }
-        for sym in parsed.symbols() {
-            if let Ok(name) = sym.name() {
-                println!("  Mach-O Symbol: {} at 0x{:x}", name, sym.address());
+        for target_name in ["macos", "macos-x86_64"] {
+            let backend = CraneliftBackend::new("test_mac_probe", Some(target_name)).unwrap();
+            let obj_bytes = backend.compile_module(&eir_module).unwrap();
+            assert!(!obj_bytes.is_empty(), "Object bytes should not be empty");
+            let parsed = object::File::parse(&obj_bytes[..]).unwrap();
+            println!("macOS ({}) object format: {:?}", target_name, parsed.format());
+            assert_eq!(parsed.format(), object::BinaryFormat::MachO);
+            for sec in parsed.sections() {
+                println!("  Mach-O Section: {} (addr: 0x{:x}, size: {}, data_len: {}, kind: {:?})", sec.name().unwrap_or("?"), sec.address(), sec.size(), sec.data().unwrap().len(), sec.kind());
             }
-        }
-        if let Some(text) = parsed.section_by_name("__text") {
-            println!("  Mach-O __text relocations count: {}", text.relocations().count());
-            for (offset, reloc) in text.relocations() {
-                println!("    reloc at 0x{:x}: {:?}", offset, reloc.target());
+            for sym in parsed.symbols() {
+                if let Ok(name) = sym.name() {
+                    println!("  Mach-O Symbol: {} at 0x{:x} (section: {:?})", name, sym.address(), sym.section());
+                }
+            }
+            if let Some(text) = parsed.section_by_name("__text") {
+                println!("  Mach-O __text relocations count: {}", text.relocations().count());
+                for (offset, reloc) in text.relocations() {
+                    println!("    reloc at 0x{:x}: {:?} flags={:?} addend={}", offset, reloc.target(), reloc.flags(), reloc.addend());
+                }
             }
         }
     }
@@ -1584,23 +1862,60 @@ print(res);
     fn test_cranelift_cross_macos_micro_binary() {
         let temp_dir = std::env::temp_dir();
         let script_path = temp_dir.join(format!("test_clif_mac_bin_{}.er", std::process::id()));
-        let out_path = temp_dir.join(format!("test_clif_mac_bin_{}", std::process::id()));
-        std::fs::write(&script_path, "let x = 100;\nprint(x);\n").unwrap();
+        let out_arm64 = temp_dir.join(format!("test_clif_mac_arm64_{}", std::process::id()));
+        let out_x64 = temp_dir.join(format!("test_clif_mac_x64_{}", std::process::id()));
+        let script = r#"
+fn fib(n) {
+    if (n <= 1) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+let res = fib(10);
+print(res);
+print("macOS Cranelift!");
+"#;
+        std::fs::write(&script_path, script).unwrap();
 
-        let res = build_cranelift_binary(&script_path, &out_path, Some("macos"));
+        for (target_name, out_path, expected_arch) in [
+            ("macos", &out_arm64, object::Architecture::Aarch64),
+            ("macos-x86_64", &out_x64, object::Architecture::X86_64),
+        ] {
+            let res = build_cranelift_binary(&script_path, out_path, Some(target_name));
+            assert!(
+                res.is_ok(),
+                "macOS ({}) micro binary build failed: {:?}",
+                target_name,
+                res.err()
+            );
+            assert!(out_path.exists());
+            let meta = std::fs::metadata(out_path).unwrap();
+            println!("Generated macOS ({}) binary size: {} bytes", target_name, meta.len());
+            assert!(
+                meta.len() < 100_000,
+                "macOS ({}) binary should be < 100KB (no runner stub), got {}",
+                target_name,
+                meta.len()
+            );
+
+            let bytes = std::fs::read(out_path).unwrap();
+            let parsed = object::File::parse(&bytes[..]).unwrap();
+            assert_eq!(parsed.format(), object::BinaryFormat::MachO);
+            assert_eq!(parsed.architecture(), expected_arch);
+
+            let seg_names: Vec<String> = parsed
+                .segments()
+                .filter_map(|s| s.name().ok().flatten().map(str::to_string))
+                .collect();
+            assert!(seg_names.iter().any(|s| s == "__PAGEZERO"), "Missing __PAGEZERO: {:?}", seg_names);
+            assert!(seg_names.iter().any(|s| s == "__TEXT"), "Missing __TEXT: {:?}", seg_names);
+            assert!(seg_names.iter().any(|s| s == "__DATA"), "Missing __DATA: {:?}", seg_names);
+            assert!(seg_names.iter().any(|s| s == "__LINKEDIT"), "Missing __LINKEDIT: {:?}", seg_names);
+
+            let _ = std::fs::remove_file(out_path);
+        }
+
         let _ = std::fs::remove_file(&script_path);
-
-        assert!(res.is_ok(), "macOS micro binary build failed: {:?}", res.err());
-        assert!(out_path.exists());
-        let meta = std::fs::metadata(&out_path).unwrap();
-        println!("Generated macOS binary size: {} bytes", meta.len());
-        // Verify micro-binary size is < 10 KB (no runner stub)
-        assert!(meta.len() < 10_000, "macOS binary should be < 10KB, got {}", meta.len());
-
-        let bytes = std::fs::read(&out_path).unwrap();
-        let parsed = object::File::parse(&bytes[..]).unwrap();
-        assert_eq!(parsed.format(), object::BinaryFormat::MachO);
-        let _ = std::fs::remove_file(&out_path);
     }
 
     #[test]

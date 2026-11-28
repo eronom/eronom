@@ -325,11 +325,13 @@ fn build_aot_binary_full(
     };
 
     // Content-addressed AOT binary caching
+    let no_clif_env = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
     let cache_dir = get_aot_cache_dir();
     let cache_file = if let Some(ref cdir) = cache_dir {
-        let mut full_input = Vec::with_capacity(script_bytes.len() + target.unwrap_or("host").len());
+        let mut full_input = Vec::with_capacity(script_bytes.len() + target.unwrap_or("host").len() + 16);
         full_input.extend_from_slice(&script_bytes);
         full_input.extend_from_slice(target.unwrap_or("host").as_bytes());
+        full_input.extend_from_slice(if no_clif_env { b":aot_v2:nocl" } else { b":aot_v2:clif" });
         let mut digest = [0u8; 32];
         unsafe {
             eronom_net::ffi::SHA256(full_input.as_ptr(), full_input.len(), digest.as_mut_ptr());
@@ -364,15 +366,9 @@ fn build_aot_binary_full(
         }
     }
 
-    // 2. Try Cranelift backend first for pure-Rust native code generation (x86_64 ELF/PE)
-    let is_macos = if let Some(t) = target {
-        let lower = t.to_lowercase();
-        lower == "macos" || lower == "mac" || lower == "darwin" || lower.contains("apple-darwin")
-    } else {
-        cfg!(target_os = "macos")
-    };
+    // 2. Try Cranelift backend first for pure-Rust native code generation (ELF/PE/Mach-O)
     let no_clif = std::env::var("ERONOM_NO_CRANELIFT").map(|v| v == "1" || v == "true").unwrap_or(false);
-    if !no_clif && !is_macos {
+    if !no_clif {
         if crate::toolchain::run_cranelift_build(script_path, &final_out, target).is_ok() {
             #[cfg(unix)]
             {
@@ -610,8 +606,13 @@ print(arr[1]);
         assert!(bin_path.exists(), "macOS binary should exist");
 
         let metadata = std::fs::metadata(&bin_path).unwrap();
-        // Verify standalone binary size is within micro-runner budget (< 5 MB)
-        assert!(metadata.len() > 1000 && metadata.len() < 5_000_000, "Binary size should be within runner budget, got {}", metadata.len());
+        // Verify standalone binary size is within native micro-binary budget (< 100 KB)
+        assert!(metadata.len() > 1000 && metadata.len() < 100_000, "Binary size should be < 100KB, got {}", metadata.len());
+        let bytes = std::fs::read(&bin_path).unwrap();
+        use object::Object;
+        let parsed = object::File::parse(&bytes[..]).unwrap();
+        assert_eq!(parsed.format(), object::BinaryFormat::MachO);
+        assert_eq!(parsed.architecture(), object::Architecture::Aarch64);
 
         let _ = std::fs::remove_file(&bin_path);
     }
