@@ -383,14 +383,11 @@ fn build_aot_binary_full(
         }
     }
 
-    // 3. Fallback: If a runner stub is available and not in pure-native mode, use it to ensure runnability
-    let pure_native = std::env::var("ERONOM_AOT_PURE_NATIVE").map(|v| v == "1" || v == "true").unwrap_or(false);
-    if !pure_native {
-        if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
-            crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
-            sync_final_out(&final_out);
-            return Ok(());
-        }
+    // 3. Fallback: If a runner stub is available, use it to ensure runnability
+    if let Some(stub_path) = resolve_target_stub(custom_stub, target) {
+        crate::cli::bundle::create_standalone_binary(&stub_path, script_path, None, &final_out)?;
+        sync_final_out(&final_out);
+        return Ok(());
     }
 
     // 4. Otherwise, build via Cranelift directly (surfacing error if it fails)
