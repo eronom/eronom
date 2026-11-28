@@ -1,6 +1,6 @@
 // Semantic deserializer binding streaming JSON tokens directly to Eronom's GC heap.
 
-use crate::gc::{gc_alloc_string, gc_allocate, get_pooled_vec, intern_string, GcData, GcStruct};
+use crate::gc::{gc_alloc_string, gc_allocate, get_pooled_vec, intern_string, GcData, GcStruct, StructFields};
 use crate::shape::get_or_create_anonymous_shape;
 use crate::value::Value;
 use super::syntax::{JsonDecoder, Token};
@@ -63,7 +63,7 @@ pub fn parse_value<'a>(decoder: &mut JsonDecoder<'a>) -> Result<Value, &'static 
                 let (desc, _) = get_or_create_anonymous_shape(&[]);
                 let ptr = gc_allocate(GcData::Struct(GcStruct {
                     descriptor: desc,
-                    fields: get_pooled_vec(0),
+                    fields: StructFields::with_len_null(0),
                 }));
                 return Ok(Value::object(ptr));
             }
@@ -103,8 +103,7 @@ pub fn parse_value<'a>(decoder: &mut JsonDecoder<'a>) -> Result<Value, &'static 
 
             // Retrieve or create Shape descriptor from cached shapes
             let (desc, offsets) = get_or_create_anonymous_shape(&keys);
-            let mut fields = get_pooled_vec(keys.len());
-            fields.resize(keys.len(), Value::null());
+            let mut fields = StructFields::with_len_null(keys.len());
             for i in 0..keys.len() {
                 fields[offsets[i]] = values[i];
             }

@@ -57,8 +57,7 @@ pub extern "C" fn er_alloc_struct(name_ptr: *const c_char, field_count: usize) -
         FnvHashMap::default(),
         FnvHashMap::default(),
     ));
-    let mut fields = crate::vm::gc::gc_vec_with_capacity(field_count);
-    fields.resize(field_count, Value::null());
+    let fields = crate::vm::gc::StructFields::with_len_null(field_count);
     let instance = GcStruct {
         descriptor,
         fields,

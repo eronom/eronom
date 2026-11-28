@@ -165,11 +165,92 @@ pub struct GcBoundMethod {
     pub function: *mut GcObject,
 }
 
+#[derive(Clone)]
+pub enum StructFields {
+    Inline { len: u8, data: [Value; 4] },
+    Heap(crate::alloc::GcVec<Value>),
+}
+
+impl StructFields {
+    #[inline(always)]
+    pub fn with_len_null(len: usize) -> Self {
+        if len <= 4 {
+            StructFields::Inline {
+                len: len as u8,
+                data: [Value::null(); 4],
+            }
+        } else {
+            let mut v = super::get_pooled_vec(len);
+            v.resize(len, Value::null());
+            StructFields::Heap(v)
+        }
+    }
+
+    #[inline(always)]
+    pub fn from_pair(a: Value, b: Value) -> Self {
+        StructFields::Inline {
+            len: 2,
+            data: [a, b, Value::null(), Value::null()],
+        }
+    }
+
+    #[inline(always)]
+    pub fn push(&mut self, val: Value) {
+        match self {
+            StructFields::Inline { len, data } => {
+                let idx = *len as usize;
+                if idx < 4 {
+                    data[idx] = val;
+                    *len += 1;
+                } else {
+                    let mut v = super::get_pooled_vec(8);
+                    v.extend_from_slice(&data[..4]);
+                    v.push(val);
+                    *self = StructFields::Heap(v);
+                }
+            }
+            StructFields::Heap(v) => v.push(val),
+        }
+    }
+}
+
+impl std::ops::Deref for StructFields {
+    type Target = [Value];
+
+    #[inline(always)]
+    fn deref(&self) -> &[Value] {
+        match self {
+            StructFields::Inline { len, data } => unsafe { data.get_unchecked(..(*len as usize)) },
+            StructFields::Heap(v) => v.as_slice(),
+        }
+    }
+}
+
+impl std::ops::DerefMut for StructFields {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut [Value] {
+        match self {
+            StructFields::Inline { len, data } => unsafe { data.get_unchecked_mut(..(*len as usize)) },
+            StructFields::Heap(v) => v.as_mut_slice(),
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a StructFields {
+    type Item = &'a Value;
+    type IntoIter = std::slice::Iter<'a, Value>;
+
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone)]
 pub struct GcStruct {
     pub descriptor: ShapePtr,
-    pub fields: crate::alloc::GcVec<Value>,
+    pub fields: StructFields,
 }
 
 impl GcStruct {

@@ -1,7 +1,7 @@
 use crate::vm::value::{Value, MapKey, PTR_MASK, TAG_METHOD_JSON, TAG_METHOD_TEXT, TAG_METHOD_FILE};
 use crate::vm::gc::{
-    gc_allocate, gc_write_barrier, get_pooled_vec, get_pooled_map,
-    get_or_create_string, gc_alloc_builtin_method, GcData, GcStruct, GcBoundMethod
+    gc_allocate, gc_write_barrier, get_pooled_map,
+    get_or_create_string, gc_alloc_builtin_method, GcData, GcStruct, GcBoundMethod, StructFields
 };
 use crate::vm::execute::builtins::{get_object_builtin_method_id, get_array_builtin_method_id, get_string_builtin_method_id};
 use super::types::VM;
@@ -31,12 +31,9 @@ impl VM {
             }
 
             if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys[..count]) {
-                let mut fields = get_pooled_vec(count);
-                fields.resize(count, Value::null());
+                let mut fields = StructFields::with_len_null(count);
                 for i in 0..count {
-                    let val = values[i];
-                    let idx = offsets[i];
-                    fields[idx] = val;
+                    fields[offsets[i]] = values[i];
                 }
                 gc_allocate(GcData::Struct(GcStruct {
                     descriptor: desc,
@@ -44,8 +41,7 @@ impl VM {
                 }))
             } else {
                 let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys[..count]);
-                let mut fields = get_pooled_vec(count);
-                fields.resize(count, Value::null());
+                let mut fields = StructFields::with_len_null(count);
                 for i in 0..count {
                     fields[offsets[i]] = values[i];
                 }
@@ -68,12 +64,9 @@ impl VM {
             }
 
             if let Some((desc, offsets)) = self.find_matching_struct_cached(&keys) {
-                let mut fields = get_pooled_vec(keys.len());
-                fields.resize(keys.len(), Value::null());
+                let mut fields = StructFields::with_len_null(keys.len());
                 for i in 0..count {
-                    let val = values[i];
-                    let idx = offsets[i];
-                    fields[idx] = val;
+                    fields[offsets[i]] = values[i];
                 }
                 gc_allocate(GcData::Struct(GcStruct {
                     descriptor: desc,
@@ -81,8 +74,7 @@ impl VM {
                 }))
             } else {
                 let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
-                let mut fields = get_pooled_vec(keys.len());
-                fields.resize(keys.len(), Value::null());
+                let mut fields = StructFields::with_len_null(keys.len());
                 for i in 0..count {
                     fields[offsets[i]] = values[i];
                 }

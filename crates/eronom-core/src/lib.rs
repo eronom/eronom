@@ -19,7 +19,7 @@ pub use gc::{
     gc_allocate, gc_free_all, gc_mark_value, gc_mark_object, gc_blacken_object,
     mark_value, mark_object, gc_write_barrier, gc_epoch,
     gc_vec_new, gc_vec_with_capacity, gc_vec_from_slice,
-    GcColor, GcPhase, GcData, GcObject, ShapePtr, StructDescriptor,
+    GcColor, GcPhase, GcData, GcObject, ShapePtr, StructDescriptor, StructFields,
     GC_STATE, GC_ROOTS, GC_NEEDS_STEP,
 };
 pub use shape::*;

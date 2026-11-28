@@ -34,8 +34,7 @@ pub fn toml_to_value(val: toml::Value) -> crate::vm::value::Value {
                 values.push(toml_to_value(v));
             }
             let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
-            let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
-            fields.resize(keys.len(), crate::vm::value::Value::null());
+            let mut fields = crate::vm::gc::StructFields::with_len_null(keys.len());
             for i in 0..keys.len() {
                 fields[offsets[i]] = values[i];
             }

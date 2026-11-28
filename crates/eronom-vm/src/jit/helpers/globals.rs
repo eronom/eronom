@@ -162,30 +162,22 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
             }
             let keys = [k0, k1];
             if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
-                let mut fields = crate::vm::gc::get_pooled_vec(2);
-                fields.clear();
-                if offsets[0] == 0 {
-                    fields.push(v0);
-                    fields.push(v1);
+                let fields = if offsets[0] == 0 {
+                    crate::vm::gc::StructFields::from_pair(v0, v1)
                 } else {
-                    fields.push(v1);
-                    fields.push(v0);
-                }
+                    crate::vm::gc::StructFields::from_pair(v1, v0)
+                };
                 gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
                     descriptor: desc,
                     fields,
                 }))
             } else {
                 let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape_2(k0, k1);
-                let mut fields = crate::vm::gc::get_pooled_vec(2);
-                fields.clear();
-                if offsets[0] == 0 {
-                    fields.push(v0);
-                    fields.push(v1);
+                let fields = if offsets[0] == 0 {
+                    crate::vm::gc::StructFields::from_pair(v0, v1)
                 } else {
-                    fields.push(v1);
-                    fields.push(v0);
-                }
+                    crate::vm::gc::StructFields::from_pair(v1, v0)
+                };
                 gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
                     descriptor: desc,
                     fields,
@@ -207,13 +199,9 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
             }
 
             if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys[..count_usize]) {
-                let mut fields = crate::vm::gc::get_pooled_vec(count_usize);
-                fields.clear();
-                fields.resize(count_usize, Value::null());
+                let mut fields = crate::vm::gc::StructFields::with_len_null(count_usize);
                 for i in 0..count_usize {
-                    let val = values[i];
-                    let idx = offsets[i];
-                    fields[idx] = val;
+                    fields[offsets[i]] = values[i];
                 }
                 gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
                     descriptor: desc,
@@ -221,9 +209,7 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
                 }))
             } else {
                 let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys[..count_usize]);
-                let mut fields = crate::vm::gc::get_pooled_vec(count_usize);
-                fields.clear();
-                fields.resize(count_usize, Value::null());
+                let mut fields = crate::vm::gc::StructFields::with_len_null(count_usize);
                 for i in 0..count_usize {
                     fields[offsets[i]] = values[i];
                 }
@@ -248,12 +234,9 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
             }
 
             if let Some((desc, offsets)) = (*vm).find_matching_struct_cached(&keys) {
-                let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
-                fields.resize(keys.len(), Value::null());
+                let mut fields = crate::vm::gc::StructFields::with_len_null(keys.len());
                 for i in 0..count_usize {
-                    let val = values[i];
-                    let idx = offsets[i];
-                    fields[idx] = val;
+                    fields[offsets[i]] = values[i];
                 }
                 gc_allocate(GcData::Struct(crate::vm::gc::GcStruct {
                     descriptor: desc,
@@ -261,8 +244,7 @@ pub extern "C" fn er_jit_make_object(vm: *mut VM, start_reg: *const Value, count
                 }))
             } else {
                 let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
-                let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
-                fields.resize(keys.len(), Value::null());
+                let mut fields = crate::vm::gc::StructFields::with_len_null(keys.len());
                 for i in 0..count_usize {
                     fields[offsets[i]] = values[i];
                 }

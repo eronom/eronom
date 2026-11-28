@@ -213,6 +213,28 @@ pub fn generate_root_css(project_dir: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+/// Allocates an Eronom struct containing the given HTML attributes mapped to GC strings.
+fn attrs_to_gc_value(attrs: &HashMap<String, String>) -> crate::vm::value::Value {
+    let mut keys = Vec::with_capacity(attrs.len());
+    let mut values = Vec::with_capacity(attrs.len());
+    for (k, v) in attrs {
+        let key_ptr = crate::vm::gc::get_or_create_string(k);
+        let val_ptr = crate::vm::gc::gc_alloc_string(v);
+        keys.push(crate::vm::value::Value::string(key_ptr));
+        values.push(crate::vm::value::Value::string(val_ptr));
+    }
+    let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
+    let mut fields = crate::vm::gc::StructFields::with_len_null(keys.len());
+    for i in 0..keys.len() {
+        fields[offsets[i]] = values[i];
+    }
+    let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Struct(crate::vm::gc::GcStruct {
+        descriptor: desc,
+        fields,
+    }));
+    crate::vm::value::Value::object(ptr)
+}
+
 /// Validates an AST element tag and its attributes against the EDS rules
 /// via the native Eronom Design System script.
 pub fn validate_tag(
@@ -224,26 +246,7 @@ pub fn validate_tag(
     with_eds_engine(|engine| {
         let tag_name_ptr = crate::vm::gc::get_or_create_string(tag_name);
         let tag_name_val = crate::vm::value::Value::string(tag_name_ptr);
-
-        let mut keys = Vec::with_capacity(attrs.len());
-        let mut values = Vec::with_capacity(attrs.len());
-        for (k, v) in attrs {
-            let key_ptr = crate::vm::gc::get_or_create_string(k);
-            let val_ptr = crate::vm::gc::gc_alloc_string(v);
-            keys.push(crate::vm::value::Value::string(key_ptr));
-            values.push(crate::vm::value::Value::string(val_ptr));
-        }
-        let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
-        let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
-        fields.resize(keys.len(), crate::vm::value::Value::null());
-        for i in 0..keys.len() {
-            fields[offsets[i]] = values[i];
-        }
-        let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Struct(crate::vm::gc::GcStruct {
-            descriptor: desc,
-            fields,
-        }));
-        let attrs_val = crate::vm::value::Value::object(ptr);
+        let attrs_val = attrs_to_gc_value(attrs);
 
         let file_ptr = crate::vm::gc::get_or_create_string(file);
         let file_val = crate::vm::value::Value::string(file_ptr);
@@ -275,26 +278,7 @@ pub fn transform_primitive(
     with_eds_engine(|engine| {
         let tag_name_ptr = crate::vm::gc::get_or_create_string(tag_name);
         let tag_name_val = crate::vm::value::Value::string(tag_name_ptr);
-
-        let mut keys = Vec::with_capacity(attrs.len());
-        let mut values = Vec::with_capacity(attrs.len());
-        for (k, v) in attrs {
-            let key_ptr = crate::vm::gc::get_or_create_string(k);
-            let val_ptr = crate::vm::gc::gc_alloc_string(v);
-            keys.push(crate::vm::value::Value::string(key_ptr));
-            values.push(crate::vm::value::Value::string(val_ptr));
-        }
-        let (desc, offsets) = crate::vm::shape::get_or_create_anonymous_shape(&keys);
-        let mut fields = crate::vm::gc::get_pooled_vec(keys.len());
-        fields.resize(keys.len(), crate::vm::value::Value::null());
-        for i in 0..keys.len() {
-            fields[offsets[i]] = values[i];
-        }
-        let ptr = crate::vm::gc::gc_allocate(crate::vm::gc::GcData::Struct(crate::vm::gc::GcStruct {
-            descriptor: desc,
-            fields,
-        }));
-        let attrs_val = crate::vm::value::Value::object(ptr);
+        let attrs_val = attrs_to_gc_value(attrs);
 
         let res = engine
             .vm

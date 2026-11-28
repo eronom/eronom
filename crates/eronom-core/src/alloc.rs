@@ -61,69 +61,6 @@ unsafe impl GlobalAlloc for MiMalloc {
     }
 }
 
-const SLAB_BUCKET_COUNT: usize = 8; // 32, 64, 128, 256, 512, 1024, 2048, 4096
-const SLAB_MAX_SIZE: usize = 4096;
-const SLAB_BUCKET_CAP: usize = 256;
-
-struct SlabPoolState {
-    buckets: [Vec<*mut u8>; SLAB_BUCKET_COUNT],
-}
-
-impl SlabPoolState {
-    const fn new() -> Self {
-        Self {
-            buckets: [const { Vec::new() }; SLAB_BUCKET_COUNT],
-        }
-    }
-
-    fn scavenge(&mut self, keep_per_bucket: usize) {
-        for bucket in &mut self.buckets {
-            while bucket.len() > keep_per_bucket {
-                if let Some(ptr) = bucket.pop() {
-                    unsafe { mi_free(ptr) };
-                }
-            }
-            if keep_per_bucket == 0 {
-                bucket.shrink_to_fit();
-            }
-        }
-    }
-}
-
-impl Drop for SlabPoolState {
-    fn drop(&mut self) {
-        self.scavenge(0);
-    }
-}
-
-thread_local! {
-    static GC_SLAB_POOL: UnsafeCell<SlabPoolState> = const { UnsafeCell::new(SlabPoolState::new()) };
-}
-
-#[inline(always)]
-fn slab_bucket_for(size: usize) -> Option<(usize, usize)> {
-    if size > SLAB_MAX_SIZE {
-        return None;
-    }
-    if size <= 32 {
-        Some((0, 32))
-    } else if size <= 64 {
-        Some((1, 64))
-    } else if size <= 128 {
-        Some((2, 128))
-    } else if size <= 256 {
-        Some((3, 256))
-    } else if size <= 512 {
-        Some((4, 512))
-    } else if size <= 1024 {
-        Some((5, 1024))
-    } else if size <= 2048 {
-        Some((6, 2048))
-    } else {
-        Some((7, 4096))
-    }
-}
-
 #[inline(always)]
 fn dangling_for_layout(layout: Layout) -> NonNull<[u8]> {
     let ptr = std::ptr::without_provenance_mut::<u8>(layout.align());
@@ -132,7 +69,7 @@ fn dangling_for_layout(layout: Layout) -> NonNull<[u8]> {
     NonNull::slice_from_raw_parts(nn, 0)
 }
 
-/// Thread-local size-classed slab allocator backed by mimalloc for GC collections.
+/// Direct mimalloc-backed `Allocator` implementation for GC collections and heap strings.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct GcSlabAlloc;
 
@@ -140,39 +77,19 @@ pub type GcVec<T> = Vec<T, GcSlabAlloc>;
 pub type GcBox<T> = Box<T, GcSlabAlloc>;
 
 impl GcSlabAlloc {
-    #[inline]
+    #[inline(always)]
     fn alloc_raw(&self, layout: Layout, zeroed: bool) -> Result<NonNull<[u8]>, AllocError> {
         let size = layout.size();
         if size == 0 {
             return Ok(dangling_for_layout(layout));
         }
-        if layout.align() <= 16 {
-            if let Some((idx, bucket_size)) = slab_bucket_for(size) {
-                let cached = GC_SLAB_POOL.with(|pool| unsafe { (*pool.get()).buckets[idx].pop() });
-                if let Some(ptr) = cached {
-                    if zeroed {
-                        unsafe { std::ptr::write_bytes(ptr, 0, bucket_size) };
-                    }
-                    let nn = unsafe { NonNull::new_unchecked(ptr) };
-                    return Ok(NonNull::slice_from_raw_parts(nn, bucket_size));
-                }
-                let raw = unsafe {
-                    if zeroed {
-                        mi_zalloc_aligned(bucket_size, 16)
-                    } else {
-                        mi_malloc_aligned(bucket_size, 16)
-                    }
-                };
-                let nn = NonNull::new(raw).ok_or(AllocError)?;
-                return Ok(NonNull::slice_from_raw_parts(nn, bucket_size));
-            }
-        }
-        let align = layout.align().max(16);
         let raw = unsafe {
-            if zeroed {
-                mi_zalloc_aligned(size, align)
+            if layout.align() <= 16 {
+                if zeroed { mi_zalloc(size) } else { mi_malloc(size) }
+            } else if zeroed {
+                mi_zalloc_aligned(size, layout.align())
             } else {
-                mi_malloc_aligned(size, align)
+                mi_malloc_aligned(size, layout.align())
             }
         };
         let nn = NonNull::new(raw).ok_or(AllocError)?;
@@ -181,42 +98,24 @@ impl GcSlabAlloc {
 }
 
 unsafe impl Allocator for GcSlabAlloc {
-    #[inline]
+    #[inline(always)]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.alloc_raw(layout, false)
     }
 
-    #[inline]
+    #[inline(always)]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.alloc_raw(layout, true)
     }
 
-    #[inline]
+    #[inline(always)]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        let size = layout.size();
-        if size == 0 {
-            return;
+        if layout.size() != 0 {
+            unsafe { mi_free(ptr.as_ptr()) };
         }
-        if layout.align() <= 16 {
-            if let Some((idx, _)) = slab_bucket_for(size) {
-                let pushed = GC_SLAB_POOL.with(|pool| unsafe {
-                    let b = &mut (*pool.get()).buckets[idx];
-                    if b.len() < SLAB_BUCKET_CAP {
-                        b.push(ptr.as_ptr());
-                        true
-                    } else {
-                        false
-                    }
-                });
-                if pushed {
-                    return;
-                }
-            }
-        }
-        unsafe { mi_free(ptr.as_ptr()) };
     }
 
-    #[inline]
+    #[inline(always)]
     unsafe fn grow(
         &self,
         ptr: NonNull<u8>,
@@ -228,25 +127,20 @@ unsafe impl Allocator for GcSlabAlloc {
         if old_size == 0 {
             return self.allocate(new_layout);
         }
-        if old_layout.align() <= 16 && new_layout.align() <= 16 {
-            if let (Some((old_idx, _)), Some((new_idx, new_bucket_size))) =
-                (slab_bucket_for(old_size), slab_bucket_for(new_size))
-            {
-                if old_idx == new_idx {
-                    return Ok(NonNull::slice_from_raw_parts(ptr, new_bucket_size));
+        let raw = unsafe {
+            if old_layout.align() <= 16 && new_layout.align() <= 16 {
+                mi_realloc(ptr.as_ptr(), new_size)
+            } else {
+                let fresh = mi_malloc_aligned(new_size, new_layout.align().max(16));
+                if !fresh.is_null() {
+                    std::ptr::copy_nonoverlapping(ptr.as_ptr(), fresh, old_size);
+                    mi_free(ptr.as_ptr());
                 }
-            } else if slab_bucket_for(old_size).is_none() && slab_bucket_for(new_size).is_none() {
-                let raw = unsafe { mi_realloc_aligned(ptr.as_ptr(), new_size, 16) };
-                let nn = NonNull::new(raw).ok_or(AllocError)?;
-                return Ok(NonNull::slice_from_raw_parts(nn, new_size));
+                fresh
             }
-        }
-        let new_ptr = self.allocate(new_layout)?;
-        unsafe {
-            std::ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_ptr() as *mut u8, old_size);
-            self.deallocate(ptr, old_layout);
-        }
-        Ok(new_ptr)
+        };
+        let nn = NonNull::new(raw).ok_or(AllocError)?;
+        Ok(NonNull::slice_from_raw_parts(nn, new_size))
     }
 
     #[inline]
@@ -271,7 +165,7 @@ unsafe impl Allocator for GcSlabAlloc {
         Ok(new_ptr)
     }
 
-    #[inline]
+    #[inline(always)]
     unsafe fn shrink(
         &self,
         ptr: NonNull<u8>,
@@ -283,21 +177,20 @@ unsafe impl Allocator for GcSlabAlloc {
             unsafe { self.deallocate(ptr, old_layout) };
             return Ok(dangling_for_layout(new_layout));
         }
-        if old_layout.align() <= 16 && new_layout.align() <= 16 {
-            if let (Some((old_idx, _)), Some((new_idx, new_bucket_size))) =
-                (slab_bucket_for(old_layout.size()), slab_bucket_for(new_size))
-            {
-                if old_idx == new_idx {
-                    return Ok(NonNull::slice_from_raw_parts(ptr, new_bucket_size));
+        let raw = unsafe {
+            if old_layout.align() <= 16 && new_layout.align() <= 16 {
+                mi_realloc(ptr.as_ptr(), new_size)
+            } else {
+                let fresh = mi_malloc_aligned(new_size, new_layout.align().max(16));
+                if !fresh.is_null() {
+                    std::ptr::copy_nonoverlapping(ptr.as_ptr(), fresh, new_size);
+                    mi_free(ptr.as_ptr());
                 }
+                fresh
             }
-        }
-        let new_ptr = self.allocate(new_layout)?;
-        unsafe {
-            std::ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_ptr() as *mut u8, new_size);
-            self.deallocate(ptr, old_layout);
-        }
-        Ok(new_ptr)
+        };
+        let nn = NonNull::new(raw).ok_or(AllocError)?;
+        Ok(NonNull::slice_from_raw_parts(nn, new_size))
     }
 }
 
@@ -491,8 +384,12 @@ pub fn collect_allocator_memory(force: bool) {
 /// Proactively scavenge idle memory and return unused pages/capacities to the OS.
 /// Called during idle event loop pauses or between batch operations.
 pub fn scavenge_idle_memory() {
-    // 1. Trim thread-local GC map pool and free list down to baseline
+    // 1. Trim thread-local GC vector/map pools and free list down to baseline
     crate::vm::gc::gc_with_state(|state| {
+        if state.vector_pool.len() > 32 {
+            state.vector_pool.truncate(32);
+            state.vector_pool.shrink_to_fit();
+        }
         if state.map_pool.len() > 16 {
             state.map_pool.truncate(16);
             state.map_pool.shrink_to_fit();
@@ -511,13 +408,11 @@ pub fn scavenge_idle_memory() {
         }
     });
 
-    GC_SLAB_POOL.with(|pool| unsafe { (*pool.get()).scavenge(16) });
-
     collect_allocator_memory(true);
 }
 
 use crate::vm::value::Value;
-use crate::vm::gc::{gc_allocate, get_pooled_vec, GcData, GcStruct, ShapePtr};
+use crate::vm::gc::{gc_allocate, GcData, GcStruct, ShapePtr, StructFields};
 
 pub fn construct_struct_from_args(
     descriptor: ShapePtr,
@@ -525,8 +420,7 @@ pub fn construct_struct_from_args(
 ) -> Result<Value, String> {
     if args.is_empty() {
         let count = descriptor.field_indices.len();
-        let mut fields = get_pooled_vec(count);
-        fields.resize(count, Value::null());
+        let fields = StructFields::with_len_null(count);
         let s_ptr = gc_allocate(GcData::Struct(GcStruct {
             descriptor,
             fields,
@@ -542,8 +436,7 @@ pub fn construct_struct_from_args(
                 match &(*arg_ptr).data {
                     GcData::Object(map) => {
                         let count = descriptor.field_indices.len();
-                        let mut fields = get_pooled_vec(count);
-                        fields.resize(count, Value::null());
+                        let mut fields = StructFields::with_len_null(count);
                         for (map_key, &idx) in &descriptor.field_indices {
                             if let Some(&val) = map.get(map_key) {
                                 fields[idx] = val;
@@ -557,8 +450,7 @@ pub fn construct_struct_from_args(
                     }
                     GcData::Struct(s) => {
                         let count = descriptor.field_indices.len();
-                        let mut fields = get_pooled_vec(count);
-                        fields.resize(count, Value::null());
+                        let mut fields = StructFields::with_len_null(count);
                         for (map_key, &idx) in &descriptor.field_indices {
                             if let Some(val) = s.get_field(map_key.0) {
                                 fields[idx] = val;
@@ -591,8 +483,7 @@ pub fn construct_struct_from_args(
     }
 
     let count = descriptor.field_indices.len();
-    let mut fields = get_pooled_vec(count);
-    fields.resize(count, Value::null());
+    let mut fields = StructFields::with_len_null(count);
     for i in 0..args.len().min(count) {
         fields[i] = args[i];
     }
@@ -624,8 +515,6 @@ mod tests {
         assert_eq!(&*s, "hello_eronom_allocator_api_long_string_buffer");
         let empty = alloc_box_str_in_slab("");
         assert_eq!(&*empty, "");
-
-        GC_SLAB_POOL.with(|pool| unsafe { (*pool.get()).scavenge(0) });
     }
 
     #[test]

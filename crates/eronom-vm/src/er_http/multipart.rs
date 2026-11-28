@@ -106,8 +106,7 @@ pub fn construct_file_object(vm: &mut VM, name: &str, type_str: &str, size: usiz
 
     if let Some(&desc) = vm.shapes.structs.get("File") {
         let count = desc.field_indices.len();
-        let mut fields = crate::vm::gc::get_pooled_vec(count);
-        fields.resize(count, Value::null());
+        let mut fields = crate::vm::gc::StructFields::with_len_null(count);
 
         let name_key = crate::vm::gc::get_or_create_string("name");
         let type_key = crate::vm::gc::get_or_create_string("type");
